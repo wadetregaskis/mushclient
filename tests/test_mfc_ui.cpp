@@ -3104,7 +3104,8 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
 
     HookGuard<decltype(g_wxhook_file_dialog)> fdGuard(g_wxhook_file_dialog);
     g_wxhook_file_dialog = [](bool bOpen, const char*, const char* dir,
-                              const char* leaf, const char*, bool ow) -> char* {
+                              const char* leaf, const char*, bool ow,
+                              bool) -> char* {
         s_fdOpen = bOpen;
         s_fdDir = dir ? dir : "";
         s_fdLeaf = leaf ? leaf : "";
@@ -3145,7 +3146,8 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
     // is not there (and wxFD_FILE_MUST_EXIST is a no-op on macOS, so honouring
     // the flag would not have helped).  It has to reach the hook as a SAVE.
     g_wxhook_file_dialog = [](bool bOpen, const char*, const char*,
-                              const char*, const char*, bool ow) -> char* {
+                              const char*, const char*, bool ow,
+                              bool) -> char* {
         s_fdOpen = bOpen;
         s_fdOverwrite = ow;
         return strdup("/picked/notes.txt");
@@ -3180,6 +3182,210 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CFileDialog multi-select (OFN_ALLOWMULTISELECT)
+// ═══════════════════════════════════════════════════════════════════════════
+// Three dialogs ask for it — Add Startup Worlds and Add Global Plugins
+// (dialogs/global_prefs/GlobalPrefs.cpp) and Add plugin
+// (dialogs/plugins/PluginsDlg.cpp) — and all three are canonical Windows code
+// written against MFC's iteration protocol: GetStartPosition() hands out an
+// opaque POSITION and each GetNextPathName() yields one path and advances it,
+// NULLing it after the last.  The shim used to answer that with the one
+// selected file, so every "Add …" button could only ever add one file per
+// click.
+//
+// The panel itself is a wxFileDialog living in mushgui_adapters, which mushcore
+// deliberately does not link, so it cannot be shown from a headless test.  What
+// IS testable here — and is where the protocol actually lives — is the shim's
+// iteration layer over whatever the hook returned; these drive it through the
+// hook seam, the same way every other dialog test in this file does.
+
+static std::vector<std::string> s_msPaths;   // what the fake panel "selected"
+static bool s_msAskedMulti;                  // what the shim asked the hook for
+static int  s_msCalls;
+
+// Pack "a", "b" into the hook's multi-select block shape: "a\0b\0\0".
+static char* MultiSelectFakeHook(bool /*bOpen*/, const char*, const char*,
+                                 const char*, const char*, bool /*overwrite*/,
+                                 bool bMulti)
+{
+    ++s_msCalls;
+    s_msAskedMulti = bMulti;
+    if (!bMulti)                             // single-select: a plain C string
+        return s_msPaths.empty() ? nullptr : strdup(s_msPaths[0].c_str());
+
+    size_t total = 1;                        // the block's closing NUL
+    for (const std::string& s : s_msPaths) total += s.size() + 1;
+    char* block = (char*) malloc(total);
+    char* w = block;
+    for (const std::string& s : s_msPaths) {
+        memcpy(w, s.c_str(), s.size() + 1);
+        w += s.size() + 1;
+    }
+    *w = '\0';
+    return block;
+}
+
+// Run the callers' own loop shape.  The iteration cap turns "never terminates"
+// into a failed assertion rather than a hung test binary.
+static std::vector<std::string> CollectPathNames(CFileDialog& dlg)
+{
+    std::vector<std::string> out;
+    for (POSITION pos = dlg.GetStartPosition(); pos; ) {
+        out.push_back((LPCTSTR) dlg.GetNextPathName(pos));
+        if (out.size() > 64) { out.push_back("<enumeration did not end>"); break; }
+    }
+    return out;
+}
+
+// (a) the multi-path case.  Two of the three paths are the ones a
+// delimiter-based implementation gets wrong: one contains a space, one is
+// non-ASCII (UTF-8, split across literals so no hex escape can swallow the
+// next character).
+TEST(CommonDialogs, MultiSelectYieldsEveryPathExactlyOnceInOrder)
+{
+    HookGuard<decltype(g_wxhook_file_dialog)> fdGuard(g_wxhook_file_dialog);
+    g_wxhook_file_dialog = MultiSelectFakeHook;
+
+    const char* kSpaced   = "/Volumes/My Worlds/second world.mcl";
+    const char* kNonAscii = "/W" "\xc3\xb6" "rter/" "\xe6\x97\xa5\xe6\x9c\xac"
+                            "\xe8\xaa\x9e" ".mcl";
+    s_msPaths = { "/worlds/first.mcl", kSpaced, kNonAscii };
+    s_msCalls = 0;
+
+    // Exactly the flags and buffer plumbing of CGlobalPrefsP1::OnNewStartupWorld.
+    CFileDialog dlg(TRUE, "mcl", NULL,
+                    OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY,
+                    "MUSHclient worlds (*.mcl)|*.mcl||");
+    char szFileBuffer[4096] = { 0 };
+    dlg.m_ofn.lpstrFile = szFileBuffer;
+    dlg.m_ofn.nMaxFile  = sizeof(szFileBuffer);
+
+    EXPECT_EQ((INT_PTR)IDOK, dlg.DoModal());
+    EXPECT_EQ(1, s_msCalls);
+    EXPECT_TRUE(s_msAskedMulti);          // the flag reached the panel
+
+    std::vector<std::string> got = CollectPathNames(dlg);
+    ASSERT_EQ((size_t)3, got.size());     // every one, and no extras
+    EXPECT_EQ(std::string("/worlds/first.mcl"), got[0]);
+    EXPECT_EQ(std::string(kSpaced),   got[1]);   // the space survived
+    EXPECT_EQ(std::string(kNonAscii), got[2]);   // and so did the UTF-8
+
+    // The enumeration is repeatable — GetStartPosition starts a fresh one.
+    EXPECT_EQ(got, CollectPathNames(dlg));
+
+    // The single-file accessors describe ONE file, so they report the first
+    // path chosen.  (Windows' MFC ASSERTs against calling them under
+    // multi-select and none of the three callers does; see mfc_ui.h.)
+    EXPECT_STREQ("/worlds/first.mcl", (LPCTSTR)dlg.GetPathName());
+    EXPECT_STREQ("first.mcl", (LPCTSTR)dlg.GetFileName());
+    EXPECT_STREQ("mcl",       (LPCTSTR)dlg.GetFileExt());
+    EXPECT_STREQ("first",     (LPCTSTR)dlg.GetFileTitle());
+}
+
+// (b) the single-path regression guard: without OFN_ALLOWMULTISELECT the shim
+// must ask for a single file and must NOT parse the answer as a block — the
+// hook returns a plain strdup()ed string with one NUL, so reading it as a block
+// would run off the end of the allocation.  This test passes both before and
+// after the multi-select change.
+TEST(CommonDialogs, SingleSelectIterationIsUnchanged)
+{
+    HookGuard<decltype(g_wxhook_file_dialog)> fdGuard(g_wxhook_file_dialog);
+    g_wxhook_file_dialog = MultiSelectFakeHook;
+
+    s_msPaths = { "/worlds/only one.mcl" };
+    s_msCalls = 0;
+    s_msAskedMulti = true;                // must be cleared by the shim
+
+    CFileDialog dlg(TRUE, "mcl", NULL, OFN_FILEMUSTEXIST | OFN_HIDEREADONLY,
+                    "MUSHclient worlds (*.mcl)|*.mcl||");
+    EXPECT_EQ((INT_PTR)IDOK, dlg.DoModal());
+    EXPECT_EQ(1, s_msCalls);
+    EXPECT_FALSE(s_msAskedMulti);         // no flag, no multi-select
+
+    std::vector<std::string> got = CollectPathNames(dlg);
+    ASSERT_EQ((size_t)1, got.size());
+    EXPECT_EQ(std::string("/worlds/only one.mcl"), got[0]);
+    EXPECT_STREQ("/worlds/only one.mcl", (LPCTSTR)dlg.GetPathName());
+
+    // ...and a multi-select dialog on which the user picked exactly one file
+    // behaves identically, so the two shapes agree at their boundary.
+    CFileDialog one(TRUE, "mcl", NULL,
+                    OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST,
+                    "MUSHclient worlds (*.mcl)|*.mcl||");
+    EXPECT_EQ((INT_PTR)IDOK, one.DoModal());
+    EXPECT_TRUE(s_msAskedMulti);
+    EXPECT_EQ(got, CollectPathNames(one));
+}
+
+// (c) cancelled, and the degenerate "OK with nothing in it".  Neither may loop
+// for ever, invent a path, or dereference anything.
+TEST(CommonDialogs, MultiSelectCancelledOrEmptyYieldsNothing)
+{
+    HookGuard<decltype(g_wxhook_file_dialog)> fdGuard(g_wxhook_file_dialog);
+
+    // Cancel: the hook returns nullptr.
+    g_wxhook_file_dialog = [](bool, const char*, const char*, const char*,
+                              const char*, bool, bool) -> char* {
+        return nullptr;
+    };
+    CFileDialog cancelled(TRUE, "mcl", NULL,
+                          OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST,
+                          "MUSHclient worlds (*.mcl)|*.mcl||");
+    EXPECT_EQ((INT_PTR)IDCANCEL, cancelled.DoModal());
+    EXPECT_EQ((POSITION)nullptr, cancelled.GetStartPosition());
+    EXPECT_TRUE(CollectPathNames(cancelled).empty());
+
+    // An empty block — "OK, nothing selected".  wx cannot produce it, but the
+    // shim must not report IDOK with no path for the caller to read.
+    g_wxhook_file_dialog = MultiSelectFakeHook;
+    s_msPaths.clear();
+    s_msCalls = 0;
+    CFileDialog empty(TRUE, "mcl", NULL,
+                      OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST,
+                      "MUSHclient worlds (*.mcl)|*.mcl||");
+    EXPECT_EQ((INT_PTR)IDCANCEL, empty.DoModal());
+    EXPECT_EQ(1, s_msCalls);
+    EXPECT_EQ((POSITION)nullptr, empty.GetStartPosition());
+    EXPECT_TRUE(CollectPathNames(empty).empty());
+}
+
+// (d) multi-select is an *open*-panel idea; wxFD_MULTIPLE is illegal with
+// wxFD_SAVE and wx asserts on it.  A save panel therefore never asks for it,
+// however it is flagged — including the open-or-create shape that reaches the
+// hook as a save.
+TEST(CommonDialogs, MultiSelectIsNeverAskedForOnASavePanel)
+{
+    HookGuard<decltype(g_wxhook_file_dialog)> fdGuard(g_wxhook_file_dialog);
+    g_wxhook_file_dialog = MultiSelectFakeHook;
+    s_msPaths = { "/worlds/saved.mcl" };
+
+    CFileDialog save(FALSE, "mcl", NULL,
+                     OFN_ALLOWMULTISELECT | OFN_OVERWRITEPROMPT,
+                     "MUSHclient worlds (*.mcl)|*.mcl||");
+    s_msAskedMulti = true;
+    EXPECT_EQ((INT_PTR)IDOK, save.DoModal());
+    EXPECT_FALSE(s_msAskedMulti);
+
+    // Open-or-create (the Notes page's "Save notes"): flagged open, delivered
+    // as a save, so it must not ask for multi-select either.
+    CFileDialog openOrCreate(TRUE, "txt", "",
+                             OFN_ALLOWMULTISELECT | OFN_OVERWRITEPROMPT,
+                             "Text files (*.txt)|*.txt||");
+    s_msAskedMulti = true;
+    EXPECT_EQ((INT_PTR)IDOK, openOrCreate.DoModal());
+    EXPECT_FALSE(s_msAskedMulti);
+
+    // The control: a plain open panel WITH the flag does ask for it, so this is
+    // not a blanket refusal.
+    CFileDialog open(TRUE, "mcl", NULL,
+                     OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST,
+                     "MUSHclient worlds (*.mcl)|*.mcl||");
+    s_msAskedMulti = false;
+    EXPECT_EQ((INT_PTR)IDOK, open.DoModal());
+    EXPECT_TRUE(s_msAskedMulti);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // App.platform, and the suggested name every file dialog puts in the box
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -3211,7 +3417,8 @@ static void InstallLogLeafRecorder ()
     s_logLeaf.clear ();
     s_logHookCalled = false;
     g_wxhook_file_dialog = [](bool, const char*, const char*,
-                              const char* leaf, const char*, bool) -> char* {
+                              const char* leaf, const char*, bool,
+                              bool) -> char* {
         s_logHookCalled = true;
         s_logLeaf = leaf ? leaf : "";
         return nullptr;      // as if the user cancelled the Save panel
@@ -4884,7 +5091,8 @@ TEST(DocPrompt, DoPromptFileNameAsksAndReportsTheChosenPath)
     static bool s_seenOpen = true;
     g_wxhook_file_dialog = [](bool bOpen, const char* /*title*/,
                               const char* /*dir*/, const char* leaf,
-                              const char* filter, bool /*overwrite*/) -> char* {
+                              const char* filter, bool /*overwrite*/,
+                              bool) -> char* {
         s_seenOpen   = bOpen;
         s_seenLeaf   = leaf   ? leaf   : "";
         s_seenFilter = filter ? filter : "";
@@ -4904,7 +5112,7 @@ TEST(DocPrompt, CancellingLeavesTheNameAloneAndReportsFailure)
 {
     auto saved = g_wxhook_file_dialog;
     g_wxhook_file_dialog = [](bool, const char*, const char*, const char*,
-                              const char*, bool) -> char* { return nullptr; };
+                              const char*, bool, bool) -> char* { return nullptr; };
     CString name = "/worlds/Suggested.mcl";
     EXPECT_FALSE(App.DoPromptFileName(name, 0, 0, FALSE, nullptr));
     EXPECT_STREQ("/worlds/Suggested.mcl", (LPCTSTR)name);  // untouched

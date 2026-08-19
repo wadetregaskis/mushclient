@@ -167,14 +167,25 @@ extern bool (*g_wxhook_save_world)(void* doc, bool saveAs, void* parent);
 // defaultFile: suggested filename without path (UTF-8), or nullptr
 // filter:      MFC-style filter string "Desc|*.ext|Desc2|*.ext2||" (| separators, || end)
 // overwrite:   if true (OFN_OVERWRITEPROMPT), confirm before overwriting
-// Returns a heap-allocated (malloc) selected path (caller must free()), or
-// nullptr if the user cancelled.  The path is UTF-8.
+// multiSelect: if true (OFN_ALLOWMULTISELECT, open panels only), let the user
+//              pick more than one file
+// Returns a heap-allocated (malloc) result the caller must free() as ONE block,
+// or nullptr if the user cancelled.  Everything is UTF-8.  The shape of the
+// block depends on what was asked for:
+//   multiSelect false — a plain NUL-terminated path, exactly as before.
+//   multiSelect true  — the full paths NUL-separated and the block closed by a
+//                       further NUL ("a\0b\0\0"), the shape Windows' own
+//                       OPENFILENAME lpstrFile uses.  An empty block ("\0")
+//                       means nothing was selected.
+// The caller only parses the second shape when it asked for it, so a hook that
+// answers single-select with strdup() is never read past its allocation.
 extern char* (*g_wxhook_file_dialog)(bool bOpen,
                                      const char* title,
                                      const char* defaultDir,
                                      const char* defaultFile,
                                      const char* filter,
-                                     bool overwrite);
+                                     bool overwrite,
+                                     bool multiSelect);
 
 // ── Font chooser hook (CFontDialog → wxFontDialog) ─────────────────────────
 // Exchange struct (no wx/MFC types so mfc_ui.h can use it).  On input:

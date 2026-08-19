@@ -31,6 +31,9 @@
 #include "dialogs/plugins/PluginWizardSheet.h"  // CPluginWizardSheet — OnKickIdle
 #include "dialogs/world_prefs/prefspropertypages.h"  // FittedLastColumnWidth,
                                                      // OutputBufferBytesNeeded
+#include "dialogs/InsertUnicodeDlg.h"  // CInsertUnicodeDlg — no wx dependency at
+                                        // all, so tests/CMakeLists.txt compiles
+                                        // the real .cpp into this test binary too
 
 #include <algorithm>
 #include <chrono>     // CStringList walk-complexity pin
@@ -5097,6 +5100,32 @@ TEST(Ddv, EveryMinMaxOverloadValidates) {
     try { DDV_MinMaxDouble(&dx, 10.5, 0.0, 10.0); }   catch (const CDdxValidationFail&) { n++; }
     try { DDV_MinMaxFloat(&dx, 10.5f, 0.0f, 10.0f); } catch (const CDdxValidationFail&) { n++; }
     EXPECT_EQ(4, n);
+}
+
+// ── CInsertUnicodeDlg: the code-value guard is not vacuous on LP64 ─────────
+//
+// The dialog checked `i > LONG_MAX`, which on Windows (LONG is 32 bits) is
+// exactly the int range _pcre_ord2utf accepts, but on this LP64 platform LONG
+// is 64 bits, so the check let a 9-10 digit hex value between 0x80000000 and
+// LONG_MAX through -- then truncated it to the `int` parameter at the sole
+// call site, producing garbage UTF-8 instead of the rejection Windows gives.
+//
+// No fakewx hooks are installed, so DDX_Text/DDX_Check are no-ops (guarded,
+// per the NullDlgItemsLeaveEveryMemberAlone contract above) and the members
+// set directly below are what DoDataExchange's own validation code sees.
+TEST(MfcUi, InsertUnicodeRejectsACodeAboveIntMaxOnSave) {
+    CInsertUnicodeDlg dlg;
+    dlg.m_bHex = TRUE;
+    dlg.m_strCharacter = "80000001";   // 0x80000001 -- above INT32_MAX, below LONG_MAX on LP64
+    EXPECT_FALSE(dlg.UpdateData(TRUE));   // pDX->Fail() -> FALSE, no throw escape
+}
+
+TEST(MfcUi, InsertUnicodeAcceptsTheTopOfTheValidRange) {
+    CInsertUnicodeDlg dlg;
+    dlg.m_bHex = TRUE;
+    dlg.m_strCharacter = "7FFFFFFF";   // INT32_MAX -- still valid on both platforms
+    EXPECT_TRUE(dlg.UpdateData(TRUE));
+    EXPECT_EQ((__int64) 0x7FFFFFFF, dlg.m_iCode);
 }
 
 // The other half of the chain -- that a Fail() makes UpdateData return FALSE and

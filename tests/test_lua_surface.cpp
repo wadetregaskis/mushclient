@@ -857,6 +857,39 @@ TEST(LuaSurface, GetRecentLinesJoinsTheWayTheShippingBodyDoes)
     EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(3) == 'a\\n\\nb')\n"));
 }
 
+// A Count larger than the buffer must simply return the whole buffer.
+//
+// The start position is a size_t-minus-long subtraction, and it used to be
+// narrowed into an `int` BEFORE the `< 0` clamp.  With three lines held and a
+// Count of 3,000,000,000 the wrapped difference keeps 1,294,967,299 in its low
+// 32 bits — positive, so the clamp never fired — and the loop then subscripted
+// the deque a billion entries past its end, with `!=` as its only stop.  Any
+// plugin reaches this with one bad argument to world.GetRecentLines.
+TEST(LuaSurface, GetRecentLinesClampsACountBiggerThanTheBuffer)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    f.doc.m_sRecentLines.clear();
+    f.doc.m_sRecentLines.push_back("a");
+    f.doc.m_sRecentLines.push_back("b");
+    f.doc.m_sRecentLines.push_back("c");
+
+    // The discriminator: out of bounds before the arithmetic went to full width.
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(3000000000) == 'a\\nb\\nc')\n"));
+
+    // Controls.  A modest overshoot always worked (its wrapped difference stayed
+    // negative in 32 bits), an exact Count must be unchanged, and asking for
+    // fewer than all of them must still take the LAST lines, not the first.
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(10) == 'a\\nb\\nc')\n"));
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(3) == 'a\\nb\\nc')\n"));
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(2) == 'b\\nc')\n"));
+
+    // Zero and negative counts ask for nothing, so the new `Count > 0` test must
+    // not turn either of them into a whole-buffer read.
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(0) == '')\n"));
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(-1) == '')\n"));
+}
+
 // The other arm: with a miniwindow actually created, most of this family does
 // real work headless.
 //

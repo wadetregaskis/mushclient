@@ -100,16 +100,19 @@ BSTR CMUSHclientDoc::GetRecentLines(long Count)
 {
 	CString strResult;
 
-  // assemble multi-line match text
-  int iPos = m_sRecentLines.size () - Count;
-  if (iPos < 0)
-    iPos = 0;
+  // assemble multi-line match text - start Count lines back, or at the start
+  // of the buffer if it holds fewer lines than that.  Done at deque width: a
+  // Count larger than the buffer used to make the difference wrap to a large
+  // positive subscript, which then read outside the deque.
+  size_t iPos = 0;
+  if (Count > 0 && (size_t) Count < m_sRecentLines.size ())
+    iPos = m_sRecentLines.size () - Count;
 
   string s;
 
   for (int iCount = 0; 
         iCount < Count &&
-        iPos != m_sRecentLines.size ()
+        iPos < m_sRecentLines.size ()
         ; iPos++, iCount++
       )
     {

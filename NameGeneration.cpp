@@ -104,6 +104,8 @@ void ReadNames (const LPCTSTR sName, const bool bNoDialog)
       }
     if (!bOK)
       ThrowErrorException ("No [middle] in names file");
+    if (FirstNames.GetSize () == 0)
+      ThrowErrorException ("No names in [start] section of names file");
 
     // look for [end]
     while (bOK = f.ReadString (sBuf))
@@ -121,6 +123,8 @@ void ReadNames (const LPCTSTR sName, const bool bNoDialog)
       }
     if (!bOK)
       ThrowErrorException ("No [end] in names file");
+    if (MiddleNames.GetSize () == 0)
+      ThrowErrorException ("No names in [middle] section of names file");
 
     // look for [stop]
     while (bOK = f.ReadString (sBuf))
@@ -136,6 +140,8 @@ void ReadNames (const LPCTSTR sName, const bool bNoDialog)
       }
     if (!bOK)
       ThrowErrorException ("No [stop] in names file");
+    if (LastNames.GetSize () == 0)
+      ThrowErrorException ("No names in [end] section of names file");
     bNamesRead = true;
 
 

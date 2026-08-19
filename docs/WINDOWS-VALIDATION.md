@@ -2540,3 +2540,13 @@ against the real view, the real timer wheel and a real MUD.
   through `CmcDateTimeSpan`, not this constructor, and must be unaffected.  The
   range the dialog accepts must also be unchanged — 59.9999 still valid, 60
   still rejected.
+
+- **Tab stops in a UTF-8 world** (`docs/UPSTREAM-BUGS.md` #58).  **To check:**
+  a UTF-8 world (*Use UTF-8* on the world's output page), then have the MUD
+  send a line of accented or CJK text followed by a tab and a marker
+  character — a two-column table is the natural shape.  The marker should line
+  up with the same column an all-ASCII line puts it in; stock 5.06 pulls the
+  multi-byte row left.  Also worth a look: an ASCII world must be
+  byte-identical (the helper returns the byte length when `m_bUTF_8` is off),
+  and the `<P>` period-space rule, which shared the same confusion, should
+  still give two spaces after a full stop well inside the wrap column.

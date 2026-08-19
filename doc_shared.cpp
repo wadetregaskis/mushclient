@@ -2778,6 +2778,16 @@ void CMUSHclientDoc::StartNewLine_KeepPreviousStyle (const int flags)
   }  // end of CMUSHclientDoc::StartNewLine_KeepPreviousStyle
 
 
+// the width of the current line, as the wrap column counts it: for Unicode
+// that is characters, not stored bytes
+static int LineLengthInChars (const CLine * pLine, const bool bUTF_8)
+  {
+  if (!bUTF_8)
+    return pLine->len;
+
+  return MultiByteToWideChar (CP_UTF8, 0, pLine->text, pLine->len, NULL, 0);
+  }   // end of LineLengthInChars
+
 // called from DisplayMsg to actually add to the current line
 // and also from the MXP routines to put stuff there
 void CMUSHclientDoc::AddToLine (LPCTSTR lpszText, const int flags)
@@ -2793,11 +2803,8 @@ int saved_count;
   for (p = lpszText; *p; p++)
     {
     c = *p;
-    int iLineLength = m_pCurrentLine->len;
-
     // for Unicode the width of the line is characters, not stored bytes
-    if (m_bUTF_8)
-       iLineLength = MultiByteToWideChar (CP_UTF8, 0, m_pCurrentLine->text, m_pCurrentLine->len, NULL, 0);
+    int iLineLength = LineLengthInChars (m_pCurrentLine, m_bUTF_8);
 
 /*
 Unicode range              UTF-8 bytes
@@ -2987,7 +2994,8 @@ void CMUSHclientDoc::DisplayMsg(LPCTSTR lpszText, int size, const int flags, con
 const char * p ;
 unsigned char c;
 int spaces,
-    i;
+    i,
+    iLineLength;
 char cOneCharacterLine [2] = {0, 0};
 
 CLine * pOriginalLine = m_pCurrentLine;
@@ -3427,7 +3435,7 @@ CString strLine (lpszText, size);
 
               // if you have period-space, make it period-space-space
               if ((m_cLastChar == '.' || m_cLastChar == '!' || m_cLastChar == '?')
-                  && m_pCurrentLine->len < m_nWrapColumn)
+                  && LineLengthInChars (m_pCurrentLine, m_bUTF_8) < m_nWrapColumn)
                 {
                 AddToLine ("  ", flags);
                 m_cLastChar = c;  // remember it
@@ -3443,12 +3451,13 @@ CString strLine (lpszText, size);
               m_cLastChar = c;  // remember it
             break;  // end of space
 
-      case '\t':  i = ((m_pCurrentLine->len + 8) & 0xFFF8);
-                  if (m_pCurrentLine->len >= m_nWrapColumn)
+      case '\t':  iLineLength = LineLengthInChars (m_pCurrentLine, m_bUTF_8);
+                  i = ((iLineLength + 8) & 0xFFF8);
+                  if (iLineLength >= m_nWrapColumn)
                     StartNewLine (false, flags);
                   else
                     {
-                    spaces = i - m_pCurrentLine->len;  // no. of spaces
+                    spaces = i - iLineLength;  // no. of spaces
                     for (i = 0; i < spaces; i++)
                         AddToLine (" ", flags);
 

@@ -62,8 +62,9 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 51 | A duplicate trigger/alias label whose replacement fails validation leaves the freed original in the map | this commit | xml_load_world.cpp `CMUSHclientDoc::Load_One_Trigger_XML` / `Load_One_Alias_XML` |
 | 52 | The Lua `error_code`/`error_desc` tables key `ePluginCouldNotSaveState` on 30037 instead of 30038, duplicating `ePluginDoesNotSaveState`'s code | this commit | lua_methods.cpp `error_codes[]`; errors.cpp `error_descriptions[]` |
 | 53 | `ExecuteLua`'s "function not found" arm returns without restoring `m_iNoteStyle` | this commit | lua_scripting.cpp `CScriptEngine::ExecuteLua` (both overloads) |
-| 57 | `CmcDateTime`'s constructor truncates a fractional second, so an `at_time` timer fires up to a second early | this commit | mcdatetime.cpp `mcDateFromTm` (via `CmcDateTime::SetDateTime`) |
 | 56 | The RGB bold/unbold colour scans stop one palette entry short, so white text never swaps | this commit | ansi.cpp `CMUSHclientDoc::InterpretANSIcode` (`ANSI_BOLD` / `ANSI_CANCEL_BOLD`) |
+| 57 | `CmcDateTime`'s constructor truncates a fractional second, so an `at_time` timer fires up to a second early | this commit | mcdatetime.cpp `mcDateFromTm` (via `CmcDateTime::SetDateTime`) |
+| 58 | `DisplayMsg`'s tab stop measures the line in bytes, so a tab after multi-byte text lands on the wrong column | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (`'\t'` and period-space cases) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1204,3 +1205,24 @@ untouched.  Covered by `CmcDateTimeTest.ConstructorKeepsFractionalSeconds` in
 arm by building whole seconds and adding the fraction onto `m_dt` afterwards;
 that arm still reads correctly and is left alone, but its comment no longer
 describes a live defect and has been corrected.)
+
+## 58 — `DisplayMsg`'s tab stop measures the line in bytes (this commit)
+**Bug:** the `'\t'` case computes the next tab stop as
+`((m_pCurrentLine->len + 8) & 0xFFF8)` and guards it with
+`m_pCurrentLine->len >= m_nWrapColumn`.  `len` is the *stored byte* count, but
+both quantities are character columns — `AddToLine` says so in as many words
+("for Unicode the width of the line is characters, not stored bytes") and
+recomputes the length with `MultiByteToWideChar` for the very same wrap
+comparison.  So in a UTF-8 world a tab following non-ASCII text pads to a
+multiple of 8 *bytes*, landing short of the column the user sees, and the wrap
+test fires early on a line that still has room.  The neighbouring period-space
+case (`m_pCurrentLine->len < m_nWrapColumn`, which decides whether
+`. ` becomes `.  `) has the identical confusion.
+**Fix:** hoist the character-length rule into one file-local helper,
+`LineLengthInChars`, and use it at all three sites — the two in `DisplayMsg`
+and the original in `AddToLine`, whose three lines it replaces verbatim.  The
+three measurements can no longer disagree.  ASCII worlds are unaffected: with
+`m_bUTF_8` false the helper returns `len`.  Covered by
+`WrapTest.Utf8TabStopCountsCharactersNotBytes` in `tests/test_display.cpp`,
+which tabs an ASCII line and a multi-byte line to the same character column and
+asserts the fixture's bytes and characters actually differ.

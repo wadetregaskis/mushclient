@@ -69,6 +69,18 @@ static CStyle* style_at(CLine* line, int idx)
     return nullptr;
 }
 
+// The (0-based) CHARACTER column of the first occurrence of c on a line: UTF-8
+// continuation bytes belong to the character they follow and do not advance it.
+static int utf8_column_of(CLine* line, char c)
+{
+    int col = 0;
+    for (int i = 0; i < line->len; i++) {
+        if (line->text[i] == c) return col;
+        if (((unsigned char)line->text[i] & 0xC0) != 0x80) col++;
+    }
+    return -1;
+}
+
 static int style_length_sum(CLine* line)
 {
     int sum = 0;
@@ -253,6 +265,35 @@ TEST(WrapTest, Utf8WrapColumnCountsCharactersNotBytes)
     EXPECT_EQ(4,  l1->len);                  // remaining 2 characters
     EXPECT_FALSE(l0->hard_return);           // soft (wrap) break
     EXPECT_TRUE(l1->hard_return);            // real newline
+}
+
+// doc_shared.cpp DisplayMsg's '\t' case: a tab stop is a CHARACTER column, and
+// so is the wrap test guarding it.  Both used to be computed from
+// m_pCurrentLine->len -- the stored BYTE count -- so in a UTF-8 world a tab
+// following multi-byte text padded to the wrong column, while AddToLine had
+// counted characters for the very same comparison all along.
+TEST(WrapTest, Utf8TabStopCountsCharactersNotBytes)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8 = TRUE;
+    doc.m_nWrapColumn = 80;          // well clear of the tab stop
+
+    feed(doc, "\xC3\xA9\xC3\xA9\xC3\xA9\t|\n");   // 3 x e-acute, then a tab
+    feed(doc, "aaa\t|\n");                        // the ASCII control
+
+    CLine* multibyte = nth_line(doc, 0);
+    CLine* ascii     = nth_line(doc, 1);
+    ASSERT_NE(nullptr, multibyte);
+    ASSERT_NE(nullptr, ascii);
+
+    // the fixture must not be degenerate: the multi-byte line's bytes and
+    // characters have to disagree, or the two measurements are the same number
+    ASSERT_EQ(3, utf8_column_of(multibyte, ' '));   // 3 characters, 6 bytes
+    ASSERT_EQ(12, multibyte->len);                  // 6 + 5 spaces + '|'
+
+    // three characters in, both lines tab to the same character column
+    EXPECT_EQ(8, utf8_column_of(ascii, '|'));
+    EXPECT_EQ(8, utf8_column_of(multibyte, '|'));
 }
 
 // doc_shared.cpp AddToLine: "any character starting 10xxxxxx will *not* be

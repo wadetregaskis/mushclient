@@ -494,10 +494,26 @@ bool CFont::CreateFont(int nHeight, int /*nWidth*/, int /*nEscapement*/,
                        BYTE /*nOutPrec*/, BYTE /*nClipPrec*/, BYTE /*nQuality*/,
                        BYTE /*nPitchFamily*/, LPCTSTR lpszFaceName)
 {
+    // PARITY GAP: nPitchFamily and nCharSet are dropped.  Windows' GDI font
+    // mapper HONOURS lfPitchAndFamily when the requested face is absent --
+    // FIXED_PITCH | FF_MODERN substitutes a monospaced face, FF_DONTCARE the
+    // proportional default -- so a plugin naming a Windows-only face plus a
+    // pitch hint gets substituted by different rules on the two platforms.
+    // Core Text also matches names EXACTLY (no substring or stem matching) and
+    // never fails, so an unknown face silently becomes the generic default and
+    // WindowFont still answers eOK.  docs/FONT-PARITY-2026-08.md section 2.
     if (m_impl) { delete static_cast<wxFont*>(m_impl); m_impl = nullptr; }
 
     // nHeight < 0: height in logical pixels (common MFC usage)
     // nHeight > 0: cell height; nHeight == 0: default
+    //
+    // NOTE the sign is COLLAPSED here, and that is a latent landmine: in Win32 a
+    // negative lfHeight is the character (em) height and a positive one is the
+    // CELL height (em + internal leading), so a positive value is realized here
+    // as an em -- too big by the internal leading.  Every current caller passes
+    // negative, so it is latent rather than live, but a future
+    // CreateFontIndirect caller whose LOGFONT came from elsewhere would hit it.
+    // See docs/FONT-PARITY-2026-08.md section 1.
     int pixH = (nHeight < 0) ? -nHeight : (nHeight > 0 ? nHeight : 12);
 
     // Every caller derives that height the Win32 way — -MulDiv (points,

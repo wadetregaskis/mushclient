@@ -145,7 +145,11 @@ public:
     //   translate colour — (colour, opacity) -> colour
     std::function<double(time_t arrived)>            m_fn_line_opacity;
     std::function<uint32_t(uint32_t, double)>        m_fn_translate_colour;
-    // Did the last paint see anything still fading?  Drives the repaint tick.
+    // Did the last paint see anything still fading?  A DIAGNOSTIC, not the
+    // gate: the repaint tick is driven by the OPTION (CWorldChildFrame::
+    // OnWorldTimer), because this flag is only ever set while painting, so
+    // using it to decide whether to paint deadlocks on an idle world.  See the
+    // comment at that tick before wiring this to anything.
     bool AnyLineFading() const { return m_anyFading; }
 
     // ── Line preamble (timestamps — 2026-08-12) ───────────────────────────
@@ -401,6 +405,11 @@ public:
 
     int FirstVisibleLine() const;
 
+    // Has logical line `lineIdx` any pixel inside the text viewport?  Asks the
+    // scrollbar, for the same reason FirstVisibleLine does.  Go To Line scrolls
+    // only when this is false — CMUSHView::EnsureSelectionVisible's contract.
+    bool IsLineVisible(int lineIdx) const;
+
     // How many lines the pane's DERIVED data actually holds -- the wrap cache's
     // length.  Read-only, for the in-app selftest.
     //
@@ -412,6 +421,13 @@ public:
     // and a drifted wrap cache is wrong scroll geometry, wrong
     // FirstVisibleLine, and a Clear Scrollback that cuts in the wrong place.
     int DerivedLength() const { return (int) m_visualRowStart.size(); }
+
+    // The wrap cache's two derived numbers: the visual rows one logical line
+    // occupies, and the buffer's total.  Read-only, for the in-app selftest --
+    // a phantom entry in the cache shifts every LATER line's metrics, and the
+    // shift is otherwise only visible as a mis-scrolled display.
+    int       VisualRowsForLine(int lineIdx) const { return WrapCount(lineIdx); }
+    long long TotalVisualRows() const { return m_totalVisualRows; }
 
     // Clear Screen (⌃⌘L): scroll the last line to the TOP of the viewport,
     // erasing nothing.  Opens a blank region below it to scroll into, which
@@ -447,6 +463,12 @@ public:
     // True when the fetch seam is wired, i.e. the pane keeps no line content
     // of its own and reads through the engine (branch pull-model-worldview).
     bool PullModelActive() const { return (bool) m_fn_fetch_line; }
+
+    // How many converted lines LineAt keeps.  Read-only, for the in-app
+    // selftest: which entry is the OLDEST cached one is what decides whether a
+    // second fetch inside one paint can free the line being painted, and the
+    // test cannot work that out without the size.
+    static int LineCacheCapacity() { return kLineCacheMin; }
 
     // True while an in-progress (not yet newline-terminated) line is being shown
     // as the dim trailing row — the engine's m_pCurrentLine.  Read-only; exists
@@ -563,6 +585,18 @@ public:
     // effect) — including layout-driven changes that don't resize the frame, so
     // the doc's GUI geometry (GetInfo 280/281) stays current.
     std::function<void()> m_fn_resized;
+
+    // Called at the top of every paint.  Windows bumps
+    // m_iOutputWindowRedrawCount in CMUSHView::OnDraw (mushview.cpp:900), which
+    // world.GetInfo(295) reports; the port has no CMUSHView, so the frame hangs
+    // that counter here instead.
+    std::function<void()> m_fn_painted;
+
+    // Route a note to the DOCUMENT instead of manufacturing a pane-only line.
+    // Wired alongside the pull seam (m_fn_fetch_line), where a line the engine
+    // does not have is unpaintable and corrupts the wrap cache — see
+    // AppendNote.  fg is a COLORREF.
+    std::function<void(const std::string& text, unsigned long fg)> m_fn_engine_note;
 
     // Returns the tooltip text for a client-space point; "" = clear tooltip.
     std::function<std::string(int x, int y)> m_fn_get_tooltip;

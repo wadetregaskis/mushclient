@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -1389,6 +1390,208 @@ void TestPluginDrawDefersAppends()
     }
 }
 
+// ── 18. the PULL seam: cached fetches and the wrap metrics ──────────────────
+// Everything above builds a pane that keeps its own content, which is the model
+// the app does NOT use: CWorldChildFrame wires m_fn_fetch_line and the pane
+// then holds only wrap metrics, converting a line from the engine's CLine on
+// demand and caching the conversion.  Two defects live only there.
+namespace {
+
+// The fake engine buffer, plus the counter that makes "did this fetch?"
+// observable at all -- the whole point of the pull model is that a fetch is a
+// full CLine -> SOutputLine conversion, so an unnecessary one is a real cost.
+std::vector<std::string> g_pullBuf;
+long                     g_pullFetches = 0;
+bool                     g_pullRule    = false;   // is the last line a rule?
+
+void WirePullSeam(COutputPane* pane)
+{
+    pane->m_fn_line_count = []() { return (int) g_pullBuf.size(); };
+    pane->m_fn_fetch_line = [](int i, SOutputLine& out) -> bool {
+        if (i < 0 || i >= (int) g_pullBuf.size()) return false;
+        ++g_pullFetches;
+        if (g_pullRule && i == (int) g_pullBuf.size() - 1) {
+            SOutputRun rule;
+            rule.horiz_rule = true;
+            out.clear();
+            out.push_back(rule);
+        } else {
+            out = MakeLine(g_pullBuf[(size_t) i].c_str());
+        }
+        return true;
+    };
+}
+
+// Push one line through BOTH sides at once: the engine gains it, then the pane
+// is told about it, exactly as the display drain does.
+void PullAppend(COutputPane* pane, const std::string& text)
+{
+    g_pullBuf.push_back(text);
+    pane->AppendLine(MakeLine(text.c_str()));
+}
+
+} // namespace
+
+void TestPullSeamReads()
+{
+    printf("pull seam: the line cache and the wrap metrics\n");
+
+    // ── the wrap cache must not fetch ────────────────────────────────────
+    // WrapCount is called once per BUFFERED line by every RebuildWrapCache --
+    // a resize, a font change, a text-rectangle change.  It used to fetch the
+    // whole line first, only to test a horiz_rule guard its own arithmetic
+    // already answers, so a rebuild converted the entire scrollback.
+    {
+        g_pullBuf.clear();
+        g_pullFetches = 0;
+        g_pullRule    = false;
+        Harness h;
+        WirePullSeam(h.pane);
+        for (int i = 0; i < 700; ++i) {
+            char buf[64];
+            snprintf(buf, sizeof buf, "pull line %04d alpha bravo charlie", i);
+            PullAppend(h.pane, buf);
+        }
+        // ...and one horizontal rule as the last line, which is the case the
+        // deleted guard existed for.
+        g_pullRule = true;
+        g_pullBuf.push_back("(rule)");
+        {
+            SOutputLine rule;
+            SOutputRun run;
+            run.horiz_rule = true;
+            rule.push_back(run);
+            h.pane->AppendLine(std::move(rule));
+        }
+        const int n = h.pane->LineCount();
+        opCheckEq(n, 701, "pull: the engine's count is what the pane reports");
+        opCheckEq(h.pane->DerivedLength(), n, "pull: ...and the wrap cache agrees");
+
+        const long long rowsBefore = h.pane->TotalVisualRows();
+        const int ruleRowsBefore   = h.pane->VisualRowsForLine(n - 1);
+        opCheckEq(ruleRowsBefore, 1, "pull: a horizontal rule is one visual row");
+
+        g_pullFetches = 0;
+        h.pane->SetTextPixelOffset(7);          // forces a full RebuildWrapCache
+        opCheckEq((int) g_pullFetches, 0,
+                  "pull: rebuilding the wrap cache fetches NOTHING from the engine");
+        opCheck(h.pane->TotalVisualRows() == rowsBefore,
+                "pull: ...and the row total is unchanged (it still computed them)");
+        opCheckEq(h.pane->VisualRowsForLine(n - 1), 1,
+                  "pull: ...including the rule line, still one row");
+    }
+
+    // ── one paint's second fetch must not free the line being painted ────
+    // DrawLine held the reference LineAt(lineIdx) handed back across a second
+    // LineAt(lineIdx - 1) for the preamble's delta.  The cache is sized so a
+    // viewport's forward walk cannot evict what it is looking at -- but
+    // lineIdx-1 walks BACKWARDS out of the cached region, which is exactly the
+    // eviction the sizing does not cover, and the victim is the line being
+    // drawn.  The defined, observable consequence is which entries survive the
+    // paint, so that is what is asserted.
+    {
+        g_pullBuf.clear();
+        g_pullFetches = 0;
+        g_pullRule    = false;
+        Harness h;
+        WirePullSeam(h.pane);
+        const int cap = COutputPane::LineCacheCapacity();
+        const int n   = cap + 100;
+        for (int i = 0; i < n; ++i) {
+            char buf[64];
+            snprintf(buf, sizeof buf, "cache line %04d", i);
+            PullAppend(h.pane, buf);
+        }
+
+        // Prime the cache with an ASCENDING walk, the shape RebuildWrapCache
+        // and a forward Find both make.  The cache then holds the last `cap`
+        // indices and the OLDEST of them is the eviction victim.
+        for (int i = 0; i < n; ++i) h.pane->GetLine(i);
+        const int oldest = n - cap;
+        opCheck(oldest > 0, "cache: the oldest cached line has a predecessor "
+                            "(control: with none, DrawLine fetches nothing)");
+
+        // The preamble callback is what makes DrawLine want line-1 at all, and
+        // it is handed the very reference the old code had already freed.
+        int  preambleCalls = 0;
+        bool sawLiveLine   = false;
+        h.pane->m_fn_line_preamble =
+            [&](const SOutputLine& line, time_t, bool,
+                COutputPane::SLinePreamble& out) {
+                ++preambleCalls;
+                sawLiveLine = !line.empty() &&
+                              line.front().text.find("cache line") != std::string::npos;
+                out.text = wxT("[TS] ");
+                return true;
+            };
+
+        wxBitmap bmp(400, 40, 32);
+        wxMemoryDC mdc(bmp);
+        mdc.SetBackground(*wxBLACK_BRUSH);
+        mdc.Clear();
+        h.pane->RenderLineForTest(mdc, oldest, 0);
+        mdc.SelectObject(wxNullBitmap);
+
+        opCheck(preambleCalls > 0,
+                "cache: the paint really did ask for the previous line "
+                "(control: without this the check below is vacuous)");
+        opCheck(sawLiveLine,
+                "cache: the line being painted still carries its own text");
+
+        // ...and the entry for it is still cached, because it was fetched
+        // AFTER the predecessor rather than before it.  A fetch here means the
+        // paint's own line had been evicted out from under it.
+        const long before = g_pullFetches;
+        h.pane->GetLine(oldest);
+        opCheckEq((int)(g_pullFetches - before), 0,
+                  "cache: ...and its cached conversion survived the paint");
+
+        h.pane->m_fn_line_preamble = nullptr;
+    }
+
+    // ── click containment stops at the end of the visual row ─────────────
+    // XToChar clamped the per-row column to m_wrapCols for BOTH forms.  For the
+    // caret that is right (the caret sits after the last cell); for containment
+    // m_wrapCols is the FIRST column of the NEXT visual row, so a click to the
+    // right of the text on a wrapped line resolved into that row and could fire
+    // its hyperlink.
+    {
+        Harness h;
+        const int cols = h.pane->WrapColumns();
+        opCheck(cols > 8, "containment: the pane has a real wrap column (control)");
+
+        SOutputLine line;
+        SOutputRun plain;
+        plain.text = std::string((size_t) cols, 'a');
+        line.push_back(plain);
+        SOutputRun link;
+        link.text = "LINKLINKLINK";
+        link.setLink("go north", "a hint", 0);
+        line.push_back(link);
+        h.pane->AppendLine(std::move(line));
+
+        const int y     = h.pane->LineHeight() / 2;              // visual row 0
+        const int xPast = (cols + 3) * h.pane->CharWidth();      // past the text
+        const SelPoint caret  = h.pane->PointToChar(xPast, y, /*halfway=*/true);
+        const SelPoint inside = h.pane->PointToChar(xPast, y, /*halfway=*/false);
+        opCheckEq(caret.col, cols,
+                  "containment: the caret form still reaches the wrap column");
+        opCheck(inside.col == cols - 1,
+                "containment: the hit-test form stops at the last cell of row 0");
+
+        const SOutputLine* l = h.pane->GetLine(0);
+        const SOutputRun* hit = l ? COutputPane::RunAtCharColumn(*l, inside.col)
+                                  : nullptr;
+        opCheck(hit && !hit->isLink(),
+                "containment: a click past the text hits no hyperlink");
+        const SOutputRun* rowOne = l ? COutputPane::RunAtCharColumn(*l, cols)
+                                     : nullptr;
+        opCheck(rowOne && rowOne->isLink(),
+                "containment: control -- the next visual row really does start "
+                "with the link the old clamp resolved into");
+    }
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -1410,6 +1613,7 @@ int RunOutputPaneSelfTest()
     TestFontSizeClamp();
     TestRunAtCharColumn();
     TestPluginDrawDefersAppends();
+    TestPullSeamReads();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

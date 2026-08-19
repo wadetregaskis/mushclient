@@ -62,6 +62,10 @@ void wx_save_child_geometry(wxConfigBase& cfg, const wxRect& rect);
 void wx_miniwindow_mask_cache_stats(long& builds, long& hits);
 void wx_miniwindow_mask_cache_reset();
 long wx_miniwindow_mask_cache_size();
+// Release the entries belonging to one document.  The compositor's own sweep is
+// scoped to the doc being painted (it is the only one whose miniwindow order it
+// can see), so a closing world has to hand its bitmaps back itself.
+void wx_miniwindow_mask_cache_forget(const CMUSHclientDoc* doc);
 
 void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
                               int clientW, int clientH,
@@ -355,7 +359,11 @@ public:
 
     // Output-pane Display commands.
     void FreezeOutput();   // toggle autoscroll pause (Display ▸ Freeze Output)
-    void GotoLine();       // prompt for a line number and scroll the output to it
+    void GotoLine();       // prompt for a line number and go to it
+    // Go To Line without the prompt: select line `line` (1-based), remember it
+    // in the doc's m_lastGoTo, and scroll only if it is off screen.  Public so
+    // the in-app selftest can drive it — the modal cannot complete there.
+    void GotoLineTo(long line);
 
     // Re-send NAWS with the current pane dimensions.  Call after a font change
     // so the MUD learns the new character-grid size.
@@ -377,6 +385,12 @@ public:
     COLORREF m_lastCustomBack15    = 0;
     COLORREF m_lastBackgroundColour = 0;
     BOOL     m_lastCustom16Default = 0;
+    // The three "Show bold / italic / underline" checkboxes: they gate the run
+    // flags BuildOutputLine sets, so a change has to invalidate cached
+    // scrollback exactly as a palette change does.
+    unsigned short m_lastShowBold      = 0;
+    unsigned short m_lastShowItalic    = 0;
+    unsigned short m_lastShowUnderline = 0;
     bool     m_paletteSnapshotValid = false;
 
     // Show/hide this world's status bar (View ▸ Status Bar).

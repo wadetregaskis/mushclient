@@ -349,6 +349,73 @@ int RunWxCompositeSelfTest()
         wx_miniwindow_mask_cache_reset();
     }
 
+    // ── 5. the mask cache with TWO worlds open ─────────────────────────────
+    // The cache is one process-wide map, but the sweep above can only see the
+    // miniwindow order of the document being painted.  Sweeping the WHOLE map
+    // against it therefore threw away every other open world's entries on every
+    // paint, so with two worlds showing transparent miniwindows nothing ever
+    // hit: A's paint deleted B's bitmaps, B's paint deleted A's, for ever.
+    // Alternating the two paints is what makes that visible; one doc alone
+    // cannot see it at all.
+    {
+        const char* const W = "selftest_twoworlds";
+        CMUSHclientDoc* docB = new CMUSHclientDoc();
+
+        auto makeWindow = [&](CMUSHclientDoc* d, long fill) {
+            return d->WindowCreate(W, 10, 10, 64, 48, 0,
+                                   MINIWINDOW_ABSOLUTE_LOCATION | MINIWINDOW_TRANSPARENT,
+                                   kRed) == eOK &&
+                   d->WindowShow(W, TRUE) == eOK &&
+                   d->WindowRectOp(W, 2 /*fill*/, 0, 0, 20, 20, fill, 0) == eOK;
+        };
+        ckCheck(makeWindow(doc,  kGreen), "two worlds: world A has a transparent window");
+        ckCheck(makeWindow(docB, kBlue),  "two worlds: world B has one of its own");
+
+        wx_miniwindow_mask_cache_reset();
+        long builds = 0, hits = 0;
+
+        auto composite = [&](CMUSHclientDoc* d, const wxColour& expect,
+                             const char* what) {
+            DestCanvas canvas(kW, kH, paneColour);
+            wx_composite_miniwindows(d, canvas.dc, kW, kH, kW, kH, false);
+            canvas.Finish();
+            ckCheck(canvas.Is(15, 15, expect), what);
+        };
+
+        composite(doc,  greenColour, "two worlds: A draws its own green patch");
+        composite(docB, blueColour,  "two worlds: B draws its own blue patch");
+        wx_miniwindow_mask_cache_stats(builds, hits);
+        ckCheck(builds == 2 && hits == 0,
+                "two worlds: one build each, nothing reused yet");
+
+        // Round two: neither canvas changed, so BOTH must come out of the
+        // cache.  Before the fix each paint had just erased the other's entry,
+        // so builds climbed for ever and hits stayed at zero.
+        composite(doc,  greenColour, "two worlds: A still draws green");
+        composite(docB, blueColour,  "two worlds: B still draws blue");
+        wx_miniwindow_mask_cache_stats(builds, hits);
+        ckCheck(builds == 2 && hits == 2,
+                "two worlds: the second round is all cache hits -- one world's "
+                "paint no longer evicts the other's mask");
+
+        // A closing world hands its own entries back: the sweep will not
+        // collect them any more, because it only looks at the painting doc's.
+        wx_miniwindow_mask_cache_forget(docB);
+        ckCheck(wx_miniwindow_mask_cache_size() == 1,
+                "two worlds: closing B releases B's bitmap and keeps A's");
+
+        delete docB;
+        ckCheck(doc->WindowDelete(W) == eOK, "two worlds: A's window cleaned up");
+        {
+            DestCanvas canvas(kW, kH, paneColour);
+            wx_composite_miniwindows(doc, canvas.dc, kW, kH, kW, kH, false);
+            canvas.Finish();
+        }
+        ckCheck(wx_miniwindow_mask_cache_size() == 0,
+                "two worlds: ...and A's own sweep still collects its entry");
+        wx_miniwindow_mask_cache_reset();
+    }
+
     delete doc;
 
     printf("PAL-COMPOSITE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);

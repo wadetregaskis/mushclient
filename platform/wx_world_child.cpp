@@ -200,6 +200,11 @@ struct MaskCacheEntry {
     long               w     = 0, h = 0;
     wxColour           transCol;
     double             scale = 0;
+    // Which document owns the miniwindow this entry belongs to.  The map is
+    // process-wide but the liability sweep below can only see ONE doc's
+    // miniwindow order, so without this every world's paint erased every other
+    // world's entries and the cache never hit with two worlds open.
+    const CMUSHclientDoc* doc = nullptr;
 };
 std::map<const CMiniWindow*, MaskCacheEntry> s_maskCache;
 // Counters, for the in-app selftest: "the mask was rebuilt" is otherwise
@@ -216,6 +221,16 @@ void wx_miniwindow_mask_cache_reset() {
 }
 long wx_miniwindow_mask_cache_size() { return (long) s_maskCache.size(); }
 
+// Release everything a closing world owns.  Needed because the sweep inside
+// wx_composite_miniwindows only touches entries belonging to the doc being
+// painted: another world's paint will no longer collect these, so the frame
+// says so on the way out.
+void wx_miniwindow_mask_cache_forget(const CMUSHclientDoc* doc)
+{
+    for (auto it = s_maskCache.begin(); it != s_maskCache.end(); )
+        it = (it->second.doc == doc) ? s_maskCache.erase(it) : std::next(it);
+}
+
 void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
                               int clientW, int clientH,
                               int frameW, int frameH, bool bUnder)
@@ -231,8 +246,16 @@ void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
     // miniwindow is exactly the case where nothing would be composited
     // afterwards, so a sweep below the early-out would never run for it and
     // that window's bitmap would be held forever.
+    //
+    // Only THIS doc's entries are liability-checked, because `order` is only
+    // this doc's miniwindows: sweeping the whole map against it threw away
+    // every other open world's bitmaps on every paint, so with two worlds
+    // showing transparent miniwindows the cache rebuilt both of them, every
+    // frame, for ever.  A closed world's entries are released by
+    // wx_miniwindow_mask_cache_forget instead.
     if (!s_maskCache.empty()) {
         for (auto it = s_maskCache.begin(); it != s_maskCache.end(); ) {
+            if (it->second.doc != doc) { ++it; continue; }
             bool alive = false;
             for (auto& kv : order)
                 if (kv.second == it->first) { alive = true; break; }
@@ -328,6 +351,7 @@ void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
 
             MaskCacheEntry& entry = s_maskCache[mw];
             const bool usable = gen != 0 && entry.gen == gen &&
+                                entry.doc == doc &&
                                 entry.w == iW && entry.h == iH &&
                                 entry.transCol == transCol &&
                                 entry.scale == wx_canvas_scale() &&
@@ -353,6 +377,7 @@ void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
                 entry.h        = iH;
                 entry.transCol = transCol;
                 entry.scale    = wx_canvas_scale();
+                entry.doc      = doc;
                 ++s_maskCacheBuilds;
             } else {
                 ++s_maskCacheHits;
@@ -769,6 +794,29 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         const long n = (long) m_doc->m_LineList.GetCount()
                      - (m_doc->m_pCurrentLine ? 1 : 0);
         return (int) (n > 0 ? n : 0);
+    };
+    // ...and the write side of the same rule: a note the PORT emits (the
+    // connection-phase annotations, the logging ones) has to become a real
+    // engine line too, or it has no CLine for the fetch above to find.  This is
+    // world.ColourNote with the colour given as #RRGGBB, so the note picks up
+    // the world's own note background and the RGB round-trip is the one the
+    // scripting API already uses.
+    m_output->m_fn_engine_note = [this](const std::string& text,
+                                        unsigned long fg) {
+        if (!m_doc) return;
+        char spec[8];
+        snprintf(spec, sizeof(spec), "#%02X%02X%02X",
+                 GetRValue(fg), GetGValue(fg), GetBValue(fg));
+        m_doc->ColourNote(spec, "", text.c_str());
+        m_doc->UpdateAllViews(nullptr);
+    };
+
+    // world.GetInfo(295): Windows counts output-window redraws in
+    // CMUSHView::OnDraw (mushview.cpp:900).  There is no CMUSHView here, so the
+    // pane's paint is the equivalent moment and the counter lives on the doc
+    // exactly as it does on Windows.
+    m_output->m_fn_painted = [this]() {
+        if (m_doc) m_doc->m_iOutputWindowRedrawCount++;
     };
 
     // Ctrl+L / context menu → the canonical Display ▸ Clear Output Buffer.
@@ -1897,6 +1945,22 @@ bool CWorldChildFrame::PaletteChanged()
     m_lastCustom16Default   = m_doc->m_bCustom16isDefaultColour;
     m_lastBackgroundColour  = m_doc->m_iBackgroundColour;
 
+    // World Properties ▸ Appearance ▸ Output's three "Show" checkboxes (and
+    // world.SetOption "show_bold" / "show_italic" / "show_underline") decide
+    // whether an ANSI attribute is rendered at all — BuildOutputLine gates each
+    // run flag on them, so scrollback the pane has already cached still carries
+    // the old attributes until the next completed line happens to clear the
+    // cache.  On an idle or disconnected world that is never.  Nothing on the
+    // change path invalidates it (ChangeFont ▸ SetOutputFont does not), so they
+    // are polled here with the palette, and the consequence below —
+    // RecolourFromPalette — already drops the cache and repaints.
+    if (m_doc->m_bShowBold      != m_lastShowBold)      changed = true;
+    if (m_doc->m_bShowItalic    != m_lastShowItalic)    changed = true;
+    if (m_doc->m_bShowUnderline != m_lastShowUnderline) changed = true;
+    m_lastShowBold      = m_doc->m_bShowBold;
+    m_lastShowItalic    = m_doc->m_bShowItalic;
+    m_lastShowUnderline = m_doc->m_bShowUnderline;
+
     const bool first = !m_paletteSnapshotValid;
     m_paletteSnapshotValid = true;
     return changed && !first;
@@ -2741,7 +2805,11 @@ void CWorldChildFrame::FreezeOutput()
         m_output->SetPaused(!m_output->IsPaused());
 }
 
-// ── Go To Line: prompt for a line number and scroll the output to it ────────
+// ── Go To Line: prompt for a line number and go to it ───────────────────────
+// CMUSHView::OnDisplayGotoline (mushview.cpp:5563): the dialog opens on the
+// LAST line asked for (m_lastGoTo), the answer is written back so the next
+// Go To Line starts there, and the target line is SELECTED — not merely
+// scrolled to — through SelectLine + EnsureSelectionVisible.
 void CWorldChildFrame::GotoLine()
 {
     if (!m_output)
@@ -2749,10 +2817,41 @@ void CWorldChildFrame::GotoLine()
     int total = m_output->LineCount();
     if (total <= 0)
         return;
+    long deflt = m_doc ? (long) m_doc->m_lastGoTo : 1;
+    deflt = std::max(1L, std::min((long) total, deflt));
     long line = wxGetNumberFromUser(
         wxString::Format(wxT("Go to which line? (1 - %d)"), total),
-        wxT("Line:"), wxT("Go To Line"), total, 1, total, this);
+        wxT("Line:"), wxT("Go To Line"), deflt, 1, total, this);
     if (line >= 1)
+        GotoLineTo(line);
+}
+
+// The half of Go To Line that is not the prompt, so the in-app selftest can
+// drive it — the modal cannot complete under an OnInit-scoped harness.
+// `line` is 1-based, as the dialog and m_lastGoTo are.
+void CWorldChildFrame::GotoLineTo(long line)
+{
+    if (!m_output) return;
+    const int total = m_output->LineCount();
+    if (total <= 0 || line < 1) return;
+    if (line > total) line = total;
+
+    if (m_doc) m_doc->m_lastGoTo = (int) line;
+
+    // CMUSHView::SelectLine is m_selstart_line = iLine, m_selend_line =
+    // iLine + 1, both columns 0 -- from the start of the line to the start of
+    // the next.  SetSelectionRange is 1-based and reads column 0 as "the whole
+    // line", so column 1 is the start-of-line those two want.  The last line
+    // has no next one, so it takes the whole-line form directly.
+    if (line < total)
+        m_output->SetSelectionRange((int) line, (int) line + 1, 1, 1);
+    else
+        m_output->SetSelectionRange((int) line, (int) line, 1, 0);
+
+    // ...and only then scroll, and only if it is not already on screen —
+    // EnsureSelectionVisible's contract.  Scrolling unconditionally moved the
+    // view for a line the user could already see.
+    if (!m_output->IsLineVisible((int) line - 1))
         m_output->ScrollToLine((int) line - 1);
 }
 
@@ -4778,10 +4877,15 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     //     double fInterval = 0.10;
     //     if (App.m_nTimerInterval) fInterval = App.m_nTimerInterval;
     //     if (fElapsedTime > fInterval) ProcessTimers ();
-    // That function is unreachable here (no MFC timer), so this tick drained
-    // the world's timers every 100 ms regardless and the setting did nothing.
-    // 100 ms IS the default cadence, so leaving 0 alone keeps today's
-    // behaviour; a non-zero value now spaces the checks out as asked.
+    // That function IS reachable here — doc_shared.cpp:1423 calls it for every
+    // packet received, so a connected world's timers are polled by BOTH
+    // drivers.  What is dead on the port is only the MFC OnTimer that drives it
+    // on Windows, which is why this tick exists at all: it is the driver for an
+    // IDLE world, where no packet ever arrives.  Both honour
+    // App.m_nTimerInterval, so neither can outrun the setting.  This tick used
+    // to drain every 100 ms regardless and the setting did nothing; 100 ms IS
+    // the default cadence, so leaving 0 alone keeps today's behaviour and a
+    // non-zero value now spaces the checks out as asked.
     m_timerCheckAccum += 100;
     if (m_timerCheckAccum >= (App.m_nTimerInterval > 0
                               ? (int) App.m_nTimerInterval * 1000 : 100)) {
@@ -5960,6 +6064,11 @@ void CWorldChildFrame::RunCloseTeardown(const CloseObserver& observe)
     // startup" set (its only writer on Windows is the Global Preferences
     // page); treating a close as a request to edit it meant the set was
     // whatever happened to be open when you last quit.
+
+    // Release this world's transparency-mask bitmaps.  The compositor's own
+    // sweep only collects entries belonging to the doc it is painting, so no
+    // other world's paint will ever come back for these.
+    wx_miniwindow_mask_cache_forget(m_doc);
 
     // Disconnect and release the doc.  Deletes socket, triggers, timers, etc.
     CMUSHclientDoc* doc = m_doc;

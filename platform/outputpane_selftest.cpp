@@ -1549,6 +1549,42 @@ void TestPullSeamReads()
         h.pane->m_fn_line_preamble = nullptr;
     }
 
+    // ── an append must not throw the cache away ──────────────────────────
+    // A line arriving at the TAIL shifts no index, so every conversion already
+    // cached is still valid.  AppendLine dropped the whole cache anyway, which
+    // meant that while a MUD was talking -- i.e. continuously -- no cached
+    // conversion survived from one paint to the next and each paint
+    // re-materialised the visible lines from their CLines.  The count is exact
+    // rather than a bound, because a cache that silently stopped caching
+    // altogether would satisfy any "<= N" form.
+    {
+        g_pullBuf.clear();
+        g_pullFetches = 0;
+        g_pullRule    = false;
+        Harness h;
+        WirePullSeam(h.pane);
+        const int n = 50;                       // well inside the cache capacity
+        opCheck(n < COutputPane::LineCacheCapacity(),
+                "append cache: the fixture fits the cache (control: it must not "
+                "be the eviction that causes a re-fetch)");
+        for (int i = 0; i < n; ++i) {
+            char buf[64];
+            snprintf(buf, sizeof buf, "append line %04d", i);
+            PullAppend(h.pane, buf);
+        }
+
+        g_pullFetches = 0;
+        for (int i = 0; i < n; ++i) h.pane->GetLine(i);
+        opCheckEq((int) g_pullFetches, n,
+                  "append cache: the first walk converts every line (control)");
+
+        PullAppend(h.pane, "append line 0050");
+        g_pullFetches = 0;
+        for (int i = 0; i <= n; ++i) h.pane->GetLine(i);
+        opCheckEq((int) g_pullFetches, 1,
+                  "append cache: the second walk converts ONLY the new line");
+    }
+
     // ── click containment stops at the end of the visual row ─────────────
     // XToChar clamped the per-row column to m_wrapCols for BOTH forms.  For the
     // caret that is right (the caret sits after the last cell); for containment
@@ -1592,6 +1628,118 @@ void TestPullSeamReads()
     }
 }
 
+// ── 19. the in-progress (pending) row is drawn like any other line ──────────
+// It used to be hand-painted: one DrawText per run against the PANE's
+// background, in the plain font, advancing by the font's natural extents.  So
+// the prompt -- exactly the kind of line a MUD colours -- lost its run
+// background, its bold/italic/underline/strikethrough attributes and the fixed
+// character grid, then changed appearance the moment the '\n' arrived and the
+// same text came back through DrawRunChunk as a committed line.
+//
+// Pixels are the only observable here, and the paint path never runs under an
+// OnInit-scoped harness, so this calls the drawing entry point straight into a
+// wxMemoryDC -- the composite-selftest trick.
+void TestPendingRowUsesTheRunPipeline()
+{
+    printf("pending row: the prompt is drawn through DrawRunChunk\n");
+
+    Harness h;
+    const int cw = h.pane->CharWidth();
+    const int lh = h.pane->LineHeight();
+    opCheck(cw > 2 && lh > 7,
+            "pending: the pane has real character metrics (control)");
+    opCheckEq((int) h.pane->PaneBackground(), 0,
+              "pending: ...and a black background, which the dim halves toward "
+              "(control: the expected colours below are derived from it)");
+
+    // SPACES, not glyphs: nothing inks the cells, so every non-background pixel
+    // sampled below comes from the run's own background fill or its
+    // strikethrough rule, with no anti-aliasing to reason about.  The
+    // strikethrough stands in for the whole attribute set -- it is the one
+    // DrawRunChunk draws itself rather than delegating to a font variant.
+    SOutputRun run;
+    run.text          = "    ";               // 4 character cells
+    run.fg            = 0x00FFFFFFu;          // white
+    run.bg            = 0x000000FFu;          // COLORREF 0x00BBGGRR — red
+    run.bold          = true;
+    run.strikethrough = true;
+    // A second run, so where it STARTS pins the x advance (the cell grid) and
+    // not merely the fill width of the first.
+    SOutputRun tail;
+    tail.text = "  ";                         // 2 more cells
+    tail.fg   = 0x00FFFFFFu;
+    tail.bg   = 0x0000FF00u;                  // green
+    SOutputLine line;
+    line.push_back(run);
+    line.push_back(tail);
+    line.pending = true;
+    h.pane->AppendLine(std::move(line));
+
+    wxBitmap bmp(cw * 8, lh + 4, 32);
+    {
+        wxMemoryDC mdc(bmp);
+        // A colour neither the run nor the dim can produce, so "untouched" is
+        // distinguishable from "painted".
+        mdc.SetBackground(*wxBLUE_BRUSH);
+        mdc.Clear();
+        h.pane->RenderPendingRowForTest(mdc, 0);
+        mdc.SelectObject(wxNullBitmap);
+    }
+    const wxImage img = bmp.ConvertToImage();
+
+    auto pixelIs = [&](int x, int y, int r, int g, int b, const char* what) {
+        const bool ok = img.GetRed(x, y) == r && img.GetGreen(x, y) == g &&
+                        img.GetBlue(x, y) == b;
+        printf("  [%s] %s (got %d,%d,%d want %d,%d,%d at %d,%d)\n",
+               ok ? "PASS" : "FAIL", what,
+               img.GetRed(x, y), img.GetGreen(x, y), img.GetBlue(x, y),
+               r, g, b, x, y);
+        (ok ? g_pass : g_fail)++;
+    };
+
+    // Off the strikethrough row, so this samples the background fill alone.
+    const int yFill = lh / 4;
+
+    // The run's OWN background, dimmed 50% toward the pane's: red -> (127,0,0).
+    // The hand-painted row filled with the pane background instead, so this
+    // pixel was black.
+    pixelIs(cw + cw / 2, yFill, 127, 0, 0,
+            "pending: the run's background colour reaches the row");
+
+    // The strikethrough rule, in the dimmed foreground: white -> (127,127,127).
+    // Nothing drew it before.
+    pixelIs(cw / 2, lh / 2, 127, 127, 127,
+            "pending: ...and so do the run's text attributes");
+
+    // The fixed grid: exactly four cells wide, whatever the font's natural
+    // advance is.  The last cell of the first run is painted...
+    pixelIs(3 * cw + cw / 2, yFill, 127, 0, 0,
+            "pending: the fourth cell is painted (grid width, not font extent)");
+    // ...the second run starts on the very next cell...
+    pixelIs(4 * cw + cw / 2, yFill, 0, 127, 0,
+            "pending: the next run starts at exactly 4 * m_charW");
+    // ...and nothing past the six cells is touched.
+    pixelIs(6 * cw + 1, yFill, 0, 0, 255,
+            "pending: ...and the seventh cell is untouched");
+
+    // Whether the two assertions above can tell the grid from the font's own
+    // advances at all depends on the font: if they agree to the pixel here, the
+    // fixture is degenerate and those two prove nothing.  Reported rather than
+    // asserted, because which it is is a property of the machine's font.
+    {
+        wxBitmap probe(8, 8, 32);
+        wxMemoryDC pdc(probe);
+        pdc.SetFont(h.pane->GetCurrentFont());
+        wxCoord tw = 0, th = 0;
+        pdc.GetTextExtent(wxT("    "), &tw, &th);
+        pdc.SelectObject(wxNullBitmap);
+        printf("  [INFO] pending: natural extent of 4 cells = %d, grid = %d%s\n",
+               (int) tw, 4 * cw,
+               (tw == 4 * cw) ? "  (EQUAL: the grid assertions are degenerate here)"
+                              : "");
+    }
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -1614,6 +1762,7 @@ int RunOutputPaneSelfTest()
     TestRunAtCharColumn();
     TestPluginDrawDefersAppends();
     TestPullSeamReads();
+    TestPendingRowUsesTheRunPipeline();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

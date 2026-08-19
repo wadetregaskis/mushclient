@@ -53,7 +53,13 @@ int i;
   SetDefaults (false);        // set up numeric/boolean defaults
   SetAlphaDefaults (false);   // set up alpha defaults
 
-  m_strWorldID = GetUniqueID ();      // default world ID
+  // ::GetUniqueID (the CString helper), NOT the unqualified name: inside
+  // CMUSHclientDoc that resolves to the automation member returning an
+  // AllocSysString'd BSTR whose ownership belongs to the caller -- assigning
+  // it to a CString copied the text and leaked the BSTR, once per document,
+  // on both platforms, since the original 2010 import.  The sibling callers
+  // (mainfrm.cpp, scriptingoptions.cpp, plugins.cpp) already qualify it.
+  m_strWorldID = ::GetUniqueID ();    // default world ID
 
   m_CurrentPlugin = NULL;     // no plugin active right now
 

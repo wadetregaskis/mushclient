@@ -27,6 +27,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 16 | MXP hyperlink from the right-click menu refuses `https://` | this commit | mushview.cpp `CMUSHView::OnMXPMenu` ACTION_HYPERLINK arm |
 | 17 | Double-click word scan reads one byte past the line buffer | this commit | mushview.cpp `CMUSHView::OnLButtonDblClk`, `OnDisplayTextattributes` |
 | 18 | `CmcDateTime::operator-`'s Windows arm discards a null/invalid span status | this commit | mcdatetime.cpp `CmcDateTime::operator-(const CmcDateTime&)` |
+| 19 | Doc ctor's unqualified `GetUniqueID()` picks the automation member and leaks its BSTR once per document | this commit | doc_construct.cpp (ex doc.cpp ctor) `m_strWorldID = GetUniqueID()` — since the 2010 import; fix is the `::` the three sibling callers already use |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`

@@ -125,8 +125,11 @@ static std::string GetHistoryDir()
 
 // The world name, reduced to characters that are safe in a filename: only
 // [A-Za-z0-9._-] are kept; runs of anything else collapse to a single
-// underscore.  E.g. "Broken Lands" → "Broken_Lands".
-static std::string SanitiseWorldNameForFile(const std::string& worldName)
+// underscore.  E.g. "Broken Lands" → "Broken_Lands".  `fallback` is what an
+// empty (or all-punctuation) name reduces to; callers pick their own so the
+// history and log filename builders keep their pre-existing defaults.
+static std::string SanitiseWorldNameForFile(const std::string& worldName,
+                                              const char* fallback = "default")
 {
     std::string safe;
     for (unsigned char c : worldName) {
@@ -139,8 +142,21 @@ static std::string SanitiseWorldNameForFile(const std::string& worldName)
     }
     // Trim trailing underscores left by a name ending in punctuation.
     while (!safe.empty() && safe.back() == '_') safe.pop_back();
-    if (safe.empty()) safe = "default";
+    if (safe.empty()) safe = fallback;
     return safe;
+}
+
+// Display ▸ Toggle Log's default save-dialog filename:
+// WORLDNAME_YYYYMMDD_HHMMSS.log.  Was inlined a second time (byte-identical
+// but for the fallback string) in the log-toggle lambda below instead of
+// calling SanitiseWorldNameForFile, so the two copies could silently drift --
+// see world_frame_selftest.cpp for the check this is factored out for.
+std::string CWorldChildFrame::DefaultLogFileName(const std::string& worldName,
+                                                  time_t now)
+{
+    char ts[32];
+    strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
+    return SanitiseWorldNameForFile(worldName, "world") + "_" + ts + ".log";
 }
 
 // FNV-1a over the raw name.  It only has to be stable across launches and
@@ -921,20 +937,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             // Default filename: WORLDNAME_YYYYMMDD_HHMMSS.log
             std::string worldName = m_doc
                 ? static_cast<const char*>(m_doc->m_mush_name) : "world";
-            time_t now = time(nullptr);
-            char ts[32];
-            strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
-
-            // Sanitise worldName for use in filename (same rules as history).
-            std::string safe;
-            for (unsigned char c : worldName) {
-                if (std::isalnum(c) || c == '-' || c == '_' || c == '.') safe += (char)c;
-                else if (!safe.empty() && safe.back() != '_') safe += '_';
-            }
-            while (!safe.empty() && safe.back() == '_') safe.pop_back();
-            if (safe.empty()) safe = "world";
-
-            std::string defName = safe + "_" + ts + ".log";
+            std::string defName = DefaultLogFileName(worldName, time(nullptr));
             const char* home = getenv("HOME");
             std::string defDir = home ? std::string(home) + "/Documents" : ".";
 

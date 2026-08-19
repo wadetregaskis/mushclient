@@ -2905,6 +2905,31 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── the log-toggle default filename shares its sanitiser with history ───
+    // (R2-01-F5 / R2-06-F10): the world-name-to-filename rule used to be
+    // copy-pasted a second time here instead of calling
+    // SanitiseWorldNameForFile, so the two copies could silently drift.
+    // DefaultLogFileName is the small named helper that replaced the inline
+    // copy -- static, so it can be pinned without opening the real
+    // wxFileDialog the toggle-log handler itself pops (which cannot be
+    // answered headlessly).
+    {
+        const std::string withPunct =
+            CWorldChildFrame::DefaultLogFileName("Broken Lands!", (time_t) 0);
+        check(withPunct.find("Broken_Lands_") != std::string::npos,
+              "log filename: space and '!' collapse to a single underscore");
+        check(withPunct.find(' ')  == std::string::npos &&
+              withPunct.find('!')  == std::string::npos,
+              "...with no raw space or '!' surviving into the filename");
+        check(withPunct.find("Lands__") == std::string::npos,
+              "...and no trailing underscore is left before the timestamp");
+
+        const std::string empty =
+            CWorldChildFrame::DefaultLogFileName("", (time_t) 0);
+        check(empty.rfind("world_", 0) == 0,
+              "log filename: an empty world name falls back to \"world_\"");
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

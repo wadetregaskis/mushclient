@@ -543,9 +543,51 @@ public:
     bool GetSelectionInfo(long& startLine, long& startCol,
                           long& endLine,   long& endCol) const;
 
-    // True while the pane is pinned to the bottom.
+    // ── Frozen, and at the buffer end: TWO pieces of state ─────────────
+    // Windows carries both, and its status line needs both to pick between the
+    // four values it can show (CMUSHView::OnUpdateStatuslineFreeze_helper,
+    // mushview.cpp:3247):
+    //
+    //     m_bAtBufferEnd = m_ScrollbarPosition.cy >=
+    //                      (m_ScrollbarSizeTotal.cy - m_ScrollbarSizePage.cy);
+    //     if (not connected to the MUD)   CLOSED
+    //     else if (m_freeze)              m_bAtBufferEnd ? PAUSE : MORE
+    //     else                            ""
+    //
+    // m_autoScroll IS the m_freeze twin, and deliberately so: on Windows the
+    // freeze flag is exactly what suppresses the scroll-to-end
+    // (mushview.cpp:1815, `if (!m_freeze) OnTestEnd ();`), so "frozen" and "not
+    // auto-scrolling" are one bit there too.  What the port was missing is the
+    // OTHER bit — where the viewport sits — without which the pane could only
+    // ever say PAUSE, never MORE.
+    //
+    // Every caller, and which of the two each one means:
+    //   IsPaused()  = "the output is frozen" (the m_freeze twin)
+    //     · CWorldChildFrame::FreezeOutput / setPaused / isPaused — Display ▸
+    //       Freeze Output, world.Pause, and the menu tick (menu_ui_rules.cpp
+    //       reads it back through pal::IWorldView::isPaused)
+    //     · GetInfo(114), which the port answers from m_gui_paused, written by
+    //       the m_fn_autoscroll_changed callback
+    //     · the unpause_on_send check on the send path
+    //     · "frozen output does not fade" (mushview.cpp:1078)
+    //     · the status line's PAUSE/MORE choice, together with the next one
+    //   IsAtBufferEnd()  = "the newest line is on screen"
+    //     · the status line's PAUSE-vs-MORE choice, and nothing else
+    // Nothing wants "the user scrolled back" as a thing in its own right: with
+    // the world's auto_pause on (its default — scriptingoptions_numeric.inc)
+    // scrolling back is what SETS m_freeze on Windows (mushview.cpp:4598), so
+    // scrolled-back and frozen coincide there by design, and a script asking
+    // GetInfo(114) after a scroll-back gets TRUE on both platforms.
     bool IsAutoScrolling() const { return m_autoScroll; }
     bool IsPaused()        const { return !m_autoScroll; }
+
+    // The m_bAtBufferEnd twin: is the scrollbar at its maximum, i.e. is the
+    // newest output on screen?  Asks the scrollbar (pal::isScrolledToBottom),
+    // never the line count — see pal/scroll_geometry.h for what deriving it
+    // from the document height cost last time.  Independent of IsPaused():
+    // freezing does not move the viewport, so a pane frozen at the bottom is
+    // still at the buffer end until the next line arrives and pushes it away.
+    bool IsAtBufferEnd() const;
 
     // Recompute m_autoScroll from where the view actually is, and fire
     // m_fn_autoscroll_changed if it flipped.  EVERY user-scroll path (wheel,

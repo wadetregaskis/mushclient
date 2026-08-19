@@ -1137,46 +1137,69 @@ void COutputPane::ScrollPage(int direction)
     RefreshAutoScrollFromPosition();
 }
 
+// ── IsAtBufferEnd ─────────────────────────────────────────────────────────
+// The m_bAtBufferEnd twin (mushview.cpp:3255): "is the scroll position at its
+// maximum?", with no tolerance.  A separate question from the freeze flag,
+// because the two really are separate — freezing moves no viewport, and a
+// scroll does not always decide the freeze (see below).  The status line needs
+// both, and it and RefreshAutoScrollFromPosition ask THIS one function, so they
+// cannot drift apart about where the bottom is.
+//
+// See pal/scroll_geometry.h for why it asks the scrollbar rather than
+// recomputing the document height: the two used to disagree by up to a row, and
+// the fudge that hid that gave the pane a one-row dead zone at the bottom where
+// a gentle scroll up was ignored and the next line of output snapped the view
+// back down.
+bool COutputPane::IsAtBufferEnd() const
+{
+    COutputPane* self = const_cast<COutputPane*>(this);
+    int scrollY = 0;
+    self->GetViewStart(nullptr, &scrollY);
+    int unitH = 0;
+    self->GetScrollPixelsPerUnit(nullptr, &unitH);
+    int clientH = 0;
+    self->GetClientSize(nullptr, &clientH);
+
+    return pal::isScrolledToBottom(scrollY, unitH, clientH,
+                                   self->GetVirtualSize().y);
+}
+
 // ── RefreshAutoScrollFromPosition ─────────────────────────────────────────
 // The single answer to "should new output still drag the view down?", shared by
-// every path the user can scroll through.  See pal/scroll_geometry.h for why it
-// asks the scrollbar rather than recomputing the document height: the two used
-// to disagree by up to a row, and the fudge that hid that gave the pane a
-// one-row dead zone at the bottom where a gentle scroll up was ignored and the
-// next line of output snapped the view back down.
+// every path the user can scroll through.
 void COutputPane::RefreshAutoScrollFromPosition()
 {
-    int scrollY = 0;
-    GetViewStart(nullptr, &scrollY);
-    int unitH = 0;
-    GetScrollPixelsPerUnit(nullptr, &unitH);
-    int clientH = 0;
-    GetClientSize(nullptr, &clientH);
-
-    const bool atBottom = pal::isScrolledToBottom(scrollY, unitH, clientH,
-                                                  GetVirtualSize().y);
-
-    const bool wasAuto = m_autoScroll;
-    // With auto-freeze disabled (world option m_bAutoFreeze) the pane never
-    // freezes: new output is always visible wherever the user has scrolled to.
-    // Only the scrollbar path used to honour that; wheel and keyboard scrolling
-    // froze the pane anyway.
-    //
-    // keep_pause_at_bottom (m_bKeepFreezeAtBottom) turns the assignment into a
-    // LATCH — Windows, mushview.cpp:4680-4685:
+    // Windows, mushview.cpp:4598-4606 (CMUSHView::ScrollToPosition):
     //     if (pDoc->m_bAutoFreeze) {
     //       if (pDoc->m_bKeepFreezeAtBottom)
     //          m_freeze = m_freeze || (pt.y < bottom);
     //       else
     //          m_freeze = pt.y < bottom;
     //     }
-    // i.e. with the option on, merely ARRIVING at the bottom never unfreezes;
+    // Note where the outer `if` ENDS.  With the world's auto_pause OFF, a
+    // scroll does not touch the freeze flag AT ALL — it neither freezes nor
+    // thaws.  The port used to write
+    //     m_autoScroll = (atBottom && !stayFrozen) || !m_allowAutoFreeze;
+    // and that trailing `|| !m_allowAutoFreeze` FORCES the pane back to
+    // auto-scrolling, so in a world with auto_pause off every explicit freeze —
+    // Display ▸ Freeze Output, world.Pause(true), start_paused, the scroll-to-
+    // top and find-match freezes — was cancelled by the next scroll event, and
+    // there is no shortage of those.  That was the one place the port genuinely
+    // conflated "the user froze it" with "where the viewport is".
+    if (!m_allowAutoFreeze)
+        return;
+
+    const bool atBottom = IsAtBufferEnd();
+
+    const bool wasAuto = m_autoScroll;
+    // keep_pause_at_bottom (m_bKeepFreezeAtBottom) turns the assignment into a
+    // LATCH: with the option on, merely ARRIVING at the bottom never unfreezes;
     // the user has to unfreeze explicitly (the hint bar / Pause command, which
     // go through ScrollToBottom and set m_autoScroll directly).  The port had no
     // reader for the option at all, so scrolling back down always resumed and
     // the next line of output dragged the view away again.
     const bool stayFrozen = m_keepPauseAtBottom && !m_autoScroll;
-    m_autoScroll = (atBottom && !stayFrozen) || !m_allowAutoFreeze;
+    m_autoScroll = atBottom && !stayFrozen;
     if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
         m_fn_autoscroll_changed(m_autoScroll);
 }

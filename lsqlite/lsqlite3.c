@@ -108,13 +108,38 @@ static int sqlite_ctx_meta_ref;
 ** =======================================================
 */
 
+/* Does a double hold this int64 EXACTLY?
+**
+** The original test here was `if (n == i64)`.  In that comparison the usual
+** arithmetic conversions widen the int64 operand to double before comparing,
+** so it reads (double) i64 == (double) i64 and is vacuously TRUE -- the string
+** branch below it was unreachable, and a value a double cannot hold came back
+** silently rounded (a column holding 9007199254740993 read as ...92).
+**
+** The round trip has to go back through sqlite_int64 to mean anything.  The
+** range test comes FIRST because (double) INT64_MAX rounds UP to exactly 2^63,
+** and casting that back to an integer is undefined behaviour -- arm64
+** saturates to INT64_MAX, which would call the value exact and reinstate the
+** bug at the one input most likely to be tested.
+**
+** MUSHclient's own world.Database* readers apply the same rule; see the band
+** boundaries and the reasoning in scripting/db_int64.h.  Keep the two in step.
+*/
+#define LSQLITE_TWO_POW_63 9223372036854775808.0   /* not representable as int64 */
+
+static int lsqlite_double_holds_int64_exactly(sqlite_int64 i64, lua_Number n) {
+    return n >= -LSQLITE_TWO_POW_63
+        && n <   LSQLITE_TWO_POW_63
+        && (sqlite_int64) n == i64;
+}
+
 static void vm_push_column(lua_State *L, sqlite3_stmt *vm, int idx) {
     switch (sqlite3_column_type(vm, idx)) {
         case SQLITE_INTEGER:
             {
                 sqlite_int64 i64 = sqlite3_column_int64(vm, idx);
                 lua_Number n = (lua_Number)i64;
-                if (n == i64)
+                if (lsqlite_double_holds_int64_exactly(i64, n))
                     lua_pushnumber(L, n);
                 else
                     lua_pushlstring(L, (const char*)sqlite3_column_text(vm, idx), sqlite3_column_bytes(vm, idx));
@@ -844,7 +869,7 @@ static int db_last_insert_rowid(lua_State *L) {
     /* conversion warning: int64 -> luaNumber */
     sqlite_int64 rowid = sqlite3_last_insert_rowid(db->db);
     lua_Number n = (lua_Number)rowid;
-    if (n == rowid)
+    if (lsqlite_double_holds_int64_exactly(rowid, n))
         lua_pushnumber(L, n);
     else
         lua_pushfstring(L, "%I64d", rowid);   // NJG
@@ -895,7 +920,7 @@ static void db_push_value(lua_State *L, sqlite3_value *value) {
             {
                 sqlite_int64 i64 = sqlite3_value_int64(value);
                 lua_Number n = (lua_Number)i64;
-                if (n == i64)
+                if (lsqlite_double_holds_int64_exactly(i64, n))
                     lua_pushnumber(L, n);
                 else
                     lua_pushlstring(L, (const char*)sqlite3_value_text(value), sqlite3_value_bytes(value));

@@ -1262,27 +1262,42 @@ TEST(DatabaseTest, Lsqlite3ModuleAgreesOnWhatADoubleCanHold)
     EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "-9223372036854775807 - 1"));
 }
 
-// The residual disagreement, asserted rather than assumed.  lsqlite3's test is
-//     lua_Number n = (lua_Number) i64;  if (n == i64) ...
-// and C widens the int64 operand to double before comparing, so it reads
-// (double) i64 == (double) i64 and is vacuously TRUE -- its string branch
-// (lsqlite/lsqlite3.c:121) is unreachable.  lsqlite3 therefore hands back a
-// silently rounded number for values a double cannot hold, where we return the
-// lossless decimal string.  Vendored third-party behaviour, deliberately left
-// alone; pinned here so a change to it -- in either direction -- is visible.
-TEST(DatabaseTest, Lsqlite3ModuleStillNumbersWhatWeStringify)
+// The two SQLite surfaces now agree, and this is what proves it.
+//
+// lsqlite3's test used to be `lua_Number n = (lua_Number) i64; if (n == i64)`.
+// C widens the int64 operand to double before comparing, so it read
+// (double) i64 == (double) i64 and was vacuously TRUE: the string branch was
+// unreachable and a value a double cannot hold came back silently ROUNDED --
+// a column holding 9007199254740993 read as ...92.  Fixed at all three sites
+// (vm_push_column, db_last_insert_rowid, db_push_value) by round-tripping back
+// through sqlite_int64, with the 2^63 range test first because
+// (double) INT64_MAX rounds UP and casting it back is undefined.
+//
+// So the `sqlite3` Lua module and world.Database* now band identically.  Both
+// halves are asserted: the values a double DOES hold stay numbers on both
+// sides, and the values it does not are the lossless decimal string on both.
+TEST(DatabaseTest, Lsqlite3ModuleBandsExactlyAsWeDo)
 {
     Lsqlite3Fixture d;
     ASSERT_NE(nullptr, d.L);
 
-    // Our four string-band columns, every one of them a number over there.
-    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "9007199254740993"));
-    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "-9007199254740993"));
-    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "1152921504606846977"));
-    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "9223372036854775807"));
+    // Exactly representable, however large: still a number.  These are the
+    // control -- without them "everything is a string now" would also pass.
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "1152921504606846976"));
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "9007199254740994"));
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "-9223372036854775807 - 1"));
 
-    // ... and the rounding that costs: 2^53+1 comes back as 2^53.  This is the
-    // assertion that makes the paragraph above a fact rather than a claim.
+    // NOT exactly representable: the decimal string, as our own readers give.
+    EXPECT_EQ(CString("integer/string"), lsqlite3_reads(d.L, "9007199254740993"));
+    EXPECT_EQ(CString("integer/string"), lsqlite3_reads(d.L, "-9007199254740993"));
+    EXPECT_EQ(CString("integer/string"), lsqlite3_reads(d.L, "1152921504606846977"));
+
+    // INT64_MAX is the input the 2^63 guard exists for: (double) INT64_MAX
+    // rounds UP to 2^63, and an unguarded cast back saturates on arm64 and
+    // would call it exact.  If this says "number", the guard has been lost.
+    EXPECT_EQ(CString("integer/string"), lsqlite3_reads(d.L, "9223372036854775807"));
+
+    // And the rounding is gone: the value arrives whole, not as 2^53.
     lua_settop(d.L, 0);
     ASSERT_EQ(1, run_ret(d.L,
         "local db = sqlite3.open_memory()\n"
@@ -1290,8 +1305,8 @@ TEST(DatabaseTest, Lsqlite3ModuleStillNumbersWhatWeStringify)
         "assert(db:exec('INSERT INTO t VALUES (9007199254740993);') == sqlite3.OK)\n"
         "local got for x in db:urows('SELECT v FROM t') do got = x end\n"
         "db:close()\n"
-        "return string.format('%.0f', got)"));
-    EXPECT_STREQ("9007199254740992", lua_tostring(d.L, -1));   // NOT ...93
+        "return tostring(got)"));
+    EXPECT_STREQ("9007199254740993", lua_tostring(d.L, -1));   // was ...92
     lua_settop(d.L, 0);
 }
 

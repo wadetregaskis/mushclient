@@ -54,6 +54,9 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 43 | A names file with an empty section makes name generation divide by zero and subscript an empty array | this commit | NameGeneration.cpp `ReadNames`, `GenerateName` |
 | 44 | `DebugHelper`'s `callbacklist` branch dereferences a NULL plugin | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` |
 | 45 | Five `DebugHelper` early returns leave the document stuck in a plugin's context | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` |
+| 46 | `GetTrigger` reports `omit_from_log` back as `eOmitFromOutput`, so a save/restore round-trip turns it into `omit_from_output` | this commit | methods_triggers.cpp `CMUSHclientDoc::GetTrigger` |
+| 47 | `world.GetUdpPort` never considers `Last` itself, so it fails for any single-port range | this commit | methods_udp.cpp `CMUSHclientDoc::GetUdpPort` |
+| 48 | `InfoTypes[]` reuses codes 31/32 for "world get focus"/"world lose focus", clobbering the "world connect"/"world disconnect" rows and omitting 33/34 | this commit | methods_info.cpp `InfoTypes[]` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -960,3 +963,41 @@ makes the omission look like an oversight rather than a design.
 **Fix:** repeat that branch's existing idiom —
 `m_CurrentPlugin = pSavedPlugin;` immediately before each of the five
 `return;`s.
+
+## 46 — `GetTrigger` reports `omit_from_log` back as `eOmitFromOutput` (this commit)
+**Bug:** `CMUSHclientDoc::GetTrigger` builds its returned `Flags` by testing
+each trigger member and OR-ing in the matching bit, and every other line does
+— `bOmitFromOutput` sets `eOmitFromOutput`, `bEnabled` sets `eEnabled` — except
+the `omit_from_log` line, which also sets `eOmitFromOutput`. A script that
+reads a trigger back with `world.GetTrigger` therefore cannot tell
+`omit_from_log` from `omit_from_output`, and `AddTriggerEx (name, …, Flags,
+…)` — which does decode `eOmitFromLog` correctly — turns a save/restore
+round-trip of a `omit_from_log` trigger into an `omit_from_output` one.
+**Fix:** OR in `eOmitFromLog` instead, matching `AddTrigger`'s own decode of
+the same bit (`trigger_item->omit_from_log = (Flags & eOmitFromLog) != 0;`
+a few dozen lines above). Covered by
+`Triggers.GetTriggerReportsOmitFromLogAndOmitFromOutputAsDistinctBits`.
+
+## 47 — `world.GetUdpPort` never considers `Last` itself (this commit)
+**Bug:** `CMUSHclientDoc::GetUdpPort (First, Last)` validates that
+`First <= Last`, explicitly allowing `First == Last` as a single-port range,
+but then searches with `for (result = First; result < Last; result++)` —
+a strict `<` that excludes `Last` from the scan. Any range where `Last` is the
+only free port, including every single-port range, reports failure (`0`) even
+though a free port exists.
+**Fix:** change the loop condition to `result <= Last`, so the scan actually
+covers the range the validity check already promised. Covered by
+`LuaSurface.GetUdpPortConsidersTheLastPortInTheRange`.
+
+## 48 — `InfoTypes[]` reuses codes 31/32 instead of 33/34 (this commit)
+**Bug:** The descriptive table `InfoTypes[]`, consulted by
+`world.GetInfoTypesList` and similar enumerations, lists "Script function for
+world get focus" and "Script function for world lose focus" under codes 31
+and 32 — but `GetInfo`'s own `switch` answers those two strings under codes 33
+and 34 (`m_strWorldGetFocus`, `m_strWorldLoseFocus`); 31 and 32 are already
+"Script function for world connect"/"…disconnect" a few rows above. The
+duplicate codes clobber the connect/disconnect entries in anything that
+builds a lookup keyed by `iInfoType`, and codes 33/34 are missing from the
+table entirely.
+**Fix:** renumber the two rows to 33 and 34, matching `GetInfo`'s switch.
+Covered by `Info.InfoTypesTableHasNoDuplicateCodesAndCovers33And34`.

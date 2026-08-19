@@ -19,6 +19,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <unistd.h>
 
@@ -947,6 +948,30 @@ TEST(AppDefaults, GetUniqueStringSharesTheGetUniqueNumberSequence)
     snprintf(expected, sizeof expected, "%lld", (long long) (n + 1));
     EXPECT_STREQ(expected, (LPCTSTR) s);
     EXPECT_EQ(n + 2, n2);
+}
+
+// InfoTypes[] (the descriptive table behind GetInfoTypesList and friends,
+// methods_info.cpp) must have a unique iInfoType per row and cover every
+// code GetInfo's own switch answers -- 33/34 ("world get focus"/"world lose
+// focus") used to be listed as 31/32 instead, clobbering the "world
+// connect"/"world disconnect" rows and leaving 33/34 absent entirely
+// (upstream bug #48).  The array is terminated by the { 0, "" } sentinel row.
+extern tInfoTypeMapping InfoTypes[];
+
+TEST(InfoTypesTable, HasNoDuplicateCodesAndCovers33And34)
+{
+    std::set<int> seen;
+    int rowCount = 0;
+
+    for (int i = 0; InfoTypes[i].iInfoType != 0; i++) {
+        seen.insert(InfoTypes[i].iInfoType);
+        rowCount++;
+    }
+
+    // A duplicate code means fewer unique values than rows walked.
+    EXPECT_EQ((size_t) rowCount, seen.size());
+    EXPECT_TRUE(seen.count(33) != 0);
+    EXPECT_TRUE(seen.count(34) != 0);
 }
 
 MC_TEST_MAIN()

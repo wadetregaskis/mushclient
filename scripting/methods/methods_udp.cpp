@@ -162,7 +162,7 @@ long CMUSHclientDoc::GetUdpPort(long First, long Last)
 
   long result;
 
-  for (result = First; result < Last; result++)
+  for (result = First; result <= Last; result++)
     {
     it = UsedPortsSet.find (result);
     if (it == UsedPortsSet.end ())

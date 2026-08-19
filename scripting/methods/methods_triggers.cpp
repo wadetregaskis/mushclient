@@ -348,8 +348,8 @@ CTrigger * trigger_item;
     iFlags |= eOmitFromOutput;  
   if (trigger_item->bKeepEvaluating) 
     iFlags |= eKeepEvaluating;   
-  if (trigger_item->omit_from_log) 
-    iFlags |= eOmitFromOutput;   
+  if (trigger_item->omit_from_log)
+    iFlags |= eOmitFromLog;
   if (trigger_item->bEnabled) 
     iFlags |= eEnabled;  
   if (trigger_item->bRegexp) 

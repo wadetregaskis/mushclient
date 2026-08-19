@@ -151,6 +151,11 @@ TEST(LuaSurface, UdpFamily)
         "assert(world.GetUdpPort(10, 5) == 0)\n"         // bad range
         "assert(world.GetUdpPort(0, 100) == 0)\n"        // First < 1
         "assert(world.GetUdpPort(46000, 46010) == 46000)\n"
+        // Last must itself be a candidate: a single-port range (First ==
+        // Last) always failed before upstream bug #47 was fixed, because the
+        // scan stopped strictly before Last.
+        "assert(world.GetUdpPort(46000, 46000) == 46000)\n"
+        "assert(world.GetUdpPort(46000, 46001) == 46000)\n"
     ));
 }
 

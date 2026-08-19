@@ -57,6 +57,16 @@ struct SelPoint {
 // World, which decodes the doc's style bytes directly.
 wxString DecodeOutputBytes(const char* bytes, size_t n, bool utf8, int charset);
 
+// The same decode for a run's own strings — text, and equally the MXP action /
+// hint bytes that came off the wire beside it.  Exists so display sites that
+// hold a std::string plus its SRunEncoding cannot quietly reach for
+// wxString::FromUTF8 instead: that is all-or-nothing, so a single legacy byte
+// yields "" — a blank tooltip, a blank menu label, an ERASED command bar.
+inline wxString DecodeRunBytes(const std::string& bytes, SRunEncoding enc)
+{
+    return DecodeOutputBytes(bytes.c_str(), bytes.size(), enc.utf8, enc.charset);
+}
+
 // Decode bytes that are MEANT to be UTF-8 but may not be, substituting U+FFFD
 // per ill-formed subpart the way MultiByteToWideChar(CP_UTF8, 0, ...) does on
 // Windows.  Use this anywhere wxString::FromUTF8 would otherwise be handed bytes
@@ -637,7 +647,12 @@ public:
     std::function<void(const std::string& text, unsigned long fg)> m_fn_engine_note;
 
     // Returns the tooltip text for a client-space point; "" = clear tooltip.
-    std::function<std::string(int x, int y)> m_fn_get_tooltip;
+    // Already DECODED: the three things this answers with — a miniwindow
+    // hotspot's tooltip, an MXP hint, the line-information string — are bytes
+    // of three different provenances, and only the frame that resolves them
+    // knows which.  Handing back a wxString keeps the decode where that
+    // knowledge is instead of guessing UTF-8 here.
+    std::function<wxString(int x, int y)> m_fn_get_tooltip;
 
     // Called when auto-scroll state changes (true = pinned to bottom).
     std::function<void(bool)> m_fn_autoscroll_changed;
@@ -708,12 +723,17 @@ public:
     // action           the MXP/Lua link action (pipe-delimited alternatives)
     // actionType       the style's ACTIONTYPE bits (SOutputRun::action_type)
     // bCommentLine     the clicked line was a note, not MUD output
-    // The last two decide what the click MEANS -- a prompt-link fills the
-    // command bar, a send-link on a note line executes -- so they travel with
-    // the action rather than being re-derived (or ignored) by the handler.
+    // enc              how to READ action's bytes (the run's own encoding)
+    // actionType/bCommentLine decide what the click MEANS -- a prompt-link
+    // fills the command bar, a send-link on a note line executes -- so they
+    // travel with the action rather than being re-derived (or ignored) by the
+    // handler.  enc is for DISPLAY only: what gets sent stays these bytes,
+    // but a prompt-link puts them in the command bar and a multi-alternative
+    // link lists them in a menu, and both of those need the decode.
     std::function<void(const std::string& action,
                        int actionType,
-                       bool bCommentLine)> m_fn_link_clicked;
+                       bool bCommentLine,
+                       SRunEncoding enc)> m_fn_link_clicked;
 
     // Double-clicked a word in the output ("Double-click Sends Word" /
     // "…Pastes Word", both world options, both default OFF).  Fired ONLY when
@@ -1062,6 +1082,7 @@ private:
     std::string m_linkAtDown;
     int         m_linkTypeAtDown = 0;      // its run.action_type
     bool        m_linkNoteAtDown = false;  // its line was a note (COMMENT)
+    SRunEncoding m_linkEncAtDown;          // how to read m_linkAtDown's bytes
 
     bool m_autoScroll      = true;
     // Nesting depth of the mid-paint plugin callback window

@@ -1977,7 +1977,7 @@ void TestPullSeamDetectsURLs()
     int         fired = 0;
     std::string clicked;
     h.pane->m_fn_link_clicked =
-        [&fired, &clicked](const std::string& action, int, bool) {
+        [&fired, &clicked](const std::string& action, int, bool, SRunEncoding) {
             ++fired;
             clicked = action;
         };
@@ -2020,6 +2020,88 @@ void TestPullSeamDetectsURLs()
     SendMouse(h.pane, wxEVT_LEFT_UP,   cw * (lastCol + 1) + cw / 2, lh / 2);
     opCheck(fired == 0,
             "pull: the column just past the URL is NOT part of the link");
+}
+
+// ── 18c. a link's ENCODING has to travel with its action ─────────────────
+// The action/hint bytes of an MXP link are the world's bytes, in the world's
+// charset -- exactly like the run text beside them.  The pane handed the action
+// on as a bare std::string, so every DISPLAY site downstream reached for
+// wxString::FromUTF8, which is all-or-nothing: one legacy byte and the label,
+// the tooltip, or (worst) the command bar came back EMPTY.  The run knows the
+// answer; it just has to be carried.
+//
+// The fixture is deliberately non-degenerate: CP1251 (charset 204) and CP1252
+// read these six bytes as completely different words, so an assertion on the
+// decoded text discriminates BOTH halves of the encoding -- a build that
+// dropped the flag and a build that hardcoded the charset each fail it.
+void TestLinkEncodingTravelsWithTheAction()
+{
+    printf("link encoding: the run's charset reaches the click handler\n");
+
+    // "\xCF\xF0\xE8\xE2\xE5\xF2" is CP1251 for the Russian for "hello".
+    // It is not valid UTF-8 (0xCF is a 2-byte lead, 0xF0 is not a continuation).
+    const std::string kAction = "say \xCF\xF0\xE8\xE2\xE5\xF2";
+    const wxString    kCp1251 = wxString::FromUTF8(
+        "say \xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
+
+    opCheck(wxString::FromUTF8(kAction.c_str(), kAction.size()).empty(),
+          "fixture: FromUTF8 of the action really does yield \"\" "
+          "(without this the test proves nothing)");
+
+    Harness h;
+
+    auto linkLine = [&](bool utf8, int charset) {
+        SOutputRun run;
+        run.text    = "click here";       // ASCII, so the column maths is plain
+        run.fg      = 0x00FFFFFFu;
+        run.utf8    = utf8 ? 1 : 0;
+        run.charset = (int16_t) charset;
+        run.setLink(kAction, "the hint", 0x0400 /*ACTION_SEND*/);
+        SOutputLine line;
+        line.push_back(run);
+        return line;
+    };
+
+    h.pane->AppendLine(linkLine(false, 204));   // row 0: a CP1251 world
+    h.pane->AppendLine(linkLine(true, 0));      // row 1: the UTF-8 control
+
+    int          fired = 0;
+    std::string  gotAction;
+    SRunEncoding gotEnc{ true, 999 };           // neither value a fix can luck into
+    h.pane->m_fn_link_clicked =
+        [&](const std::string& action, int, bool, SRunEncoding enc) {
+            ++fired;
+            gotAction = action;
+            gotEnc    = enc;
+        };
+
+    const int cw = h.pane->CharWidth();
+    const int lh = h.pane->LineHeight();
+    auto clickRow = [&](int row) {
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 2 + cw / 2, row * lh + lh / 2);
+        SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 2 + cw / 2, row * lh + lh / 2);
+    };
+
+    clickRow(0);
+    opCheck(fired == 1, "the click reaches the link handler");
+    opCheck(gotAction == kAction,
+            "the action arrives BYTE-EXACT (what gets sent must not change)");
+    opCheck(gotEnc.utf8 == false,
+            "...and the run's utf8 flag arrives with it (was: not carried at all)");
+    opCheck(gotEnc.charset == 204,
+            "...and so does the run's charset");
+    opCheck(DecodeRunBytes(gotAction, gotEnc) == kCp1251,
+            "...so the handler can render the action as its CP1251 text "
+            "(was: FromUTF8 -> \"\", a blank menu label / cleared command bar)");
+
+    // ── the control ──────────────────────────────────────────────
+    // A build that simply hardcoded {false, 204} would pass everything above.
+    fired = 0;
+    gotEnc = SRunEncoding{ false, 999 };
+    clickRow(1);
+    opCheck(fired == 1, "control: the UTF-8 row's link fires too");
+    opCheck(gotEnc.utf8 == true && gotEnc.charset == 0,
+            "control: ...and reports ITS encoding, not the other row's");
 }
 
 void TestPendingRowUsesTheRunPipeline()
@@ -2277,6 +2359,7 @@ int RunOutputPaneSelfTest()
     TestPluginDrawDefersAppends();
     TestPullSeamReads();
     TestPullSeamDetectsURLs();
+    TestLinkEncodingTravelsWithTheAction();
     TestPendingRowUsesTheRunPipeline();
     TestMiddleClickIsInert();
 

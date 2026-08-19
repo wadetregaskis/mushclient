@@ -47,6 +47,18 @@ struct SRunLink {
 
 #include <ctime>   // time_t — SOutputLine::arrived
 
+// ── SRunEncoding ──────────────────────────────────────────────────────────
+// How to READ a run's bytes: the two facts SOutputRun carries about its own
+// text, which its MXP action/hint bytes share (they came off the same wire in
+// the same world).  Anything that hands those strings on to be DISPLAYED — a
+// tooltip, a context-menu label, the command bar — has to hand this on with
+// them, or it has nothing to decode with and falls back to bare FromUTF8,
+// which is all-or-nothing: one legacy byte and the label comes back "".
+struct SRunEncoding {
+    bool utf8    = true;   // SOutputRun::utf8
+    int  charset = 0;      // SOutputRun::charset (a Windows LOGFONT charset)
+};
+
 struct SOutputRun {
     std::string text;
     uint32_t    fg            = 0x00C0C0C0u;  // default: light grey  (RGB 192,192,192)
@@ -102,6 +114,11 @@ struct SOutputRun {
     const std::string& hint() const        { return link ? link->hint   : NoText(); }
     int                action_type() const { return link ? link->action_type : 0; }
     bool               isLink() const      { return link && !link->action.empty(); }
+
+    // The encoding of text(), action() and hint() alike — travel it with any of
+    // them that leaves the run.
+    SRunEncoding encoding() const
+        { return SRunEncoding{ utf8 != 0, (int) charset }; }
 
     void setLink(const std::string& action, const std::string& hint, int type)
     {

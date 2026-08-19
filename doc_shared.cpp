@@ -763,15 +763,13 @@ void  CMUSHclientDoc::PluginListChanged (void)
 
   {
 
-static bool bInPluginListChanged = false;
-
   // don't recurse into infinite loops
-  if (bInPluginListChanged)
+  if (m_bInPluginListChanged)
     return;
 
-  bInPluginListChanged = true;
+  m_bInPluginListChanged = true;
   SendToAllPluginCallbacks (ON_PLUGIN_LIST_CHANGED);
-  bInPluginListChanged = false;
+  m_bInPluginListChanged = false;
 
   }    // end CMUSHclientDoc::PluginListChanged 
 

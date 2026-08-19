@@ -3768,20 +3768,19 @@ void CMUSHclientDoc::Screendraw  (const long iType,
                                   const long iLog,
                                   const char * sText)
   {
-static bool bInScreendraw = false;
 
   // don't recurse into infinite loops
-  if (bInScreendraw)
+  if (m_bInScreendraw)
     return;
 
-  bInScreendraw = true;
+  m_bInScreendraw = true;
   SendToAllPluginCallbacks (ON_PLUGIN_SCREENDRAW,
                             iType,
                             iLog,
                             sText,
                             false,
                             false);
-  bInScreendraw = false;
+  m_bInScreendraw = false;
 
   }  // end of CMUSHclientDoc::Screendraw 
 

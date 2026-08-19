@@ -1543,6 +1543,13 @@ public:
   // one world could not add a hotspot to another.
   bool m_bInWindowAddHotspot;
 
+  // The same guard for the same reason, on the two plugin notifications that
+  // were function-local statics too: a Screendraw callback that writes to
+  // another world, or a PluginListChanged one that loads a plugin into it,
+  // must not silence that world's own callback.
+  bool m_bInScreendraw;
+  bool m_bInPluginListChanged;
+
   // sort miniwindows into Z-order
   void SortWindows (void);
 
@@ -2651,10 +2658,6 @@ public:
   bool SendToAllPluginCallbacks (const string & sName,
                                  const CString & sText,
                                  const bool bStopOnFalse);
-  bool SendToAllPluginCallbacks (const string & sName,
-                                 const CString & sText,
-                                 const bool bStopOnTrue,
-                                 const bool bStopOnFalse);
 
   // send strResult to all plugins, allow them to modify it
   void SendToAllPluginCallbacksRtn (const string & sName, 
@@ -2674,6 +2677,9 @@ public:
                                  const string sText,
                                  const bool bStopOnTrue,
                                  const bool bStopOnFalse);
+
+  // discard the items the plugin wizard just exported
+  void RemoveSelectedWizardItems (void);
 
   // load from document into property page (Windows GUI only)
   // World-prefs data marshaling — portable (definitions in configuration.cpp;

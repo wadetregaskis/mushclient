@@ -17,6 +17,7 @@
 #include "fake_transport.h"
 #include "scripting/scripting.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -750,8 +751,7 @@ TEST(PluginCallback, OneNumberOneStringStopSemantics)
 }
 
 // plugins.cpp CString convenience overloads "forward to the const char*
-// implementation" — including the 4-argument form, whose bStopOnTrue flag
-// is documented as ignored.
+// implementation".
 TEST(PluginCallback, CStringOverloadsForwardToCharImplementation)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -771,11 +771,6 @@ TEST(PluginCallback, CStringOverloadsForwardToCharImplementation)
     EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, CString("two"),
                                               true));
     EXPECT_STREQ("two", (const char*)plugin_var(p, "saw"));
-
-    // 4-arg CString form: bStopOnTrue ignored, behaves as the 2-arg form
-    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, CString("three"),
-                                              true, true));
-    EXPECT_STREQ("three", (const char*)plugin_var(p, "saw"));
 }
 
 // plugins.cpp GetPluginDispid: "else return DISPID_UNKNOWN" — a plugin with
@@ -2024,6 +2019,185 @@ TEST(PluginVeto, APluginThatImplementsTheCallbackIsObeyed)
         "function OnPluginSend(text) return false end\n")));
     EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "a line", true));
     }
+}
+
+// ââ re-entrancy guards: one per document, not one per process ââââââââââ
+
+// doc.cpp Screendraw and doc_shared.cpp PluginListChanged each guarded
+// themselves with a function-local static, so the flag was one for the whole
+// process rather than one per open world.  Screendraw runs for every completed
+// line, note and command, and a handler on world A that writes to world B
+// reaches B's Screendraw synchronously (Note â DisplayMsg â
+// ProcessPreviousLine), so B's own OnPluginScreendraw used to be skipped for
+// that line.
+TEST(PluginGuards, ScreendrawGuardIsPerDocument)
+{
+    CMUSHclientDoc docA; make_doc(docA);
+    CMUSHclientDoc docB; make_doc(docB);
+    docB.m_mush_name = "screendraw_other";
+
+    // B's watcher goes on first, so it is there when A reaches across.
+    ASSERT_TRUE(load_plugin(docB, write_plugin("sd_b", IDB, "BWatcher",
+        "function OnPluginScreendraw(t, l, s)\n"
+        "  world.SetVariable('b_saw', s)\n"
+        "end\n")));
+    ASSERT_TRUE(load_plugin(docA, write_plugin("sd_a", IDA, "AWriter",
+        "function OnPluginScreendraw(t, l, s)\n"
+        "  world.SetVariable('a_saw', s)\n"
+        "  if not reached then\n"
+        "    reached = true\n"
+        "    world.GetWorld('screendraw_other'):Note('over here')\n"
+        "  end\n"
+        "end\n")));
+
+    docA.Note("hello");
+
+    // the control: A's callback really ran, so the assertion below cannot
+    // pass merely because no callback fired anywhere
+    EXPECT_STRNE("<unset>",
+                 (const char*)plugin_var(docA.GetPlugin(IDA), "a_saw"));
+    // the fix: B was not silenced by A being inside its own Screendraw
+    EXPECT_STREQ("over here",
+                 (const char*)plugin_var(docB.GetPlugin(IDB), "b_saw"));
+}
+
+// ...and the guard still does its original job within one document: a note
+// written from inside the callback must not re-enter it.  Deleting the guard
+// fails this even though it passes the cross-world test above.
+TEST(PluginGuards, ScreendrawGuardStillBlocksSameDocumentRecursion)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("sd_self", IDA, "SelfDraw",
+        "count = 0\n"
+        "function OnPluginScreendraw(t, l, s)\n"
+        "  count = count + 1\n"
+        "  world.SetVariable('count', tostring(count))\n"
+        "  if count == 1 then world.Note('re-entry') end\n"   // one-shot, so
+        "end\n")));                                          // it terminates
+
+    doc.Screendraw (COMMENT, 0, "outer");
+
+    // the nested note's own Screendraw was refused: one entry, not two
+    EXPECT_STREQ("1", (const char*)plugin_var(doc.GetPlugin(IDA), "count"));
+}
+
+// The same shape on PluginListChanged: A's OnPluginListChanged loads a plugin
+// into world B, and B's own watcher must be told.  The single-document control
+// is ListChangedCallbackDoesNotRecurse above.
+TEST(PluginGuards, PluginListChangedGuardIsPerDocument)
+{
+    CMUSHclientDoc docA; make_doc(docA);
+    CMUSHclientDoc docB; make_doc(docB);
+    docB.m_mush_name = "listchanged_other";
+
+    ASSERT_TRUE(load_plugin(docB, write_plugin("lc_b", IDB, "BListWatcher",
+        "function OnPluginListChanged()\n"
+        "  world.SetVariable('b_saw', 'yes')\n"
+        "end\n")));
+
+    std::string third = write_plugin("lc_third", IDC, "Third", "-- nothing\n");
+    std::string body =
+        "function OnPluginListChanged()\n"
+        "  if not loaded_once then\n"
+        "    loaded_once = true\n"
+        "    world.GetWorld('listchanged_other'):LoadPlugin('" + third + "')\n"
+        "  end\n"
+        "end\n";
+    ASSERT_TRUE(load_plugin(docA, write_plugin("lc_a", IDA, "AListWriter",
+                                               body.c_str())));
+
+    // InternalLoadPlugin does not fire the event; the doc-level LoadPlugin does
+    std::string other = write_plugin("lc_other", "dddddddddddddddddddddd44",
+                                     "Other", "-- nothing\n");
+    EXPECT_EQ((long)eOK, docA.LoadPlugin(CString(other.c_str())));
+
+    ASSERT_NE(nullptr, docB.GetPlugin(IDC));     // A really did reach across
+    EXPECT_STREQ("yes", (const char*)plugin_var(docB.GetPlugin(IDB), "b_saw"));
+}
+
+// plugins.cpp: the note-batching flag is saved and put back, not cleared, so a
+// callback that dispatches again (world.Send â ON_PLUGIN_SEND) leaves batching
+// on for the plugins that come after it in the outer walk.  Cleared, the
+// later plugin's note went straight into the middle of the line being
+// processed instead of into m_OutstandingLines.
+TEST(PluginGuards, NestedDispatchKeepsNoteBatchingOn)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pTransport = new NullTransport(/*dropSends=*/true);  // dtor tears down
+    doc.m_display_my_input = false;   // the echo would start a fresh line and
+                                      // Tell would not batch on that anyway
+
+    // A comes first, and dispatches again from inside its callback...
+    ASSERT_TRUE(load_plugin(doc, write_plugin("nb_a", IDA, "Sender",
+        "function OnPluginLineReceived(line)\n"
+        "  world.SetVariable('ran', 'yes')\n"
+        "  world.Send('a command')\n"
+        "end\n")));
+    // ...B comes after it, and its note must still be deferred
+    ASSERT_TRUE(load_plugin(doc, write_plugin("nb_b", IDB, "Noter",
+        "function OnPluginLineReceived(line)\n"
+        "  world.SetVariable('ran', 'yes')\n"
+        "  world.Note('deferred')\n"
+        "end\n")));
+
+    // a partial, non-note line: the three conditions Tell batches on
+    doc.DisplayMsg("partial", 7, 0);
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    ASSERT_TRUE(doc.m_pCurrentLine->len != 0);
+    ASSERT_EQ(0, (int)(doc.m_pCurrentLine->flags & NOTE_OR_COMMAND));
+    ASSERT_TRUE(doc.m_OutstandingLines.empty());
+
+    doc.SendToAllPluginCallbacks(ON_PLUGIN_LINE_RECEIVED, "partial", false);
+
+    // both really ran (otherwise "no note anywhere" would pass)
+    EXPECT_STREQ("yes", (const char*)plugin_var(doc.GetPlugin(IDA), "ran"));
+    EXPECT_STREQ("yes", (const char*)plugin_var(doc.GetPlugin(IDB), "ran"));
+    // and B's note was batched, not emitted inline
+    EXPECT_EQ(1, (int)doc.m_OutstandingLines.size());
+}
+
+// plugins.cpp RemoveSelectedWizardItems: each "sort what is left" block runs
+// once, after its loop.  It used to sit inside, so removing N pre-selected
+// items ran N full sorts â O(NÂ² log N) for what is one sort's worth of work.
+// A complexity pin, not a stopwatch: time the same removal at two sizes.
+TEST(WizardTest, RemovingSelectedItemsSortsOncePerCategory)
+{
+    auto run = [](int count) {
+        CMUSHclientDoc doc;
+        char name[32];
+        for (int i = 0; i < count; i++)
+          {
+          snprintf(name, sizeof name, "t%05d", i);
+          doc.AddTrigger(name, "match", "resp", 1, -1, 0, "", "");
+          }
+        // the wizard pre-selects everything before exporting it
+        for (POSITION pos = doc.GetTriggerMap().GetStartPosition(); pos; )
+          {
+          CString strName; CTrigger * t;
+          doc.GetTriggerMap().GetNextAssoc(pos, strName, t);
+          t->bSelected = true;
+          }
+
+        const auto t0 = std::chrono::steady_clock::now();
+        doc.RemoveSelectedWizardItems();
+        const auto t1 = std::chrono::steady_clock::now();
+
+        // it really removed them, so a do-nothing helper cannot pass on time
+        EXPECT_EQ(0, (int)doc.GetTriggerMap().GetCount());
+        EXPECT_EQ(0, (int)doc.GetTriggerArray().GetSize());
+        return std::chrono::duration<double, std::milli>(t1 - t0).count();
+    };
+
+    run(200);                              // warm
+    const double small = run(400);
+    const double big   = run(2400);        // 6x the items
+
+    // one sort each: ~6x the work.  One per surviving entry: ~36x, and the
+    // ratio keeps climbing with the size.  Twice as loose as the measured
+    // 6x, so ordinary machine noise cannot fail it.
+    EXPECT_TRUE(big <= small * 12 + 25.0);
+    if (big > small * 12 + 25.0)
+        printf("    400 items %.3fms vs 2400 items %.3fms\n", small, big);
 }
 
 MC_TEST_MAIN()

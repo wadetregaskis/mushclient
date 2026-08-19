@@ -361,6 +361,11 @@ void wx_unregister_world_frame(CMUSHclientDoc* doc)
     App.UpdateWorldCounts();
 }
 
+// Defined in wx_toolbar.cpp: the world occupying activity slot 1..10.  Shared
+// so the Window-menu / startup ID_WORLDS_WORLD* commands and the activity bar
+// cannot disagree about which world is "world 1".
+CMUSHclientDoc* wx_world_in_slot(int slot);
+
 void wx_activate_world_frame(CMUSHclientDoc* doc)
 {
     auto it = s_docFrameMap.find(doc);
@@ -1028,6 +1033,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     fileMenu->AppendSeparator();
     fileMenu->Append(32250 /*ID_FILE_PRINT_WORLD*/, wxT("&Print World…\tCtrl+P"));
     fileMenu->Append(ID_MENU_PRINT_SELECTION, wxT("Print Selection…"));
+    // Canonical File-menu command (ID_FILE_SAVESELECTION, accelerators.cpp's
+    // "SaveSelection"), with no port implementation until now: its handler is
+    // CMUSHView::OnFileSaveselection, on a view this port never constructs.
+    fileMenu->Append(32255 /*ID_FILE_SAVESELECTION*/, wxT("Save Selection…"));
     // File ▸ Preferences uses wxID_PREFERENCES so wxWidgets automatically moves
     // it to the macOS application menu as "Settings…" (⌘,), where Mac users
     // expect it.  (No surrounding separator here — it leaves the File menu.)
@@ -1056,6 +1065,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // Verified: with the standard ids Copy stays grey however the world's
     // selection looks and Select All is inert; with these it enables/works.
     wxMenu* editMenu = new wxMenu();
+    // Undo keeps its STANDARD id for the opposite reason Copy drops its own:
+    // its only target IS the focused text field, so AppKit routing undo: down
+    // the responder chain is exactly right, and if wx keeps it the wxID_UNDO
+    // arm below forwards it there anyway.  Without this item the canonical
+    // Edit ▸ Undo was unreachable from the UI and no ⌘Z was registered at all.
+    editMenu->Append(wxID_UNDO,      wxT("Undo\tCtrl+Z"));
+    editMenu->AppendSeparator();
     editMenu->Append(ID_EDIT_COPY,   wxT("Copy\tCtrl+C"));
     editMenu->Append(wxID_CUT,       wxT("Cut\tCtrl+X"));
     editMenu->Append(wxID_PASTE,     wxT("Paste\tCtrl+V"));
@@ -1392,9 +1408,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             id == ID_MENU_EXPORT_MACROS) {
             // Need an active world.
             evt.Enable(doc != nullptr);
-        } else if (id == ID_MENU_PRINT_SELECTION) {
+        } else if (id == ID_MENU_PRINT_SELECTION ||
+                   id == 32255 /*ID_FILE_SAVESELECTION*/) {
             // Needs an active world WITH a selection — the whole point of the
             // separate item (Windows puts this choice on its print dialog).
+            // Save Selection follows the same rule, which is also the one Copy
+            // uses (CMUSHclientDoc::EditCopyTarget).
             auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
             evt.Enable(child && child->HasOutputSelection());
         } else if (id == ID_MENU_GAME_LUA_EVAL ||
@@ -1524,6 +1543,24 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                    },
                    ID_EDIT_SELECT_ALL);
 
+    // ── Application activation → CMainFrame::m_bActive ────────────────────
+    // Windows keeps this current in CMainFrame::OnActivate (mainfrm.cpp:1348),
+    // and the activity flash reads it: `if (bFlashIcon && !m_bActive)` at
+    // mainfrm.cpp:811 is what stops a background world's unread lines asking
+    // for attention while MUSHclient is the app you are already looking at.
+    // Nothing on the port ever set it, so that guard was vacuously true and
+    // m_bFlashingWindow, whose only clearer is the same handler, was set once
+    // and never cleared.  wxEVT_ACTIVATE_APP is the wx equivalent; it is an
+    // app-level event, so it binds on wxTheApp rather than the frame.
+    wxTheApp->Bind(wxEVT_ACTIVATE_APP, [](wxActivateEvent& evt) {
+        Frame.m_bActive = evt.GetActive() ? true : false;
+        if (Frame.m_bActive && Frame.m_bFlashingWindow) {
+            Frame.FlashWindow(FALSE);      // a no-op here; the request is one-shot
+            Frame.m_bFlashingWindow = false;
+        }
+        evt.Skip();                        // wx and AppKit both still want it
+    });
+
     // ── Menu event routing via Bind() ─────────────────────────────────────
     frame->Bind(wxEVT_MENU, [frame](wxCommandEvent& evt) {
         int id = evt.GetId();
@@ -1579,6 +1616,25 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             auto* child = dynamic_cast<CWorldChildFrame*>(active);
             return child ? child->GetDoc() : nullptr;
         };
+
+        // ── ID_WORLDS_WORLD1..0: activate the world in that slot ───────────
+        // Canonically CMainFrame::OnWorldSwitch, an ON_COMMAND_EX handler —
+        // and the port's message maps never expand ON_COMMAND_EX (mfc_ui.h),
+        // so AfxDispatchCommand cannot reach it even with &Frame as the
+        // target.  Do the same job the activity toolbar's buttons do.
+        //
+        // The one caller that matters is InitInstance (MUSHclient.cpp:950),
+        // which posts ID_WORLDS_WORLD1 at startup so that "Open activity
+        // window at startup" does not leave the Activity frame holding the
+        // focus.  That was a silent no-op here.
+        if (id >= ID_WORLDS_WORLD1 && id <= ID_WORLDS_WORLD0) {
+            // 1..9 then 0, where the button labelled 0 is world *10* — the
+            // same order the activity bar's table uses.
+            const int slot = id - ID_WORLDS_WORLD1 + 1;
+            if (CMUSHclientDoc* target = wx_world_in_slot(slot))
+                wx_activate_world_frame(target);
+            return;
+        }
 
         // ── Table-driven canonical commands: route the click to its MFC
         // message-map handler.  One path for every standard command. ──────────
@@ -1748,7 +1804,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // stay focus-routed, which is also what Windows does: Cut, Paste and
         // Undo only ever apply to the command window.
         //
-        // Undo has no menu item here; it is reachable through
+        // Undo arrives either from its Edit-menu item, or through
         // world.DoCommand("Undo"), which posts ID_EDIT_UNDO (translated to
         // wxID_UNDO at the top of this handler).
         if (id == wxID_CUT || id == wxID_PASTE || id == wxID_UNDO)
@@ -1840,6 +1896,24 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             id == ID_MENU_PRINT_SELECTION) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
                 child->PrintWorld(id == ID_MENU_PRINT_SELECTION);
+            return;
+        }
+
+        // ── Save Selection (output selection → a text file) ────────────────
+        // Same dialog the canonical CMUSHView::OnFileSaveselection puts up
+        // (mushview.cpp:3997): default name "selection.txt", .txt filter,
+        // overwrite prompt.
+        if (id == 32255 /*ID_FILE_SAVESELECTION*/) {
+            auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
+            if (!child || !child->HasOutputSelection()) return;
+            wxFileDialog dlg(frame, wxT("Saved selection"), wxEmptyString,
+                             wxT("selection.txt"),
+                             wxT("Text files (*.txt)|*.txt|All files (*.*)|*.*"),
+                             wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+            if (dlg.ShowModal() != wxID_OK) return;
+            if (!child->SaveSelectionToFile(dlg.GetPath()))
+                wxMessageBox(wxT("Failed to write the selection."),
+                             wxT("Save Selection"), wxICON_ERROR | wxOK, child);
             return;
         }
 
@@ -2363,8 +2437,14 @@ static wxString DefaultWorldFileNameFor(CMUSHclientDoc* doc)
 
 
 // ── Save Active World ─────────────────────────────────────────────────────
-// Saves the doc of the currently active MDI child frame.
-// If saveAs==true OR the doc has no path yet, shows a save-file dialog first.
+// File ▸ Save / Save As on the currently active MDI child frame.  Finds the
+// world, then hands over to g_wxhook_save_world — the same call the close
+// prompt makes (wx_world_child.cpp:6038), so there is exactly one save flow.
+//
+// This used to be a second, hand-copied version of that flow, and the two had
+// already drifted: this one's failure wxMessageBox had no parent, so a save
+// error came up as a detached app-modal alert rather than one belonging to the
+// world window that failed.
 static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
 {
     if (!frame) return;
@@ -2375,58 +2455,11 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
     CWorldChildFrame* child = dynamic_cast<CWorldChildFrame*>(active);
     if (!child) return;
 
-    // Access the doc via the public accessor pattern: child has m_doc.
-    // We use the OutputPane's parent (child frame) to reach the doc.
-    // Since we can't access m_doc directly (it's private), we work through
-    // a dedicated accessor.  For now, add a GetDoc() to CWorldChildFrame.
     CMUSHclientDoc* doc = child->GetDoc();
     if (!doc) return;
 
-    // Determine the save path.
-    CString  pathCStr = doc->GetPathName();
-    wxString path     = wxString::FromUTF8(static_cast<const char*>(pathCStr));
-
-    if (saveAs || path.IsEmpty()) {
-        // Use the directory of the existing path, or fall back to the default
-        // world file directory configured in preferences.
-        wxString saveDir = path.IsEmpty()
-            ? wxString::FromUTF8(static_cast<const char*>(App.m_strDefaultWorldFileDirectory))
-            : wxFileName(path).GetPath();
-        wxFileDialog dlg(frame,
-                         wxT("Save World File"),
-                         saveDir,
-                         path.IsEmpty() ? DefaultWorldFileNameFor(doc)
-                                       : wxFileName(path).GetFullName(),
-                         wxT("MUSHclient world files (*.mcl)|*.mcl|All files (*.*)|*.*"),
-                         wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-        if (dlg.ShowModal() != wxID_OK) return;
-        path = dlg.GetPath();
-    }
-
-    if (path.IsEmpty()) return;
-
-    std::string savePath = path.ToUTF8().data();
-
-    // Capture the old path BEFORE saving: DoSave -> CDocument::DoSave calls
-    // SetPathName, so reading it afterwards would return the new path and the
-    // save-as world-list cleanup below would never fire.
-    std::string oldPath = static_cast<const char*>(doc->GetPathName());
-
-    // DoSave, not OnSaveDocument: the canonical doc.cpp::DoSave runs the
-    // on_world_save script handler and the OnPluginWorldSave callback before
-    // delegating to the base (which does the actual write).
-    if (!doc->DoSave(savePath.c_str(), TRUE)) {
-        wxMessageBox(wxT("Failed to save world file."), wxT("Save Error"), wxICON_ERROR | wxOK);
-        return;
-    }
-
-    // Update the document's path so subsequent Ctrl+S uses the same file.
-    doc->SetPathName(savePath.c_str());
-    doc->SetModifiedFlag(FALSE);
-
-    // Saving a world does not change which worlds open at startup — see the
-    // note in hook_open_world_file.
-    recent_worlds_add(savePath);
+    if (g_wxhook_save_world)
+        g_wxhook_save_world(doc, saveAs, child);
 }
 
 // (Quick Connect is no longer a hand-built wx dialog: the canonical
@@ -2766,9 +2799,6 @@ static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
     if (path.IsEmpty()) return false;
 
     std::string savePath = path.ToUTF8().data();
-
-    // Old path first — DoSave calls SetPathName (see the File > Save hook).
-    std::string oldPath = static_cast<const char*>(doc->GetPathName());
 
     // DoSave runs on_world_save + OnPluginWorldSave, then writes.
     if (!doc->DoSave(savePath.c_str(), TRUE)) {
@@ -4822,9 +4852,36 @@ static char* hook_get_window_text(void* hwnd)
 // ── CEdit selection / line / insertion (the canonical dialogs use these for
 // Go-To-Line, insert-at-caret of special chars / regexp tokens, Tab, and the
 // Notes-page Find).  hwnd is the live wxTextCtrl bound by DDX_Control. ──────
+//
+// These numbers cross a seam.  wxTextCtrl counts CHARACTERS, but every
+// canonical caller uses the same numbers as indices into the UTF-8 CString it
+// got from GetWindowText -- Complete Word slices the line with them, the
+// Function List splices at them, the Notes-page Find scans from them.  So one
+// non-ASCII character anywhere before the caret shifted every offset after it
+// and the edit landed in the wrong place.  Convert at the hook boundary, the
+// way commandSelection() already does for the command bar.
+static long edit_byte_to_char(wxTextCtrl* t, long byteOffset) {
+    // Named local, NOT t->GetValue().utf8_str(): the buffer can be a
+    // non-owning view into a string that dies at the semicolon.
+    const wxString value = t->GetValue();
+    const wxScopedCharBuffer utf8 = value.utf8_str();
+    return (long) UTF8ByteToCharOffset(utf8.data(), utf8.length(),
+                                       (size_t) (byteOffset < 0 ? 0 : byteOffset));
+}
+static long edit_char_to_byte(wxTextCtrl* t, long charOffset) {
+    const wxString value = t->GetValue();          // named local -- see above
+    const wxScopedCharBuffer utf8 = value.utf8_str();
+    return (long) UTF8CharToByteOffset(utf8.data(), utf8.length(),
+                                       (size_t) (charOffset < 0 ? 0 : charOffset));
+}
+
 static void hook_edit_get_sel(void* hwnd, int* s, int* e) {
     long from = 0, to = 0;
-    if (auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl)) t->GetSelection(&from, &to);
+    if (auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl)) {
+        t->GetSelection(&from, &to);
+        from = edit_char_to_byte(t, from);
+        to   = edit_char_to_byte(t, to);
+    }
     if (s) *s = (int) from;
     if (e) *e = (int) to;
 }
@@ -4832,8 +4889,8 @@ static void hook_edit_set_sel(void* hwnd, int s, int e) {
     auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl);
     if (!t) return;
     if (s < 0) { long ip = t->GetInsertionPoint(); t->SetSelection(ip, ip); return; }  // SetSel(-1,..) deselects
-    long end = (e < 0) ? t->GetLastPosition() : (long) e;                              // SetSel(s,-1) → to end
-    t->SetSelection((long) s, end);
+    long end = (e < 0) ? t->GetLastPosition() : edit_byte_to_char(t, e);               // SetSel(s,-1) → to end
+    t->SetSelection(edit_byte_to_char(t, s), end);
     t->ShowPosition(end);
 }
 static void hook_edit_replace_sel(void* hwnd, const char* text) {
@@ -4844,23 +4901,29 @@ static void hook_edit_replace_sel(void* hwnd, const char* text) {
     if (from != to) t->Replace(from, to, s);   // replace the selection
     else            t->WriteText(s);            // or insert at the caret
 }
+// Ops 1-4 answer in BYTES, and ops 2/3 are handed a byte offset -- see the
+// seam note above hook_edit_get_sel.  Only op 0 (the line count) is free of it.
 static int hook_edit_line_info(void* hwnd, int op, int arg) {
     auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl);
     if (!t) return 0;
     long col = 0, line = 0;
     switch (op) {
     case 0: return (int) t->GetNumberOfLines();                          // line count
-    case 1:                                                              // char index of line `arg`
+    case 1:                                                              // byte index of line `arg`
         if (arg < 0) { if (!t->PositionToXY(t->GetInsertionPoint(), &col, &line)) line = 0; }
         else         line = arg;
-        { long pos = t->XYToPosition(0, line); return pos < 0 ? 0 : (int) pos; }
-    case 2:                                                              // length of line holding char `arg`
-        if (!t->PositionToXY(arg < 0 ? t->GetInsertionPoint() : (long) arg, &col, &line)) return 0;
-        return (int) t->GetLineLength(line);
-    case 3:                                                              // line of char `arg`
-        if (!t->PositionToXY(arg < 0 ? t->GetInsertionPoint() : (long) arg, &col, &line)) return 0;
+        { long pos = t->XYToPosition(0, line);
+          return pos < 0 ? 0 : (int) edit_char_to_byte(t, pos); }
+    case 2:                                                              // byte length of the line holding byte `arg`
+        if (!t->PositionToXY(arg < 0 ? t->GetInsertionPoint()
+                                     : edit_byte_to_char(t, arg), &col, &line)) return 0;
+        { const wxString text = t->GetLineText(line);   // named local -- non-owning buffer
+          return (int) text.utf8_str().length(); }
+    case 3:                                                              // line of byte `arg`
+        if (!t->PositionToXY(arg < 0 ? t->GetInsertionPoint()
+                                     : edit_byte_to_char(t, arg), &col, &line)) return 0;
         return (int) line;
-    case 4: return (int) t->GetLastPosition();                           // total text length
+    case 4: return (int) edit_char_to_byte(t, t->GetLastPosition());     // total text length
     }
     return 0;
 }

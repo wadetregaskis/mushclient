@@ -329,6 +329,10 @@ public:
     void PrintWorld(bool selectionOnly = false);
     bool BuildPrintLines(bool selectionOnly, std::vector<SPrintLine>& lines) const;
     bool HasOutputSelection() const;
+    // File ▸ Save Selection (2026-08-18): write the output selection to `path`
+    // as UTF-8.  Canonically CMUSHView::OnFileSaveselection, on a view this
+    // port never constructs, so the command did nothing here at all.
+    bool SaveSelectionToFile(const wxString& path);
     // Ctrl+click alias menu (2026-08-13): word under the hit for GetInfo(86),
     // then a wxMenu of every enabled, labelled alias flagged "menu", and the
     // chosen one executed -- the doc's hoisted trio does the engine half.

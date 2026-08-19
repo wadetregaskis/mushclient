@@ -13,6 +13,7 @@
 #include <wx/clipbrd.h>   // wxTheClipboard, wxTextDataObject, wxDF_TEXT
 #include <wx/display.h>   // wxDisplay (usable screen area for the default size)
 #include <wx/tooltip.h>   // wxToolTip::SetDelay/SetAutoPop — tooltip timing options
+#include <wx/file.h>      // wxFile — File ▸ Save Selection writes the pane text
 #include <string>
 #include <netdb.h>  // getaddrinfo, freeaddrinfo
 
@@ -2477,6 +2478,32 @@ void CWorldChildFrame::PrintWorld(bool selectionOnly)
                         (int) App.m_nPrinterLeftMargin,
                         (int) App.m_nPrinterTopMargin,
                         (int) App.m_nPrinterLinesPerPage);
+}
+
+// File ▸ Save Selection.  The canonical handler is CMUSHView::OnFileSaveselection
+// (mushview.cpp:3995), which walks the doc's lines into a CFile; CMUSHView is
+// never instantiated here, so the command had no implementation at all and
+// there was no way on macOS to write the output selection to a file.  The pane
+// already holds the selected text, so this is the same job one layer down.
+// Returns false if there is nothing selected or the file could not be written.
+bool CWorldChildFrame::SaveSelectionToFile(const wxString& path)
+{
+    if (!m_output || path.IsEmpty()) return false;
+    if (!HasOutputSelection())       return false;
+
+    const wxString text = m_output->GetSelectionText();
+
+    wxFile f;
+    if (!f.Create(path, /*overwrite=*/true))
+        return false;
+
+    // UTF-8, like everything else the port writes: the pane's text is already
+    // decoded, and a selection can hold anything the MUD sent.  Named local --
+    // a buffer taken from a temporary wxString dangles.
+    const wxScopedCharBuffer utf8 = text.utf8_str();
+    const bool ok = f.Write(utf8.data(), utf8.length()) == utf8.length();
+    f.Close();
+    return ok;
 }
 
 // ── View-level output/input commands ──────────────────────────────────────────

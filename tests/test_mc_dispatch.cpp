@@ -52,6 +52,12 @@ VARIANT vi4(long n)          { VARIANT v; VariantInit(&v); v.vt = VT_I4;   v.lVa
 VARIANT vi2(short n)         { VARIANT v; VariantInit(&v); v.vt = VT_I2;   v.iVal    = n; return v; }
 VARIANT vr8(double d)        { VARIANT v; VariantInit(&v); v.vt = VT_R8;   v.dblVal  = d; return v; }
 VARIANT vbool(bool b)        { VARIANT v; VariantInit(&v); v.vt = VT_BOOL; v.boolVal = b ? 1 : 0; return v; }
+// The language's nil: Python None, Ruby nil, Perl undef and JavaScript
+// undefined/null all marshal to VT_EMPTY (py_engine.cpp:79 and friends).
+VARIANT vnil()               { VARIANT v; VariantInit(&v); v.vt = VT_EMPTY; v.lVal = 0; return v; }
+// VT_NULL: no engine emits it today, but it is the third no-value VARIANT type
+// a direct MC_DispatchInvoke caller can hand the substrate.
+VARIANT vnull()              { VARIANT v; VariantInit(&v); v.vt = VT_NULL;  v.lVal = 0; return v; }
 
 // Call a method and hand back the result; the caller clears it.
 int call(CMUSHclientDoc& doc, const char* name, std::vector<VARIANT> args, VARIANT& out,
@@ -67,6 +73,27 @@ int call(CMUSHclientDoc& doc, const char* name, std::vector<VARIANT> args, VARIA
 std::string bstr_of(const VARIANT& v)
 {
     return (v.vt == VT_BSTR && v.bstrVal) ? std::string(v.bstrVal) : std::string();
+}
+
+// Add a trigger in a known enabled/disabled state, so an argument-default test
+// can start from the state the call under test must CHANGE.
+void add_trigger(CMUSHclientDoc& doc, const char* name, bool enabled)
+{
+    VARIANT r; VariantInit(&r);
+    call(doc, "AddTrigger", { vstr(name), vstr("match"), vstr(""),
+                              vi4(enabled ? 1 /*eEnabled*/ : 0), vi4(-1),
+                              vi4(0), vstr(""), vstr("") }, r);
+    MC_VariantClear(r);
+}
+
+// Is it enabled?  (GetTriggerInfo info type 8.)
+bool trigger_enabled(CMUSHclientDoc& doc, const char* name)
+{
+    VARIANT info; VariantInit(&info);
+    call(doc, "GetTriggerInfo", { vstr(name), vi2(8) }, info);
+    const bool on = (info.vt == VT_BOOL && info.boolVal != 0);
+    MC_VariantClear(info);
+    return on;
 }
 
 // Set a variable through dispatch, read it back through dispatch, return the
@@ -431,6 +458,171 @@ TEST(McDispatch, OmittedTrailingArgsTakeTheLuaDefaults)
     call(doc, "DatabaseClose", { vstr("db") }, dbc);
     MC_VariantClear(dbc);
     ::unlink(dbpath);
+}
+
+
+// ── an EXPLICIT nil is an omitted argument, not a zero ─────────────────────
+//
+// Python None, Ruby nil, Perl undef and JavaScript undefined/null all reach the
+// substrate as VT_EMPTY.  The padding above used to fill only slots BEYOND the
+// supplied count, so an explicit nil sailed past the default table and
+// var_to_long read it as 0 -- which made the two spellings of one call mean
+// OPPOSITE things: world.EnableTrigger("t") enabled the trigger and
+// world.EnableTrigger("t", None) DISABLED it, both returning eOK.
+//
+// Lua, whose opt* defaults kArgDefaults copies, never had that split:
+// optboolean (lua_methods.cpp:335) says "nil will default to the default", and
+// my_optnumber is luaL_opt, i.e. lua_isnoneornil.  That is shipping Windows
+// source, so this is Windows parity for the language where MUSHclient's
+// optional-argument defaults are actually defined.
+//
+// The fixture is chosen so "the call did nothing" fails every row: the rows
+// that must ENABLE start disabled, and the row that must DISABLE starts
+// enabled.  Asserting the enable/disable OUTCOME rather than the coerced number
+// is the point -- the defect was an inverted effect, not a wrong integer.
+TEST(McDispatch, ExplicitNilTakesTheSameDefaultAsAnOmittedArgument)
+{
+    CMUSHclientDoc doc;
+
+    add_trigger(doc, "t_omit",  false);
+    add_trigger(doc, "t_nil",   false);
+    add_trigger(doc, "t_null",  false);
+    add_trigger(doc, "t_true",  false);
+    add_trigger(doc, "t_false", true);
+    ASSERT_FALSE(trigger_enabled(doc, "t_omit"));      // the fixture really is
+    ASSERT_TRUE (trigger_enabled(doc, "t_false"));     // non-degenerate
+
+    // omitted -- the behaviour the nil rows must match.
+    VARIANT o; VariantInit(&o);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("t_omit") }, o));
+    EXPECT_EQ((long) eOK, o.lVal);
+    MC_VariantClear(o);
+    EXPECT_TRUE(trigger_enabled(doc, "t_omit"));
+
+    // explicit nil -- the bug: this used to disable.
+    VARIANT n; VariantInit(&n);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("t_nil"), vnil() }, n));
+    EXPECT_EQ((long) eOK, n.lVal);
+    MC_VariantClear(n);
+    EXPECT_TRUE(trigger_enabled(doc, "t_nil"));
+
+    // explicit VT_NULL -- same rule, from the same reasoning.
+    VARIANT z; VariantInit(&z);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("t_null"), vnull() }, z));
+    MC_VariantClear(z);
+    EXPECT_TRUE(trigger_enabled(doc, "t_null"));
+
+    // explicit true -- unchanged, and not vacuous: it starts disabled.
+    VARIANT t; VariantInit(&t);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("t_true"), vbool(true) }, t));
+    MC_VariantClear(t);
+    EXPECT_TRUE(trigger_enabled(doc, "t_true"));
+
+    // explicit false -- THE control.  A supplied value is never defaulted, so a
+    // sloppier fix ("anything falsy means absent") passes every row above and
+    // fails here.
+    VARIANT f; VariantInit(&f);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("t_false"), vbool(false) }, f));
+    MC_VariantClear(f);
+    EXPECT_FALSE(trigger_enabled(doc, "t_false"));
+}
+
+// A second method, so the rule is not one fixture's accident: a NUMERIC default
+// rather than a boolean one, on a method with no world state at all.
+// BlendPixel's Opacity defaults to 1.0 (fully apply the blend colour); the
+// zero-coerced nil made it 0.0, which returns the BASE colour instead -- the
+// same inversion wearing different clothes.
+TEST(McDispatch, ExplicitNilTakesANumericDefaultToo)
+{
+    CMUSHclientDoc doc;
+    const long blend = 0x0000FF, base = 0x00FF00;   // mode 1 = Blend_Normal
+
+    VARIANT full; VariantInit(&full);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "BlendPixel",
+        { vi4(blend), vi4(base), vi2(1), vr8(1.0) }, full));
+    VARIANT none; VariantInit(&none);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "BlendPixel",
+        { vi4(blend), vi4(base), vi2(1), vr8(0.0) }, none));
+    // The two endpoints must differ, or nothing below can discriminate.
+    ASSERT_NE(full.lVal, none.lVal);
+
+    VARIANT omitted; VariantInit(&omitted);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "BlendPixel",
+        { vi4(blend), vi4(base), vi2(1) }, omitted));
+    EXPECT_EQ(full.lVal, omitted.lVal);
+
+    VARIANT nil; VariantInit(&nil);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "BlendPixel",
+        { vi4(blend), vi4(base), vi2(1), vnil() }, nil));
+    EXPECT_EQ(full.lVal, nil.lVal);        // not none.lVal, which was the bug
+
+    MC_VariantClear(full); MC_VariantClear(none);
+    MC_VariantClear(omitted); MC_VariantClear(nil);
+}
+
+// Filling a nil slot must not SHORTEN the list.  Most defaulted slots are a
+// method's LAST, where the distinction cannot show; five window methods put
+// theirs in the middle (WindowDrawImage's Mode, WindowBlendImage's Opacity,
+// WindowFont's Charset, ...), and there a length computed from the defaulted
+// slot alone throws away every argument after it -- for DrawImage, the source
+// rectangle, which then reads as 0,0,0,0 and means "the whole image".
+//
+// So this drives the real thing, through the surface the headless tests raster
+// into.  Three distinct colours make all three outcomes distinguishable:
+//   drawn from the right sub-rectangle -> RED    (correct)
+//   drawn from the whole image         -> BLUE   (the length was truncated)
+//   not drawn at all                   -> GREEN  (Mode's nil never took its
+//                                                 default, so no case matched)
+TEST(McDispatch, AnExplicitNilDoesNotTruncateTheArgumentsAfterIt)
+{
+    const long kRed = 0x0000FF, kBlue = 0xFF0000, kGreen = 0x00FF00;
+    CMUSHclientDoc doc;
+
+    // A 4x4 blue source window whose bottom-right 2x2 quadrant is red.
+    VARIANT w; VariantInit(&w);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "WindowCreate",
+        { vstr("src"), vi4(0), vi4(0), vi4(4), vi4(4), vi2(0), vi4(0), vi4(kBlue) }, w));
+    ASSERT_EQ((long) eOK, w.lVal);
+    MC_VariantClear(w);
+    VARIANT fill; VariantInit(&fill);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "WindowRectOp",
+        { vstr("src"), vi2(2), vi4(2), vi4(2), vi4(4), vi4(4), vi4(kRed), vi4(0) }, fill));
+    ASSERT_EQ((long) eOK, fill.lVal);
+    MC_VariantClear(fill);
+
+    // The fixture is non-degenerate: the two source quadrants really differ.
+    VARIANT p; VariantInit(&p);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "WindowGetPixel", { vstr("src"), vi4(0), vi4(0) }, p));
+    ASSERT_EQ(kBlue, p.lVal);
+    MC_VariantClear(p);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "WindowGetPixel", { vstr("src"), vi4(3), vi4(3) }, p));
+    ASSERT_EQ(kRed, p.lVal);
+    MC_VariantClear(p);
+
+    // A green destination, and the source window captured into an image on it.
+    VARIANT d; VariantInit(&d);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "WindowCreate",
+        { vstr("dst"), vi4(0), vi4(0), vi4(4), vi4(4), vi2(0), vi4(0), vi4(kGreen) }, d));
+    ASSERT_EQ((long) eOK, d.lVal);
+    MC_VariantClear(d);
+    VARIANT img; VariantInit(&img);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "WindowImageFromWindow",
+        { vstr("dst"), vstr("img"), vstr("src") }, img));
+    ASSERT_EQ((long) eOK, img.lVal);
+    MC_VariantClear(img);
+
+    // Mode (slot 6) explicitly nil -> its default 1, a straight copy; the source
+    // rectangle after it names the red quadrant.
+    VARIANT drew; VariantInit(&drew);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "WindowDrawImage",
+        { vstr("dst"), vstr("img"), vi4(0), vi4(0), vi4(0), vi4(0), vnil(),
+          vi4(2), vi4(2), vi4(4), vi4(4) }, drew));
+    ASSERT_EQ((long) eOK, drew.lVal);
+    MC_VariantClear(drew);
+
+    ASSERT_EQ(MC_DISP_OK, call(doc, "WindowGetPixel", { vstr("dst"), vi4(0), vi4(0) }, p));
+    EXPECT_EQ(kRed, p.lVal);
+    MC_VariantClear(p);
 }
 
 // The window default belongs to the methods that HAVE a Which parameter.  The
@@ -839,6 +1031,55 @@ TEST(McDispatch, StrictOnStillHonoursTheArgumentDefaults)
     call(doc, "DatabaseClose", { vstr("db") }, dbc);
     MC_VariantClear(dbc);
     ::unlink(dbpath);
+}
+
+// Strict must not read an explicit nil as a MISSING argument.  The padding
+// treats the two alike -- that is the fix above -- but the arity check counts
+// what the caller WROTE, so turning the option on cannot start rejecting
+// world.EnableTrigger("t", None): a call that works with strict off, and whose
+// omitted-argument spelling works with strict on, must work here too.
+//
+// The pair of halves is what makes it a test rather than a restatement: the
+// nil-filled slot is accepted because the slot HAS a default, while the same
+// nil in a slot that has none (SetVariable's value) is still a supplied
+// argument and so still passes the count -- it is the trailing slot that must
+// not be silently un-counted.
+TEST(McDispatch, StrictOnAcceptsAnExplicitNil)
+{
+    CMUSHclientDoc doc;
+    doc.m_bStrictScriptArguments = TRUE;
+
+    add_trigger(doc, "s_nil",   false);
+    add_trigger(doc, "s_false", true);
+
+    VARIANT n; VariantInit(&n);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("s_nil"), vnil() }, n));
+    EXPECT_EQ((long) eOK, n.lVal);
+    MC_VariantClear(n);
+    EXPECT_TRUE(trigger_enabled(doc, "s_nil"));       // and it took the default
+
+    // ...and strict did not quietly change what a SUPPLIED false means either.
+    VARIANT f; VariantInit(&f);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("s_false"), vbool(false) }, f));
+    MC_VariantClear(f);
+    EXPECT_FALSE(trigger_enabled(doc, "s_false"));
+
+    // A nil in a slot with NO default is still a supplied argument: the call is
+    // accepted (it is not short) and the zero-value coercion stands.
+    VARIANT s; VariantInit(&s);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "SetVariable", { vstr("sv"), vnil() }, s));
+    MC_VariantClear(s);
+    VARIANT g; VariantInit(&g);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetVariable", { vstr("sv") }, g));
+    EXPECT_EQ((int) VT_BSTR, (int) g.vt);             // it really was created
+    EXPECT_EQ(std::string(""), bstr_of(g));
+    MC_VariantClear(g);
+
+    // The control: the option is still ON and still refuses a genuinely short
+    // list, so the three acceptances above are not "strict quietly off".
+    VARIANT bad; VariantInit(&bad);
+    EXPECT_EQ(MC_DISP_BADARGS, call(doc, "SetVariable", { vstr("short") }, bad));
+    MC_VariantClear(bad);
 }
 
 // The by-ref getters.  GetTrigger/GetAlias/GetTimer declare trailing [out]

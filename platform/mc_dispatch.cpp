@@ -458,36 +458,72 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
   if (it == table().end())
     return MC_DISP_UNKNOWN;
 
-  // Pad a short list up to the highest defaulted slot.  The padded vector
-  // holds shallow VIEWS of the caller's VARIANTs (the thunk only reads them);
-  // filler slots without a default carry the same VT_ERROR sentinel arg_at
-  // hands out, so unlisted parameters keep their zero-fill semantics.
+  // Pad the defaulted slots the caller did not fill.  The padded vector holds
+  // shallow VIEWS of the caller's VARIANTs (the thunk only reads them); filler
+  // slots without a default carry the same VT_ERROR sentinel arg_at hands out,
+  // so unlisted parameters keep their zero-fill semantics.
+  //
+  // "Did not fill" covers TWO shapes, and they must be one rule:
+  //   * a slot beyond the end of the list — the caller omitted it; and
+  //   * a slot inside the list holding the language's nil.
+  // Python None, Ruby nil, Perl undef and JavaScript undefined/null all marshal
+  // to VT_EMPTY (py_engine.cpp:79, ruby_engine.cpp:119, perl_engine.cpp:79,
+  // js_engine.cpp:195).  While only the first shape took the default, the two
+  // spellings of one call meant OPPOSITE things: world.EnableTrigger("t")
+  // enabled the trigger and world.EnableTrigger("t", None) — VT_EMPTY, which
+  // var_to_long reads as 0 — DISABLED it, silently, returning eOK either way.
+  //
+  // Lua, whose opt* defaults this table copies, has never had that split:
+  // optboolean says in so many words that "nil will default to the default"
+  // (lua_methods.cpp:335) and my_optnumber is luaL_opt, i.e. lua_isnoneornil.
+  // That is shipping Windows source, so matching it is Windows parity for the
+  // one language where MUSHclient's optional-argument defaults are actually
+  // defined.  (What a real COM caller's explicit VT_EMPTY does inside MFC's
+  // IDispatch is not knowable from this tree — but it is also moot: COM refuses
+  // a short list for these methods outright, so kArgDefaults is Lua parity by
+  // construction, never COM parity, and the whole table would be wrong if the
+  // COM answer were the one being matched.)
+  //
+  // VT_ERROR is the port's own "omitted" marker (DISP_E_PARAMNOTFOUND's shape);
+  // VT_NULL no engine emits today, but it is the third no-value VARIANT type a
+  // direct MC_DispatchInvoke caller can hand us, and coercing it to 0 would be
+  // the same inversion.  A SUPPLIED value — including an explicit false — is
+  // never touched.
+  auto unsupplied = [](const VARIANT& v)
+    { return v.vt == VT_EMPTY || v.vt == VT_ERROR || v.vt == VT_NULL; };
+
   std::vector<VARIANT> padded;
   const int nSupplied = nargs;      // before the padding below rewrites it
-  int maxSlot = -1;
+  int  maxSlot = -1;                // highest defaulted slot still to fill
+  bool anyToFill = false;
   for (const ArgDefault& d : kArgDefaults)
-    if (d.slot >= nargs && d.slot > maxSlot && key == d.method)
-      maxSlot = d.slot;
-  if (maxSlot >= 0)
+    if (key == d.method && (d.slot >= nargs || unsupplied (args[d.slot])))
+      {
+      anyToFill = true;
+      if (d.slot > maxSlot) maxSlot = d.slot;
+      }
+  if (anyToFill)
     {
-    padded.reserve((size_t) maxSlot + 1);
-    for (int i = 0; i <= maxSlot; ++i)
+    // Never SHORTEN the list: an explicit nil in an early slot must not throw
+    // away the arguments after it (extra arguments are ignored, not rejected).
+    const int total = (maxSlot + 1 > nargs) ? maxSlot + 1 : nargs;
+    padded.reserve((size_t) total);
+    for (int i = 0; i < total; ++i)
       {
       VARIANT v;
       VariantInit(&v);
       if (i < nargs)
         v = args[i];                       // borrowed, not owned
       else
-        {
-        v.vt = VT_ERROR; v.lVal = 0;       // "not supplied"
+        { v.vt = VT_ERROR; v.lVal = 0; }   // "not supplied"
+      if (unsupplied (v))
         for (const ArgDefault& d : kArgDefaults)
           if (d.slot == i && key == d.method)
             { v.vt = VT_I4; v.lVal = d.value; break; }
-        }
       padded.push_back(v);
       }
     args  = padded.data();
-    nargs = maxSlot + 1;
+    nargs = total;
     }
 
   // ── Strict argument checking (world option "script_strict_arguments") ────
@@ -500,6 +536,10 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
   //
   // nSupplied, not nargs: the padding rewrote nargs upward, and asking whether
   // the PADDED list is long enough would compare the fill against itself.
+  // nSupplied also counts an explicitly-passed nil, which the padding above
+  // treats as unfilled — deliberately, and the two readings must not be merged:
+  // strict must not reject world.EnableTrigger("t", None) when it accepts
+  // world.EnableTrigger("t").
   if (doc && doc->m_bStrictScriptArguments &&
       !(flags & MC_DISP_F_INTROSPECT) &&
       nSupplied < required_args (key, it->second.inArity))

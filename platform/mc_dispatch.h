@@ -86,6 +86,13 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
 // The check runs AFTER the kArgDefaults padding, so the Lua-parity defaults
 // (EnableTrigger's implicit `true`, DatabaseOpen's sqlite flags, …) still
 // apply: a slot the caller omitted is only an error when it has no default.
+//
+// It counts the arguments the caller WROTE, not the padded list, so an
+// explicitly-passed nil (VT_EMPTY) is a supplied argument here even though the
+// padding above treats it as an unfilled slot.  Those two readings must stay
+// apart: turning strict on would otherwise start rejecting
+// world.EnableTrigger("t", None), a call the same option leaves working when
+// spelled world.EnableTrigger("t").
 
 // How many leading arguments `name` genuinely requires -- its declared arity
 // less any trailing slots kArgDefaults supplies.  -1 if there is no such

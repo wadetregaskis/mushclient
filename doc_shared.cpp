@@ -5575,17 +5575,20 @@ void CMUSHclientDoc::SendTo (
 // instantiated, and consequently NONE of the six auto-say settings did anything
 // at all — the page rendered and saved correctly, but the feature was inert.
 //
-// Returns true when auto-say consumed the command; false to let the caller send
-// strFullCommand normally.  strFullCommand is modified in place when the
-// override prefix is stripped (so the caller sends the stripped text).
+// eAutoSayNotApplied lets the caller send strFullCommand normally;
+// strFullCommand is modified in place when the override prefix is stripped (so
+// the caller sends the stripped text).  The other two results both mean
+// auto-say consumed the command, and the caller must tell them apart: the
+// "not connected" arm below sends NOTHING, and a command that was never sent
+// does not belong in the command history.
 //
 // NOTE: sendvw.cpp still carries its own copy of this logic rather than calling
 // through here.  Collapsing the two is worthwhile but is deliberately NOT done
 // blind: in CSendView the "not connected" arm below is a bare `return` that
-// exits SendCommand *before* its command-history/cleanup tail (sendvw.cpp:713+),
-// so routing it through a bool return would quietly change Windows behaviour.
+// exits SendCommand *before* its command-history/cleanup tail (sendvw.cpp:713+)
+// -- which is exactly the difference eAutoSayRefusedNotConnected now carries.
 // That reconciliation needs a Windows build to verify.
-bool CMUSHclientDoc::ApplyAutoSay (CString & strFullCommand)
+eAutoSayResult CMUSHclientDoc::ApplyAutoSay (CString & strFullCommand)
   {
 BOOL bAutoSay = m_bEnableAutoSay;
 
@@ -5623,12 +5626,12 @@ BOOL bAutoSay = m_bEnableAutoSay;
       bAutoSay = false;
 
   if (!bAutoSay)
-    return false;     // caller sends strFullCommand normally
+    return eAutoSayNotApplied;    // caller sends strFullCommand normally
 
   // let them know if they are foolishly trying to send to a closed connection
 
   if (!m_bReEvaluateAutoSay && CheckConnected ())
-    return true;      // consumed: nothing to send
+    return eAutoSayRefusedNotConnected;   // dropped: nothing was sent
 
   // break up auto-say string into a list, terminated by newlines
   CStringList strList;
@@ -5670,5 +5673,5 @@ BOOL bAutoSay = m_bEnableAutoSay;
   m_bEnableAutoSay = true; // re-enable it
   m_enable_command_stack = bSaveCommandStack; // re-enable it
 
-  return true;      // consumed
+  return eAutoSaySent;      // consumed
   } // end of CMUSHclientDoc::ApplyAutoSay

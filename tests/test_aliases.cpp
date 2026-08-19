@@ -1505,3 +1505,56 @@ TEST(AliasApi, SetAliasOptionScriptResolvesAndSwapsTheCallback)
     EXPECT_STREQ("AAB", (const char*)v->strContents);
     EXPECT_EQ(4L, a->nMatched);
 }
+
+// ── Auto-say: "sent" and "refused" are not the same answer ────────────────
+// ApplyAutoSay (doc_shared.cpp) used to answer a bare `true` for BOTH "I
+// prepended the auto-say string and sent it" and "the world is not connected,
+// so I dropped it".  The port's command bar took that as "consumed, therefore
+// record it", so a command the world never accepted still joined the up-arrow
+// history.  Windows cannot make that mistake: its copy of this logic is inline
+// in CSendView::SendCommand, where the not-connected arm is a bare `return`
+// taken BEFORE the command-history add (sendvw.cpp:670-671).
+//
+// m_server "0.0.0.0" is the address CheckConnected refuses silently
+// (doc.cpp:2739-2740), which is what lets the refused arm be reached here
+// without a message box.  The transport stays attached in both worlds, so
+// "nothing was sent" is a statement about ApplyAutoSay and not about the
+// fixture — the connected control proves the same fixture DOES send.
+TEST(AutoSayTest, RefusedWhenNotConnectedIsDistinctFromSent)
+{
+    {   // connected: auto-say prepends and sends
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.m_bEnableAutoSay     = TRUE;
+        doc.m_bReEvaluateAutoSay = FALSE;
+        doc.m_strAutoSayString   = "say ";
+
+        CString cmd("hello there");
+        EXPECT_EQ((int) eAutoSaySent, (int) doc.ApplyAutoSay(cmd));
+        EXPECT_STREQ("say hello there\r\n", wire(doc)->sent.c_str());
+    }
+
+    {   // not connected: refused, and nothing went out
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.m_bEnableAutoSay     = TRUE;
+        doc.m_bReEvaluateAutoSay = FALSE;
+        doc.m_strAutoSayString   = "say ";
+        doc.m_iConnectPhase      = eConnectNotConnected;
+        doc.m_server             = "0.0.0.0";
+
+        CString cmd("hello there");
+        EXPECT_EQ((int) eAutoSayRefusedNotConnected, (int) doc.ApplyAutoSay(cmd));
+        EXPECT_TRUE(wire(doc)->sent.empty());
+    }
+
+    {   // ...and "auto-say does not apply" is a third answer again, or the
+        // caller could not tell "send it yourself" from "already handled".
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.m_bEnableAutoSay     = FALSE;
+        doc.m_strAutoSayString   = "say ";
+
+        CString cmd("hello there");
+        EXPECT_EQ((int) eAutoSayNotApplied, (int) doc.ApplyAutoSay(cmd));
+        EXPECT_TRUE(wire(doc)->sent.empty());
+        EXPECT_STREQ("hello there", (const char *) cmd);   // handed back intact
+    }
+}

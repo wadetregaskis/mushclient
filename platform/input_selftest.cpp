@@ -274,6 +274,95 @@ int RunInputSelfTest()
     chkStr(inp->GetValue(), "newer still",
            "Up from the start of the text still browses the history");
 
+    // ── caret movement does not cancel a history browse ────────────────────
+    // Every key that was not Up/Down or a bare modifier reset m_histIdx, so
+    // pressing Left to fix one character of a recalled command -- or Home/End
+    // to reach an end of it -- threw the browse away and sent the next Up back
+    // to the newest entry.  Windows keeps its history position until the
+    // command is sent.  Text-CHANGING keys still reset, deliberately: there is
+    // no CheckTyping / confirm-before-replacing-typing equivalent here, so that
+    // reset is what stops an edit being silently discarded -- which is why the
+    // last check below is a control and not an oversight.
+    child->addToCommandHistory("hist_a");
+    child->addToCommandHistory("hist_b");
+    child->addToCommandHistory("hist_c");
+
+    // Each arm starts from the bottom of the history.  inp->Clear() alone will
+    // NOT do that -- it is a programmatic change, so no key event reaches the
+    // frame and the browse cursor stays exactly where the previous arm left it
+    // -- so send a text-changing key, which is the very reset under test.
+    auto restartBrowse = [&]() { sendKey(inp, 'X'); inp->Clear(); };
+
+    restartBrowse();
+    sendKey(inp, WXK_UP);
+    sendKey(inp, WXK_UP);
+    chkStr(inp->GetValue(), "hist_b", "two Ups reach the second-newest entry");
+    sendKey(inp, WXK_LEFT);
+    sendKey(inp, WXK_UP);
+    chkStr(inp->GetValue(), "hist_a",
+           "...and a caret move between them does not restart the browse");
+
+    // Home and End are the same kind of key.
+    restartBrowse();
+    sendKey(inp, WXK_UP);
+    sendKey(inp, WXK_UP);
+    sendKey(inp, WXK_HOME);
+    sendKey(inp, WXK_END);
+    sendKey(inp, WXK_UP);
+    chkStr(inp->GetValue(), "hist_a", "...nor do Home and End");
+
+    // The control: a key that CHANGES the text still cancels, so the two checks
+    // above cannot be satisfied by a handler that simply never resets.
+    restartBrowse();
+    sendKey(inp, WXK_UP);
+    sendKey(inp, WXK_UP);
+    sendKey(inp, 'X');
+    sendKey(inp, WXK_UP);
+    chkStr(inp->GetValue(), "hist_c",
+           "...but typing a character does cancel it, back to the newest");
+
+    // ── Escape's history push must not leave the browse cursor off by one ──
+    // With escape_deletes_input and save_deleted_command both on, Escape pushes
+    // the discarded text into the history; AT THE LIMIT that costs an
+    // erase(begin()), which shifts every index down by one.  Keeping the browse
+    // position across Escape is right -- Windows' OnProcessEscape does the same
+    // -- but it holds a POSITION, which survives RemoveHead, while this holds an
+    // INDEX, so the cursor was left naming the wrong entry and the next Up
+    // re-showed the line already on screen.
+    {
+        const LONG     savedLines = doc->m_nHistoryLines;
+        const unsigned savedEsc   = doc->m_bEscapeDeletesInput;
+        const LONG     savedSave  = doc->m_bSaveDeletedCommand;
+        doc->m_nHistoryLines       = 20;
+        doc->m_bEscapeDeletesInput = 1;
+        doc->m_bSaveDeletedCommand = 1;
+
+        // Exactly 20 entries: addToCommandHistory trims to the limit after each
+        // add, so whatever the checks above left behind is gone by the last one.
+        for (int i = 0; i < 20; ++i) {
+            char entry[16];
+            snprintf(entry, sizeof(entry), "esc_%02d", i);
+            child->addToCommandHistory(entry);
+        }
+
+        inp->Clear();
+        sendKey(inp, WXK_UP);
+        sendKey(inp, WXK_UP);
+        chkStr(inp->GetValue(), "esc_18", "escape: two Ups reach esc_18");
+
+        // Pushes "esc_18" and evicts "esc_00", so every index moves.
+        sendKey(inp, WXK_ESCAPE);
+        chkStr(inp->GetValue(), "", "...and Escape clears the bar");
+
+        sendKey(inp, WXK_UP);
+        chkStr(inp->GetValue(), "esc_17",
+               "...leaving the browse cursor on the same entry, so Up steps on");
+
+        doc->m_nHistoryLines       = savedLines;
+        doc->m_bEscapeDeletesInput = savedEsc;
+        doc->m_bSaveDeletedCommand = savedSave;
+    }
+
     // ── the spell-check cancel channel ─────────────────────────────────────
     {
         installSpellChecker(spell_cancel);
@@ -434,6 +523,40 @@ int RunInputSelfTest()
         pressEnter2();
         chk(seen() == "[]\n",
             "the callback fires for a bare Enter, with the empty command");
+
+        // ── auto repeat re-enters the SENT command, selected ──────────────
+        // Windows puts strOriginalCommand back in the bar and selects it all
+        // (sendvw.cpp:741-748), so Enter repeats it and typing anything at all
+        // replaces it.  The port cleared the bar and re-derived the repeat from
+        // m_history.back() on the next blank Enter -- a DIFFERENT command as
+        // soon as the one just sent was kept out of the history (an alias with
+        // "omit from command history", or a password).  The auto-repeat-OFF
+        // check above -- "an accepted command still clears the bar" -- is the
+        // control: a handler that always clears fails here, and one that never
+        // clears fails there.
+        {
+            const bool savedRepeat2 = doc->m_bAutoRepeat != 0;
+            doc->m_bAutoRepeat = 1;
+
+            remove(seenPath);
+            inp->SetValue(wxT("north"));
+            pressEnter2();
+            chkStr(inp->GetValue(), "north",
+                   "auto repeat leaves the sent command in the bar");
+            long selFrom = -1, selTo = -1;
+            inp->GetSelection(&selFrom, &selTo);
+            chk(selFrom == 0 && selTo == 5,
+                "...with the whole string selected, so typing replaces it");
+
+            // ...and a second Enter really does send it again -- read off the
+            // plugin's own log, not off the bar, so this is about the SEND and
+            // not a restatement of the check above.
+            pressEnter2();
+            chk(seen() == "[north]\n[north]\n",
+                "...so pressing Enter again repeats the command");
+
+            doc->m_bAutoRepeat = savedRepeat2 ? 1 : 0;
+        }
 
         remove(seenPath);
         remove(pluginPath.c_str());

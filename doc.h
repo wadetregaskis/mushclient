@@ -3043,11 +3043,21 @@ public:
 
 // Implementation
 public:
-	// Port: public entry to the canonical (protected) SaveModified prompt, so the
-	// macOS quit handler (hook_query_quit_save) can prompt to save dirty worlds
-	// before [NSApp terminate:] tears the process down.  A method, not a data
-	// member — no object-layout impact.
-	BOOL PortPromptSaveModified() { return SaveModified(); }
+	// The two halves of SaveModified, public so that a caller closing SEVERAL
+	// worlds can ask them all before ending any of them (MFC does the same
+	// thing one level up: SaveAllModified() then CloseAllDocuments()).  Methods,
+	// not data members — no object-layout impact.
+	//
+	//  QueryCloseWorld  — every question the close asks, plus whatever save the
+	//                     answers call for.  Returns FALSE if the user refused.
+	//                     Runs NO closing side effect: not the on_world_close
+	//                     script, not MXP shutdown, not m_bWorldClosing.
+	//  CommitCloseWorld — those side effects, once the answer is settled.
+	//
+	// The macOS quit handler (hook_query_quit_save) needs both, because
+	// -[NSApp terminate:] bypasses the MFC document flow entirely.
+	BOOL QueryCloseWorld ();
+	void CommitCloseWorld ();
 	virtual ~CMUSHclientDoc();
 	virtual void Serialize(CArchive& ar);   // overridden for document i/o
 #ifdef _DEBUG

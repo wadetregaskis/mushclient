@@ -32,6 +32,7 @@
 #include "platform/wx_outputpane.h"
 #include "pal/itransport.h"          // the recording transport below
 #include "platform/selftest_support.h"   // plugin-loading fixture
+#include "platform/world_close_decision.h"  // QueryThenCloseAllWorlds
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box — answer the
                                      // clear-buffer confirmation prompt
 #include "dialogs/TextAttributesDlg.h"    // Display ▸ Text Attributes
@@ -1575,10 +1576,15 @@ int RunWorldFrameSelfTest()
         static int  s_answer  = IDNO;   // what the user "presses"
         static int  s_saves   = 0;      // calls to the save hook
         static bool s_saveOK  = true;   // whether that save succeeds
+        // WHICH question was asked, not just how many.  Two of the checks below
+        // would pass on a count alone: the close chain used to put up exactly
+        // one prompt for a connected world too -- the wrong one.
+        static std::string s_lastPrompt;
         int  (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
         bool (*savedSaveWorld)(void*, bool, void*)          = g_wxhook_save_world;
-        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+        g_wxhook_message_box = [](const char* text, const char*, unsigned) -> int {
             ++s_prompts;
+            s_lastPrompt = text ? text : "";
             return s_answer;
         };
         // A save that neither touches the disk nor opens the Save As dialog the
@@ -1728,6 +1734,165 @@ int RunWorldFrameSelfTest()
                   "...and the document is still modified, so the user IS asked");
             check(closed, "...and No closes it");
             s_saveOK = true;
+        }
+
+        // ── Cmd+W asks the questions Cmd+Q asks, and no others ─────────────
+        // The close chain is CMUSHclientDoc::SaveModified's, not one the port
+        // invented.  It used to differ in both directions: no warning that
+        // closing would drop a live session, and m_bConfirmBeforeClosingWorld
+        // (default ON) spent on a "Close <world>?" prompt Windows never shows.
+        {
+            App.m_bConfirmBeforeClosingWorld    = 1;
+            App.m_bConfirmBeforeSavingVariables = 1;
+
+            // An idle world -- saved, no variables, not connected -- with the
+            // preference ON.  Nothing to warn about, so nothing is asked.
+            // Cancel is the answer, so a prompt appearing would VETO: `closed`
+            // is what makes this falsifiable rather than a bare count of zero.
+            {
+                CWorldChildFrame* f = makeWorld("zz_selftest_close_idle");
+                CMUSHclientDoc*   d = f->GetDoc();
+                d->SetModifiedFlag(FALSE);
+                d->m_bVariablesChanged = false;
+
+                s_prompts = 0; s_saves = 0; s_answer = IDCANCEL;
+                const bool closed = f->Close(false);
+                wxYield();
+                check(s_prompts == 0,
+                      "an idle, saved, disconnected world is not questioned at "
+                      "all (it used to ask \"Close <world>?\" every time)");
+                check(closed, "...and simply closes");
+            }
+
+            // The same world with a live session: warned, in SaveModified's
+            // words.  Both the count AND the text matter -- the old chain also
+            // asked exactly one question here, just a different one.
+            {
+                CWorldChildFrame* f = makeWorld("zz_selftest_close_connected");
+                CMUSHclientDoc*   d = f->GetDoc();
+                d->SetModifiedFlag(FALSE);
+                d->m_bVariablesChanged = false;
+                d->m_iConnectPhase = eConnectConnectedToMud;
+                d->m_pTransport    = new RecordingTransport();  // the doc owns it
+
+                s_prompts = 0; s_answer = IDCANCEL; s_lastPrompt.clear();
+                const bool vetoed = !f->Close(false);
+                check(vetoed,
+                      "Cancel on the session warning keeps the world open");
+                check(s_prompts == 1, "...after exactly one question");
+                check(s_lastPrompt.find("end your") != std::string::npos &&
+                      s_lastPrompt.find("zz_selftest_close_connected")
+                          != std::string::npos,
+                      "...which is the session warning, naming the world");
+
+                // ...and the preference really is what buys it.
+                App.m_bConfirmBeforeClosingWorld = 0;
+                s_prompts = 0; s_answer = IDCANCEL;
+                const bool closed = f->Close(false);
+                wxYield();
+                check(s_prompts == 0,
+                      "with confirm-before-closing off, a connected world "
+                      "closes without a word");
+                check(closed, "...and it does close");
+                App.m_bConfirmBeforeClosingWorld = 1;
+            }
+        }
+
+        // ── quitting asks EVERY world before closing ANY of them ───────────
+        // The quit hook walks the world list; it used to run the whole of
+        // SaveModified per world as it went, so cancelling at the second world
+        // left the first with its on_world_close script already run, MXP shut
+        // down and m_bWorldClosing stuck true for the rest of the session --
+        // which silently suppressed that world's ON_PLUGIN_GETFOCUS /
+        // ON_PLUGIN_LOSEFOCUS.  Only the CANCEL path is driven through the real
+        // hook: letting it through would close every OTHER world this selftest
+        // still has open.  The committing half is covered against real
+        // documents just below, and headlessly in tests/test_mfc_ui.cpp.
+        {
+            // The hook persists the main window geometry to the user's REAL
+            // preferences on its way in.  Put those keys back afterwards.
+            long mw = -1, mh = -1, mx = LONG_MIN, my = LONG_MIN;
+            bool hadMax = false, maxWas = false, hadSb = false, sbWas = false;
+            {
+                const std::unique_ptr<wxConfigBase> c = OpenAppConfig();
+                if (!c->Read(wxT("/geometry/main_w"), &mw)) mw = -1;
+                if (!c->Read(wxT("/geometry/main_h"), &mh)) mh = -1;
+                if (!c->Read(wxT("/geometry/main_x"), &mx)) mx = LONG_MIN;
+                if (!c->Read(wxT("/geometry/main_y"), &my)) my = LONG_MIN;
+                hadMax = c->Read(wxT("/geometry/main_maximized"), &maxWas);
+                hadSb  = c->Read(wxT("/geometry/status_bar"), &sbWas);
+            }
+
+            // Every world already open must say yes, so that the only refusal
+            // is the one this check plants.  (They are asked first: the doc
+            // template lists them in creation order.)
+            App.m_bConfirmBeforeClosingWorld    = 0;
+            App.m_bConfirmBeforeSavingVariables = 0;
+            if (App.m_pWorldDocTemplate) {
+                POSITION p = App.m_pWorldDocTemplate->GetFirstDocPosition();
+                while (p)
+                    if (CDocument* od = App.m_pWorldDocTemplate->GetNextDoc(p)) {
+                        od->SetModifiedFlag(FALSE);
+                        static_cast<CMUSHclientDoc*>(od)->m_bVariablesChanged = false;
+                    }
+            }
+
+            CWorldChildFrame* fa = makeWorld("zz_selftest_quit_first");
+            CWorldChildFrame* fb = makeWorld("zz_selftest_quit_cancel");
+            CMUSHclientDoc*   da = fa->GetDoc();
+            CMUSHclientDoc*   db = fb->GetDoc();
+            da->SetModifiedFlag(FALSE);
+            da->m_bMXP = true;              // a live MXP session to lose
+            db->SetModifiedFlag(TRUE);      // ...and the world that refuses
+
+            check(g_wxhook_query_quit_save != nullptr,
+                  "quit: the hook is installed");
+            if (g_wxhook_query_quit_save) {
+                s_prompts = 0; s_saves = 0; s_answer = IDCANCEL;
+                const int allowed = g_wxhook_query_quit_save();
+                check(allowed == 0, "quit: Cancel at one world cancels the quit");
+                check(s_prompts == 1, "...having asked that one world");
+                // The world BEFORE it -- the whole point.
+                check(!da->m_bWorldClosing,
+                      "...and the world asked FIRST is not marked closing");
+                check(da->m_bMXP, "...its MXP session is still up");
+                check(fa->GetDoc() == da, "...and its window is still open");
+            }
+
+            // The control, against the same real documents: with nobody
+            // refusing, every world really does close.  Scoped to these two so
+            // the rest of the selftest's worlds survive.
+            {
+                std::vector<CMUSHclientDoc*> pair { da, db };
+                db->SetModifiedFlag(FALSE);      // nothing left to refuse over
+                s_prompts = 0;
+                check(QueryThenCloseAllWorlds(pair),
+                      "quit: with nobody refusing, the close pass runs");
+                check(da->m_bWorldClosing && db->m_bWorldClosing,
+                      "...and BOTH worlds are marked closing");
+                check(!da->m_bMXP, "...with MXP shut down");
+            }
+
+            fa->Close(true);
+            fb->Close(true);
+            wxYield();
+
+            {
+                const std::unique_ptr<wxConfigBase> c = OpenAppConfig();
+                if (mw >= 0) c->Write(wxT("/geometry/main_w"), mw);
+                else         c->DeleteEntry(wxT("/geometry/main_w"));
+                if (mh >= 0) c->Write(wxT("/geometry/main_h"), mh);
+                else         c->DeleteEntry(wxT("/geometry/main_h"));
+                if (mx != LONG_MIN) c->Write(wxT("/geometry/main_x"), mx);
+                else                c->DeleteEntry(wxT("/geometry/main_x"));
+                if (my != LONG_MIN) c->Write(wxT("/geometry/main_y"), my);
+                else                c->DeleteEntry(wxT("/geometry/main_y"));
+                if (hadMax) c->Write(wxT("/geometry/main_maximized"), maxWas);
+                else        c->DeleteEntry(wxT("/geometry/main_maximized"));
+                if (hadSb)  c->Write(wxT("/geometry/status_bar"), sbWas);
+                else        c->DeleteEntry(wxT("/geometry/status_bar"));
+                c->Flush();
+            }
         }
 
         // ── the command history reaches disk on BOTH close paths ───────────

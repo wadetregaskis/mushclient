@@ -265,15 +265,37 @@ if(TARGET mushgui)
     # The notepad windows: CTextDocument, its wxFrame and the quit hook are all
     # GUI-only, so this is the only place the modified-flag / SaveModified /
     # Convert-menu behaviour can be executed at all.
-    # Extended (loop-running) mode, unconditionally: this harness creates,
-    # MOVES and hides real windows, and doing that with no event loop leaves
-    # CoreAnimation's async commit workers racing the main thread -- an
-    # intermittent write-after-free the allocator aborted on (~1 run in 3,
-    # 2026-08-18; 0/40 with the loop).  The --extended-selftest flag exists in
-    # every build; the MUSHCLIENT_EXTENDED_TESTS option gates only the extra
-    # harnesses below.  --notepad-selftest remains for manual loop-free runs.
+    # Extended (loop-running) mode, unconditionally: a real loop, the
+    # watchdog and serialisation, all for free.  The --extended-selftest
+    # flag exists in every build; the MUSHCLIENT_EXTENDED_TESTS option
+    # gates only the extra harnesses below.
+    #
+    # 2026-08-19: the intermittent SIGSEGV/SIGABRT this mode was adopted to
+    # dodge was NOT "CoreAnimation async commit workers", as the note here
+    # used to say -- it was one wxYield() in the harness.  With no active
+    # loop wxYield builds a temporary one and pumps AppKit events into a
+    # half-booted app, corrupting the malloc tiny-zone free list; the loop
+    # hid it because with a loop already active wxYield is ordinary.  The
+    # yield is gone, so --notepad-selftest is sound loop-free again and
+    # selftest_notepad_loopfree below keeps it that way.
     add_test(NAME selftest_notepad
              COMMAND $<TARGET_FILE:mushgui> --extended-selftest=notepad ${_selftest_args})
+
+    # The same harness loop-free, under Guard Malloc.  Loop-free is the mode
+    # that breaks when anything in this harness dispatches events, and
+    # libgmalloc turns that from a ~2-in-12 flake into a deterministic
+    # failure (measured 6/6 with the yield, 0/6 without), which is what
+    # makes it a test rather than a coin toss.  APPLE-only: libgmalloc is
+    # a macOS facility.
+    if(APPLE AND EXISTS /usr/lib/libgmalloc.dylib)
+        add_test(NAME selftest_notepad_loopfree
+                 COMMAND ${CMAKE_COMMAND} -E env
+                         DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib
+                         $<TARGET_FILE:mushgui> --notepad-selftest ${_selftest_args})
+        set_tests_properties(selftest_notepad_loopfree PROPERTIES
+                             RUN_SERIAL TRUE
+                             TIMEOUT 180)
+    endif()
     # Window geometry persistence, the dialog-template -> wx control mapping and
     # the world-creation defaults: wx adapter code mushcore does not link.
     add_test(NAME selftest_gui_bridge

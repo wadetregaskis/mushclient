@@ -4068,6 +4068,29 @@ TEST(LuaR5, WindowPositionsWithWorldView)
     lua_close(L);
 }
 
+// SpellCheckCommand with a live command view: on Windows this walks the
+// CSendView list to reach the command-bar CEdit directly; there is no
+// CSendView on this port, so it used to be permanently dead (-1) even with a
+// world view attached.  A no-op #ifndef _WIN32 arm returns -1 and leaves the
+// bar untouched, failing both assertions below.
+TEST(SpellCheckTest, SpellCheckCommandAppliesCorrectionThroughView)
+{
+    SpellFixture fx("function spellcheck(text, all) return 'the' end\n");
+
+    CMUSHclientDoc doc;
+    FakeWorldView view;
+    view.cmd = "teh cat";
+    doc.m_pWorldView = &view;
+
+    // 1-based [1,3] selects "teh" (StartCol decrements to the 0-based start,
+    // EndCol is already the 0-based exclusive end -- see the SpellCheckCommand
+    // comment on re-encoding through SetCommandSelectionRange).
+    EXPECT_EQ(1L, doc.SpellCheckCommand(1, 3));
+    EXPECT_STREQ("the cat", view.cmd.c_str());
+
+    doc.m_pWorldView = nullptr;
+}
+
 TEST(LuaR5, GetScriptTimeWithCounter)
 {
     CMUSHclientDoc doc;

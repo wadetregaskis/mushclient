@@ -105,11 +105,106 @@ return vaResult;
 } // end of SpellCheck
   
 
-long CMUSHclientDoc::SpellCheckCommand(long StartCol, long EndCol) 
+long CMUSHclientDoc::SpellCheckCommand(long StartCol, long EndCol)
 {
   if (!App.m_bSpellCheckOK)
     return -1;
 
+#ifndef _WIN32
+  // Windows walks the view list for a CSendView to reach the command-bar
+  // CEdit directly.  There is no CSendView on this port (dead view family --
+  // doc_flip_gui_stubs.cpp), so that walk always found nothing and this
+  // whole method was permanently dead (always -1) in the shipping app.
+  // Route through the command-bar seams (doc.h:1692/1717/1724/1729) that
+  // world.GetCommand / world.SetCommand / world.SetCommandSelection already
+  // use instead of a CEdit.
+  if (!m_pWorldView)
+    return -1;    // couldn't find it -- same as Windows' "no CSendView" case
+
+  int nStartChar,
+      nEndChar;
+
+  // get current selection (raw 0-based, matching CEdit::GetSel)
+  {
+  long s = 0, e = 0;
+  GetCommandSelection (s, e);
+  nStartChar = (int) s;
+  nEndChar   = (int) e;
+  }
+
+  // make wanted selection 1-relative
+  if (StartCol > 0)
+    StartCol--;
+
+  bool bHaveSelection = EndCol > StartCol &&
+                         StartCol >= 0 &&
+                         EndCol >= 0;
+
+  // select what the scripter wanted.  StartCol/EndCol are now raw 0-based
+  // (as CEdit::SetSel would take), but SetCommandSelectionRange instead
+  // speaks the 1-based-with-0-meaning-end space of world.SetCommandSelection
+  // (doc.h:1724), so re-encode.  bHaveSelection guarantees StartCol >= 0 and
+  // EndCol > StartCol, i.e. EndCol >= 1, so neither re-encoded argument can
+  // land on that seam's "<= 0 means end of bar" special case.
+  if (bHaveSelection)
+     SetCommandSelectionRange (StartCol + 1, EndCol);
+
+  if (App.m_SpellChecker_Lua)
+    {
+
+    lua_settop(App.m_SpellChecker_Lua, 0);   // clear stack
+
+    lua_getglobal (App.m_SpellChecker_Lua, SPELLCHECKFUNCTION);
+    if (!lua_isfunction (App.m_SpellChecker_Lua, -1))
+      return true;  // assume ok, what can we do?
+
+    // mirrors Windows' GetSelection(CEdit*, CString&): the selected text if
+    // any, else the whole command text, with bAll true iff nothing selected
+    long selStart = 0, selEnd = 0;
+    GetCommandSelection (selStart, selEnd);
+
+    bool bAll = !(selEnd > selStart);
+    CString strText = GetCommandText ().c_str ();
+    if (!bAll)
+      strText = strText.Mid ((int) selStart, (int) (selEnd - selStart));
+
+    lua_pushstring (App.m_SpellChecker_Lua, strText);  // string to be checked
+    lua_pushboolean (App.m_SpellChecker_Lua, bAll);    // doing all?
+
+    int narg = lua_gettop(App.m_SpellChecker_Lua) - 1;  // all but the function
+    int error = CallLuaWithTraceBack (App.m_SpellChecker_Lua, narg, 1);
+
+    if (error)
+      {
+      LuaError (App.m_SpellChecker_Lua, "Run-time error", SPELLCHECKFUNCTION, "Command-line spell-check");
+      lua_close (App.m_SpellChecker_Lua);
+      App.m_SpellChecker_Lua = NULL;
+      App.m_bSpellCheckOK = false;
+      return -1;
+      }
+
+    if (lua_isstring (App.m_SpellChecker_Lua, -1))
+      {
+      const char * p = lua_tostring (App.m_SpellChecker_Lua, -1);
+      if (bAll)
+        ReplaceCommandSelectionRange (0, (long) GetCommandText ().size (), p);
+      else
+        ReplaceCommandSelectionRange (selStart, selEnd, p);
+      // put original selection back.  See the re-encode note above -- an
+      // original EMPTY selection sitting at column 0 of a non-empty bar
+      // (nEndChar == 0) can't be expressed through this seam and restores
+      // to "select to end" instead; a narrow corner case, not a crash.
+      SetCommandSelectionRange (nStartChar + 1, nEndChar);
+      return 1;   // spell checked ok
+      }
+
+    // put original selection back
+    SetCommandSelectionRange (nStartChar + 1, nEndChar);
+    return 0;      // they cancelled
+    }
+
+  return -1;
+#else
   CEdit * pEdit = NULL;
   CWnd * pWnd = NULL;
 
@@ -197,6 +292,8 @@ long CMUSHclientDoc::SpellCheckCommand(long StartCol, long EndCol)
     }
 
   return -1;
+
+#endif
 
 } // end of CMUSHclientDoc::SpellCheckCommand
 

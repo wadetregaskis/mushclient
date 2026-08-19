@@ -781,14 +781,30 @@ assemble the full text of the original line.
             m_sRecentLines.pop_back ();
         }
 
+      // Step BACK before removing, not after.  RemoveTail unlinks and frees the
+      // very node `pos` names, so the GetPrev that used to sit at the bottom of
+      // this loop read its prev pointer out of freed memory -- once per omitted
+      // line, on every gagging trigger.  It survived because MFC's CList does
+      // not return nodes to the heap at all (FreeNode pushes them onto a free
+      // list and leaves pPrev intact), and because the port's CTypedPtrList
+      // does `delete n` but nothing reallocates in the instant between the free
+      // and the read.  AddressSanitizer sees it every time.
+      //
+      // Both halves are captured before the removal, so nothing here touches
+      // the node once it is gone.  On Windows this is the same traversal: a
+      // tail's prev pointer is unaffected by the tail's own removal.
+      POSITION posPrev = pos;
+      m_LineList.GetPrev (posPrev);
+      const bool bWasFirstLine = (pos == prevpos);
+
       delete pLine; // delete contents of tail iten -- version 3.85
       m_LineList.RemoveTail ();   // get rid of the line
       m_total_lines--;            // don't count as received
 
       // if this was the first line, we have done enough
-      if (pos == prevpos)
-        break;    
-     m_LineList.GetPrev (pos);
+      if (bWasFirstLine)
+        break;
+     pos = posPrev;
      }
 
 #ifndef _WIN32

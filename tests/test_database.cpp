@@ -167,6 +167,7 @@ TEST(DatabaseTest, OpenFailureDoesNotRegisterDatabase)
 // LuaScripting.StringReturningMethodsDoNotLeakTheirVariant.
 TEST(DatabaseTest, OpenFailureClosesTheHandleSqliteAllocated)
 {
+    MC_SKIP_UNDER_SANITIZER("measures RSS growth; a sanitizer's redzones blow any budget");
     CMUSHclientDoc doc;
 
     auto rss = [] () -> long {

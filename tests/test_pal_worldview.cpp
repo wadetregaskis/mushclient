@@ -2038,6 +2038,93 @@ TEST(PalWorldView, GagTriggerDoesNotSwallowTheLinesAfterIt)
     EXPECT_TRUE(sawInView("and another"));
 }
 
+// ProcessPreviousLine's omit-from-output loop deletes the whole batch of lines
+// a gagging trigger matched, walking backwards from the tail to the first line
+// of the batch.  It used to take that backward step AFTER RemoveTail had freed
+// the node it was stepping from, reading the freed node's prev pointer to find
+// where to go next -- a use-after-free once per omitted line, on every gag.
+// Upstream it is latent (MFC's CList never returns nodes to the heap: FreeNode
+// pushes them onto a free list and leaves pPrev intact); the port's
+// CTypedPtrList really deletes them, and it has only ever appeared to work
+// because nothing reallocates in the instant between the free and the read.
+// The identical bug in the sibling loop -- DeleteLines, in
+// methods_output_shared.cpp -- was found and fixed long ago; this instance was
+// missed, and an AddressSanitizer run over the headless suite found it.
+//
+// The freed read itself is caught by ASan and by nothing else (build with
+// -DMUSHCLIENT_SANITIZE=address; see docs/SANITIZERS.md).  What THIS test adds
+// is the half a sanitizer cannot check: that the corrected traversal still
+// visits exactly the batch.  A loop that fails to advance, that advances twice,
+// or that loses its stop condition deletes a different set of lines -- and the
+// buffer in front of the gag is what shows it.
+TEST(PalWorldView, GagDeletesExactlyItsOwnBatchAndNothingBefore)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+    doc.AddStyle(COLOUR_ANSI, WHITE, BLACK, 0, static_cast<CAction*>(nullptr));
+
+    // Narrow, so the gagged paragraph below wraps into several lines and the
+    // delete loop really iterates -- see the fixture assertion further down.
+    doc.m_nWrapColumn = 20;
+
+    CTrigger* t = new CTrigger;
+    t->trigger         = CString("*spam*");
+    t->strLabel        = CString("gag");
+    t->bEnabled        = TRUE;
+    t->bOmitFromOutput = TRUE;
+    t->iSendTo         = eSendToWorld;
+    t->iSequence       = DEFAULT_TRIGGER_SEQUENCE;
+    doc.GetTriggerMap().SetAt(t->strLabel, t);
+    doc.GetTriggerArray().Add(t);
+
+    auto drain = [&] { doc.UpdateAllViews(nullptr); };
+    auto put   = [&](const char* s) { doc.DisplayMsg(s, (int) strlen(s), 0); };
+    auto buffer = [&] {
+        std::vector<std::string> out;
+        for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+            CLine* l = doc.m_LineList.GetNext(pos);
+            out.push_back(std::string(l->text, l->len));
+        }
+        return out;
+    };
+
+    put("keep one\n");    drain();
+    put("keep two\n");    drain();
+    put("keep three\n");  drain();
+
+    const std::vector<std::string> before = buffer();
+    const long linesBefore = (long) doc.m_LineList.GetCount();
+    const long totalBefore = doc.m_total_lines;
+
+    // Segment 1 of the paragraph, with no newline yet, so the trigger has not
+    // fired: this is the only moment the wrapped batch can be measured.
+    put("spam spam spam spam spam spam spam spam spam spam "
+        "spam spam spam spam spam spam spam spam spam spam ");
+    drain();
+    const long peak = (long) doc.m_LineList.GetCount();
+
+    // The fixture must genuinely wrap.  If the batch were a single line the
+    // loop would stop on its first pass, never take the backward step at all,
+    // and every assertion below would pass against any traversal whatsoever.
+    ASSERT_TRUE(peak - linesBefore >= 3);
+
+    // Segment 2 completes the paragraph; the trigger fires and gags all of it.
+    put("and more spam\n");
+    drain();
+    EXPECT_EQ(1L, t->nMatched);
+
+    // Exactly back where we started: the gag took its own lines and stopped.
+    const std::vector<std::string> after = buffer();
+    EXPECT_EQ(linesBefore, (long) doc.m_LineList.GetCount());
+    EXPECT_EQ(totalBefore, doc.m_total_lines);
+    ASSERT_EQ(before.size(), after.size());
+    for (size_t i = 0; i < before.size(); ++i)
+        EXPECT_STREQ(before[i].c_str(), after[i].c_str());
+
+    doc.m_pWorldView = nullptr;
+}
+
 // ── pal::imagePlacement — world.SetBackgroundImage's 13 modes ───────────────
 // This arithmetic lived inside the paint-time drawing lambda, which no test can
 // reach (COutputPane::OnPaint is never called by any selftest -- see

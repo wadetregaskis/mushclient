@@ -396,6 +396,7 @@ TEST(GdiHeadless, CanvasBitmapOwnsASurfaceAndSelectObjectAssociatesIt)
 // CBitmap aliased — GetBitmap answered for the DEAD image.
 TEST(GdiHeadless, DeletingABitmapObjectReleasesItsSurface)
 {
+    MC_SKIP_UNDER_SANITIZER("needs the allocator to recycle a freed address; a sanitizer never does");
     CBitmap* a = new CBitmap;
     ASSERT_TRUE(a->CreateCanvasBitmap(8, 8));
     BITMAP info = {};

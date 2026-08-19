@@ -28,6 +28,33 @@ wxApp::OnRun, so they are the only tests where a paint is delivered or a modal \
 completes -- and the only ones that can HANG rather than fail.  Off by default; \
 see platform/extended_selftest.h." OFF)
 
+# ── Sanitizer instrumentation (opt-in) ─────────────────────────────────────
+# -DMUSHCLIENT_SANITIZE=address builds OUR code -- the three engine libraries
+# and every headless test executable -- with AddressSanitizer.  Empty (the
+# default) adds nothing at all to any target, so a normal build is unchanged.
+#
+# Whatever clang's -fsanitize= accepts is accepted here; 'address' and
+# 'address,undefined' are the two this tree has actually been run with.
+# 'thread' will NOT work as-is: it needs the vendored libraries instrumented
+# too, and MUSHCLIENT_SANITIZE deliberately leaves them alone (see below).
+#
+# See docs/SANITIZERS.md for what a run finds, how to read the vendored-code
+# noise, and why a clean run is not a proof of absence.
+set(MUSHCLIENT_SANITIZE "" CACHE STRING
+    "Sanitizer to build our code with, e.g. 'address'.  Empty = off (default).")
+
+# Apply the requested sanitizer to one target.  Both halves are needed: the
+# compile flag inserts the checks, the link flag pulls in the runtime.  The
+# link options are PUBLIC so a consumer of a sanitized static library (mushgui
+# links mushcore) still gets the runtime even if it is not itself instrumented.
+function(mc_sanitize tgt)
+    if(MUSHCLIENT_SANITIZE)
+        target_compile_options(${tgt} PRIVATE
+            -fsanitize=${MUSHCLIENT_SANITIZE} -fno-omit-frame-pointer -g)
+        target_link_options(${tgt} PUBLIC -fsanitize=${MUSHCLIENT_SANITIZE})
+    endif()
+endfunction()
+
 
 # ── Linker-aware de-duplication of link libraries ──────────────────────────
 # Under the default policies for cmake_minimum_required 3.14, CMake re-emits
@@ -804,6 +831,17 @@ if(NOT WIN32)
         endforeach()
     endif()
 
+    # The sanitizer covers all three engine libraries -- everything that is
+    # ours.  The vendored ones (mcpcre, mcsqlite3, mczlib) and the external Lua
+    # are deliberately left uninstrumented: ASan's heap checking comes from the
+    # intercepted ALLOCATOR, not from instrumentation, so a use-after-free or a
+    # heap overflow committed by vendored code is still caught in full.  What
+    # we give up is only stack/global checking *inside* them -- and what we buy
+    # is a report list that is about our code.
+    foreach(_sant mushcore mushcore_testsupport mushgui_adapters)
+        mc_sanitize(${_sant})
+    endforeach()
+
     # ── Per-library Lua sources ───────────────────────────────────────────────
     if(LUA_FOUND)
         # Vendored Lua C extensions + LPeg + lsqlite3 + the real world library.
@@ -1061,6 +1099,9 @@ if(NOT WIN32)
             -Wno-narrowing
             -Wno-unused-function
         )
+        # mushgui builds and runs under ASan, but its findings are not this
+        # option's purpose: see docs/SANITIZERS.md "Can the GUI be sanitized?".
+        mc_sanitize(mushgui)
         # wxWidgets on macOS needs the bundle type for proper menu bar / event loop
         if(APPLE)
             # macOS-only Obj-C++ helper (AppKit): disable NSTextView smart-quote

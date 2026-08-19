@@ -1089,6 +1089,85 @@ TEST(LuaSurface, AWindowNoLayoutPassHasSeenIsNotClickableAtThePanesCorner)
     EXPECT_TRUE(NULL != pHotspot);
 }
 
+// m_bLaidOut used to be set at the TOP of the layout loop, before the "not if
+// not to be shown" skip — so a paint pass that swept over a HIDDEN window
+// flagged it laid out while its m_rect was still the constructor's (0,0,0,0)
+// (the skip fires before any m_rect is assigned).  A later WindowShow followed
+// by WindowAddHotspot's synchronous re-detect then hit-tested the pane's
+// top-left GetWidth() x GetHeight() corner — the very defect m_bLaidOut bounds,
+// reinstated for the hidden-then-shown case the flag's first fix left open.
+TEST(LuaSurface, AHiddenWindowALayoutPassSweptIsNotClickableAtThePanesCornerOnceShown)
+{
+    CMUSHclientDoc doc;
+
+    // Absolute (30,30), 20x20, created HIDDEN (no WindowShow yet).
+    ASSERT_EQ((long) eOK, doc.WindowCreate("mw", 30, 30, 20, 20, 0,
+                                           MINIWINDOW_ABSOLUTE_LOCATION, 0));
+
+    // A paint pass runs while it is hidden.  It must NOT flag the window laid
+    // out: the show skip fires before m_rect is ever assigned.
+    RECT clientrect = { 0, 0, 100, 100 };
+    CalculateMiniWindowRectangles(&doc, false, clientrect, clientrect);
+
+    // Now show it and add a hotspot the way a script would.
+    ASSERT_EQ((long) eOK, doc.WindowShow("mw", TRUE));
+    ASSERT_EQ((long) eOK, doc.WindowAddHotspot("mw", "h", 0, 0, 20, 20,
+                                               "", "", "", "", "", "", 0, 0));
+
+    std::string sHotspotId, sMiniWindowId;
+    CHotspot * pHotspot = NULL;
+
+    // The pane corner still belongs to the text underneath: the window was
+    // never laid out (m_rect is (0,0,0,0)), so it is not clickable there.
+    EXPECT_TRUE(NULL == MouseOverMiniWindow(&doc, CPoint(2, 2),
+                                            sHotspotId, pHotspot, sMiniWindowId));
+    EXPECT_TRUE(sMiniWindowId.empty());
+
+    // Control: once a pass lays out the now-shown window it answers at its own
+    // coordinates — so this is not a "stop hit-testing everything" fix.
+    CalculateMiniWindowRectangles(&doc, false, clientrect, clientrect);
+    EXPECT_TRUE(NULL != MouseOverMiniWindow(&doc, CPoint(35, 35),
+                                            sHotspotId, pHotspot, sMiniWindowId));
+    EXPECT_STREQ("mw", sMiniWindowId.c_str());
+}
+
+// A tiled window (position 13) covers the whole pane — Blit_Bitmap's
+// `case 13: rect = r` sets its m_rect to the client rectangle, not one tile,
+// and CalculateMiniWindowRectangles leaves that alone (`case 13: continue`).
+// MouseOverMiniWindow used to hit-test m_rect.left/top + GetWidth()/GetHeight()
+// (ONE tile), so a click anywhere past the first tile fell through to the text.
+TEST(LuaSurface, ATiledWindowIsClickableAcrossTheWholePaneNotJustTheFirstTile)
+{
+    CMUSHclientDoc doc;
+
+    // A 32x24 tile whose hotspot covers the whole 400x300 pane.
+    ASSERT_EQ((long) eOK, doc.WindowCreate("tiled", 0, 0, 32, 24, 13, 0, 0));
+    ASSERT_EQ((long) eOK, doc.WindowShow("tiled", TRUE));
+    ASSERT_EQ((long) eOK, doc.WindowAddHotspot("tiled", "h", 0, 0, 400, 300,
+                                               "", "", "", "", "", "", 0, 0));
+
+    // Reproduce what a paint leaves behind (the layout pass skips tiles): the
+    // whole-pane m_rect Blit_Bitmap writes, and the laid-out flag.
+    CMiniWindow * mw = doc.m_MiniWindows["tiled"];
+    ASSERT_TRUE(mw != NULL);
+    mw->m_rect = CRect(0, 0, 400, 300);
+    mw->m_bLaidOut = true;
+
+    std::string sHotspotId, sMiniWindowId;
+    CHotspot * pHotspot = NULL;
+
+    // The middle of the pane — well past the first 32x24 tile — is on it.
+    EXPECT_TRUE(NULL != MouseOverMiniWindow(&doc, CPoint(200, 150),
+                                            sHotspotId, pHotspot, sMiniWindowId));
+    EXPECT_STREQ("tiled", sMiniWindowId.c_str());
+    EXPECT_STREQ("h", sHotspotId.c_str());
+
+    // Control: past the pane's right edge it is NOT hit, so the fix is not
+    // "always hit".
+    EXPECT_TRUE(NULL == MouseOverMiniWindow(&doc, CPoint(400, 150),
+                                            sHotspotId, pHotspot, sMiniWindowId));
+}
+
 // The two layout passes (draw-underneath, then not) run back to back, and the
 // reset of m_bTemporarilyHide used to happen for EVERY window in EVERY pass —
 // so the second pass wiped the first pass's decision and WindowInfo (6) always

@@ -66,9 +66,16 @@ CMiniWindow * MouseOverMiniWindow (CMUSHclientDoc* pDoc,
          if (mw->GetFlags () & (MINIWINDOW_DRAW_UNDERNEATH | MINIWINDOW_IGNORE_MOUSE))
            continue;
 
+         // a tiled window (position 13) is not laid out by the loop above —
+         // its m_rect is the whole pane (Blit_Bitmap's `case 13: rect = r`),
+         // not left/top + one tile.  Hit-test the whole rect, or clicks past
+         // the first tile fall through to the text underneath.
+         long iRight  = mw->GetPosition () == 13 ? mw->m_rect.right
+                                                 : mw->m_rect.left + mw->GetWidth ();
+         long iBottom = mw->GetPosition () == 13 ? mw->m_rect.bottom
+                                                 : mw->m_rect.top + mw->GetHeight ();
          if (point.x < mw->m_rect.left || point.y < mw->m_rect.top ||
-             point.x >= mw->m_rect.left + mw->GetWidth () ||
-             point.y >= mw->m_rect.top + mw->GetHeight ())
+             point.x >= iRight || point.y >= iBottom)
            continue;  // not in window
 
          CPoint mw_relative_mouse (point);
@@ -137,10 +144,7 @@ void CalculateMiniWindowRectangles (CMUSHclientDoc* pDoc, const bool bUnderneath
    // wipe the first pass's "would not fit" decision, and WindowInfo (6)
    // always answered false for a draw-underneath window that had no room
    if (((mw->GetFlags () & MINIWINDOW_DRAW_UNDERNEATH) != 0) == bUnderneath)
-     {
      mw->m_bTemporarilyHide = false;
-     mw->m_bLaidOut = true;   // this pass owns it: m_rect stops being the ctor's
-     }
 
 
    // not if not to be shown
@@ -150,6 +154,14 @@ void CalculateMiniWindowRectangles (CMUSHclientDoc* pDoc, const bool bUnderneath
    // not if wrong time
    if (((mw->GetFlags () & MINIWINDOW_DRAW_UNDERNEATH) != 0) != bUnderneath)
      continue;
+
+   // past the show and wrong-time skips, so this pass owns the window and
+   // WILL place it (or pop it as "would not fit", which m_bTemporarilyHide
+   // bounds): m_rect stops being the ctor's.  NOT set before the show skip —
+   // a paint pass sweeping a hidden window would otherwise flag it laid out
+   // while m_rect is still (0,0,0,0), and a later WindowShow + hotspot
+   // re-detect would hit-test the pane's top-left corner.
+   mw->m_bLaidOut = true;
 
    long iWidth = mw->GetWidth (),
          iHeight = mw->GetHeight ();

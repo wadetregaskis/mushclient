@@ -3594,6 +3594,41 @@ TEST(SweepR4, DebugListingsTruncateAtNarrowWrapColumn)
     lua_close(L);
 }
 
+// Companion: a match LONGER than the floor exercises the truncation itself,
+// not just the floor.  Truncate() cuts to (budget - 3) ONCE, so a 40-char
+// match comes back exactly at the 20-column floor (Left(17) + "...") — the
+// width the GUI twin (world_debug.cpp) now agrees on after its double-clamp,
+// which used to LENGTHEN the same value to 23 columns, was removed.
+TEST(SweepR4, DebugListingsTruncateLongValueToTheWrapBudget)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_nWrapColumn = 20;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // 17 'Q', then a distinctive "XYZ" at columns 18-20, then filler: a cut at
+    // 17 shows the Q run and no XYZ; a cut at 20 would reveal the XYZ marker.
+    const std::string kFull = std::string(17, 'Q') + "XYZ" + std::string(20, 'W');
+    EXPECT_TRUE(run(L,
+        "world.AddTriggerEx('dt', string.rep('Q', 17) .. 'XYZ' .. string.rep('W', 20),"
+        " 'resp', 1, -1, 0, '', '', 0, 100)\n"
+        "world.Debug('triggerlist')\n"));
+
+    // The listing wraps at column 20, so a single match token spans several
+    // CLines — reconstruct the whole output before matching.
+    std::string all;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        all.append(l->text, l->len);
+    }
+    EXPECT_NE(std::string::npos, all.find(std::string(17, 'Q')));  // the Q run is shown
+    EXPECT_EQ(std::string::npos, all.find("XYZ"));                 // cut at 17, not 20
+    EXPECT_EQ(std::string::npos, all.find(kFull));                 // and it WAS truncated
+
+    lua_close(L);
+}
+
 TEST(SweepR4, UtilityMethodArms)
 {
     CMUSHclientDoc doc;

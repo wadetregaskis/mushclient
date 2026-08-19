@@ -98,6 +98,12 @@ mc_test(test_scriptengine)
 # chat stack is reachable from here.
 mc_test(test_chat_protocol)
 
+# The sound engine's two pure decisions (platform/ma_sound_rules.h): the
+# Windows-parity auto-select scan and the DSBVOLUME decibel scale.
+# platform/ma_sound.cpp compiles miniaudio and needs a device, so it is
+# mushgui-only and the rest of it is covered by --sound-selftest.
+mc_test(test_sound)
+
 # ── Phase 2 Unit B-2 → B-3: headless GDI shim, now a normal mc_test ──────────
 # gdi_headless.cpp folded into the flipped (FULL_BUILD) mushcore at B-3, so the
 # CDC/CFont/CBitmap shape no longer forks: this is now an ordinary mc_test that
@@ -323,6 +329,15 @@ if(TARGET mushgui)
     # only reachable from inside the app.
     add_test(NAME selftest_outputpane
              COMMAND $<TARGET_FILE:mushgui> --outputpane-selftest ${_selftest_args})
+    # The miniaudio sound engine: platform/ma_sound.cpp compiles miniaudio, so
+    # it links here and nowhere else, and per-owner buffer isolation + the
+    # exit-time teardown both need a real device.  SKIP_RETURN_CODE 77 covers a
+    # machine with no audio device (the --engines-selftest convention).
+    add_test(NAME selftest_sound
+             COMMAND $<TARGET_FILE:mushgui> --sound-selftest ${_selftest_args})
+    set_tests_properties(selftest_sound PROPERTIES
+                         SKIP_RETURN_CODE 77
+                         TIMEOUT 120 RUN_SERIAL TRUE)
     # The six scripting languages: the only place five of them can be exercised,
     # since their interpreters are linked into the app and deliberately kept out
     # of mushcore.  One ctest entry per language, so a build without (say) Ruby

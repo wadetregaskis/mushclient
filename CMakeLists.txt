@@ -995,6 +995,10 @@ if(NOT WIN32)
             # miniaudio sound engine: concurrent buffers + volume/pan/loop
             # (backs world.PlaySound / MSP / trigger sounds)
             platform/ma_sound.cpp
+            # In-app conformance harness for it (--sound-selftest).  Here for
+            # the same reason ma_sound.cpp is: miniaudio's implementation is
+            # compiled into the executable and nothing headless can link it.
+            platform/sound_selftest.cpp
         )
         # mushgui links the shared engine (mushcore) + the wx/GUI adapter set
         # (mushgui_adapters, which PUBLIC-links mushcore).  Both are listed so the

@@ -1366,6 +1366,542 @@ TEST(LuaSurface, WindowAddHotspotSkipsTheReDetectWhileTheMouseIsCaptured)
     doc.m_pWorldView = NULL;
 }
 
+// ── a callback deleting a DIFFERENT miniwindow ─────────────────────────────
+//
+// m_bExecutingScript is set only on the window whose own callback is running,
+// and WindowDelete refuses only that one — so a callback may delete any OTHER
+// window, including the one the dispatch routine is still holding in mw across
+// SendMouseEventToPlugin.  Every routine below used the freed pointer
+// afterwards (hotspot lookup, m_sCallbackPlugin, m_bExecutingScript = false)
+// and then dispatched that dead window's callbacks.
+//
+// Widening the refusal to every held window is NOT the fix: a toolbar button
+// dismissing its own popup is a legitimate cross-window delete that plugins do
+// all the time, and eItemInUse would break it (on Windows too).  So the
+// routines re-look-up by the id they already hold — the file's own idiom for
+// the hotspot pointers, one container up.
+//
+// Two miniwindows side by side, each with one hotspot:
+//   "a" at (0,0) 100x80,   hotspot "ha" 0,0..50x40   → mouse at (10,10)
+//   "b" at (150,0) 100x80, hotspot "hb" 0,0..50x40   → mouse at (160,10)
+namespace {
+
+const long MW_LH = 0x10;   // MW_MOUSE_LH, mushview.h:13 (not included here)
+
+// Counts every hooks call the routines make, so a fix that simply bailed out
+// of the whole routine can be told from one that abandons only the dead branch.
+struct CountingHooks : MiniWindowMouseHooks {
+    int tooltipsRemoved, tooltipsActivated, tracked, captures, releases;
+    CountingHooks () : tooltipsRemoved (0), tooltipsActivated (0), tracked (0),
+                       captures (0), releases (0) {}
+    virtual void RemoveToolTip ()      { ++tooltipsRemoved; }
+    virtual void ActivateToolTip ()    { ++tooltipsActivated; }
+    virtual void TrackMouseLeave ()    { ++tracked; }
+    virtual void SetMouseCapture ()    { ++captures; }
+    virtual void ReleaseMouseCapture () { ++releases; }
+};
+
+struct TwoWindows {
+    CMUSHclientDoc  doc;
+    CScriptEngine * engine;
+    CountingHooks   hooks;
+
+    TwoWindows () : engine (NULL) {}
+
+    // `victim` names the window the A-side callbacks delete (empty = the
+    // control: delete nothing).  kill() is one-shot so a test that reaches two
+    // A-side callbacks still attributes the delete to the first of them.
+    bool build (const char * victim)
+      {
+      engine = new CScriptEngine (&doc, "lua");
+      if (engine->CreateScriptEngine ())
+        return false;
+      CString script;
+      script.Format ("victim = '%s'\n"
+                     "delrc, selfrc = -1, -1\n"
+                     "a_over, a_cancelover, a_down, a_canceldown, a_up = 0,0,0,0,0\n"
+                     "a_move, a_release = 0, 0\n"
+                     "b_over, b_cancelover, b_down, b_canceldown, b_up = 0,0,0,0,0\n"
+                     "wheel = 0\n"
+                     "function kill ()\n"
+                     "  if victim ~= '' and delrc == -1 then\n"
+                     "    delrc = world.WindowDelete (victim)\n"
+                     "  end\n"
+                     "end\n"
+                     "function AOver () a_over = a_over + 1 end\n"
+                     "function ACancelOver () a_cancelover = a_cancelover + 1 kill () end\n"
+                     "function ADown () a_down = a_down + 1 end\n"
+                     "function ACancelDown () a_canceldown = a_canceldown + 1 kill () end\n"
+                     "function AUp () a_up = a_up + 1 end\n"
+                     "function AMove () a_move = a_move + 1 end\n"
+                     "function ARelease () a_release = a_release + 1 kill () end\n"
+                     "function ASelfDelete () a_over = a_over + 1 "
+                     "  selfrc = world.WindowDelete ('a') end\n"
+                     "function AWheel () wheel = wheel + 1 kill () end\n"
+                     "function BOver () b_over = b_over + 1 end\n"
+                     "function BCancelOver () b_cancelover = b_cancelover + 1 end\n"
+                     "function BDown () b_down = b_down + 1 end\n"
+                     "function BCancelDown () b_canceldown = b_canceldown + 1 end\n"
+                     "function BUp () b_up = b_up + 1 end\n",
+                     victim);
+      if (engine->Parse (script, "<test>"))
+        return false;
+      // The hotspots' callback dispids resolve against the engine at
+      // AddHotspot time, so it has to be attached first.
+      doc.m_ScriptEngine = engine;
+
+      if (doc.WindowCreate ("a", 0, 0, 100, 80, 0, MINIWINDOW_ABSOLUTE_LOCATION, 0) != eOK ||
+          doc.WindowCreate ("b", 150, 0, 100, 80, 0, MINIWINDOW_ABSOLUTE_LOCATION, 0) != eOK ||
+          doc.WindowShow ("a", TRUE) != eOK || doc.WindowShow ("b", TRUE) != eOK)
+        return false;
+      if (doc.WindowAddHotspot ("a", "ha", 0, 0, 50, 40,
+                                "AOver", "ACancelOver", "ADown", "ACancelDown",
+                                "AUp", "", 0, 0) != eOK ||
+          doc.WindowAddHotspot ("b", "hb", 0, 0, 50, 40,
+                                "BOver", "BCancelOver", "BDown", "BCancelDown",
+                                "BUp", "", 0, 0) != eOK)
+        return false;
+
+      // Hit-testing skips a window no layout pass has placed (m_bLaidOut).
+      RECT client = { 0, 0, 400, 200 };
+      CalculateMiniWindowRectangles (&doc, false, client, client);
+      return true;
+      }
+
+    ~TwoWindows ()
+      {
+      doc.m_ScriptEngine = NULL;
+      delete engine;
+      }
+
+    long num (const char * global)
+      {
+      lua_getglobal (engine->L, global);
+      long v = (long) lua_tonumber (engine->L, -1);
+      lua_pop (engine->L, 1);
+      return v;
+      }
+
+    bool alive (const char * name)
+      { return doc.m_MiniWindows.find (name) != doc.m_MiniWindows.end (); }
+
+    // Install a real plugin (the same InternalLoadPlugin route test_plugins
+    // uses) so ON_PLUGIN_MOUSE_MOVED has somewhere to go.
+    bool addPlugin (const char * id, const char * body)
+      {
+      char path[256];
+      snprintf (path, sizeof (path), "/tmp/mc_uaf_plugin_%d_%s.xml",
+                (int) getpid (), id);
+      FILE * fp = fopen (path, "wb");
+      if (!fp)
+        return false;
+      fprintf (fp,
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+        "<plugin name=\"P%s\" author=\"T\" id=\"%s\" language=\"Lua\" "
+        "version=\"1.0\" />\n<script><![CDATA[\n%s\n]]></script>\n"
+        "</muclient>\n", id, id, body);
+      fclose (fp);
+      bool ok;
+      try { doc.InternalLoadPlugin (CString (path)); ok = true; }
+      catch (CException * e) { e->Delete (); ok = false; }
+      catch (...)            { ok = false; }
+      unlink (path);
+      return ok;
+      }
+};
+
+}  // namespace
+
+// MouseMove: leaving "a" for "b" fires a's CancelMouseOver, which deletes "b" —
+// the window this very call is holding in mw and is about to fire MouseOver on.
+TEST(LuaSurface, MouseMoveCancelCallbackMayDeleteTheWindowWeMovedOnTo)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build("b"));
+
+    // Settle on "a" first, so m_sPreviousMiniWindow is "a" and it has a live
+    // mouse-over hotspot to cancel.
+    ASSERT_TRUE(MouseMoveMiniWindow(&f.doc, CPoint(10, 10), f.hooks));
+    ASSERT_EQ(1, f.num("a_over"));
+
+    // ...now move to "b".
+    bool consumed = MouseMoveMiniWindow(&f.doc, CPoint(160, 10), f.hooks);
+
+    EXPECT_EQ(1, f.num("a_cancelover"));            // we really got there
+    EXPECT_EQ((long) eOK, f.num("delrc"));          // and the delete was ALLOWED
+    EXPECT_FALSE(f.alive("b"));                     // ...and really happened
+    // The window we were moving on to no longer exists, so its MouseOver must
+    // not fire and the move is not "over a miniwindow" any more.  Against the
+    // unfixed code both of these come off the freed CMiniWindow.
+    EXPECT_EQ(0, f.num("b_over"));
+    EXPECT_FALSE(consumed);
+    // "a" is untouched — the fix abandons only the dead branch.
+    EXPECT_TRUE(f.alive("a"));
+    EXPECT_EQ(1, f.num("a_over"));
+}
+
+// Control for the above: an identical move whose cancel callback deletes
+// nothing gets the whole normal behaviour, so "bail out early" fails here.
+TEST(LuaSurface, MouseMoveCancelCallbackThatDeletesNothingIsUnaffected)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build(""));
+
+    ASSERT_TRUE(MouseMoveMiniWindow(&f.doc, CPoint(10, 10), f.hooks));
+    bool consumed = MouseMoveMiniWindow(&f.doc, CPoint(160, 10), f.hooks);
+
+    EXPECT_EQ(1, f.num("a_cancelover"));
+    EXPECT_TRUE(f.alive("b"));
+    EXPECT_EQ(1, f.num("b_over"));                  // b's MouseOver DID fire
+    EXPECT_TRUE(consumed);
+}
+
+// The earliest hazard in MouseMove, and the only one with no m_bExecutingScript
+// anywhere near it: ON_PLUGIN_MOUSE_MOVED broadcasts to every plugin BEFORE any
+// hotspot work, so a plugin's OnPluginMouseMoved can delete the window this call
+// is over while mw already points at it.
+TEST(LuaSurface, PluginMouseMovedCallbackMayDeleteTheWindowWeAreOver)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build(""));      // the Lua-side kill() is unused here
+    ASSERT_TRUE(f.addPlugin("aaaaaaaaaaaaaaaaaaaaaaaa",
+        "function OnPluginMouseMoved (x, y, name)\n"
+        "  if name == 'b' then world.WindowDelete ('b') end\n"
+        "end\n"));
+
+    bool consumed = MouseMoveMiniWindow(&f.doc, CPoint(160, 10), f.hooks);
+
+    EXPECT_FALSE(f.alive("b"));                     // the plugin really deleted it
+    EXPECT_EQ(0, f.num("b_over"));                  // so no MouseOver may fire
+    EXPECT_FALSE(consumed);
+    EXPECT_TRUE(f.alive("a"));
+}
+
+// Control: the identical broadcast for a window the plugin leaves alone.
+TEST(LuaSurface, PluginMouseMovedCallbackThatDeletesNothingIsUnaffected)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build(""));
+    ASSERT_TRUE(f.addPlugin("bbbbbbbbbbbbbbbbbbbbbbbb",
+        "function OnPluginMouseMoved (x, y, name)\n"
+        "  if name == 'zzz' then world.WindowDelete ('b') end\n"
+        "end\n"));
+
+    bool consumed = MouseMoveMiniWindow(&f.doc, CPoint(160, 10), f.hooks);
+
+    EXPECT_TRUE(f.alive("b"));
+    EXPECT_EQ(1, f.num("b_over"));
+    EXPECT_TRUE(consumed);
+}
+
+// MouseDown: the click on "b" first cancels the mouse-over in "a", and that
+// callback deletes "b" — which the routine then dereferenced to dispatch
+// MouseDown and to capture the mouse for a window that no longer exists.
+TEST(LuaSurface, MouseDownCancelCallbackMayDeleteTheWindowClickedIn)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build("b"));
+
+    ASSERT_TRUE(MouseMoveMiniWindow(&f.doc, CPoint(10, 10), f.hooks));
+    const int capturesBefore = f.hooks.captures;
+
+    bool consumed = MouseDownMiniWindow(&f.doc, CPoint(160, 10), MW_LH, f.hooks);
+
+    EXPECT_EQ(1, f.num("a_cancelover"));
+    EXPECT_EQ((long) eOK, f.num("delrc"));
+    EXPECT_FALSE(f.alive("b"));
+    EXPECT_EQ(0, f.num("b_down"));                  // no callback for a dead window
+    EXPECT_FALSE(consumed);
+    EXPECT_EQ(capturesBefore, f.hooks.captures);    // nothing to capture for
+}
+
+TEST(LuaSurface, MouseDownCancelCallbackThatDeletesNothingIsUnaffected)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build(""));
+
+    ASSERT_TRUE(MouseMoveMiniWindow(&f.doc, CPoint(10, 10), f.hooks));
+    const int capturesBefore = f.hooks.captures;
+
+    bool consumed = MouseDownMiniWindow(&f.doc, CPoint(160, 10), MW_LH, f.hooks);
+
+    EXPECT_EQ(1, f.num("a_cancelover"));
+    EXPECT_TRUE(f.alive("b"));
+    EXPECT_EQ(1, f.num("b_down"));
+    EXPECT_TRUE(consumed);
+    EXPECT_EQ(capturesBefore + 1, f.hooks.captures);
+}
+
+// MouseUp: both windows have been moused down, and the release in "b" first
+// runs a's CancelMouseDown — which deletes "b", the window whose MouseUp the
+// routine is about to dispatch off the freed pointer.
+TEST(LuaSurface, MouseUpCancelCallbackMayDeleteTheWindowReleasedIn)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build("b"));
+
+    // Down in "b" (leaves b.m_sMouseDownHotspot = "hb")...
+    ASSERT_TRUE(MouseDownMiniWindow(&f.doc, CPoint(160, 10), MW_LH, f.hooks));
+    ASSERT_EQ(1, f.num("b_down"));
+    // ...then down in "a", which makes "a" the previous window without
+    // clearing b's own mouse-down hotspot.
+    ASSERT_TRUE(MouseDownMiniWindow(&f.doc, CPoint(10, 10), MW_LH, f.hooks));
+    ASSERT_EQ(1, f.num("a_down"));
+
+    bool consumed = MouseUpMiniWindow(&f.doc, CPoint(160, 10), MW_LH, f.hooks);
+
+    EXPECT_EQ(1, f.num("a_canceldown"));
+    EXPECT_EQ((long) eOK, f.num("delrc"));
+    EXPECT_FALSE(f.alive("b"));
+    EXPECT_EQ(0, f.num("b_up"));                    // no MouseUp for a dead window
+    // It still started in a miniwindow, so the event is still consumed...
+    EXPECT_TRUE(consumed);
+    // ...but the capture is released exactly once, not once more off the freed
+    // window as well.
+    EXPECT_EQ(1, f.hooks.releases);
+}
+
+TEST(LuaSurface, MouseUpCancelCallbackThatDeletesNothingIsUnaffected)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build(""));
+
+    ASSERT_TRUE(MouseDownMiniWindow(&f.doc, CPoint(160, 10), MW_LH, f.hooks));
+    ASSERT_TRUE(MouseDownMiniWindow(&f.doc, CPoint(10, 10), MW_LH, f.hooks));
+
+    bool consumed = MouseUpMiniWindow(&f.doc, CPoint(160, 10), MW_LH, f.hooks);
+
+    EXPECT_EQ(1, f.num("a_canceldown"));
+    EXPECT_TRUE(f.alive("b"));
+    EXPECT_EQ(1, f.num("b_up"));                    // b's MouseUp DID fire
+    EXPECT_TRUE(consumed);
+    EXPECT_EQ(2, f.hooks.releases);
+}
+
+// The other MouseUp site: the drag ReleaseCallback runs BEFORE the
+// cancel-mouse-down one, and it too can delete the window the mouse came up
+// over.
+//
+// The release handler here ALSO deletes its own hotspot, which is what makes
+// this test discriminate: with "ha" gone, the cancel-mouse-down block below
+// finds nothing to dispatch and its re-lookup never runs, so the release
+// site's is the only thing standing between mw and the freed window.  (Without
+// that, the two guards are redundant for this scenario and deleting either one
+// alone changes nothing — checked by mutation, and it survived.)
+TEST(LuaSurface, MouseUpReleaseCallbackMayDeleteTheWindowReleasedIn)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build("b"));
+    ASSERT_EQ((long) eOK, f.doc.WindowDragHandler("a", "ha", "AMove", "ARelease", 0));
+
+    ASSERT_TRUE(MouseDownMiniWindow(&f.doc, CPoint(160, 10), MW_LH, f.hooks));
+    ASSERT_TRUE(MouseDownMiniWindow(&f.doc, CPoint(10, 10), MW_LH, f.hooks));
+
+    ASSERT_TRUE(run(f.engine->L,
+        "function ARelease ()\n"
+        "  a_release = a_release + 1\n"
+        "  kill ()\n"
+        "  world.WindowDeleteHotspot ('a', 'ha')\n"
+        "end\n"));
+    const int releasesBefore = f.hooks.releases;
+
+    bool consumed = MouseUpMiniWindow(&f.doc, CPoint(160, 10), MW_LH, f.hooks);
+
+    EXPECT_EQ(1, f.num("a_release"));               // the release handler ran...
+    EXPECT_EQ((long) eOK, f.num("delrc"));          // ...and its delete was allowed
+    EXPECT_FALSE(f.alive("b"));
+    EXPECT_EQ(0, f.num("b_up"));                    // no MouseUp for a dead window
+    // ...and with its hotspot gone too, nothing cancelled a's mouse-down.
+    EXPECT_EQ(0, f.num("a_canceldown"));
+    // The rest of the routine still ran for what DOES exist — the fix abandons
+    // one branch, it does not return early out of the whole call.
+    EXPECT_EQ(releasesBefore + 1, f.hooks.releases);
+    EXPECT_TRUE(consumed);
+    EXPECT_TRUE(f.alive("a"));
+}
+
+// (d) The self-delete guard is unchanged: WindowDelete on the window whose own
+// callback is running is still refused.  Nothing in the re-lookup fix may
+// weaken this — it is what makes the re-lookups the ONLY thing standing
+// between a cross-window delete and a freed pointer.
+TEST(LuaSurface, AWindowStillCannotDeleteItselfFromItsOwnCallback)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build(""));
+    // Point a's MouseOver at the self-deleting routine.
+    ASSERT_EQ((long) eOK, f.doc.WindowAddHotspot("a", "ha", 0, 0, 50, 40,
+                                                 "ASelfDelete", "ACancelOver",
+                                                 "ADown", "ACancelDown",
+                                                 "AUp", "", 0, 0));
+
+    EXPECT_TRUE(MouseMoveMiniWindow(&f.doc, CPoint(10, 10), f.hooks));
+
+    EXPECT_EQ(1, f.num("a_over"));                  // the callback ran...
+    EXPECT_EQ((long) eItemInUse, f.num("selfrc"));  // ...and was refused
+    EXPECT_TRUE(f.alive("a"));
+}
+
+// ...but the self-delete guard is not the protection it looks like, which is
+// the second reason the routines re-look-up rather than lean on the flag.
+// m_bExecutingScript is a plain bool, not a counter, so a NESTED dispatch on
+// the same window clears it on its way out and the outer dispatch is left
+// unprotected.  WindowAddHotspot makes that reachable: a new hotspot landing
+// under the cursor re-enters the mouse routing synchronously
+// (methods_miniwindows.cpp:583), so a MouseOver callback that adds a hotspot
+// and THEN deletes its own window is allowed to.
+//
+// The view below is what the wx frame does for that re-detect — replay the
+// real routing — and it uses its own hooks, so the counter this test reads
+// belongs strictly to the outer call.
+struct ReplayMouseView : FakeWorldView {
+    CMUSHclientDoc *     doc;
+    MiniWindowMouseHooks replayHooks;
+
+    ReplayMouseView () : doc (NULL) {}
+
+    void mouseMoveMiniWindow (long x, long y) override {
+        FakeWorldView::mouseMoveMiniWindow (x, y);
+        if (doc)
+            MouseMoveMiniWindow (doc, CPoint (x, y), replayHooks);
+    }
+};
+
+TEST(LuaSurface, MouseOverCallbackMayLoseItsOwnWindowToANestedDispatch)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build(""));
+
+    ASSERT_TRUE(run(f.engine->L,
+        "function AOverNested ()\n"
+        "  a_over = a_over + 1\n"
+        // 'h0' sorts BEFORE 'ha', so the re-detect lands on a DIFFERENT hotspot
+        // and really dispatches — which is what clears the flag
+        "  world.WindowAddHotspot ('a', 'h0', 0, 0, 50, 40,\n"
+        "                          'AOver', 'ACancelOver', '', '', '', '', 0, 0)\n"
+        "  delrc = world.WindowDelete ('a')\n"
+        "end\n"));
+    ASSERT_EQ((long) eOK, f.doc.WindowAddHotspot("a", "ha", 0, 0, 50, 40,
+                                                 "AOverNested", "ACancelOver",
+                                                 "ADown", "ACancelDown",
+                                                 "AUp", "", 0, 0));
+
+    // Only now: attaching the view earlier would make THIS WindowAddHotspot's
+    // own re-detect run the whole scenario during setup.
+    ReplayMouseView view;
+    view.doc = &f.doc;
+    f.doc.m_pWorldView = &view;
+
+    bool consumed = MouseMoveMiniWindow(&f.doc, CPoint(10, 10), f.hooks);
+
+    EXPECT_TRUE(view.mouseMoves > 0);               // the re-detect really fired
+    EXPECT_EQ((long) eOK, f.num("delrc"));          // ...and the flag was gone
+    EXPECT_FALSE(f.alive("a"));                     // so the window really died
+    // The mouse-over WAS consumed by that window, but there is no window left
+    // to put a tooltip on.  Against the unfixed code this comes off the freed
+    // CMiniWindow — as does the hotspot re-lookup immediately after it.
+    EXPECT_EQ(0, f.hooks.tooltipsActivated);
+    EXPECT_TRUE(consumed);
+    EXPECT_TRUE(f.alive("b"));
+
+    f.doc.m_pWorldView = NULL;
+}
+
+// Control for the above: the identical nested re-detect, without the delete.
+// The outer call must still activate its tooltip, so "never activate" fails.
+TEST(LuaSurface, MouseOverCallbackSurvivingANestedDispatchStillFinishes)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build(""));
+
+    ASSERT_TRUE(run(f.engine->L,
+        "function AOverNested ()\n"
+        "  a_over = a_over + 1\n"
+        "  world.WindowAddHotspot ('a', 'h0', 0, 0, 50, 40,\n"
+        "                          'AOver', 'ACancelOver', '', '', '', '', 0, 0)\n"
+        "end\n"));
+    ASSERT_EQ((long) eOK, f.doc.WindowAddHotspot("a", "ha", 0, 0, 50, 40,
+                                                 "AOverNested", "ACancelOver",
+                                                 "ADown", "ACancelDown",
+                                                 "AUp", "", 0, 0));
+
+    // Only now: attaching the view earlier would make THIS WindowAddHotspot's
+    // own re-detect run the whole scenario during setup.
+    ReplayMouseView view;
+    view.doc = &f.doc;
+    f.doc.m_pWorldView = &view;
+
+    bool consumed = MouseMoveMiniWindow(&f.doc, CPoint(10, 10), f.hooks);
+
+    EXPECT_TRUE(view.mouseMoves > 0);
+    EXPECT_TRUE(f.alive("a"));
+    EXPECT_EQ(1, f.hooks.tooltipsActivated);
+    EXPECT_TRUE(consumed);
+
+    f.doc.m_pWorldView = NULL;
+}
+
+// MouseWheel.  Its mw is guarded by m_bExecutingScript for the duration of the
+// dispatch, so the only way it dies is the flag being cleared EARLY by a
+// nested dispatch — m_bExecutingScript is a plain bool, not a counter, and
+// WindowAddHotspot re-enters the mouse routing synchronously when the new
+// hotspot lands under the cursor (methods_miniwindows.cpp:583).  That path is
+// what this test drives, and it shows the self-delete guard evaporating: the
+// wheel callback deletes its OWN window and is not refused.
+//
+// Honest limitation: unlike the four tests above, this one cannot fail against
+// the unfixed code.  Everything MouseWheelMiniWindow does after the dispatch is
+// the single store `mw->m_bExecutingScript = false`, so the bug is a write into
+// freed memory with no observable consequence — only a sanitizer sees it.  What
+// this pins is that the hazard is REACHABLE (so the guard is not dead code) and
+// that adding the guard did not change the routine's answer.
+// The observable half of this same hazard is covered by
+// MouseOverCallbackMayLoseItsOwnWindowToANestedDispatch above.
+TEST(LuaSurface, MouseWheelCallbackCanLoseItsOwnWindowToANestedDispatch)
+{
+    TwoWindows f;
+    ASSERT_TRUE(f.build("a"));          // AWheel deletes "a" — its OWN window
+    ASSERT_EQ((long) eOK, f.doc.WindowAddHotspot("a", "ha", 0, 0, 50, 40,
+                                                 "AOver", "ACancelOver",
+                                                 "ADown", "ACancelDown",
+                                                 "AUp", "", 0, 0));
+    ASSERT_EQ((long) eOK, f.doc.WindowScrollwheelHandler("a", "ha", "AWheel"));
+
+    // Control first, with no view attached: WindowAddHotspot cannot re-enter,
+    // the flag stays set for the whole dispatch, and the self-delete is
+    // REFUSED — which is what makes the second half meaningful.
+    EXPECT_TRUE(MouseWheelMiniWindow(&f.doc, CPoint(10, 10), 1, f.hooks));
+    EXPECT_EQ(1, f.num("wheel"));
+    EXPECT_EQ((long) eItemInUse, f.num("delrc"));
+    EXPECT_TRUE(f.alive("a"));
+
+    // Now with a view that really replays the routing, as the wx frame does.
+    // Rearm kill(), and have the wheel callback add a hotspot under the cursor
+    // first so the re-detect fires.
+    ReplayMouseView view;
+    view.doc = &f.doc;
+    f.doc.m_pWorldView = &view;
+    ASSERT_TRUE(run(f.engine->L,
+        "delrc = -1\n"
+        "function AWheel ()\n"
+        "  wheel = wheel + 1\n"
+        // sorts BEFORE 'ha', so the nested move lands on a DIFFERENT hotspot
+        // and really dispatches (and so clears the flag on its way out)
+        "  world.WindowAddHotspot ('a', 'h0', 0, 0, 50, 40,\n"
+        "                          'AOver', 'ACancelOver', '', '', '', '', 0, 0)\n"
+        "  delrc = world.WindowDelete ('a')\n"
+        "end\n"));
+
+    EXPECT_TRUE(MouseWheelMiniWindow(&f.doc, CPoint(10, 10), 1, f.hooks));
+
+    EXPECT_EQ(2, f.num("wheel"));
+    EXPECT_TRUE(view.mouseMoves > 0);               // the re-detect really fired
+    EXPECT_EQ((long) eOK, f.num("delrc"));          // ...and the guard was gone
+    EXPECT_FALSE(f.alive("a"));
+    EXPECT_TRUE(f.alive("b"));                      // and only "a" went
+
+    f.doc.m_pWorldView = NULL;
+}
+
 // Stage 2: the pixels are real.
 //
 // platform/headless_surface.cpp installs pal::CpuRaster as the headless

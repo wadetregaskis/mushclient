@@ -62,6 +62,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 51 | A duplicate trigger/alias label whose replacement fails validation leaves the freed original in the map | this commit | xml_load_world.cpp `CMUSHclientDoc::Load_One_Trigger_XML` / `Load_One_Alias_XML` |
 | 52 | The Lua `error_code`/`error_desc` tables key `ePluginCouldNotSaveState` on 30037 instead of 30038, duplicating `ePluginDoesNotSaveState`'s code | this commit | lua_methods.cpp `error_codes[]`; errors.cpp `error_descriptions[]` |
 | 53 | `ExecuteLua`'s "function not found" arm returns without restoring `m_iNoteStyle` | this commit | lua_scripting.cpp `CScriptEngine::ExecuteLua` (both overloads) |
+| 57 | `CmcDateTime`'s constructor truncates a fractional second, so an `at_time` timer fires up to a second early | this commit | mcdatetime.cpp `mcDateFromTm` (via `CmcDateTime::SetDateTime`) |
 | 56 | The RGB bold/unbold colour scans stop one palette entry short, so white text never swaps | this commit | ansi.cpp `CMUSHclientDoc::InterpretANSIcode` (`ANSI_BOLD` / `ANSI_CANCEL_BOLD`) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
@@ -1182,3 +1183,24 @@ drift out from under the loops again.  Covered by
 `AnsiRgbMode.BoldScanReachesTheLastPaletteEntry` in `tests/test_ansi.cpp` —
 deliberately at index 7, because the pre-existing
 `BoldUpgradeAndDowngradeScanPalette` exercises index 1 and passes either way.
+
+## 57 — `CmcDateTime`'s constructor truncates a fractional second (this commit)
+**Bug:** `CmcDateTime::SetDateTime` takes a `double nSec` and passes it straight
+into `mcDateFromTm`, whose corresponding parameter is a `WORD` — so the implicit
+conversion discards the fraction.  `world.SetTimerOption ("second", …)` accepts
+up to 59.9999 and the Timer dialog's `IDC_AT_SECOND` field validates the same
+range, but `timers.cpp` feeds `fAtSecond` through this constructor, so an
+`eAtTime` timer configured for (say) 30.75 was built as 30.0 and fired up to
+just under a second early.
+**Fix:** widen `mcDateFromTm`'s seconds parameter to `double`.  Its range check
+becomes `nSecond < 0.0 || nSecond >= 60.0` — identical accept/reject behaviour
+for every value the callers can supply, and well-defined for a negative one,
+which previously wrapped through the `WORD` conversion.  The rest of the body
+needs no change: the seconds term already feeds a floating-point division by
+`SECS_IN_DAY`, and the negative-serial sign convention a few lines below is
+untouched.  Covered by `CmcDateTimeTest.ConstructorKeepsFractionalSeconds` in
+`tests/test_mcdatetime.cpp`, which also pins the range check at both ends.
+(`c9fb64d` had already worked around this truncation for `GetTimeNow`'s POSIX
+arm by building whole seconds and adding the fraction onto `m_dt` afterwards;
+that arm still reads correctly and is left alone, but its comment no longer
+describes a live defect and has been corrected.)

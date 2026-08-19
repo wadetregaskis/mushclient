@@ -28,18 +28,46 @@ TEST(CmcDateTimeTest, ConstructFromComponents) {
     EXPECT_EQ(30,   dt.GetMinute());
 }
 
+// mcDateFromTm's seconds parameter is a double, so a fractional second survives
+// construction.  It used to be a WORD: an "at time" timer configured for 30.75
+// seconds (world.SetTimerOption "second" allows up to 59.9999, and the Timer
+// dialog validates the same range) was built as 30.0 and fired up to a second
+// early.
+TEST(CmcDateTimeTest, ConstructorKeepsFractionalSeconds) {
+    CmcDateTime dt(2024, 1, 1, 0, 0, 30.75);
+    ASSERT_EQ(CmcDateTime::valid, dt.GetStatus());
+
+    const CmcDateTime midnight(2024, 1, 1, 0, 0, 0.0);
+    ASSERT_EQ(CmcDateTime::valid, midnight.GetStatus());
+
+    // seconds since midnight, read off the DATE double.  The tolerance is set by
+    // what a DATE can hold at this magnitude (~1 microsecond), not by the defect,
+    // which was three quarters of a second.
+    const double secs = (dt.m_dt - midnight.m_dt) * kSecsInDay;
+    EXPECT_NEAR(30.75, secs, 1e-4);
+
+    // widening the parameter must not have widened the range it accepts
+    CmcDateTime edge(2024, 1, 1, 0, 0, 59.9999);   // the configured maximum
+    EXPECT_EQ(CmcDateTime::valid, edge.GetStatus());
+    CmcDateTime whole_minute(2024, 1, 1, 0, 0, 60.0);
+    EXPECT_EQ(CmcDateTime::invalid, whole_minute.GetStatus());
+    CmcDateTime negative(2024, 1, 1, 0, 0, -1.0);
+    EXPECT_EQ(CmcDateTime::invalid, negative.GetStatus());
+}
+
 TEST(CmcDateTimeTest, GetTimeNowReturnsNonZero) {
     CmcDateTime now = CmcDateTime::GetTimeNow();
     EXPECT_EQ(CmcDateTime::valid, now.GetStatus());
     EXPECT_NE(0.0, now.m_dt);
 }
 
-// GetTimeNow must carry SUB-SECOND precision.  CmcDateTime's constructor cannot:
-// SetDateTime takes a `double nSec` and passes it into mcDateFromTm, whose
-// parameter is a WORD, so the fraction is truncated on the way in.  Windows
-// sidesteps that by adding its QueryPerformanceCounter delta straight onto
-// m_dt; the POSIX arm used to hand its nanoseconds to the constructor and lose
-// them, which quantised every fractional timer to 1 Hz.
+// GetTimeNow must carry SUB-SECOND precision.  The POSIX arm used to hand its
+// nanoseconds to the CmcDateTime constructor, which truncated them (mcDateFromTm
+// took a WORD second), quantising every fractional timer to 1 Hz.  Windows
+// sidesteps that by adding its QueryPerformanceCounter delta straight onto m_dt,
+// and the POSIX arm now does the same.  (The constructor no longer truncates
+// either -- see ConstructorKeepsFractionalSeconds -- but the precision pinned
+// here is GetTimeNow's own.)
 //
 // This cannot be tested through the timer suite: those tests install
 // pal::g_clock, whose nowOle() returns a raw double and so bypasses the

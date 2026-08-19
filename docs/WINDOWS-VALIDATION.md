@@ -2531,3 +2531,12 @@ against the real view, the real timer wheel and a real MUD.
   obviously different colours on the world's ANSI-colour page first, or the
   change is invisible.  Confirm the other seven colours are unchanged — they
   already worked, and the loop bound is the only thing that moved.
+
+- **Fractional `at_time` timers** (`docs/UPSTREAM-BUGS.md` #57).  **To check:**
+  a timer set to *at time* with a second field of, say, 30.75, against the
+  world clock.  It should fire three quarters of a second later than stock
+  5.06 does — i.e. at the time configured, not at the whole second below it.
+  Worth re-running the ordinary *every* timers and `DoAfter` alongside: they go
+  through `CmcDateTimeSpan`, not this constructor, and must be unaffected.  The
+  range the dialog accepts must also be unchanged — 59.9999 still valid, 60
+  still rejected.

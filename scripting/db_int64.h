@@ -28,7 +28,8 @@
 // The middle band is a VALUE test, not a MAGNITUDE test, and that is the whole
 // point of it.  MUSHclient ships two SQLite surfaces -- these four
 // world.Database* readers and the bundled Lua `sqlite3` module -- and the
-// module reaches for the value test at lsqlite/lsqlite3.c:115-121:
+// module reached for the value test first, in vm_push_column and its two
+// siblings (lsqlite/lsqlite3.c), originally written as:
 //
 //     lua_Number n = (lua_Number) i64;
 //     if (n == i64) lua_pushnumber (L, n); else <push the decimal text>
@@ -38,15 +39,18 @@
 // so is held perfectly by a double, yet which the old band stringified.  The
 // round trip removes that disagreement.
 //
-// One residual difference remains, and it is lsqlite3's, not ours: in
-// `n == i64` the usual arithmetic conversions widen the int64 operand to
-// double before comparing, so the test reads (double) i64 == (double) i64 and
-// is vacuously true.  lsqlite3's string branch is therefore unreachable and it
-// pushes a silently rounded number for values a double cannot hold, where we
-// return the lossless decimal string.  Deliberately left alone here -- changing
-// vendored third-party behaviour is a separate decision -- but pinned by
-// Lsqlite3ModuleStillNumbersWhatWeStringify in tests/test_database.cpp so the
-// two surfaces cannot drift further apart unnoticed.
+// The two surfaces agreed completely as of fbb6695.  They did not at first:
+// lsqlite3 spelled its round trip `n == i64`, where the usual arithmetic
+// conversions widen the int64 operand to double before comparing, so the test
+// read (double) i64 == (double) i64 and was vacuously true -- its string branch
+// was unreachable and it pushed a silently rounded number for values a double
+// cannot hold, where we return the lossless decimal string.  That was recorded
+// here as a deliberate residual, on the grounds that changing vendored
+// third-party behaviour is a separate decision; the decision was then taken and
+// lsqlite3 fixed (docs/UPSTREAM-BUGS.md 87), so no residual remains.  Both sides
+// are pinned by Lsqlite3ModuleBandsExactlyAsWeDo and
+// Lsqlite3ModuleAgreesOnWhatADoubleCanHold in tests/test_database.cpp, so the two
+// surfaces cannot drift apart unnoticed.  Keep them in step.
 //
 // The string band follows the precedent already set by DatabaseLastInsertRowid
 // (methods_database.cpp), which has always returned an sqlite3_int64 rowid as a

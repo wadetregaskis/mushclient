@@ -142,6 +142,18 @@ public:
     virtual void textRectChanged() = 0;
     // Screen rect of the output pane (world.GetWorldWindowPosition).
     virtual Rect outputRect() const = 0;
+    // World Properties ▸ Output ▸ "Adjust size to width": resize THIS WORLD'S
+    // WINDOW so the output text area ends up `textWidth` pixels wide.  The
+    // window moves; the wrap column does NOT (the caller has already clamped
+    // the column and turned it into pixels).  false = refused, and nothing
+    // moved — the caller reports eBadParameter, which is what Windows already
+    // returns when it cannot find a frame to resize.
+    //
+    // Deliberately NOT pure, for the reason isPaused gives below: an adapter
+    // with no window to resize honestly cannot do this, and a new pure virtual
+    // here would break the Windows build from a tree where
+    // pal/win_worldview.cpp cannot be compiled.  Both real adapters override.
+    virtual bool setOutputWidthPixels(int /*textWidth*/) { return false; }
 
     // ── core → frontend: world/main window management (P2 window family) ──
     // world.SetMainTitle: the application (main frame) title, set from this

@@ -290,6 +290,7 @@ public:
                               bool bold, bool italic) override;
     void        textRectChanged() override;
     pal::Rect   outputRect() const override;
+    bool        setOutputWidthPixels(int textWidth) override;
     void        setMainTitle(const char* title) override;
     void        moveWorldWindow(long left, long top,
                                 long width, long height) override;

@@ -6130,6 +6130,59 @@ pal::Rect CWorldChildFrame::outputRect() const
     return { r.x, r.y, r.width, r.height };
 }
 
+// World Properties ▸ Output ▸ "Adjust size to width": widen or narrow THIS
+// window until the output pane's text area is exactly `textWidth` pixels.
+//
+// Windows resizes the frame's rcNormalPosition and lets the splitter hand the
+// difference to the view, adding the scroll bar / frame / border system metrics
+// to get from text width to window width.  There is no equivalent here: the
+// chrome is whatever the sizer puts either side of the pane, so it is MEASURED
+// (frame width minus pane client width) rather than assembled from constants.
+// Same answer, no magic numbers, and it stays right across themes and DPI.
+//
+// REFUSED while maximised or full screen.  wxOSX has no rcNormalPosition — the
+// restored rect is not readable or writable — so the honest choices are to
+// approximate it or to decline; declining is the one that cannot silently
+// unzoom the user's window or resize the wrong rectangle.
+//
+// Only the WIDTH changes: x, y and height are read back and re-applied, exactly
+// as OnAdjustToWidth's "we only want to change the width" comment says.  The
+// wrap column is not touched here at all -- ApplyWrapColumnAndNAWS decides that
+// on the resize that follows, and only when the world has auto_wrap_window_width
+// on (AutoWrapColumnFor).
+bool CWorldChildFrame::setOutputWidthPixels(int textWidth)
+{
+    if (!m_output || textWidth <= 0)
+        return false;
+
+    if (IsMaximized() || IsFullScreen())
+        return false;              // no restored rect to resize -- see above
+
+    // Two passes at most: the first uses the chrome measured before the move,
+    // the second corrects for anything the relayout itself changed (a scroll
+    // bar appearing, a minimum size biting).  Bounded, so it cannot oscillate.
+    bool moved = false;
+
+    for (int pass = 0; pass < 2; ++pass) {
+        const int paneW = m_output->GetClientSize().x;
+
+        if (paneW == textWidth)
+            break;                 // already there
+
+        const wxRect r = GetRect();
+        const int wanted = r.width + (textWidth - paneW);
+
+        if (wanted <= 0)
+            return false;          // would collapse the window -- refuse
+
+        SetSize(r.x, r.y, wanted, r.height);
+        Layout();
+        moved = true;
+    }
+
+    return moved || m_output->GetClientSize().x == textWidth;
+}
+
 // ── world/main window management (P2 window family) ──────────────────────────
 
 // world.SetMainTitle(s): update the main application window title.

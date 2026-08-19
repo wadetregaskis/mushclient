@@ -136,6 +136,19 @@ struct FakeWorldView : pal::IWorldView {
     void textRectChanged() override { ++textRectChanges; }
     pal::Rect outputRect() const override { return outRect; }
 
+    // "Adjust size to width".  Records the text width the engine asked for;
+    // `widthRefused` makes the fake decline, so the caller's error arm has a
+    // way to be reached (the real adapters decline while maximised).
+    int  outputWidthPixels = 0;
+    int  outputWidthCalls  = 0;
+    bool widthRefused      = false;
+    bool setOutputWidthPixels(int textWidth) override {
+        ++outputWidthCalls;
+        if (widthRefused) return false;
+        outputWidthPixels = textWidth;
+        return true;
+    }
+
     // ── world/main window management (P2 window family) ────────────────────
     std::string mainTitle;
     long mwX = -1, mwY = -1, mwW = -1, mwH = -1;

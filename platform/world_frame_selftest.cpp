@@ -37,6 +37,14 @@
                                      // clear-buffer confirmation prompt
 #include "dialogs/TextAttributesDlg.h"    // Display ▸ Text Attributes
 #include "dialogs/HighlightPhraseDlg.h"   // Display ▸ Highlight Word
+#include "scripting/errors.h"             // eOK / eBadParameter
+
+// Defined in wx_mfc_impl.cpp: enter/leave full screen on a window, stashing
+// (or discarding) its pre-full-screen rect -- the same bookkeeping the real
+// View ▸ Full Screen menu handler does, exposed so a harness can drive it
+// without a fully wired MDI parent + wxEVT_MENU dispatch.  Declared the same
+// way in platform/gui_bridge_selftest.cpp, which drives it too.
+void wx_toggle_full_screen(wxTopLevelWindow* target);
 
 #include <climits>        // LONG_MIN — "no saved child_x/child_y" sentinel below
 #include <cstdio>
@@ -3451,6 +3459,88 @@ int RunWorldFrameSelfTest()
         doc->GetMainRect(mx, my, mw, mh);
         check(mx == child->GetRect().x && mw == child->GetRect().width,
               "...and GetMainWindowPosition with it");
+    }
+
+    // ── World Properties ▸ Output ▸ "Adjust size to width" ─────────────────
+    // The button's whole body used to sit behind
+    // `m_pActiveCommandView || m_pActiveOutputView` -- written only by the MFC
+    // views -- so on the port it was visible and completely inert.  It resizes
+    // the WINDOW so a given wrap column fits; asserting the pane's real client
+    // width (not "the seam was called") is what makes "it did nothing" fail.
+    {
+        // The wrap column must NOT follow the window: that is the port bug
+        // AutoWrapColumnFor was introduced to fix, and it also rewrote the
+        // user's world file.  Turn the option off, which is its default.
+        doc->m_bAutoWrapWindowWidth = FALSE;
+        doc->m_nWrapColumn          = 80;
+
+        child->SetSize(150, 170, 700, 480);
+        wxYield();
+
+        COutputPane * op = child->OutputPane();
+        const int charW = doc->m_gui_font_width;
+
+        check(op != NULL && charW > 0,
+              "adjust-size-to-width: fixture -- the pane has a measured char width");
+
+        const int widthBefore = op ? op->GetClientSize().x : 0;
+
+        // 60 columns + a 3-pixel offset.  Neither number is a multiple of the
+        // other and the offset is not a multiple of the char width, so a body
+        // that dropped either term lands somewhere else.
+        check(doc->ResizeWindowToWrapColumn(60, 3) == eOK,
+              "adjust-size-to-width: the engine entry point reports success");
+        wxYield();
+
+        const int paneW60 = op ? op->GetClientSize().x : 0;
+        check(paneW60 == charW * 60 + 3,
+              "adjust-size-to-width: the output pane is EXACTLY 60 columns "
+              "plus the pixel offset wide");
+        check(paneW60 > 0,
+              "adjust-size-to-width: ...and the sizer did not squeeze the pane "
+              "to nothing");
+        check(paneW60 != widthBefore,
+              "adjust-size-to-width: ...and it really moved (control)");
+        check((int) doc->m_nWrapColumn == 80,
+              "adjust-size-to-width: the WINDOW changed, the wrap column did not");
+
+        // A second, different column: the width tracks the request rather than
+        // landing on one lucky number.
+        check(doc->ResizeWindowToWrapColumn(90, 3) == eOK,
+              "adjust-size-to-width: a second call succeeds too");
+        wxYield();
+        const int paneW90 = op ? op->GetClientSize().x : 0;
+        check(paneW90 == charW * 90 + 3,
+              "adjust-size-to-width: 90 columns gives a 90-column pane");
+        check(paneW90 > paneW60,
+              "adjust-size-to-width: ...which is wider than the 60-column one");
+
+        // Only the width moves -- x, y and height are re-applied, exactly as
+        // the Windows handler's "we only want to change the width" comment says.
+        const wxRect r = child->GetRect();
+        check(r.x == 150 && r.y == 170 && r.height == 480,
+              "adjust-size-to-width: position and height are left alone");
+
+        // Refused while full screen: wxOSX has no rcNormalPosition, so there is
+        // no restored rect to widen -- approximating one would resize the wrong
+        // rectangle (the same trap wx_geometry_rect_for_save exists for).
+        wx_toggle_full_screen(child);
+        wxYield();
+        check(child->IsFullScreen(),
+              "adjust-size-to-width: control -- the frame really is full screen");
+        const int fsPaneW = op ? op->GetClientSize().x : 0;
+        check(doc->ResizeWindowToWrapColumn(50, 3) == eBadParameter,
+              "adjust-size-to-width: refused while full screen");
+        wxYield();
+        check(op != NULL && op->GetClientSize().x == fsPaneW,
+              "adjust-size-to-width: ...and the refusal moved nothing");
+
+        wx_toggle_full_screen(child);
+        wxYield();
+        check(!child->IsFullScreen(),
+              "adjust-size-to-width: control -- and back out of full screen");
+        check(doc->ResizeWindowToWrapColumn(60, 3) == eOK,
+              "adjust-size-to-width: ...where it works again");
     }
 
     // Tear down without running the close/save flow (this doc has no file).

@@ -1812,6 +1812,11 @@ public:
       x = r.x; y = r.y; w = r.w; h = r.h;
       return true;
   }
+  // "Adjust size to width" — resize the world window so the output text area
+  // is `textWidth` pixels wide.  false = no view, or the frontend refused.
+  bool EmitOutputWidthPixels(int textWidth) {
+      return m_pWorldView && m_pWorldView->setOutputWidthPixels(textWidth);
+  }
 
   // ── PAL: world/main window management (typed-only — P2 window family) ────
   void EmitMainTitle(const std::string& title) {
@@ -2551,6 +2556,19 @@ public:
   // 0 = cannot tell.  This is World Properties ▸ Output ▸ "Adjust width to
   // size", which used to walk the views for a CMUSHView the port never builds.
   int WrapColumnForCharWidth (int iAveCharWidth) const;
+
+  // The average character width, in pixels, of the font this world is CURRENTLY
+  // painting output with.  Windows measures m_font [0] through a memory DC; the
+  // port reads the figure the output pane keeps current.  0 = cannot tell.
+  int OutputFontCharWidth () const;
+
+  // World Properties ▸ Output ▸ "Adjust size to width": the mirror of
+  // WrapColumnForCharWidth — resize the world WINDOW so iColumn columns fit,
+  // rather than derive a column from the window.  iColumn is clamped by
+  // ClampWrapColumn; iPixelOffset is the page's pixel-offset field, which
+  // needs the extra room.  Returns an eOK/eBadParameter script error code.
+  // The window moves; m_nWrapColumn is deliberately NOT written.
+  long ResizeWindowToWrapColumn (int iColumn, int iPixelOffset);
 
   // The Ctrl+click alias menu, hoisted from the view family so the port can
   // drive it (doc_aliasmenu_shared.cpp, 2026-08-13).  Windows' CMUSHView

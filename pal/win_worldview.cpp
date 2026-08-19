@@ -34,6 +34,8 @@
 //   isFullscreen        methods_info.cpp    GetInfo 125 (Frame.IsFullScreen)
 //   saveWorld           methods_utilities.cpp Save ("" name: !DoSave(path))
 //   outputRect          methods_output.cpp  GetWorldWindowPositionX (Which 1)
+//   setOutputWidthPixels dialogs/world_prefs/prefspropertypages.cpp
+//                       CPrefsP14::OnAdjustToWidth ("Adjust size to width")
 //   mainRect            methods_info.cpp    GetMainWindowPosition
 //   infobar*            methods_infobar.cpp ShowInfoBar/InfoClear/Info/
 //                       InfoColour/InfoBackground/InfoFont
@@ -759,6 +761,49 @@ public:
         }
 
         return out;
+    }
+
+    bool setOutputWidthPixels(int textWidth) override
+    {
+        // World Properties ▸ Output ▸ "Adjust size to width"
+        // (CPrefsP14::OnAdjustToWidth, dialogs/world_prefs/prefspropertypages.cpp).
+        // Every statement below is that handler's, verbatim, with only the two
+        // pieces that are not platform work moved out to the engine site: the
+        // font metric (CMUSHclientDoc::OutputFontCharWidth, the same memory-DC
+        // measurement of m_font [0]) and the 20 .. MAX_LINE_WIDTH column clamp
+        // (ClampWrapColumn).  textWidth is therefore
+        // tm.tmAveCharWidth * iColumn + m_iPixelOffset, i.e. exactly the two
+        // terms this body used to add inside the rect.right sum.
+        if (!(m_pDoc->m_pActiveCommandView || m_pDoc->m_pActiveOutputView))
+            return false;
+
+        RECT rect;
+
+        CChildFrame * pFrame;
+
+        if (m_pDoc->m_pActiveCommandView)
+            pFrame = m_pDoc->m_pActiveCommandView->m_owner_frame;
+        else
+            pFrame = m_pDoc->m_pActiveOutputView->m_owner_frame;
+
+        // get current window size and position (we only want to change the width)
+
+        WINDOWPLACEMENT wp;
+        wp.length = sizeof (wp);
+        pFrame->GetWindowPlacement (&wp);
+        rect = wp.rcNormalPosition;
+
+        // calculate new width
+        rect.right = rect.left +
+                textWidth +                          // columns wanted (+ offset)
+                GetSystemMetrics (SM_CXVSCROLL) +    // scroll bar
+                GetSystemMetrics (SM_CXSIZEFRAME) * 2 +  // frame
+                GetSystemMetrics (SM_CXBORDER) * 2 +     // border
+                5;    // fudge factor, it always seemed to be out by a column
+
+        pFrame->MoveWindow (&rect);
+
+        return true;
     }
 
     // ── world/main window management ───────────────────────────────────────

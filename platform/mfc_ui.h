@@ -1902,7 +1902,10 @@ public:
 #ifndef GUID_DEFINED
 #define GUID_DEFINED
 struct GUID {
-    unsigned long  Data1;
+    // 32 bits, NOT `unsigned long`: the Windows SDK's long is 32-bit, so
+    // GetGUID's "%08lX" printed 8 hex digits there and SIXTEEN here, giving
+    // world.CreateGUID a malformed 44-character result on every LP64 host.
+    unsigned int   Data1;
     unsigned short Data2, Data3;
     unsigned char  Data4[8];
 };

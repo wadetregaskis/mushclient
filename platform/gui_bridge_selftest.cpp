@@ -41,6 +41,8 @@
 #include "dialogs/global_prefs/GlobalPrefs.h"         // CGlobalPrefsP4 — printer font
 #include "dialogs/DebugWorldInputDlg.h"                // CDebugWorldInputDlg — fixed-pitch font
 
+#include <cctype>                       // isxdigit/islower — the GUID shape check
+
 #include <vector>
 
 // Defined in wx_mfc_impl.cpp: the geometry writer the quit hook and the MDI
@@ -1363,6 +1365,62 @@ void TestFixedPitchFontReachesTheDialogs()
     g_wxhook_set_font = savedFont;
 }
 
+// GUID::Data1 was declared `unsigned long`, which is 64 bits here and 32 on
+// Windows, while GetGUID's format was "%08lX" — a MINIMUM width.  So the first
+// group came out sixteen hex digits and world.CreateGUID returned a malformed
+// 44-character GUID.  Only the GUI build compiles Utilities.cpp (mushcore has
+// its own twin in doc_port_glue.cpp), so this cannot be caught headlessly.
+void TestCreateGuidShape()
+{
+    printf("GetGUID (world.CreateGUID):\n");
+
+    const CString guid = GetGUID ();
+    const std::string s ((LPCTSTR) guid);
+
+    check(s.size() == 36, "the GUID is 36 characters (was: 44 on any LP64 host)");
+
+    // 8-4-4-4-12 hex with dashes, checked positionally so a wrong group WIDTH
+    // fails rather than merely a wrong total length.
+    static const int groups[5] = { 8, 4, 4, 4, 12 };
+    bool shape = s.size() == 36;
+    size_t at = 0;
+    for (int g = 0; g < 5 && shape; g++) {
+        if (g > 0) shape = shape && at < s.size() && s[at++] == '-';
+        for (int i = 0; i < groups[g] && shape; i++, at++)
+            shape = at < s.size() && isxdigit((unsigned char) s[at]) != 0
+                                  && !islower((unsigned char) s[at]);
+    }
+    check(shape && at == s.size(), "...in 8-4-4-4-12 uppercase hex groups");
+
+    // The control: it is not a constant.
+    check(GetGUID () != guid, "consecutive calls differ");
+}
+
+// metaphone() clamps its OUTPUT length to the size of its 61-byte stack buffer
+// and then fills that buffer from the input with no bound at all, so any word of
+// more than 60 letters smashes the stack frame (upstream bug 30).  It has no
+// caller in the tree, and only the GUI build compiles Utilities.cpp, so this is
+// the only place the shipping body can be driven.
+void TestMetaphoneBoundsItsInput()
+{
+    printf("metaphone() input bound:\n");
+
+    char out[64];
+
+    // The control first: an ordinary word still comes back with something.
+    out[0] = '\0';
+    metaphone ("Thompson", out, (int) sizeof (out) - 1);
+    check(out[0] != '\0', "an ordinary word produces a result");
+
+    std::string huge;
+    while (huge.size() < 200) huge += "Thompson";
+    out[0] = '\0';
+    metaphone (huge.c_str (), out, (int) sizeof (out) - 1);
+    check(out[0] != '\0', "a 200-letter word produces one too (was: stack smash)");
+    check(std::string (out).size () < sizeof (out),
+          "...inside the caller's buffer");
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1387,6 +1445,8 @@ int RunGuiBridgeSelfTest()
     TestPrinterFontPickerSeedsFromThePage();
     TestTimerListSortsByContents();
     TestFixedPitchFontReachesTheDialogs();
+    TestCreateGuidShape();
+    TestMetaphoneBoundsItsInput();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

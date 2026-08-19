@@ -345,8 +345,12 @@ CString GetGUID (void)
   GUID guid;
 
   if (CoCreateGuid (&guid) == S_OK)
-    strResult.Format ("%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",
-                        guid.Data1, guid.Data2, guid.Data3,
+    // %08X + an explicit 32-bit cast: GUID::Data1 is 32 bits by definition, but
+    // "%08lX" is a MINIMUM width, so on a host where long is 64 bits the first
+    // group came out 16 digits long.  Identical on Windows, where Data1 is an
+    // (also 32-bit) unsigned long.
+    strResult.Format ("%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                        (unsigned int) guid.Data1, guid.Data2, guid.Data3,
                         guid.Data4 [0], guid.Data4 [1], guid.Data4 [2], guid.Data4 [3],
                         guid.Data4 [4], guid.Data4 [5], guid.Data4 [6], guid.Data4 [7]);
 
@@ -1147,6 +1151,11 @@ void metaphone (const char *name, char * metaph, int metalen)
   jj = 0;
   for (ii=0; name[ii] != '\0'; ii++) {
     if ( isalpha(name[ii]) ) {
+      // Upstream copies without a bound, so any word of more than 60 letters
+      // runs off the end of wname and smashes the stack frame.  metalen is
+      // already clamped to the same size just above; this is the missing half.
+      if (jj >= (int) sizeof (wname) - 1)
+        break;
       ename[jj] = toupper(name[ii]);
       jj++;
       }

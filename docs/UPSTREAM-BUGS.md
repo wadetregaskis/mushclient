@@ -38,6 +38,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 27 | The Timers list's Contents column header does not sort | this commit | prefspropertypages.cpp `CPrefsP16::CompareObjects` |
 | 28 | The alias page's column arrays are indexed with the trigger page's enum | this commit | configuration.cpp `CMUSHclientDoc::LoadPrefsP7` |
 | 29 | The printer-font picker opens on the font from before the sheet opened | this commit | GlobalPrefs.cpp `CGlobalPrefsP4::OnFont` |
+| 30 | `metaphone()` copies a word into a 61-byte stack buffer with no bound | this commit | Utilities.cpp `metaphone` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -729,3 +730,16 @@ the size half already uses the page's own `m_nPrinterFontSize`.
 matching `CGlobalPrefsP10::OnFont`.  `needs: windows-run` — the port's font
 picker is the wx one behind `g_wxhook_font_dialog`, so only a Windows build
 confirms the `CFontDialog` seeding end to end.
+
+## 30 — `metaphone()` copies a word into a 61-byte stack buffer with no bound (this commit)
+**Bug:** `metaphone` clamps its *output* length to `sizeof (wname) - 1` and then
+fills `wname[61]` from the input with `for (ii=0; name[ii] != '\0'; ii++) { if
+(isalpha(...)) ename[jj++] = ...; }` — no check on `jj`.  Any word with more
+than 60 letters writes past the end of the buffer and smashes the stack frame.
+It is latent rather than live: the function has **no caller anywhere in the
+tree** (the only near-call, methods_spellchecker.cpp:328, is commented out, and
+`utils.metaphone` goes through `MString::DoubleMetaphone` instead), so the first
+caller added would be the one to find it.
+**Fix:** `break` out of the fill loop once `jj` reaches `sizeof (wname) - 1`,
+which is the same clamp the `metalen` line above it already applies.  Kept
+rather than deleted so the reference implementation stays available.

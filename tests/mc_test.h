@@ -16,6 +16,9 @@
 #include <cmath>
 #include <vector>
 #include <string>
+#include <sstream>
+#include <type_traits>
+#include <utility>
 #include <functional>
 
 namespace mc_test {
@@ -78,7 +81,33 @@ inline void fail_msg(const char* file, int line, const char* msg) {
 template<typename A, typename B>
 inline bool cmp_eq(const A& a, const B& b) { return a == b; }
 inline bool cmp_eq(const char* a, const char* b) {
-    return a && b && strcmp(a, b) == 0;
+    return a == b || (a && b && strcmp(a, b) == 0);
+}
+
+// ── Value rendering for failure messages ─────────────────────────────────
+//
+// Best-effort human-readable rendering of a compared value, so a failure
+// inside a table- or loop-driven assertion shows WHICH input produced it,
+// not just the source text of the expression.  Falls back to a placeholder
+// for types with no operator<< (EXPECT_EQ etc. are used with every kind of
+// value in the suite, including plain structs), rather than failing to
+// compile.
+template<typename T, typename = void>
+struct has_ostream_op : std::false_type {};
+template<typename T>
+struct has_ostream_op<T, std::void_t<decltype(std::declval<std::ostream&>() << std::declval<const T&>())>>
+    : std::true_type {};
+
+template<typename T>
+inline std::string describe(const T& v) {
+    if constexpr (has_ostream_op<T>::value) {
+        std::ostringstream oss;
+        oss << v;
+        return oss.str();
+    } else {
+        (void)v;
+        return "<?>";
+    }
 }
 
 } // namespace mc_test
@@ -106,34 +135,56 @@ inline bool cmp_eq(const char* a, const char* b) {
 #define EXPECT_EQ(expected, actual) \
     do { if (!mc_test::cmp_eq((expected), (actual))) { \
         char buf[512]; \
-        snprintf(buf, sizeof(buf), "Expected " #expected " == " #actual); \
+        snprintf(buf, sizeof(buf), "Expected " #expected " == " #actual \
+                 " (%s vs %s)", mc_test::describe(expected).c_str(), \
+                 mc_test::describe(actual).c_str()); \
         mc_test::fail_msg(__FILE__, __LINE__, buf); \
     }} while(0)
 
 #define EXPECT_NE(a, b) \
-    do { if (mc_test::cmp_eq((a),(b))) \
-        mc_test::fail_msg(__FILE__, __LINE__, "Expected " #a " != " #b); \
-    } while(0)
+    do { if (mc_test::cmp_eq((a),(b))) { \
+        char buf[512]; \
+        snprintf(buf, sizeof(buf), "Expected " #a " != " #b \
+                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+                 mc_test::describe(b).c_str()); \
+        mc_test::fail_msg(__FILE__, __LINE__, buf); \
+    }} while(0)
 
 #define EXPECT_GT(a, b) \
-    do { if (!((a) > (b))) \
-        mc_test::fail_msg(__FILE__, __LINE__, "Expected " #a " > " #b); \
-    } while(0)
+    do { if (!((a) > (b))) { \
+        char buf[512]; \
+        snprintf(buf, sizeof(buf), "Expected " #a " > " #b \
+                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+                 mc_test::describe(b).c_str()); \
+        mc_test::fail_msg(__FILE__, __LINE__, buf); \
+    }} while(0)
 
 #define EXPECT_GE(a, b) \
-    do { if (!((a) >= (b))) \
-        mc_test::fail_msg(__FILE__, __LINE__, "Expected " #a " >= " #b); \
-    } while(0)
+    do { if (!((a) >= (b))) { \
+        char buf[512]; \
+        snprintf(buf, sizeof(buf), "Expected " #a " >= " #b \
+                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+                 mc_test::describe(b).c_str()); \
+        mc_test::fail_msg(__FILE__, __LINE__, buf); \
+    }} while(0)
 
 #define EXPECT_LT(a, b) \
-    do { if (!((a) < (b))) \
-        mc_test::fail_msg(__FILE__, __LINE__, "Expected " #a " < " #b); \
-    } while(0)
+    do { if (!((a) < (b))) { \
+        char buf[512]; \
+        snprintf(buf, sizeof(buf), "Expected " #a " < " #b \
+                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+                 mc_test::describe(b).c_str()); \
+        mc_test::fail_msg(__FILE__, __LINE__, buf); \
+    }} while(0)
 
 #define EXPECT_LE(a, b) \
-    do { if (!((a) <= (b))) \
-        mc_test::fail_msg(__FILE__, __LINE__, "Expected " #a " <= " #b); \
-    } while(0)
+    do { if (!((a) <= (b))) { \
+        char buf[512]; \
+        snprintf(buf, sizeof(buf), "Expected " #a " <= " #b \
+                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+                 mc_test::describe(b).c_str()); \
+        mc_test::fail_msg(__FILE__, __LINE__, buf); \
+    }} while(0)
 
 #define EXPECT_STREQ(expected, actual) \
     do { if (!mc_test::cmp_eq((const char*)(expected), (const char*)(actual))) { \

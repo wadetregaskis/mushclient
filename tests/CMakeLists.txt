@@ -98,6 +98,11 @@ mc_test(test_chat_protocol)
 # non-full mushcore; that reason is gone.)
 mc_test(test_gdi_headless)
 
+# Self-tests for mc_test.h itself (X04-F15, X04-F16): a regression in the
+# framework's own comparison/message-building logic is invisible to every
+# OTHER suite, which would just silently mis-report pass/fail.
+mc_test(test_mc_test_framework)
+
 # ── Source lint: no non-ASCII in narrow string literals ─────────────────────
 # Note()/Tell()/DisplayMsg() take BYTES, decoded with the world's encoding — so
 # a UTF-8 em dash in an app-generated message renders as "â€”" in any world that
@@ -116,6 +121,12 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/check_ascii_literals.py
                      --selftest)
+else()
+    # Without a Python3 interpreter the two lint tests above are never
+    # registered, so a green ctest run no longer means the mojibake guard
+    # ran.  Surface that in the configure log rather than letting the gap
+    # be silent (the test COUNT dropping is easy to miss).
+    message(WARNING "Python3 not found; ASCII-literal lint (mojibake guard) SKIPPED")
 endif()
 
 # ── In-app conformance selftests ────────────────────────────────────────────

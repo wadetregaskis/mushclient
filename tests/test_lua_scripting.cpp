@@ -4981,6 +4981,35 @@ TEST(LuaScripting, SetTraceFlushesAHalfBuiltLine)
     lua_close(L);
 }
 
+// D-18: GetLineInfo(n).time is a 64-bit time_t widened to a Lua double.  It used
+// to be truncated through (int), so every timestamp from 2038-01-19 came back
+// negative.
+TEST(LuaScripting, GetLineInfoTimeSurvives2038)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    ASSERT_TRUE(run(L, "world.Note('a line from the future')"));
+    ASSERT_GT((long)doc.m_LineList.GetCount(), 0L);
+
+    // One day past the signed-32-bit time_t rollover (2038-01-19 03:14:08 UTC):
+    // the smallest realistic value an (int) narrowing turns negative.
+    const time_t kPost2038 = (time_t) 2147483648LL + 86400;   // 2038-01-20
+    doc.m_LineList.GetHead()->m_theTime = kPost2038;
+
+    int n = run_ret(L, "local t = world.GetLineInfo(1) return t.time");
+    ASSERT_EQ(1, n);
+    ASSERT_TRUE(lua_isnumber(L, -1));
+    double got = lua_tonumber(L, -1);
+    EXPECT_GT(got, 0.0);                        // the sign flip itself
+    EXPECT_EQ((double) kPost2038, got);         // and the exact instant, losslessly
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

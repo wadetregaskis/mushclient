@@ -3025,7 +3025,10 @@ static int L_GetLineInfo (lua_State *L)
     MakeTableItemBool (L, "log",      (pLine->flags & LOG_LINE) != 0); // 6
     MakeTableItemBool (L, "bookmark", (pLine->flags & BOOKMARK) != 0); // 7
     MakeTableItemBool (L, "hr",       (pLine->flags & HORIZ_RULE) != 0); // 8
-    MakeTableItem     (L, "time",     (int) pLine->m_theTime.GetTime ()); // 9a
+    // (double), never (int): GetTime() is a 64-bit time_t and the Lua number is a
+    // double, which carries it exactly.  Truncating to int made every timestamp
+    // from 2038-01-19 come back negative.
+    MakeTableItem     (L, "time",     (double) pLine->m_theTime.GetTime ()); // 9a
     MakeTableItem     (L, "timestr",  COleDateTime (pLine->m_theTime.GetTime ())); // 9b
     MakeTableItem     (L, "line",     pLine->m_nLineNumber); // 10
     MakeTableItem     (L, "styles",   pLine->styleList.GetCount ()); // 11

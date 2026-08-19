@@ -4006,6 +4006,15 @@ public:
     void      LimitText(int) {}
     int       SetEditSel(int, int) { return CB_ERR; }
     BOOL      GetEditSel(LPDWORD, LPDWORD) const { return FALSE; }
+    // Owner-draw paint entry point (CBS_OWNERDRAWFIXED / …VARIABLE), the combo
+    // twin of CButton::DrawItem.  CColourComboBox overrides this to paint each
+    // row in its custom colour; the owner-draw combo bridge calls it once per
+    // item with a CDC over that row's paint bitmap.  Base = no custom paint.
+    //
+    // This must stay virtual HERE, not just on the subclass: the bridge only
+    // ever holds a CComboBox*, so a non-virtual declaration would silently
+    // paint nothing.
+    virtual void DrawItem(LPDRAWITEMSTRUCT) {}
 };
 
 // DDX_CBIndex: member <-> combo's selected index.  DDX_CBString: member <->

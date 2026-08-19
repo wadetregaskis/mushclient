@@ -22,6 +22,7 @@
 #include <wx/stdpaths.h>
 #include <wx/listbox.h>
 #include <wx/listctrl.h>                // wxListCtrl (SysListView32 view mode)
+#include <wx/odcombo.h>                 // wxOwnerDrawnComboBox (owner-draw combos)
 #include <memory>
 #include <cstdio>
 #include <string>
@@ -44,6 +45,7 @@
 #include "dialogs/plugins/PluginsDlg.h"                // CPluginsDlg — description liveness guard
 #include "dialogs/MapDlg.h"                            // CMapDlg — the mapper's "make alias"
 #include "dialogs/world_prefs/aliasdlg.h"              // CAliasDlg — what it runs
+#include "dialogs/ColourComboBox.h"                    // CColourComboBox — owner-draw combo
 
 #include <cctype>                       // isxdigit/islower — the GUID shape check
 #include <cstring>                      // strcmp — the OptionsTable row lookup
@@ -68,6 +70,12 @@ void wx_seed_new_world_defaults(CMUSHclientDoc* doc);
 // scriptingoptions_numeric.inc) — the single source of truth for every
 // numeric/boolean world default, which the seed above must agree with.
 extern tConfigurationNumericOption OptionsTable [];
+// Defined in wx_mfc_impl.cpp: render one row of an owner-draw combo by the same
+// call the popup's paint makes.  Selftests exit before the event loop, so no
+// real paint ever happens — this is the engine-shaped function to call instead.
+// Returns an invalid bitmap when the control is not an owner-draw combo.
+wxBitmap wx_render_owner_draw_combo_item(wxWindow* combo, int item, int flags,
+                                         int w, int h);
 
 namespace {
 
@@ -2205,6 +2213,209 @@ void TestSendAndPasteDelaysAcceptTheOptionRange()
     g_wxhook_message_box = savedBox;
 }
 
+// ── 18. Owner-draw colour combos paint swatches, not names (2026-08-19) ────
+// CBS_OWNERDRAWFIXED means the OWNER paints each row.  The bridge built every
+// combo as a plain wxChoice/wxComboBox and never looked at the bit, so
+// CColourComboBox::DrawItem — the code that fills each row with the custom
+// colour it stands for — never ran, and the trigger/highlight/echo/text colour
+// drop-downs listed "Custom3" where Windows shows a swatch.
+//
+// Five templates in the recovered resources carry the bit; all five must build
+// owner-draw, and nothing else must.
+//
+// A CColourComboBox that also records the itemIDs it was handed.  DrawItem is
+// virtual on CComboBox precisely so the bridge can reach it; overriding it here
+// proves the canonical body really was called, and with which rows — so "the
+// bridge silently drew nothing" cannot pass.
+namespace {
+class RecordingColourCombo : public CColourComboBox
+{
+public:
+    mutable std::vector<int> drawn;
+    void DrawItem(LPDRAWITEMSTRUCT dis) override
+    {
+        drawn.push_back((int) dis->itemID);
+        CColourComboBox::DrawItem(dis);      // still paint, for real
+    }
+};
+
+// The colour of one pixel of a rendered row.
+bool RowPixel(const wxBitmap& bmp, int x, int y, wxColour& out)
+{
+    if (!bmp.IsOk()) return false;
+    wxImage img = bmp.ConvertToImage();
+    if (!img.IsOk() || x >= img.GetWidth() || y >= img.GetHeight()) return false;
+    out.Set(img.GetRed(x, y), img.GetGreen(x, y), img.GetBlue(x, y));
+    return true;
+}
+} // namespace
+
+void TestOwnerDrawColourCombos()
+{
+    printf("Owner-draw colour combos (CBS_OWNERDRAWFIXED):\n");
+
+    // (a) The control class follows the style bit.  IDD_EDIT_TRIGGER is the
+    // ideal control: it carries BOTH kinds of read-only drop-down, built by the
+    // same call in the same dialog — IDC_TRIGGER_COLOUR (0x50210213, the bit
+    // set) and IDC_COLOUR_CHANGE_TYPE (0x50210003, the bit clear).
+    const RcDialog* trig = MfcDialogResources().FindDialog(IDD_EDIT_TRIGGER);
+    check(trig != nullptr, "IDD_EDIT_TRIGGER is in the recovered resources");
+    if (!trig) return;
+
+    wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *trig);
+    wxWindow* colourWin = dlg->FindWindow(IDC_TRIGGER_COLOUR);
+    wxWindow* plainWin  = dlg->FindWindow(IDC_COLOUR_CHANGE_TYPE);
+
+    wxOwnerDrawnComboBox* odc = wxDynamicCast(colourWin, wxOwnerDrawnComboBox);
+    check(odc != nullptr,
+          "IDC_TRIGGER_COLOUR (CBS_OWNERDRAWFIXED) builds an owner-draw combo");
+    check(plainWin != nullptr &&
+          wxDynamicCast(plainWin, wxOwnerDrawnComboBox) == nullptr,
+          "...while IDC_COLOUR_CHANGE_TYPE, same dialog, bit clear, does NOT");
+    check(wxDynamicCast(plainWin, wxChoice) != nullptr,
+          "...it is still the plain read-only wxChoice it always was");
+
+    if (!odc) { dlg->Destroy(); return; }
+
+    // (b) VALUE semantics are unchanged.  A wxOwnerDrawnComboBox is neither a
+    // wxComboBox nor a wxChoice, so every CComboBox hook had to learn about it;
+    // if one did not, GetCurSel answers CB_ERR and DDX_CBIndex quietly drops
+    // the user's colour on OK.  Drive it exactly as the dialog does.
+    RecordingColourCombo cb;
+    CDataExchange dx;
+    dx.m_pDlgWnd = CWnd::FromHandle((HWND) dlg);
+    dx.m_bSaveAndValidate = FALSE;
+    DDX_Control(&dx, IDC_TRIGGER_COLOUR, cb);      // binds m_hWnd + the paint hook
+    check(cb.m_hWnd == (HWND) colourWin, "DDX_Control binds the owner-draw combo");
+
+    cb.ResetContent();
+    cb.AddString("(no change)");
+    for (int i = 0; i < MAX_CUSTOM; ++i) {
+        char name[32];
+        snprintf(name, sizeof name, "Custom%d", i + 1);
+        cb.AddString(name);
+    }
+    cb.AddString("Other ...");
+    check(cb.GetCount() == MAX_CUSTOM + 2,
+          "AddString reaches it (18 rows: no-change + 16 custom + other)");
+
+    CString text;
+    cb.GetLBText(3, text);
+    check(text == "Custom3", "GetLBText reads a row back by index");
+    check(cb.FindStringExact(-1, "Other ...") == MAX_CUSTOM + 1,
+          "FindStringExact finds the last row");
+
+    // The DDX round trip, both directions, with a non-degenerate index (7 is
+    // neither 0 nor the count, so an off-by-one or a reset shows up).
+    int member = 7;
+    dx.m_bSaveAndValidate = FALSE;                 // member -> control
+    DDX_CBIndex(&dx, IDC_TRIGGER_COLOUR, member);
+    check(cb.GetCurSel() == 7, "DDX load selects the member's index");
+    check(odc->GetSelection() == 7,
+          "...and the wx control agrees (not just the shim's idea of it)");
+
+    int readBack = -1;
+    dx.m_bSaveAndValidate = TRUE;                  // control -> member
+    DDX_CBIndex(&dx, IDC_TRIGGER_COLOUR, readBack);
+    check(readBack == 7, "DDX save reads the same index back (was: -1, silently)");
+
+    cb.SetCurSel(MAX_CUSTOM + 1);                  // "Other ..."
+    dx.m_bSaveAndValidate = TRUE;
+    DDX_CBIndex(&dx, IDC_TRIGGER_COLOUR, readBack);
+    check(readBack == MAX_CUSTOM + 1, "...and follows a later user change");
+
+    // Item data is how utils.choose keeps its keys straight; it must survive too.
+    cb.SetItemData(2, 4242);
+    check(cb.GetItemData(2) == 4242, "SetItemData/GetItemData round-trip");
+
+    // (c) Something observable about the RENDERING.  Give the combo a palette
+    // whose entries all differ, then render three rows and read the pixels back.
+    for (int i = 0; i < MAX_CUSTOM; ++i) {
+        cb.m_customtext[i] = RGB(0, 0, 0);
+        cb.m_customback[i] = RGB(10 + i * 5, 20 + i * 5, 200 - i * 5);
+    }
+    cb.m_iOtherForeground = RGB(255, 255, 0);
+    cb.m_iOtherBackground = RGB(8, 96, 160);
+
+    const int W = 80, H = 16;
+    cb.drawn.clear();
+
+    // Row 0 is "(no change)": the canonical body offsets itemID by one, so it
+    // falls past the custom range and draws black-on-white.
+    wxBitmap b0 = wx_render_owner_draw_combo_item(colourWin, 0, 0, W, H);
+    // Row 3 is Custom3 -> m_customback[2].
+    wxBitmap b3 = wx_render_owner_draw_combo_item(colourWin, 3, 0, W, H);
+    // Row 17 is "Other ..." -> m_iOtherBackground.
+    wxBitmap b17 = wx_render_owner_draw_combo_item(colourWin, MAX_CUSTOM + 1, 0, W, H);
+
+    check(cb.drawn.size() == 3,
+          "the canonical DrawItem ran once per rendered row (was: never)");
+    check(cb.drawn.size() == 3 && cb.drawn[0] == 0 && cb.drawn[1] == 3 &&
+          cb.drawn[2] == MAX_CUSTOM + 1,
+          "...with the itemIDs it was asked for, unshifted");
+
+    // Sample the far right edge: the label is drawn from the left, so this is
+    // background in every row and cannot be confused with glyph pixels.
+    wxColour c0, c3, c17;
+    check(RowPixel(b0, W - 2, H / 2, c0) &&
+          RowPixel(b3, W - 2, H / 2, c3) &&
+          RowPixel(b17, W - 2, H / 2, c17),
+          "every rendered row produced a readable bitmap");
+    check(c3 == wxColour(10 + 2 * 5, 20 + 2 * 5, 200 - 2 * 5),
+          "Custom3's row is filled with m_customback[2] (the swatch)");
+    check(c17 == wxColour(8, 96, 160),
+          "\"Other ...\" is filled with m_iOtherBackground");
+    check(c0 == wxColour(255, 255, 255),
+          "\"(no change)\" stays white - the row-0 offset is honoured");
+    check(!(c3 == c17) && !(c3 == c0),
+          "the three rows really differ (a no-op painter would tie them)");
+
+    // A control the bridge did NOT build owner-draw must not answer the painter
+    // — otherwise the class check above could pass while everything renders.
+    check(!wx_render_owner_draw_combo_item(plainWin, 1, 0, W, H).IsOk(),
+          "the plain combo has no owner-draw painter at all");
+
+    // (c2) Picking a row must still reach the canonical CBN_SELCHANGE handler —
+    // that is what opens the colour picker for "Other ...", and what keeps the
+    // two swatch buttons beside the combo in step.  The modal runner binds
+    // wxEVT_COMBOBOX on the DIALOG (wx_mfc_impl.cpp), so the control's event has
+    // to propagate up to it; a control parented anywhere else would silently
+    // stop firing the handler.  wxOwnerDrawnComboBox raises wxEVT_COMBOBOX, the
+    // same event as wxComboBox, so the existing bind is the right one.
+    check(colourWin->GetParent() == dlg,
+          "the owner-draw combo is a child of the dialog (events can reach it)");
+    // `seen` outlives the binding: the handler stays attached until the dialog
+    // is destroyed below, so it must not capture anything shorter-lived.
+    int seen = -1;
+    dlg->Bind(wxEVT_COMBOBOX, [&seen](wxCommandEvent& e) { seen = e.GetId(); });
+    wxCommandEvent sel(wxEVT_COMBOBOX, colourWin->GetId());
+    sel.SetEventObject(colourWin);
+    colourWin->GetEventHandler()->ProcessEvent(sel);
+    check(seen == IDC_TRIGGER_COLOUR,
+          "...and a selection from it propagates there as CBN_SELCHANGE");
+
+    dlg->Destroy();
+
+    // (d) The other four owner-draw templates light up too — this fix is not
+    // just the trigger dialog.  IDD_TEST_RESULT's copy is WS_DISABLED
+    // (0x58210213), which must not change the control class.
+    struct { int dlgId; int ctlId; const char* what; } rest[] = {
+        { IDD_PREFS_P9,  IDC_ECHO_COLOUR,    "World > Commands echo colour" },
+        { IDD_PREFS_P17, IDC_TEXT_COLOUR,    "World > Scripting error colour" },
+        { IDD_HIGHLIGHT, IDC_TRIGGER_COLOUR, "Highlight Phrase colour" },
+        { IDD_TEST_RESULT, IDC_TRIGGER_COLOUR, "Test Result colour (disabled)" },
+    };
+    for (const auto& r : rest)
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(r.dlgId);
+        if (!t) { check(false, r.what); continue; }
+        wxDialog* d = BuildWxDialogFromTemplate(nullptr, *t);
+        check(wxDynamicCast(d->FindWindow(r.ctlId), wxOwnerDrawnComboBox) != nullptr,
+              r.what);
+        d->Destroy();
+    }
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -2240,6 +2451,7 @@ int RunGuiBridgeSelfTest()
     TestBeepSoundBrowseBoundsItsPath();
     TestMapperAliasKeepsEveryDialogField();
     TestSendAndPasteDelaysAcceptTheOptionRange();
+    TestOwnerDrawColourCombos();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

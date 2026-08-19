@@ -1842,6 +1842,16 @@ public:
       x = r.x; y = r.y; w = r.w; h = r.h;
       return true;
   }
+  // Fills the CLIENT rect of the main window (GetInfo 249/250).  false —
+  // outputs untouched — when no view is attached OR the view has no window to
+  // measure, so the caller keeps its own approximation for the headless case.
+  bool GetMainClientRect(int& x, int& y, int& w, int& h) {
+      if (!m_pWorldView) return false;
+      pal::Rect r = m_pWorldView->mainClientRect();
+      if (r.w <= 0 || r.h <= 0) return false;
+      x = r.x; y = r.y; w = r.w; h = r.h;
+      return true;
+  }
 
   // ── PAL: the info bar (typed-only — P2 infobar family) ───────────────────
   void EmitInfobarShow(bool visible) {

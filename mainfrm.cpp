@@ -2143,15 +2143,20 @@ LRESULT CMainFrame::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
 }   // end of CMainFrame::WindowProc
 
 
-void CMainFrame::LeftTrayClick (void)
-  {
-CPoint point;
-  
-  GetCursorPos(&point);
+// The open-world list the tray icon's left click -- and, on the port, a single
+// click on the status bar's world-name pane -- pops up.  Key = the menu label
+// (the world name, plus " (n)" when n lines have arrived unread); value = the
+// offset OnTrayMenu decodes back into a world (m_view_number - 1).  The
+// multimap sorts by label, which is what puts the menu in name order.
+//
+// Extracted verbatim from LeftTrayClick below so the list can be checked
+// without opening a modal popup menu.
+void CMainFrame::CollectWorldMenuItems (std::multimap<std::string, int> & sWorlds)
+{
+  sWorlds.clear ();
 
-  multimap<string, int> sWorlds;
-
-// add all documents to the list
+  if (App.m_pWorldDocTemplate == NULL)
+    return;             // no world registry yet -- nothing is open
 
   POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
 
@@ -2168,6 +2173,20 @@ CPoint point;
      sWorlds.insert (make_pair (std::basic_string<TCHAR>(strName), pDoc->m_view_number - 1));
 
     }   // end of doing each world
+
+}   // end of CMainFrame::CollectWorldMenuItems
+
+void CMainFrame::LeftTrayClick (void)
+  {
+CPoint point;
+  
+  GetCursorPos(&point);
+
+  multimap<string, int> sWorlds;
+
+// add all documents to the list
+
+  CollectWorldMenuItems (sWorlds);
 
   CMenu menu;
 	VERIFY(menu.LoadMenu(IDR_MXP_MENU));
@@ -2193,10 +2212,22 @@ CPoint point;
 	while (pWndPopupOwner->GetStyle() & WS_CHILD)
 		pWndPopupOwner = pWndPopupOwner->GetParent();
 
-	pPopup->TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, 
+	const UINT nSelected = pPopup->TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, 
                         point.x, 
                         point.y,
 			                  pWndPopupOwner);
+
+#ifdef _WIN32
+  (void) nSelected;   // Win32 posts WM_COMMAND to the owner for us
+#else
+  // The port's TrackPopupMenu shim behaves as if TPM_RETURNCMD were set: it
+  // ANSWERS the chosen id rather than posting a WM_COMMAND to the owner, so
+  // without this the menu appeared and the choice went nowhere.  Hand it to
+  // the same handler CMainFrame's ON_COMMAND_RANGE would have routed it to.
+  if (nSelected >= TRAY_FIRST_MENU &&
+      nSelected <  TRAY_FIRST_MENU + TRAY_MENU_COUNT)
+    OnTrayMenu (nSelected);
+#endif
 
   }  // end of CMainFrame::LeftTrayClick
 

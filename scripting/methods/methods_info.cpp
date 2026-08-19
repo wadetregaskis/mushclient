@@ -831,28 +831,40 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
         SetUpVariantLong (vaResult, m_iTimersFiredCount);  
         break;
 
+    // 249 / 250: the height and width of the main window's CLIENT area.
+    //
+    // Both used to be a hand-written #ifdef pair -- Frame.GetClientRect on
+    // Windows, a guess derived from the output pane's character grid off it.
+    // They now ask the frontend through pal::IWorldView, whose Windows adapter
+    // runs that same Frame.GetClientRect (so Windows is unchanged by
+    // construction) and whose wx adapter measures the world child, the window
+    // a macOS user actually sees.  Frame is never shown there and its m_hWnd is
+    // permanently null, so "the main window" cannot mean the MDI parent on this
+    // platform -- the same call the divergence at GetInfo(125) makes.
+    //
+    // The old derivation survives as the NO-VIEW fallback, which is the
+    // headless engine.  Its "+2 rows" on the height has no measurement behind
+    // it: it is a stand-in for the chrome a real client rect includes above and
+    // below the pane, and has been there since the arm was first written
+    // (84d69dd).  The width has no counterpart because the main client area is
+    // about as wide as the pane.
     case 249:
       {
-#ifdef _WIN32
-      RECT rect;
-      Frame.GetClientRect(&rect);
-      SetUpVariantLong (vaResult, rect.bottom);
-#else
-      // Non-Windows: approximate from output pane metrics.
-      SetUpVariantLong (vaResult, (m_gui_rows + 2) * m_gui_font_height);
-#endif
+      int x = 0, y = 0, w = 0, h = 0;
+      if (GetMainClientRect (x, y, w, h))
+        SetUpVariantLong (vaResult, h);
+      else
+        SetUpVariantLong (vaResult, (m_gui_rows + 2) * m_gui_font_height);
       }
       break;
 
     case 250:
       {
-#ifdef _WIN32
-      RECT rect;
-      Frame.GetClientRect(&rect);
-      SetUpVariantLong (vaResult, rect.right);
-#else
-      SetUpVariantLong (vaResult, m_gui_cols * m_gui_font_width);
-#endif
+      int x = 0, y = 0, w = 0, h = 0;
+      if (GetMainClientRect (x, y, w, h))
+        SetUpVariantLong (vaResult, w);
+      else
+        SetUpVariantLong (vaResult, m_gui_cols * m_gui_font_width);
       }
       break;
 

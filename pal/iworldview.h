@@ -161,6 +161,20 @@ public:
     virtual bool saveWorld() = 0;
     // Screen rect of the main (MDI parent) frame (world.GetMainWindowPosition).
     virtual Rect mainRect() const = 0;
+    // GetInfo(249)/(250): the CLIENT rect of whatever "the main window" means
+    // on this platform -- origin (0,0), as GetClientRect reports one.
+    //
+    // Windows answers Frame.GetClientRect: the MDI parent's client area, inside
+    // its toolbars and status bar.  There is no such window to measure on
+    // macOS -- the MDI parent is never shown and Frame.m_hWnd is permanently
+    // null -- so the wx adapter measures the world child, which IS the window
+    // the user sees.  Same reasoning, and the same documented divergence, as
+    // isFullscreen above.
+    //
+    // Deliberately NOT pure, for the reason isPaused gives: an adapter with no
+    // window to measure is honestly "no rect", and the doc-side accessor
+    // reports false for it so the caller keeps its own approximation.
+    virtual Rect mainClientRect() const { return { 0, 0, 0, 0 }; }
 
     // ── core → frontend: miniwindow mouse routing ─────────────────────────
     // Re-run the miniwindow mouse-move hit test at a client-space point the

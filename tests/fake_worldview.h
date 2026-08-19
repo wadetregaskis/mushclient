@@ -144,6 +144,9 @@ struct FakeWorldView : pal::IWorldView {
     bool fullscreen = false;
     int  saves = 0;
     pal::Rect mainR{ 5, 6, 1024, 768 };   // returned by mainRect()
+    // returned by mainClientRect(); deliberately NOT a multiple of the
+    // m_gui_* grid, so a test cannot pass on the headless fallback by accident
+    pal::Rect mainClientR{ 0, 0, 793, 517 };
 
     void setMainTitle(const char* t) override { mainTitle.assign(t); }
     void moveWorldWindow(long l, long t, long w, long h) override {
@@ -154,6 +157,7 @@ struct FakeWorldView : pal::IWorldView {
     bool isFullscreen() const override { return fullscreen; }
     bool saveWorld() override { ++saves; return true; }
     pal::Rect mainRect() const override { return mainR; }
+    pal::Rect mainClientRect() const override { return mainClientR; }
 
     // ── miniwindow mouse routing ────────────────────────────────────────────
     // WindowAddHotspot's create-under-the-cursor re-detect lands here.

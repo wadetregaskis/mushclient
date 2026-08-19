@@ -35,6 +35,7 @@
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
 #include "platform/wx_print.h"        // PrintStyledDocument (File ▸ Print World)
 #include "platform/wx_osx_text.h"    // wxOSXSetWindowTabbing ("Window tabs" pref)
+#include "mainfrm.h"                  // Frame — the world-switcher popup (LeftTrayClick)
 #include "genprint.h"                 // FONT_BOLD / FONT_ITALIC / FONT_UNDERLINE
 #include "pal/text_rect.h"            // pal::textRectWidth — world.TextRectangle
 #include "platform/world_close_decision.h"  // DecideWorldClose — the Cmd+W prompt chain
@@ -1630,11 +1631,18 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // mirroring the Windows status line; UpdateStatusBar() fills them.
     m_statusBar = new wxStatusBar(this, wxID_ANY,
                                   wxSTB_DEFAULT_STYLE & ~wxSTB_SIZEGRIP);
-    m_statusBar->SetFieldsCount(5);
+    m_statusBar->SetFieldsCount(kStatusPaneCount);
     {
-        const int widths[5] = { -1, 160, 90, 130, 70 };  // -1 = stretch (message)
-        m_statusBar->SetStatusWidths(5, widths);
+        // Indexed by StatusPaneId; -1 = stretch (the message pane).
+        const int widths[kStatusPaneCount] = { -1, 70, 160, 90, 130, 70 };
+        m_statusBar->SetStatusWidths(kStatusPaneCount, widths);
     }
+    // The four CMyStatusBar click shortcuts (MyStatusBar.cpp).  Bound here
+    // rather than in the frame's event table because the events belong to the
+    // BAR, not the frame -- a status bar is a child window and its mouse
+    // events do not propagate up.
+    m_statusBar->Bind(wxEVT_LEFT_DOWN,   &CWorldChildFrame::OnStatusBarLeftDown, this);
+    m_statusBar->Bind(wxEVT_LEFT_DCLICK, &CWorldChildFrame::OnStatusBarDClick,   this);
     sizer->Add(m_statusBar, 0, wxEXPAND);
 
     // Standard / World / Activity bars.  Built last so their Insert() calls put
@@ -3156,8 +3164,20 @@ void CWorldChildFrame::UpdateStatusBar()
     int phase = m_doc->m_iConnectPhase;
     const bool connected = (phase == eConnectConnectedToMud);
 
-    // ── Pane 1: world name (its own field now, no longer a message prefix) ──
-    pane(1, static_cast<const char*>(m_doc->m_mush_name));
+    // ── Freeze pane: "" / PAUSE / CLOSED ───────────────────────────────────
+    // CMUSHView::OnUpdateStatuslineFreeze_helper (mushview.cpp:3247) writes one
+    // of "", "PAUSE", "CLOSED", "MORE" into ID_STATUSLINE_FREEZE.  "MORE" --
+    // frozen AND scrolled back -- has no port equivalent: COutputPane makes
+    // Freeze Output and scroll-lock the same bit (SetPaused only disengages
+    // auto-scroll), so a frozen pane here is "PAUSE" whether or not the view
+    // sits at the buffer end.  Distinguishing them needs a freeze flag separate
+    // from m_autoScroll, which is a behaviour change, not a wiring one.
+    pane(kStatusPaneFreeze,
+         !connected                                ? "CLOSED" :
+         (m_output && m_output->IsPaused())        ? "PAUSE"  : "");
+
+    // ── World-name pane (its own field, no longer a message prefix) ────────
+    pane(kStatusPaneName, static_cast<const char*>(m_doc->m_mush_name));
 
     // ── Pane 0 (stretch): main status / connection state ───────────────────
     // Script status takes priority, then scrollback, reconnect countdown, the
@@ -3191,18 +3211,30 @@ void CWorldChildFrame::UpdateStatusBar()
         default:                             msg = "Not connected.";             break;
         }
     }
-    pane(0, msg);
+    pane(kStatusPaneMessage, msg);
 
     // ── Pane 2: connection duration (H:MM:SS) while connected ──────────────
+    // m_tStatusTime, NOT m_tConnectTime.  This pane is CMainFrame's
+    // ID_STATUSLINE_TIME, whose canonical text comes from
+    // CMUSHclientDoc::OnUpdateStatuslineTime (doc.cpp:1069) -- and that reads
+    // m_tStatusTime, which is seeded at doc construction and re-seeded by the
+    // only two things that claim to reset this pane: Game > Reset Connected
+    // Time (OnGameResetconnectedtime, doc.cpp:3691) and world.ResetStatusTime
+    // (methods_output.cpp:87).  Reading m_tConnectTime instead made BOTH of
+    // them dead on the port: they wrote a member the pane never looked at.
+    // (m_tConnectTime is a different clock -- the connect instant that
+    // GetInfo(301) and the "--- Connected on ... ---" banner report -- and
+    // nothing resets it but a fresh connection, which is why the difference
+    // was invisible until you tried the menu item.)
     if (connected) {
-        time_t start = m_doc->m_tConnectTime.GetTime();
+        time_t start = m_doc->m_tStatusTime.GetTime();
         time_t now   = time(nullptr);
         long secs = (start > 0 && now >= start) ? (long)(now - start) : 0;
         char buf[32];
         snprintf(buf, sizeof buf, "%ld:%02ld:%02ld", secs / 3600, (secs / 60) % 60, secs % 60);
-        pane(2, buf);
+        pane(kStatusPaneTime, buf);
     } else {
-        pane(2, "");
+        pane(kStatusPaneTime, "");
     }
 
     // ── Pane 3: lines received ↓ / sent ↑ this connection ──────────────────
@@ -3210,11 +3242,11 @@ void CWorldChildFrame::UpdateStatusBar()
         char buf[64];
         snprintf(buf, sizeof buf, "\xe2\x86\x93%ld \xe2\x86\x91%ld",
                  (long) m_doc->m_nTotalLinesReceived, (long) m_doc->m_nTotalLinesSent);
-        pane(3, buf);
+        pane(kStatusPaneLines, buf);
     }
 
     // ── Pane 4: log indicator ──────────────────────────────────────────────
-    pane(4, IsLogging() ? "\xf0\x9f\x94\xb4 Log" : "");
+    pane(kStatusPaneLog, IsLogging() ? "\xf0\x9f\x94\xb4 Log" : "");
 }
 
 bool CWorldChildFrame::SetTransientStatus(const wxString& text)
@@ -3224,7 +3256,7 @@ bool CWorldChildFrame::SetTransientStatus(const wxString& text)
     // put.  The next UpdateStatusBar() (world timer, activation, connection
     // change) redraws pane 0 from the doc, which is the same transience the
     // MDI parent bar had.
-    m_statusBar->SetStatusText(text, 0);
+    m_statusBar->SetStatusText(text, kStatusPaneMessage);
     return true;
 }
 
@@ -3239,6 +3271,105 @@ void CWorldChildFrame::ShowStatusBarStrip(bool show)
 bool CWorldChildFrame::IsStatusBarStripShown() const
 {
     return m_statusBar && m_statusBar->IsShown();
+}
+
+// ── Status-bar click shortcuts ──────────────────────────────────────────────
+// The port of CMyStatusBar::OnLButtonDblClk / OnLButtonDown
+// (MyStatusBar.cpp:38-101).  Windows hit-tests the click against each pane's
+// GetRect and posts the pane's command to the frame; we hit-test against
+// GetFieldRect and call the same canonical handlers.
+//
+// Only the mapping lives here.  Each action is the one the equivalent menu
+// item already runs, so the two can never drift: the time pane goes through
+// the doc's own ON_COMMAND for ID_GAME_RESETCONNECTEDTIME, and the freeze and
+// go-to-line panes call the same CWorldChildFrame methods wx_mfc_impl.cpp's
+// Display-menu handler calls for ID_DISPLAY_FREEZEOUTPUT / ID_DISPLAY_GOTOLINE.
+
+// static
+int CWorldChildFrame::StatusPaneCommand(int pane, bool doubleClick)
+{
+    if (doubleClick) {
+        switch (pane) {
+        case kStatusPaneTime:   return ID_GAME_RESETCONNECTEDTIME;
+        case kStatusPaneFreeze: return ID_DISPLAY_FREEZEOUTPUT;
+        case kStatusPaneLines:  return ID_DISPLAY_GOTOLINE;
+        default:                return 0;
+        }
+    }
+    // The single-click arm is the world-name pane alone (OnLButtonDown).
+    return (pane == kStatusPaneName) ? (int) kCmdWorldSwitcher : 0;
+}
+
+bool CWorldChildFrame::StatusPaneRect(int pane, wxRect& out) const
+{
+    return m_statusBar && pane >= 0 && pane < kStatusPaneCount &&
+           m_statusBar->GetFieldRect(pane, out);
+}
+
+int CWorldChildFrame::StatusPaneAt(const wxPoint& pt) const
+{
+    for (int i = 0; i < kStatusPaneCount; ++i) {
+        wxRect r;
+        if (StatusPaneRect(i, r) && r.Contains(pt))
+            return i;
+    }
+    return -1;
+}
+
+void CWorldChildFrame::RunStatusPaneCommand(int cmd)
+{
+    switch (cmd) {
+    case ID_GAME_RESETCONNECTEDTIME:
+        // The doc's own handler, exactly as the Game menu reaches it.
+        if (m_doc) AfxDispatchCommand(m_doc, 0, ID_GAME_RESETCONNECTEDTIME);
+        UpdateStatusBar();          // the pane it just reset is on this bar
+        break;
+
+    case ID_DISPLAY_FREEZEOUTPUT:
+        FreezeOutput();
+        UpdateStatusBar();          // ...and so is the PAUSE indicator
+        break;
+
+    case ID_DISPLAY_GOTOLINE:
+        GotoLine();
+        break;
+
+    case kCmdWorldSwitcher:
+        ShowWorldSwitcher();
+        break;
+
+    default:
+        break;
+    }
+}
+
+int CWorldChildFrame::HandleStatusBarMouse(const wxPoint& pt, bool doubleClick)
+{
+    const int cmd = StatusPaneCommand(StatusPaneAt(pt), doubleClick);
+    if (cmd) RunStatusPaneCommand(cmd);
+    return cmd;
+}
+
+// ── The world switcher (single click on the world-name pane) ────────────────
+// CMyStatusBar::OnLButtonDown does exactly this one call.  LeftTrayClick builds
+// the open-world menu and, on the port, routes the choice into OnTrayMenu --
+// whose non-Windows arm raises the chosen world's frame.  Nothing here depends
+// on the tray icon; only the menu's other entry point does.
+void CWorldChildFrame::ShowWorldSwitcher()
+{
+    Frame.LeftTrayClick();
+}
+
+void CWorldChildFrame::OnStatusBarLeftDown(wxMouseEvent& evt)
+{
+    if (!HandleStatusBarMouse(evt.GetPosition(), false))
+        evt.Skip();
+}
+
+void CWorldChildFrame::OnStatusBarDClick(wxMouseEvent& evt)
+{
+    if (!HandleStatusBarMouse(evt.GetPosition(), true))
+        evt.Skip();
 }
 
 // ── OnActivate ────────────────────────────────────────────────────────────
@@ -6066,15 +6197,30 @@ bool CWorldChildFrame::saveWorld()
     return m_doc->DoSave(savePath.c_str(), TRUE) != FALSE;
 }
 
-// world.GetMainWindowPosition(): screen rect of the MDI parent frame.
+// world.GetMainWindowPosition(): the screen rect of "the main window".
+//
+// This world's own frame, NOT the wxMDIParentFrame -- the same call
+// isFullscreen above makes, and for the same reason.  The MDI parent is never
+// shown on macOS: hook_load_mdi_frame sizes it once at launch and nothing ever
+// moves it again, so reporting its rect handed every script a constant that
+// described a window nobody can see, frozen at startup.  The world child IS the
+// window on screen here.  Documented divergence; on Windows the adapter still
+// answers Frame's own window placement, where there really is one main frame.
 pal::Rect CWorldChildFrame::mainRect() const
 {
-    wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
-    if (parent) {
-        wxRect r = parent->GetScreenRect();
-        return { r.x, r.y, r.width, r.height };
-    }
-    return { 0, 0, 1024, 768 };
+    const wxRect r = GetRect();
+    return { r.x, r.y, r.width, r.height };
+}
+
+// GetInfo(249)/(250): the CLIENT rect of the same window mainRect describes --
+// inside the title bar, the toolbars, the input bar and the status strip, which
+// is what Frame.GetClientRect measures on Windows.  Origin (0,0), as a client
+// rect has.
+pal::Rect CWorldChildFrame::mainClientRect() const
+{
+    int w = 0, h = 0;
+    GetClientSize(&w, &h);
+    return { 0, 0, w, h };
 }
 
 // Re-run the miniwindow mouse-move hit test at a point the pane is not

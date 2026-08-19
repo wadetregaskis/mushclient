@@ -32,6 +32,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -107,21 +108,36 @@ struct Harness {
 
 // ── Clipboard save/restore ───────────────────────────────────────────────────
 // The auto-copy test has to look at the real system clipboard — that IS the
-// observable behaviour — so it puts back whatever text the user had there when
-// it is done, and clears the sentinel outright if there was none.  (A non-text
-// clipboard, e.g. an image, cannot be preserved; clearing beats leaving a
-// "SENTINEL-…" string behind.)
+// observable behaviour of copy_selection_to_clipboard, and a fake would only
+// prove the pane can call a fake.  So these read and write the real one.
 std::string ClipboardText()
 {
     std::string out;
-    if (wxTheClipboard->Open()) {
-        if (wxTheClipboard->IsSupported(wxDF_TEXT)) {
-            wxTextDataObject data;
-            if (wxTheClipboard->GetData(data))
-                out = std::string(data.GetText().utf8_str());
+    if (!wxTheClipboard->Open()) return out;
+    // NOT `IsSupported(wxDF_TEXT)` on its own, which is what this used to ask.
+    // Measured on macOS 15 with a string put there by another process (pbcopy):
+    // IsSupported(wxDF_TEXT) is FALSE while IsSupported(wxDF_UNICODETEXT) is
+    // true and GetData succeeds -- so every read of text this app did not
+    // itself write came back empty.  The save half of save/restore was
+    // therefore dead: the tests below concluded the clipboard had been empty
+    // and CLEARED it on the way out, wiping whatever the user had there on
+    // every single run.  wx_mfc_impl.cpp:2568 (world.GetClipboard) already
+    // tests the pair; this is the same rule.
+    if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) ||
+        wxTheClipboard->IsSupported(wxDF_TEXT)) {
+        wxTextDataObject data;
+        if (wxTheClipboard->GetData(data)) {
+            // Named locals, not `std::string(data.GetText().utf8_str())`:
+            // utf8_str() can hand back a NON-owning view of the wxString it was
+            // called on, and this project has already shipped one clipboard bug
+            // from exactly that shape.  Keep the wxString alive, then copy with
+            // an explicit length so an embedded NUL cannot truncate it.
+            const wxString           text = data.GetText();
+            const wxScopedCharBuffer buf  = text.utf8_str();
+            if (buf.data()) out.assign(buf.data(), buf.length());
         }
-        wxTheClipboard->Close();
     }
+    wxTheClipboard->Close();
     return out;
 }
 
@@ -131,6 +147,68 @@ void SetClipboardText(const std::string& s)
         wxTheClipboard->SetData(new wxTextDataObject(wxString::FromUTF8(s.c_str())));
         wxTheClipboard->Close();
     }
+}
+
+// RAII: put back whatever text the user had there, on EVERY way out — a return,
+// an assertion that ends the arm early, a throw — not just the last line of the
+// happy path.  Two of the three clipboard-using tests here used to restore only
+// on the fall-through, and one of those only when there had been text to begin
+// with, so an empty starting clipboard kept the copied selection afterwards.
+// (A non-text clipboard, e.g. an image, cannot be preserved; clearing beats
+// leaving a "SENTINEL-…" string behind.)
+struct ClipboardGuard {
+    std::string saved;
+    bool        hadText;
+    ClipboardGuard() : saved(ClipboardText()), hadText(!saved.empty()) {}
+    ~ClipboardGuard()
+    {
+        if (hadText) {
+            SetClipboardText(saved);
+        } else if (wxTheClipboard->Open()) {
+            wxTheClipboard->Clear();
+            wxTheClipboard->Close();
+        }
+    }
+    ClipboardGuard(const ClipboardGuard&)            = delete;
+    ClipboardGuard& operator=(const ClipboardGuard&) = delete;
+};
+
+// ── Making a real-clipboard assertion hermetic ──────────────────────────────
+// The system clipboard is machine-wide, so anything else running on the box can
+// land between the write and the read: another build agent's own selftest, or
+// the user pressing Cmd-C.  That turns a green test red for a reason that has
+// nothing to do with the pane, and a spurious failure in a GUI selftest is
+// exactly the kind that gets chased as a real defect.
+//
+// ctest's RESOURCE_LOCK cannot help: every in-app selftest here is already
+// RUN_SERIAL, so no two of them overlap WITHIN a run, and a lock is scoped to
+// one ctest invocation — it cannot see a second ctest in another worktree, let
+// alone a human.  wx exposes no pasteboard change-count to check ownership with
+// either.  What is left, and what actually matches the failure mode, is to
+// repeat the whole experiment: re-plant the sentinel, drive the pane again, and
+// read again.  Interference is a momentary collision, so a second run gets a
+// clean window; a pane that has stopped copying answers wrong every time.
+//
+// That last sentence is the load-bearing one: `attempt` must re-establish the
+// sentinel AND re-drive the pane, so a wrong answer can only mean the pane, and
+// the assertion still fails if the copy is removed.  Retrying the READ alone
+// would weaken it into "the clipboard eventually said something we like".
+const int kClipboardTries = 6;
+
+std::string ClipboardAttempt(const std::string& want,
+                             const std::function<std::string()>& attempt)
+{
+    std::string got;
+    for (int i = 0; i < kClipboardTries; ++i) {
+        got = attempt();
+        if (got == want) return got;
+        if (i == 0)
+            printf("    (clipboard said \"%s\", wanted \"%s\" -- retrying, "
+                   "something else on this machine may own it)\n",
+                   got.c_str(), want.c_str());
+        wxMilliSleep(20 * (i + 1));
+    }
+    return got;   // the LAST answer, so a genuine failure prints what it saw
 }
 
 // ── 1. Selection freezes output (world option auto_pause / m_bAutoFreeze) ────
@@ -252,30 +330,38 @@ void TestDoubleClickAutoCopy()
 {
     printf("double-click honours copy_selection_to_clipboard (mushview.cpp:4884)\n");
 
-    const std::string saved = ClipboardText();
+    const ClipboardGuard clip;
 
     {
-        Harness h;
-        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
-        h.pane->SetCopySelectionToClipboard(true);
-        h.pane->SetAutoCopyInHTML(false);
-        SetClipboardText("SENTINEL-not-copied");
+        wxString selected;
+        bool     paused = false;
+        const std::string got = ClipboardAttempt("bravo", [&]() {
+            Harness h;
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            h.pane->SetCopySelectionToClipboard(true);
+            h.pane->SetAutoCopyInHTML(false);
+            SetClipboardText("SENTINEL-not-copied");
 
-        const int cw = h.pane->CharWidth();
-        const int lh = h.pane->LineHeight();
-        // "bravo" starts at column 6; aim at its middle (column 8).
-        SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            // "bravo" starts at column 6; aim at its middle (column 8).
+            SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
 
-        opCheck(h.pane->GetSelectionText() == wxT("bravo"),
+            selected = h.pane->GetSelectionText();
+            paused   = h.pane->IsPaused();
+            return ClipboardText();
+        });
+
+        opCheck(selected == wxT("bravo"),
                 "double-click selects the word under the cursor");
-        opCheck(ClipboardText() == "bravo",
+        opCheck(got == "bravo",
                 "...and copy_selection_to_clipboard puts it on the clipboard");
         // The THIRD site of the same two Windows lines (mushview.cpp:4837),
         // which runs before the word is dispatched.  Without its own assertion
         // the drag-path checks in section 1 would cover for it.
-        opCheck(h.pane->IsPaused(),
+        opCheck(paused,
                 "...and the double-click froze output, as the drag does");
     }
 
@@ -301,21 +387,30 @@ void TestDoubleClickAutoCopy()
     }
 
     {
-        // Option off: the clipboard must be left alone.
-        Harness h;
-        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
-        h.pane->SetCopySelectionToClipboard(false);
-        SetClipboardText("SENTINEL-untouched");
+        // Option off: the clipboard must be left alone.  Retried the same way,
+        // and for the same reason -- a foreign write over the sentinel would
+        // otherwise read as "the pane copied something", which is the opposite
+        // of what happened.
+        wxString selected;
+        const std::string got = ClipboardAttempt("SENTINEL-untouched", [&]() {
+            Harness h;
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            h.pane->SetCopySelectionToClipboard(false);
+            SetClipboardText("SENTINEL-untouched");
 
-        const int cw = h.pane->CharWidth();
-        const int lh = h.pane->LineHeight();
-        SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
 
-        opCheck(h.pane->GetSelectionText() == wxT("bravo"),
+            selected = h.pane->GetSelectionText();
+            return ClipboardText();
+        });
+
+        opCheck(selected == wxT("bravo"),
                 "the word is still selected with the option off");
-        opCheck(ClipboardText() == "SENTINEL-untouched",
+        opCheck(got == "SENTINEL-untouched",
                 "...but the clipboard is not touched");
     }
 
@@ -327,60 +422,62 @@ void TestDoubleClickAutoCopy()
         // the selection tidy-up and the OnEditCopy below it — so a pane that
         // copied anyway would put text on the clipboard for a click the user
         // just cancelled.
-        Harness h;
-        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
-        h.pane->SetCopySelectionToClipboard(true);
-        SetClipboardText("SENTINEL-aborted");
+        wxString seen, selected;
+        const std::string got = ClipboardAttempt("SENTINEL-aborted", [&]() {
+            Harness h;
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            h.pane->SetCopySelectionToClipboard(true);
+            SetClipboardText("SENTINEL-aborted");
 
-        wxString seen;
-        h.pane->m_fn_word_double_clicked =
-            [&seen](const wxString& word, bool) -> bool {
-                seen = word;
-                return false;             // eDblClickAbort
-            };
+            h.pane->m_fn_word_double_clicked =
+                [&seen](const wxString& word, bool) -> bool {
+                    seen = word;
+                    return false;             // eDblClickAbort
+                };
 
-        const int cw = h.pane->CharWidth();
-        const int lh = h.pane->LineHeight();
-        SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+
+            selected = h.pane->GetSelectionText();
+            return ClipboardText();
+        });
 
         opCheck(seen == wxT("bravo"),
                 "the handler is given the word under the cursor");
-        opCheck(ClipboardText() == "SENTINEL-aborted",
+        opCheck(got == "SENTINEL-aborted",
                 "...and eDblClickAbort skips the auto-copy, as Windows does");
         // The capture/drag reset moved AHEAD of the dispatch, so it holds
         // whether or not a handler is wired: the platform's trailing LEFT_UP
         // must not re-enter the drag branch and collapse the word.
-        opCheck(h.pane->GetSelectionText() == wxT("bravo"),
+        opCheck(selected == wxT("bravo"),
                 "...and the trailing mouse-up leaves the word selected");
     }
 
     {
         // The same wiring, but the handler accepts: the copy DOES run.  Without
         // this arm a pane that never copies once a handler exists also passes.
-        Harness h;
-        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
-        h.pane->SetCopySelectionToClipboard(true);
-        SetClipboardText("SENTINEL-accepted");
-        h.pane->m_fn_word_double_clicked =
-            [](const wxString&, bool) -> bool { return true; };
+        const std::string got = ClipboardAttempt("bravo", [&]() {
+            Harness h;
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            h.pane->SetCopySelectionToClipboard(true);
+            SetClipboardText("SENTINEL-accepted");
+            h.pane->m_fn_word_double_clicked =
+                [](const wxString&, bool) -> bool { return true; };
 
-        const int cw = h.pane->CharWidth();
-        const int lh = h.pane->LineHeight();
-        SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
 
-        opCheck(ClipboardText() == "bravo",
+            return ClipboardText();
+        });
+
+        opCheck(got == "bravo",
                 "a handler that does not abort still gets the auto-copy");
-    }
-
-    if (!saved.empty())
-        SetClipboardText(saved);
-    else if (wxTheClipboard->Open()) {
-        wxTheClipboard->Clear();
-        wxTheClipboard->Close();
     }
 }
 
@@ -631,6 +728,12 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
 {
     printf("a mouse release only builds the selection when something wants it\n");
 
+    // The "on" arm below really does write the clipboard, so guard it for the
+    // whole function: the old code saved it late and restored it only when
+    // there had been text there to begin with, which left a whole scrollback
+    // on an empty clipboard.
+    const ClipboardGuard clip;
+
     Harness h;
     h.Feed(4000);
     h.pane->SelectAll();
@@ -661,13 +764,11 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
 
     // With the option ON the work is real and unavoidable -- that arm is the
     // control, and it is what makes "off is cheap" meaningful rather than
-    // vacuous.  (It also touches the clipboard, so save and restore it.)
-    const std::string saved = ClipboardText();
+    // vacuous.  (It also touches the clipboard; ClipboardGuard has it.)
     h.pane->SetCopySelectionToClipboard(true);
     releases(3);
     const double on = releases(30);
     h.pane->SetCopySelectionToClipboard(false);
-    if (!saved.empty()) SetClipboardText(saved);
 
     // "off is cheaper than on" is NOT enough: with the guard removed the off
     // arm still skips the clipboard write, so it comes out a few times faster
@@ -2112,7 +2213,7 @@ void TestMiddleClickIsInert()
     {
         // A sentinel on the system clipboard, so that if the old arm were still
         // there it would have something non-empty to paste.  Restored after.
-        const std::string saved = ClipboardText();
+        const ClipboardGuard clip;
         SetClipboardText("SENTINEL-MIDDLE-CLICK-PASTE");
 
         Harness h;
@@ -2142,17 +2243,19 @@ void TestMiddleClickIsInert()
         opCheck(pastedText.IsEmpty(), "...and no text was handed to the input bar");
 #endif
 
-        if (saved.empty()) {
-            if (wxTheClipboard->Open()) { wxTheClipboard->Clear(); wxTheClipboard->Close(); }
-        } else {
-            SetClipboardText(saved);
-        }
     }
 }
 
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
+
+    // An outer net over the whole harness.  The three tests that mean to touch
+    // the clipboard guard themselves, but a mouse release with the auto-copy
+    // option on writes it from anywhere, so a future test could reach it
+    // without meaning to -- and this runs on a real machine belonging to a real
+    // person whose clipboard is none of its business.
+    const ClipboardGuard clipAll;
 
     TestSelectionFreezesOutput();
     TestWantsSelectAll();

@@ -5574,7 +5574,15 @@ protected:
     // DrawItem fills the whole row itself (that IS the swatch), and the
     // canonical body ignores ODS_SELECTED — so wx must not paint its own
     // highlight underneath, exactly as Windows does not.
-    void OnDrawBackground(wxDC&, const wxRect&, int, int) const override {}
+    //
+    // Until DDX_Control binds the canonical combo there is nothing to fill the
+    // row with, and suppressing the background then would leave it unpainted —
+    // so an unbound control keeps wx's ordinary appearance.
+    void OnDrawBackground(wxDC& dc, const wxRect& rect, int item, int flags) const override
+    {
+        if (!m_ccb)
+            wxOwnerDrawnComboBox::OnDrawBackground(dc, rect, item, flags);
+    }
 };
 } // namespace
 

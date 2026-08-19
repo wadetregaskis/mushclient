@@ -1444,6 +1444,60 @@ TEST(LuaSurface, WindowDrawingActuallyPaints)
     ));
 }
 
+// D-21: a miniwindow font occupies the pixels it occupies on WINDOWS.
+//
+// A miniwindow is a PIXEL canvas — the plugin sizes the window, positions every
+// WindowText and reads back WindowTextWidth/WindowFontInfo in canvas pixels, and
+// all of those constants were written against Windows.  So the parity statement
+// is arithmetic, not aesthetic: at Windows' 96 logical dpi a P-point font is
+// MulDiv(P, 96, 72) pixels, and that is the number the engine must produce.
+//
+// This is the reference half of the pin and it can be an EXACT equality, which
+// is why it belongs here rather than in the GUI: pal::CpuRaster's dpi() is a
+// literal 96 (the Windows-parity adapter) and its cellH is spec.pixelHeight
+// verbatim, so CMiniWindow::Font's own MulDiv(points, dpi(), 72) is visible
+// undistorted.  Any factor reintroduced above the seam shows up here first.
+// The wx adapter's half — where the display PPI is 144 and the adapter has to
+// convert — is pinned in platform/miniwindow_selftest.cpp against the same
+// MulDiv(P, 96, 72), because "both adapters land on Windows' figure" is the
+// whole contract.
+//
+// Measured before the D-21 fix (an extra (96/72)^2 above the seam): 10pt gave a
+// 23px cell against Windows' 13 — 1.78x — and plugin strings clipped their own
+// miniwindow edge.  Deliberately several sizes: MulDiv rounds to nearest, so 8pt
+// (10.67 -> 11) and 14pt (18.67 -> 19) catch a truncating conversion that the
+// exactly-divisible 9/12pt would let through.
+TEST(LuaSurface, MiniWindowFontIsWindowsSized)
+{
+    CMUSHclientDoc doc;
+    const char* PW = "d21font";
+    ASSERT_EQ(eOK, doc.WindowCreate(PW, 0, 0, 240, 56, 0, 0, 0x000000L));
+
+    for (int pt : { 8, 9, 10, 12, 14 })
+    {
+        ASSERT_EQ(eOK, doc.WindowFont(PW, "f", "Menlo", (double) pt,
+                                      FALSE, FALSE, FALSE, FALSE, 0, 0));
+        VARIANT vh = doc.WindowFontInfo(PW, "f", 1);   // tmHeight
+        ASSERT_EQ(VT_I4, vh.vt);
+        if (vh.lVal != MulDiv(pt, 96, 72))
+            printf("  D-21: %dpt gives a %ld px cell; Windows gives %d\n",
+                   pt, (long) vh.lVal, MulDiv(pt, 96, 72));
+        EXPECT_EQ(MulDiv(pt, 96, 72), vh.lVal);
+    }
+
+    // The em must also be what the WIDTHS are built from: ten characters of a
+    // fixed-pitch font advance ten cells.  Without this, a mutation that fixed
+    // the height and left the width scaled would survive every check above.
+    ASSERT_EQ(eOK, doc.WindowFont(PW, "f", "Menlo", 10.0,
+                                  FALSE, FALSE, FALSE, FALSE, 0, 0));
+    VARIANT vavg = doc.WindowFontInfo(PW, "f", 6);     // tmAveCharWidth
+    ASSERT_EQ(VT_I4, vavg.vt);
+    EXPECT_EQ(vavg.lVal * 10,
+              doc.WindowTextWidth(PW, "f", "MMMMMMMMMM", FALSE));
+
+    EXPECT_EQ(eOK, doc.WindowDelete(PW));
+}
+
 // WindowDelete must release the surface, not just forget the window.
 //
 // The lifetime here is not obvious: the CBitmap owns the surface, and

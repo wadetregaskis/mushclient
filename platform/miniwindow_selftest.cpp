@@ -249,6 +249,34 @@ int RunPalMiniWindowSelfTest()
             "WindowFont creates a font");
     mwCheck(doc->WindowText(W, "nofont", "x", 0, 0, 0, 0, kWhite, FALSE) == -2,
             "WindowText with an unknown font id returns -2");
+    // ── D-21: a 10pt font is a WINDOWS-sized font, in canvas pixels ────────
+    // A miniwindow is a pixel canvas and the plugin's layout constants are
+    // canvas pixels, so parity means a 10pt request occupies the pixels it
+    // occupies on Windows: MulDiv(10, 96, 72) = 13 for the em.  The engine now
+    // uses the plain Windows formula (MulDiv(points, dpi(), 72)) and the wx
+    // adapter converts for its non-96 display PPI; the headless CpuRaster twin
+    // pins the same number exactly (tests/test_lua_surface.cpp), which is the
+    // point -- both adapters have to land on Windows' figure.
+    //
+    // Bands, not equalities, because these are real measured face metrics.
+    // Both ends have teeth; measured here (D-21, Courier New, 144-PPI panel):
+    //   correct                                    -> tmHeight 15, 10xM 79
+    //   the old (96/72)^2 factor above the seam    -> tmHeight 20, 10xM 103
+    //   adapter compensation dropped               -> tmHeight 12, 10xM 61
+    // tmHeight includes leading so it sits above the em; the 10xM bound is on
+    // the ADVANCE, which for a monospace face is a fixed fraction of the em
+    // (Courier New 0.6), so 55-68% brackets the correct 79 while excluding both
+    // failures.  Pinned in em terms rather than as literals so the relation,
+    // not this machine's numbers, is what is being asserted.
+    {
+        const long kEm = MulDiv(10, 96, 72);     // 13 -- Windows' pixel em
+        VARIANT vh = doc->WindowFontInfo(W, "f1", 1);        // tmHeight
+        long w10 = doc->WindowTextWidth(W, "f1", "MMMMMMMMMM", FALSE);
+        mwCheck(vh.vt == VT_I4 && vh.lVal >= kEm && vh.lVal <= kEm + 3,
+                "a 10pt miniwindow font is Windows-sized (tmHeight straddles the em)");
+        mwCheck(w10 >= kEm * 10 * 55 / 100 && w10 <= kEm * 10 * 68 / 100,
+                "...and ten 'M's advance the Windows width, not 1.33x it");
+    }
     {
         long w = doc->WindowText(W, "f1", "Hi", 2, 24, 0, 0, kWhite, FALSE);
         mwCheck(w > 0, "WindowText draws and returns a positive width");

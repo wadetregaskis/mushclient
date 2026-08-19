@@ -32,6 +32,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -107,21 +108,36 @@ struct Harness {
 
 // ── Clipboard save/restore ───────────────────────────────────────────────────
 // The auto-copy test has to look at the real system clipboard — that IS the
-// observable behaviour — so it puts back whatever text the user had there when
-// it is done, and clears the sentinel outright if there was none.  (A non-text
-// clipboard, e.g. an image, cannot be preserved; clearing beats leaving a
-// "SENTINEL-…" string behind.)
+// observable behaviour of copy_selection_to_clipboard, and a fake would only
+// prove the pane can call a fake.  So these read and write the real one.
 std::string ClipboardText()
 {
     std::string out;
-    if (wxTheClipboard->Open()) {
-        if (wxTheClipboard->IsSupported(wxDF_TEXT)) {
-            wxTextDataObject data;
-            if (wxTheClipboard->GetData(data))
-                out = std::string(data.GetText().utf8_str());
+    if (!wxTheClipboard->Open()) return out;
+    // NOT `IsSupported(wxDF_TEXT)` on its own, which is what this used to ask.
+    // Measured on macOS 15 with a string put there by another process (pbcopy):
+    // IsSupported(wxDF_TEXT) is FALSE while IsSupported(wxDF_UNICODETEXT) is
+    // true and GetData succeeds -- so every read of text this app did not
+    // itself write came back empty.  The save half of save/restore was
+    // therefore dead: the tests below concluded the clipboard had been empty
+    // and CLEARED it on the way out, wiping whatever the user had there on
+    // every single run.  wx_mfc_impl.cpp:2568 (world.GetClipboard) already
+    // tests the pair; this is the same rule.
+    if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) ||
+        wxTheClipboard->IsSupported(wxDF_TEXT)) {
+        wxTextDataObject data;
+        if (wxTheClipboard->GetData(data)) {
+            // Named locals, not `std::string(data.GetText().utf8_str())`:
+            // utf8_str() can hand back a NON-owning view of the wxString it was
+            // called on, and this project has already shipped one clipboard bug
+            // from exactly that shape.  Keep the wxString alive, then copy with
+            // an explicit length so an embedded NUL cannot truncate it.
+            const wxString           text = data.GetText();
+            const wxScopedCharBuffer buf  = text.utf8_str();
+            if (buf.data()) out.assign(buf.data(), buf.length());
         }
-        wxTheClipboard->Close();
     }
+    wxTheClipboard->Close();
     return out;
 }
 
@@ -131,6 +147,68 @@ void SetClipboardText(const std::string& s)
         wxTheClipboard->SetData(new wxTextDataObject(wxString::FromUTF8(s.c_str())));
         wxTheClipboard->Close();
     }
+}
+
+// RAII: put back whatever text the user had there, on EVERY way out — a return,
+// an assertion that ends the arm early, a throw — not just the last line of the
+// happy path.  Two of the three clipboard-using tests here used to restore only
+// on the fall-through, and one of those only when there had been text to begin
+// with, so an empty starting clipboard kept the copied selection afterwards.
+// (A non-text clipboard, e.g. an image, cannot be preserved; clearing beats
+// leaving a "SENTINEL-…" string behind.)
+struct ClipboardGuard {
+    std::string saved;
+    bool        hadText;
+    ClipboardGuard() : saved(ClipboardText()), hadText(!saved.empty()) {}
+    ~ClipboardGuard()
+    {
+        if (hadText) {
+            SetClipboardText(saved);
+        } else if (wxTheClipboard->Open()) {
+            wxTheClipboard->Clear();
+            wxTheClipboard->Close();
+        }
+    }
+    ClipboardGuard(const ClipboardGuard&)            = delete;
+    ClipboardGuard& operator=(const ClipboardGuard&) = delete;
+};
+
+// ── Making a real-clipboard assertion hermetic ──────────────────────────────
+// The system clipboard is machine-wide, so anything else running on the box can
+// land between the write and the read: another build agent's own selftest, or
+// the user pressing Cmd-C.  That turns a green test red for a reason that has
+// nothing to do with the pane, and a spurious failure in a GUI selftest is
+// exactly the kind that gets chased as a real defect.
+//
+// ctest's RESOURCE_LOCK cannot help: every in-app selftest here is already
+// RUN_SERIAL, so no two of them overlap WITHIN a run, and a lock is scoped to
+// one ctest invocation — it cannot see a second ctest in another worktree, let
+// alone a human.  wx exposes no pasteboard change-count to check ownership with
+// either.  What is left, and what actually matches the failure mode, is to
+// repeat the whole experiment: re-plant the sentinel, drive the pane again, and
+// read again.  Interference is a momentary collision, so a second run gets a
+// clean window; a pane that has stopped copying answers wrong every time.
+//
+// That last sentence is the load-bearing one: `attempt` must re-establish the
+// sentinel AND re-drive the pane, so a wrong answer can only mean the pane, and
+// the assertion still fails if the copy is removed.  Retrying the READ alone
+// would weaken it into "the clipboard eventually said something we like".
+const int kClipboardTries = 6;
+
+std::string ClipboardAttempt(const std::string& want,
+                             const std::function<std::string()>& attempt)
+{
+    std::string got;
+    for (int i = 0; i < kClipboardTries; ++i) {
+        got = attempt();
+        if (got == want) return got;
+        if (i == 0)
+            printf("    (clipboard said \"%s\", wanted \"%s\" -- retrying, "
+                   "something else on this machine may own it)\n",
+                   got.c_str(), want.c_str());
+        wxMilliSleep(20 * (i + 1));
+    }
+    return got;   // the LAST answer, so a genuine failure prints what it saw
 }
 
 // ── 1. Selection freezes output (world option auto_pause / m_bAutoFreeze) ────
@@ -252,30 +330,38 @@ void TestDoubleClickAutoCopy()
 {
     printf("double-click honours copy_selection_to_clipboard (mushview.cpp:4884)\n");
 
-    const std::string saved = ClipboardText();
+    const ClipboardGuard clip;
 
     {
-        Harness h;
-        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
-        h.pane->SetCopySelectionToClipboard(true);
-        h.pane->SetAutoCopyInHTML(false);
-        SetClipboardText("SENTINEL-not-copied");
+        wxString selected;
+        bool     paused = false;
+        const std::string got = ClipboardAttempt("bravo", [&]() {
+            Harness h;
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            h.pane->SetCopySelectionToClipboard(true);
+            h.pane->SetAutoCopyInHTML(false);
+            SetClipboardText("SENTINEL-not-copied");
 
-        const int cw = h.pane->CharWidth();
-        const int lh = h.pane->LineHeight();
-        // "bravo" starts at column 6; aim at its middle (column 8).
-        SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            // "bravo" starts at column 6; aim at its middle (column 8).
+            SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
 
-        opCheck(h.pane->GetSelectionText() == wxT("bravo"),
+            selected = h.pane->GetSelectionText();
+            paused   = h.pane->IsPaused();
+            return ClipboardText();
+        });
+
+        opCheck(selected == wxT("bravo"),
                 "double-click selects the word under the cursor");
-        opCheck(ClipboardText() == "bravo",
+        opCheck(got == "bravo",
                 "...and copy_selection_to_clipboard puts it on the clipboard");
         // The THIRD site of the same two Windows lines (mushview.cpp:4837),
         // which runs before the word is dispatched.  Without its own assertion
         // the drag-path checks in section 1 would cover for it.
-        opCheck(h.pane->IsPaused(),
+        opCheck(paused,
                 "...and the double-click froze output, as the drag does");
     }
 
@@ -301,21 +387,30 @@ void TestDoubleClickAutoCopy()
     }
 
     {
-        // Option off: the clipboard must be left alone.
-        Harness h;
-        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
-        h.pane->SetCopySelectionToClipboard(false);
-        SetClipboardText("SENTINEL-untouched");
+        // Option off: the clipboard must be left alone.  Retried the same way,
+        // and for the same reason -- a foreign write over the sentinel would
+        // otherwise read as "the pane copied something", which is the opposite
+        // of what happened.
+        wxString selected;
+        const std::string got = ClipboardAttempt("SENTINEL-untouched", [&]() {
+            Harness h;
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            h.pane->SetCopySelectionToClipboard(false);
+            SetClipboardText("SENTINEL-untouched");
 
-        const int cw = h.pane->CharWidth();
-        const int lh = h.pane->LineHeight();
-        SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
 
-        opCheck(h.pane->GetSelectionText() == wxT("bravo"),
+            selected = h.pane->GetSelectionText();
+            return ClipboardText();
+        });
+
+        opCheck(selected == wxT("bravo"),
                 "the word is still selected with the option off");
-        opCheck(ClipboardText() == "SENTINEL-untouched",
+        opCheck(got == "SENTINEL-untouched",
                 "...but the clipboard is not touched");
     }
 
@@ -327,60 +422,62 @@ void TestDoubleClickAutoCopy()
         // the selection tidy-up and the OnEditCopy below it — so a pane that
         // copied anyway would put text on the clipboard for a click the user
         // just cancelled.
-        Harness h;
-        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
-        h.pane->SetCopySelectionToClipboard(true);
-        SetClipboardText("SENTINEL-aborted");
+        wxString seen, selected;
+        const std::string got = ClipboardAttempt("SENTINEL-aborted", [&]() {
+            Harness h;
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            h.pane->SetCopySelectionToClipboard(true);
+            SetClipboardText("SENTINEL-aborted");
 
-        wxString seen;
-        h.pane->m_fn_word_double_clicked =
-            [&seen](const wxString& word, bool) -> bool {
-                seen = word;
-                return false;             // eDblClickAbort
-            };
+            h.pane->m_fn_word_double_clicked =
+                [&seen](const wxString& word, bool) -> bool {
+                    seen = word;
+                    return false;             // eDblClickAbort
+                };
 
-        const int cw = h.pane->CharWidth();
-        const int lh = h.pane->LineHeight();
-        SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+
+            selected = h.pane->GetSelectionText();
+            return ClipboardText();
+        });
 
         opCheck(seen == wxT("bravo"),
                 "the handler is given the word under the cursor");
-        opCheck(ClipboardText() == "SENTINEL-aborted",
+        opCheck(got == "SENTINEL-aborted",
                 "...and eDblClickAbort skips the auto-copy, as Windows does");
         // The capture/drag reset moved AHEAD of the dispatch, so it holds
         // whether or not a handler is wired: the platform's trailing LEFT_UP
         // must not re-enter the drag branch and collapse the word.
-        opCheck(h.pane->GetSelectionText() == wxT("bravo"),
+        opCheck(selected == wxT("bravo"),
                 "...and the trailing mouse-up leaves the word selected");
     }
 
     {
         // The same wiring, but the handler accepts: the copy DOES run.  Without
         // this arm a pane that never copies once a handler exists also passes.
-        Harness h;
-        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
-        h.pane->SetCopySelectionToClipboard(true);
-        SetClipboardText("SENTINEL-accepted");
-        h.pane->m_fn_word_double_clicked =
-            [](const wxString&, bool) -> bool { return true; };
+        const std::string got = ClipboardAttempt("bravo", [&]() {
+            Harness h;
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            h.pane->SetCopySelectionToClipboard(true);
+            SetClipboardText("SENTINEL-accepted");
+            h.pane->m_fn_word_double_clicked =
+                [](const wxString&, bool) -> bool { return true; };
 
-        const int cw = h.pane->CharWidth();
-        const int lh = h.pane->LineHeight();
-        SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
-        SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            SendMouse(h.pane, wxEVT_LEFT_DOWN,   cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_DCLICK, cw * 8 + cw / 2, lh / 2);
+            SendMouse(h.pane, wxEVT_LEFT_UP,     cw * 8 + cw / 2, lh / 2);
 
-        opCheck(ClipboardText() == "bravo",
+            return ClipboardText();
+        });
+
+        opCheck(got == "bravo",
                 "a handler that does not abort still gets the auto-copy");
-    }
-
-    if (!saved.empty())
-        SetClipboardText(saved);
-    else if (wxTheClipboard->Open()) {
-        wxTheClipboard->Clear();
-        wxTheClipboard->Close();
     }
 }
 
@@ -631,6 +728,12 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
 {
     printf("a mouse release only builds the selection when something wants it\n");
 
+    // The "on" arm below really does write the clipboard, so guard it for the
+    // whole function: the old code saved it late and restored it only when
+    // there had been text there to begin with, which left a whole scrollback
+    // on an empty clipboard.
+    const ClipboardGuard clip;
+
     Harness h;
     h.Feed(4000);
     h.pane->SelectAll();
@@ -661,13 +764,11 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
 
     // With the option ON the work is real and unavoidable -- that arm is the
     // control, and it is what makes "off is cheap" meaningful rather than
-    // vacuous.  (It also touches the clipboard, so save and restore it.)
-    const std::string saved = ClipboardText();
+    // vacuous.  (It also touches the clipboard; ClipboardGuard has it.)
     h.pane->SetCopySelectionToClipboard(true);
     releases(3);
     const double on = releases(30);
     h.pane->SetCopySelectionToClipboard(false);
-    if (!saved.empty()) SetClipboardText(saved);
 
     // "off is cheaper than on" is NOT enough: with the guard removed the off
     // arm still skips the clipboard write, so it comes out a few times faster
@@ -888,6 +989,213 @@ void TestRunCharLenMatchesTheDecode()
         hr.horiz_rule = 1;
         opCheck(hr.text.empty(), "a horizontal-rule run has no text");
         opCheck(RunCharLen(hr) == 0, "...so it measures zero columns");
+    }
+}
+
+// -- Counting characters must not cost a decode, nor a converter -------------
+// The non-UTF-8 branch stopped being exotic the day worlds stopped being
+// silently flipped to UTF-8: it is now what an ordinary ANSI world takes for
+// every run of every appended line, every painted line, every line a mouse move
+// walks, and every line of the whole scrollback on every Find keypress.  It
+// used to build -- and destroy -- a wxCSConv per run (an iconv_open apiece) and
+// force a full byte->wxString conversion merely to COUNT characters.
+//
+// This counts the work rather than timing it.  A timing assertion on a shared
+// machine is a coin toss, and the project has already been bitten once by a
+// shim that was functionally correct, quadratic, and defended by a comment
+// nobody could falsify (the CTypedPtrList POSITION scan, 595ms per drain at
+// 50k lines).  So: exact before/after deltas on two counters, plus the
+// equality the whole optimisation rests on, checked over every byte value of
+// every charset the mapper knows.
+void TestCharCountAvoidsTheDecode()
+{
+    printf("legacy-charset counting: no converter per call, no decode to count\n");
+
+    // Every LOGFONT charset WinCharsetToEncoding has a row for, plus two it
+    // does not (1 = DEFAULT_CHARSET, 2 = SYMBOL_CHARSET) which fall to CP1252.
+    const int kSingleByte[] = { 0, 1, 2, 161, 162, 163, 177, 178,
+                                186, 204, 222, 238, 255 };
+    const int kDbcs[]       = { 128, 129, 134, 136 };
+
+
+    auto makeRun = [](const std::string& bytes, int charset) {
+        SOutputRun r;
+        r.text    = bytes;
+        r.utf8    = 0;
+        r.charset = (short) charset;
+        return r;
+    };
+    auto decodedLen = [](const SOutputRun& r) {
+        return (int) DecodeOutputBytes(r.text.c_str(), r.text.size(),
+                                       r.utf8 != 0, r.charset).size();
+    };
+
+    // -- 1. the equality the fast path is only allowed to exist because of --
+    // Every single byte, on its own and in a pair, under every charset.  If any
+    // single-byte codepage ever DROPS an unmapped byte instead of failing the
+    // whole conversion (0x81/0x8D/0x8F/0x90/0x9D are undefined in CP1252), the
+    // byte count and the drawn count part company and this fails -- which is the
+    // only reason it is safe to skip the decode at all.
+    {
+        int mismatches = 0;
+        std::string firstBad;
+        for (int cs : kSingleByte) {
+            for (int b = 0; b <= 0xFF; ++b) {
+                const std::string one(1, (char)(unsigned char) b);
+                const std::string two = one + std::string(1, (char) 0x41);
+                for (const std::string& bytes : { one, two }) {
+                    SOutputRun r = makeRun(bytes, cs);
+                    if (RunCharLen(r) != decodedLen(r)) {
+                        if (mismatches == 0) {
+                            char buf[96];
+                            snprintf(buf, sizeof buf,
+                                     "charset %d byte 0x%02X: counted %d, drawn %d",
+                                     cs, b, RunCharLen(r), decodedLen(r));
+                            firstBad = buf;
+                        }
+                        ++mismatches;
+                    }
+                }
+            }
+        }
+        if (mismatches)
+            printf("    %d mismatches, first: %s\n", mismatches, firstBad.c_str());
+        opCheck(mismatches == 0,
+                "single-byte charsets: the byte count IS the drawn count, "
+                "for all 256 bytes of all 13");
+    }
+    // ...and the DBCS charsets, where the count still goes through the decode:
+    // the memo must not change the answer, including for a truncated lead byte
+    // (which fails the conversion and lands on the Latin-1 fallback).
+    {
+        const std::string kCases[] = {
+            "", "plain", "\xA4\xA4", "\xA4\xA4\xA4\xE5", "\xA4",
+            "a\xA4\xA4" "b", std::string("\x00\xA4\xA4", 3),
+        };
+        int mismatches = 0;
+        for (int cs : kDbcs)
+            for (const std::string& bytes : kCases) {
+                SOutputRun r = makeRun(bytes, cs);
+                if (RunCharLen(r) != decodedLen(r)) ++mismatches;
+                if (RunCharLen(r) != decodedLen(r)) ++mismatches;   // twice: memo hit
+            }
+        opCheck(mismatches == 0,
+                "DBCS charsets: the memoised count equals the drawn count, "
+                "on a repeat as well as the first ask");
+    }
+
+    // -- 2. one converter per charset, not one per call ----------------------
+    {
+        const unsigned long c0 = g_outputConvBuilds.load();
+        const unsigned long d0 = g_outputDecodes.load();
+        for (int i = 0; i < 500; ++i)
+            (void) DecodeOutputBytes("a\x93" "quoted\x94 word", 14, false, 0);
+        const unsigned long convs   = g_outputConvBuilds.load() - c0;
+        const unsigned long decodes = g_outputDecodes.load() - d0;
+        // The decode count is the control: without it, a DecodeOutputBytes that
+        // stopped decoding entirely would also build no converters and pass.
+        opCheckEq((int) decodes, 500, "500 decodes really ran");
+        opCheck(convs <= 1,
+                "...through at most ONE wxCSConv, not 500 (was one per call)");
+        if (convs > 1) printf("    built %lu converters\n", convs);
+    }
+
+    // -- 3. counting a single-byte run does no work at all -------------------
+    {
+        SOutputRun r = makeRun("a\x93" "quoted\x94 word", 0);
+        const unsigned long c0 = g_outputConvBuilds.load();
+        const unsigned long d0 = g_outputDecodes.load();
+        long total = 0;
+        for (int i = 0; i < 500; ++i) total += RunCharLen(r);
+        opCheckEq((int)(total / 500), 14, "the count is right (14 characters)");
+        opCheckEq((int)(g_outputDecodes.load() - d0), 0,
+                  "500 RunCharLen calls on a CP1252 run decode NOTHING");
+        opCheckEq((int)(g_outputConvBuilds.load() - c0), 0,
+                  "...and build no converter either");
+    }
+
+    // -- 4. a DBCS run is decoded once, then remembered ----------------------
+    {
+        SOutputRun r = makeRun("\xA4\xA4\xA4\xE5" "abc", 136);   // Big5
+        (void) RunCharLen(r);                       // prime (and build the conv)
+        const unsigned long c0 = g_outputConvBuilds.load();
+        const unsigned long d0 = g_outputDecodes.load();
+        long total = 0;
+        for (int i = 0; i < 200; ++i) total += RunCharLen(r);
+        opCheckEq((int)(g_outputDecodes.load() - d0), 0,
+                  "200 more RunCharLen calls on the SAME Big5 run re-decode nothing");
+        opCheckEq((int)(g_outputConvBuilds.load() - c0), 0,
+                  "...and build no further converter");
+        opCheckEq((int)(total / 200), decodedLen(r),
+                  "...and the memo answers what the decode would have");
+    }
+
+    // -- 5. the memo is keyed on the CONTENT and on the CHARSET --------------
+    // Two runs, alternating: each must be decoded once and then remembered, so
+    // a one-entry cache (which would thrash) and a cache that ignored the bytes
+    // (which would answer the other run's length) both fail here.
+    {
+        SOutputRun a = makeRun("\xA4\xA4", 136);            // Big5: one char
+        SOutputRun b = makeRun("\xA4\xA4\xA4\xE5", 136);    // Big5: two chars
+        opCheckEq(RunCharLen(a), 1, "Big5 A4A4 is one rendered character");
+        opCheckEq(RunCharLen(b), 2, "Big5 A4A4A4E5 is two");
+        const unsigned long d0 = g_outputDecodes.load();
+        for (int i = 0; i < 100; ++i) { (void) RunCharLen(a); (void) RunCharLen(b); }
+        opCheckEq((int)(g_outputDecodes.load() - d0), 0,
+                  "alternating two known runs re-decodes neither");
+    }
+    {
+        // The SAME bytes under a different DBCS charset are a different length:
+        // 0xA4 is a lead byte in Big5 but a halfwidth-katakana character of its
+        // own in Shift-JIS.  A memo keyed only on the bytes returns the stale
+        // answer here -- which is exactly the runtime charset change the cache
+        // has to survive.
+        SOutputRun big5 = makeRun("\xA4\xA4", 136);
+        SOutputRun sjis = makeRun("\xA4\xA4", 128);
+        const int nBig5 = RunCharLen(big5);
+        const int nSjis = RunCharLen(sjis);
+        opCheckEq(nBig5, decodedLen(big5), "A4A4 as Big5 counts as Big5 draws it");
+        opCheckEq(nSjis, decodedLen(sjis), "A4A4 as Shift-JIS counts as Shift-JIS draws it");
+        opCheck(nBig5 != nSjis,
+                "...and the two really do differ, so the charset key is load-bearing");
+        // Re-ask in the other order: neither answer may have been overwritten.
+        opCheckEq(RunCharLen(sjis), nSjis, "the Shift-JIS answer survives the Big5 ask");
+        opCheckEq(RunCharLen(big5), nBig5, "...and vice versa");
+    }
+
+    // -- 6. more distinct runs than the memo holds: still all correct --------
+    // The bound is a memory bound, never a correctness one.
+    {
+        std::vector<SOutputRun> runs;
+        std::vector<int>        want;
+        for (int i = 0; i < 40; ++i) {
+            std::string bytes = "\xA4\xA4";
+            bytes += std::string((size_t) i % 7 + 1, 'x');
+            runs.push_back(makeRun(bytes, 136));
+            want.push_back(decodedLen(runs.back()));
+        }
+        int wrong = 0;
+        for (int pass = 0; pass < 3; ++pass)
+            for (size_t i = 0; i < runs.size(); ++i)
+                if (RunCharLen(runs[i]) != want[i]) ++wrong;
+        opCheckEq(wrong, 0, "40 distinct runs cycled past a 16-entry memo stay correct");
+    }
+
+    // -- 7. a world that changes charset at runtime -------------------------
+    // Nothing invalidates the converter cache, because nothing has to: the key
+    // IS the encoding.  Flipping between four charsets many times must build at
+    // most one converter each (and none at all for the ones already used).
+    {
+        const unsigned long c0 = g_outputConvBuilds.load();
+        int wrong = 0;
+        for (int i = 0; i < 100; ++i)
+            for (int cs : { 0, 204, 238, 136 }) {
+                SOutputRun r = makeRun("\xA4\xA4" "text", cs);
+                if (RunCharLen(r) != decodedLen(r)) ++wrong;
+            }
+        opCheckEq(wrong, 0, "flipping charset 400 times never miscounts");
+        opCheck(g_outputConvBuilds.load() - c0 <= 4,
+                "...and builds at most one converter per charset, ever");
     }
 }
 
@@ -1905,7 +2213,7 @@ void TestMiddleClickIsInert()
     {
         // A sentinel on the system clipboard, so that if the old arm were still
         // there it would have something non-empty to paste.  Restored after.
-        const std::string saved = ClipboardText();
+        const ClipboardGuard clip;
         SetClipboardText("SENTINEL-MIDDLE-CLICK-PASTE");
 
         Harness h;
@@ -1935,17 +2243,19 @@ void TestMiddleClickIsInert()
         opCheck(pastedText.IsEmpty(), "...and no text was handed to the input bar");
 #endif
 
-        if (saved.empty()) {
-            if (wxTheClipboard->Open()) { wxTheClipboard->Clear(); wxTheClipboard->Close(); }
-        } else {
-            SetClipboardText(saved);
-        }
     }
 }
 
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
+
+    // An outer net over the whole harness.  The three tests that mean to touch
+    // the clipboard guard themselves, but a mouse release with the auto-copy
+    // option on writes it from anywhere, so a future test could reach it
+    // without meaning to -- and this runs on a real machine belonging to a real
+    // person whose clipboard is none of its business.
+    const ClipboardGuard clipAll;
 
     TestSelectionFreezesOutput();
     TestWantsSelectAll();
@@ -1959,6 +2269,7 @@ int RunOutputPaneSelfTest()
     TestSearchHighlightOffsets();
     TestMeasuredMetrics();
     TestRunCharLenMatchesTheDecode();
+    TestCharCountAvoidsTheDecode();
     TestAdoptTextRect();
     TestWheelActionOrdering();
     TestFontSizeClamp();

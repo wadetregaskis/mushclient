@@ -1109,10 +1109,12 @@ bool bPaletteValid = false;
     The trigger's side is resolved as an ANSI style carrying the SAME
     HILITE/INVERSE flags as the run under the match.  That keeps "red" matching
     bold red exactly as before (boldness is the separate TRIGGER_MATCH_HILITE
-    condition), and leaves the INVERSE swap to the resolver, which also honours
-    m_bAlternativeInverse -- the old hand-rolled swap here did not.  Under
-    INVERSE the displayed foreground comes from the BACKGROUND index, hence the
-    crossed-over arguments.
+    condition).  Under INVERSE the displayed foreground comes from the
+    BACKGROUND index, hence the crossed-over arguments -- the old code got that
+    index right too, but being index-only it never had to ask which TABLE the
+    index was read from, and m_bAlternativeInverse decides exactly that for an
+    inverted bold run.  Handing the whole question to the resolver is what keeps
+    the two sides in step whatever that option is set to.
     */
 
         if (trigger_item->iMatch & (TRIGGER_MATCH_TEXT | TRIGGER_MATCH_BACK))

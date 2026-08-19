@@ -439,12 +439,47 @@ public:
     // minus ID_INDICATOR_CAPS (macOS has no Caps-Lock indicator convention).
     enum StatusPaneId {
         kStatusPaneMessage = 0,   // ID_SEPARATOR            — the status line
+        kStatusPaneFreeze,        // ID_STATUSLINE_FREEZE    — "" / PAUSE / CLOSED
         kStatusPaneName,          // ID_STATUSLINE_MUSHNAME  — world name
         kStatusPaneTime,          // ID_STATUSLINE_TIME      — connected time
         kStatusPaneLines,         // ID_STATUSLINE_LINES     — lines in/out
         kStatusPaneLog,           // ID_STATUSLINE_LOG       — logging?
         kStatusPaneCount
     };
+
+    // ── Status-bar click shortcuts ────────────────────────────────────────
+    // CMyStatusBar::OnLButtonDblClk / OnLButtonDown (MyStatusBar.cpp:38-101):
+    // double-click the time pane to reset the connected time, the freeze pane
+    // to toggle Freeze Output, the lines pane to open Go To Line; single-click
+    // the world-name pane for the open-worlds popup.  The port's per-world
+    // wxStatusBar bound no mouse handlers at all, so none of the four existed.
+    //
+    // Split three ways -- a pure pane->command map, a hit test, and the run
+    // step -- so the in-app selftest can pin the mapping and the hit test
+    // without synthesising a native mouse event, and can drive the two
+    // shortcuts whose action is not modal.
+    //
+    // The switcher has no Windows command id (CMyStatusBar calls
+    // CMainFrame::LeftTrayClick directly), so it gets a local sentinel that
+    // cannot collide with the resource.h id space.
+    enum { kCmdWorldSwitcher = -1 };
+    // The command a `doubleClick` (or single) click on pane `pane` runs;
+    // 0 when that pane has no shortcut.  Static: it is only the table.
+    static int StatusPaneCommand(int pane, bool doubleClick);
+    // One pane's rect in status-bar client coordinates; false if there is no
+    // bar or no such pane.  (Also the selftest's window onto the hit test.)
+    bool StatusPaneRect(int pane, wxRect& out) const;
+    // Which pane is at `pt` (status-bar client coordinates), or -1.
+    int  StatusPaneAt(const wxPoint& pt) const;
+    // Run one of the commands StatusPaneCommand returns.
+    void RunStatusPaneCommand(int cmd);
+    // The whole path the bound handlers take; returns the command run (0 =
+    // the click was not on a shortcut pane).
+    int  HandleStatusBarMouse(const wxPoint& pt, bool doubleClick);
+    // The open-worlds popup the world-name pane raises.  Modal, so nothing
+    // headless may call it -- the list it shows is checked through
+    // CMainFrame::CollectWorldMenuItems instead.
+    void ShowWorldSwitcher();
 
     // Selftest probe: pane 0's current text (the transient/status line).
     wxString StatusPane0() const { return StatusPane(kStatusPaneMessage); }
@@ -624,6 +659,9 @@ private:
     void OnSize(wxSizeEvent& evt);
     // Frame activated/deactivated — refresh the status bar.
     void OnActivate(wxActivateEvent& evt);
+    // Status-bar mouse: the four CMyStatusBar click shortcuts.
+    void OnStatusBarLeftDown(wxMouseEvent& evt);
+    void OnStatusBarDClick(wxMouseEvent& evt);
 
     // ── Helpers ───────────────────────────────────────────────────────────
 

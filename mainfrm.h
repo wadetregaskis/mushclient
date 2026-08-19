@@ -10,6 +10,9 @@
 #include "MyStatusBar.h"
 #include "MDITabs.h"
 
+#include <map>
+#include <string>
+
 class CMUSHclientDoc;
 
 #define TRAY_FIRST_MENU 11000
@@ -80,6 +83,9 @@ public:
    void ShowMCIError (const DWORD dwCode, const CString & strSound);
    bool IsFullScreen () { return m_bFullScreen; };
    void AddTrayIcon (void);
+   // The open-world list LeftTrayClick pops up: label -> m_view_number - 1,
+   // sorted by label.  Its own method so it can be checked without a modal.
+   void CollectWorldMenuItems (std::multimap<std::string, int> & sWorlds);
    void LeftTrayClick (void);
    void RightTrayClick (void);
 

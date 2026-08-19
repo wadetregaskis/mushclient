@@ -3012,6 +3012,188 @@ int RunWorldFrameSelfTest()
         doc->m_iConnectPhase = eConnectConnectedToMud;
     }
 
+    // ── the four CMyStatusBar click shortcuts ──────────────────────
+    // MyStatusBar.cpp:38-101 gives the Windows status bar four shortcuts; the
+    // port's per-world wxStatusBar bound no mouse handlers at all, so none of
+    // them existed here.  Two of the four end in a modal (Go To Line's number
+    // prompt, the switcher's popup menu) which an OnInit-scoped harness cannot
+    // answer, so those two are driven only as far as "the real hit test picked
+    // the right pane and the table named the right command"; the other two are
+    // run end to end and their effect asserted.
+    {
+        const bool barWasShown = child->IsStatusBarStripShown();
+        child->ShowStatusBarStrip(true);
+        wxYield();
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+        child->UpdateStatusBar();
+
+        typedef CWorldChildFrame F;
+
+        // (a) the pane -> command table, both click kinds.
+        check(F::StatusPaneCommand(F::kStatusPaneTime,   true) ==
+                  ID_GAME_RESETCONNECTEDTIME,
+              "table: double-click on the time pane = Reset Connected Time");
+        check(F::StatusPaneCommand(F::kStatusPaneFreeze, true) ==
+                  ID_DISPLAY_FREEZEOUTPUT,
+              "table: double-click on the freeze pane = Freeze Output");
+        check(F::StatusPaneCommand(F::kStatusPaneLines,  true) ==
+                  ID_DISPLAY_GOTOLINE,
+              "table: double-click on the lines pane = Go To Line");
+        check(F::StatusPaneCommand(F::kStatusPaneName,  false) ==
+                  F::kCmdWorldSwitcher,
+              "table: SINGLE click on the world-name pane = the world switcher");
+
+        // Controls: the click kind matters, and the other panes do nothing.
+        check(F::StatusPaneCommand(F::kStatusPaneName,   true) == 0,
+              "table: a DOUBLE click on the world-name pane is not a shortcut");
+        check(F::StatusPaneCommand(F::kStatusPaneTime,  false) == 0,
+              "table: a SINGLE click on the time pane is not a shortcut");
+        check(F::StatusPaneCommand(F::kStatusPaneMessage, true) == 0 &&
+              F::StatusPaneCommand(F::kStatusPaneLog,     true) == 0,
+              "table: the message and log panes have no shortcut");
+        check(F::StatusPaneCommand(-1, true) == 0 &&
+              F::StatusPaneCommand(-1, false) == 0,
+              "table: a click on no pane at all runs nothing");
+
+        // (b) the hit test.  Every pane must have a real rect and answer its
+        // OWN index at its centre -- a hit test stuck on one pane passes for
+        // that pane only.
+        for (int i = 0; i < F::kStatusPaneCount; ++i) {
+            wxRect r;
+            const bool got = child->StatusPaneRect(i, r);
+            check(got && r.width > 0 && r.height > 0,
+                  "hit test: every status pane has a non-empty rect");
+            if (!got) continue;
+            check(child->StatusPaneAt(
+                      wxPoint(r.x + r.width / 2, r.y + r.height / 2)) == i,
+                  "hit test: a pane's centre maps back to that pane");
+        }
+        check(child->StatusPaneAt(wxPoint(-40, -40)) == -1,
+              "hit test: a point off the bar maps to no pane");
+
+        wxRect rFreeze, rTime, rLines, rName;
+        child->StatusPaneRect(F::kStatusPaneFreeze, rFreeze);
+        child->StatusPaneRect(F::kStatusPaneTime,   rTime);
+        child->StatusPaneRect(F::kStatusPaneLines,  rLines);
+        child->StatusPaneRect(F::kStatusPaneName,   rName);
+        check(!rTime.Contains(wxPoint(rLines.x + rLines.width / 2,
+                                      rLines.y + rLines.height / 2)),
+              "hit test: the time and lines panes really are different regions");
+        const wxPoint ptFreeze(rFreeze.x + rFreeze.width / 2,
+                               rFreeze.y + rFreeze.height / 2);
+        const wxPoint ptTime  (rTime.x   + rTime.width   / 2,
+                               rTime.y   + rTime.height  / 2);
+        const wxPoint ptLines (rLines.x  + rLines.width  / 2,
+                               rLines.y  + rLines.height / 2);
+        const wxPoint ptName  (rName.x   + rName.width   / 2,
+                               rName.y   + rName.height  / 2);
+
+        // (c) freeze, end to end through the real hit test.
+        pane->SetPaused(false);
+        child->UpdateStatusBar();
+        check(!child->isPaused(), "freeze: control -- the output starts running");
+        check(child->StatusPane(F::kStatusPaneFreeze).empty(),
+              "freeze: ...and the freeze pane starts blank");
+
+        check(child->HandleStatusBarMouse(ptFreeze, true) ==
+                  ID_DISPLAY_FREEZEOUTPUT,
+              "freeze: double-clicking the freeze pane runs Freeze Output");
+        check(child->isPaused(), "freeze: ...and the output really froze");
+        check(child->StatusPane(F::kStatusPaneFreeze) == wxT("PAUSE"),
+              "freeze: ...and the pane says PAUSE");
+
+        check(child->HandleStatusBarMouse(ptFreeze, true) ==
+                  ID_DISPLAY_FREEZEOUTPUT,
+              "freeze: a second double-click runs it again");
+        check(!child->isPaused(), "freeze: ...and thaws the output");
+        check(child->StatusPane(F::kStatusPaneFreeze).empty(),
+              "freeze: ...and blanks the pane");
+
+        check(child->HandleStatusBarMouse(ptFreeze, false) == 0,
+              "freeze: a SINGLE click on the freeze pane runs nothing");
+        check(!child->isPaused(), "freeze: ...and leaves the output running");
+
+        // The third state of the pane, so "blank" above is not the only thing
+        // it can ever say.
+        doc->m_iConnectPhase = eConnectNotConnected;
+        child->UpdateStatusBar();
+        check(child->StatusPane(F::kStatusPaneFreeze) == wxT("CLOSED"),
+              "freeze: the pane says CLOSED while the world is not connected");
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+
+        // (d) reset connected time, end to end through the real hit test.
+        doc->m_tStatusTime = CTime::GetCurrentTime() - 90L;
+        child->UpdateStatusBar();
+        check(child->StatusPane(F::kStatusPaneTime) == wxT("0:01:30"),
+              "time: control -- 90 seconds on the clock before the click");
+        check(child->HandleStatusBarMouse(ptTime, true) ==
+                  ID_GAME_RESETCONNECTEDTIME,
+              "time: double-clicking the time pane runs Reset Connected Time");
+        check(child->StatusPane(F::kStatusPaneTime) == wxT("0:00:00"),
+              "time: ...and the pane resets to zero");
+
+        // A double-click one pane over must NOT reset it -- the hit test is
+        // what separates them, and this is the assertion that says so.
+        doc->m_tStatusTime = CTime::GetCurrentTime() - 90L;
+        child->UpdateStatusBar();
+        child->HandleStatusBarMouse(ptFreeze, true);
+        check(child->StatusPane(F::kStatusPaneTime) == wxT("0:01:30"),
+              "time: double-clicking the FREEZE pane leaves the clock alone");
+        pane->SetPaused(false);   // undo that freeze
+
+        // (e) the two modal shortcuts: real hit test + real table, stopping
+        // one call short of the dialog.
+        check(F::StatusPaneCommand(child->StatusPaneAt(ptLines), true) ==
+                  ID_DISPLAY_GOTOLINE,
+              "lines: a double-click there resolves to Go To Line");
+        check(F::StatusPaneCommand(child->StatusPaneAt(ptName), false) ==
+                  F::kCmdWorldSwitcher,
+              "name: a single click there resolves to the world switcher");
+
+        // (f) the switcher's list.  The popup is modal, but the list it shows
+        // is not -- CollectWorldMenuItems is the half of LeftTrayClick that
+        // decides what appears and what each entry activates.
+        {
+            CMUSHclientDoc* other = new CMUSHclientDoc();
+            other->m_mush_name   = "Ankh";    // sorts BEFORE "SelfTest", so
+            other->m_nWrapColumn = 80;        // name order and open order differ
+            other->m_maxlines    = 5000;      // and the sort is falsifiable
+            other->SetUpOutputWindow();
+            CWorldChildFrame* otherFrame =
+                new CWorldChildFrame(parent, other, wxT("Ankh"));
+            App.UpdateWorldCounts();
+            // Both counts set explicitly: constructing a world frame can leave
+            // unread lines of its own, and an accidental "Ankh (1)" would look
+            // like a sort failure rather than the label rule it really is.
+            doc->m_new_lines   = 3;           // the "(n) unread" suffix
+            other->m_new_lines = 0;           // ...and its absence
+
+            std::multimap<std::string, int> worlds;
+            Frame.CollectWorldMenuItems(worlds);
+            check(worlds.size() == 2,
+                  "switcher: both open worlds are listed");
+            std::multimap<std::string, int>::const_iterator it = worlds.begin();
+            check(it != worlds.end() && it->first == "Ankh",
+                  "switcher: sorted by NAME, so Ankh comes first");
+            check(it != worlds.end() &&
+                      it->second == other->m_view_number - 1,
+                  "switcher: ...carrying the offset OnTrayMenu decodes");
+            if (it != worlds.end()) ++it;
+            check(it != worlds.end() && it->first == "SelfTest (3)",
+                  "switcher: an unread count is appended to the label");
+            check(it != worlds.end() && it->second == doc->m_view_number - 1,
+                  "switcher: ...and the second world's offset is its own");
+            check(other->m_view_number != doc->m_view_number,
+                  "switcher: control -- the two offsets are not the same number");
+
+            doc->m_new_lines = 0;
+            otherFrame->Close(true);
+            wxYield();
+        }
+
+        if (!barWasShown) child->ShowStatusBarStrip(false);
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

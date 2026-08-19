@@ -5,6 +5,9 @@
 
 #include "platform/compat.h"
 
+#include <map>
+#include <string>
+
 // ── Macros defined in mainfrm.h Windows block ────────────────────────────
 #ifndef TRAY_FIRST_MENU
 #  define TRAY_FIRST_MENU         11000
@@ -179,6 +182,7 @@ public:
     void ShowMCIError(DWORD, const CString&);
     bool IsFullScreen() { return m_bFullScreen; }
     void AddTrayIcon();
+    void CollectWorldMenuItems(std::multimap<std::string, int>&);
     void LeftTrayClick();
     void RightTrayClick();
     void OpenAndConnectToWorldsInStartupList(const bool);

@@ -51,6 +51,12 @@
 // parent's close handler share, taking the config it writes into.
 void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame);
 
+// Defined in wx_mfc_impl.cpp: enter/leave full screen on a window, stashing
+// (or discarding) its pre-full-screen rect -- the same bookkeeping the real
+// View ▸ Full Screen menu handler does, exposed so this harness can drive it
+// without a fully wired MDI parent + wxEVT_MENU dispatch.
+void wx_toggle_full_screen(wxTopLevelWindow* target);
+
 // Defined in wx_mfc_impl.cpp: the pre-load defaults File ▸ New World and Open
 // World File both apply to a freshly constructed document.
 void wx_seed_new_world_defaults(CMUSHclientDoc* doc);
@@ -164,6 +170,44 @@ void TestGeometry()
               "a zero-size window is not persisted");
         check(!cfg.Read(wxT("/geometry/child_x"), &x),
               "...nor is its position, even though it was well-formed");
+    }
+
+    // R2-04-F5: wx_geometry_rect_for_save is the ONE choice both the quit
+    // path (above) and CWorldChildFrame::OnClose (Cmd+W) go through, so the
+    // two paths cannot disagree about a full-screen window's persisted rect.
+    // A helper that just forwards GetRect() -- what OnClose used to do --
+    // fails this: while full screen, GetRect() reports the display-sized
+    // bounds, not the size the window had before going full screen.
+    {
+        wxFrame* fsFrame = new wxFrame(nullptr, wxID_ANY, wxT("selftest-fullscreen"),
+                                       wxPoint(11, 22), wxSize(555, 333));
+        fsFrame->Show();
+        wx_toggle_full_screen(fsFrame);   // stashes 555x333 @ (11,22); enters full screen
+        check(fsFrame->IsFullScreen(), "the frame reports full screen after toggling");
+
+        const wxRect saved = wx_geometry_rect_for_save(fsFrame);
+        check(saved.width == 555 && saved.height == 333,
+              "wx_geometry_rect_for_save returns the PRE-full-screen size while "
+              "still full screen -- a bare GetRect() would return the display "
+              "size instead");
+        check(saved.x == 11 && saved.y == 22,
+              "...and the pre-full-screen position too");
+
+        wxRemoveFile(path);
+        wxFileConfig cfg(wxEmptyString, wxEmptyString, path, wxEmptyString,
+                         wxCONFIG_USE_LOCAL_FILE);
+        // The exact call OnClose now makes (Cmd+W path).
+        wx_save_child_geometry(cfg, wx_geometry_rect_for_save(fsFrame));
+        long w = 0, x = 0;
+        cfg.Read(wxT("/geometry/child_w"), &w);
+        cfg.Read(wxT("/geometry/child_x"), &x);
+        check(w == 555 && x == 11,
+              "...so the value that reaches OnClose's persisted keys is the "
+              "pre-full-screen rect, not the full-screen one");
+
+        wx_toggle_full_screen(fsFrame);   // leaves full screen; the stash is erased
+        check(!fsFrame->IsFullScreen(), "the frame reports leaving full screen");
+        fsFrame->Destroy();
     }
 
     child->Destroy();

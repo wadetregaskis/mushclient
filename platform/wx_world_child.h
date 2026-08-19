@@ -50,6 +50,14 @@ void wx_activate_world_frame(CMUSHclientDoc* doc);
 // included — exactly as the close handler always did for size.
 class wxConfigBase;   // <wx/config.h> is included by the .cpp, not this header
 void wx_save_child_geometry(wxConfigBase& cfg, const wxRect& rect);
+// The rect wx_save_child_geometry's caller ought to pass for `win`: its
+// pre-full-screen rect if `win` is currently full screen (macOS animates the
+// exit, so GetRect() would otherwise report the full-screen bounds), else its
+// current GetRect().  Defined in wx_mfc_impl.cpp, which owns the stash; shared
+// by the macOS quit hook and CWorldChildFrame::OnClose so a Cmd+W on a
+// full-screen world cannot persist the full-screen bounds where the quit path
+// already knew to avoid it.
+wxRect wx_geometry_rect_for_save(wxTopLevelWindow* win);
 // ── Miniwindow compositing / tooltips (wx_world_child.cpp) ───────────────────
 // Free functions, not frame members: they need only the doc, and the in-app
 // compositor selftest (platform/wx_composite_selftest.cpp) drives the real

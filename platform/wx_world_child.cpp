@@ -6238,10 +6238,14 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     // opens uses the same geometry instead of reverting to the
     // screen-derived default.  The quit hook writes the same keys through
     // the same helper, because a Cmd-Q never reaches this handler at all.
-    {
+    // Skip while iconized (same guard SaveWindowGeometryTo applies to the
+    // quit path), and route through wx_geometry_rect_for_save rather than a
+    // bare GetRect() — a world closed with Cmd+W while still full screen used
+    // to persist the full-screen bounds as its saved size and position.
+    if (!IsIconized()) {
         const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
     wxConfigBase& cfg = *cfgOwner;
-        wx_save_child_geometry(cfg, GetRect());
+        wx_save_child_geometry(cfg, wx_geometry_rect_for_save(this));
     }
 
     PersistBeforeTeardown();

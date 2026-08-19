@@ -1074,7 +1074,12 @@ TEST(Files, CMemFileWritableGrowsAndDetaches) {
     EXPECT_EQ((UINT)3, mf.Read(buf, 3));
     EXPECT_STREQ("abc", buf);
     EXPECT_EQ((DWORD)3, mf.GetPosition());
-    EXPECT_STREQ("def", (const char*)mf.GetMemoryPos());
+    // Compared by length, not as a C string: Write() stored exactly the six
+    // bytes it was given and CMemFile appends no terminator, so strcmp would
+    // run off the end of the buffer.  ASan reports that as a
+    // heap-buffer-overflow READ 0 bytes after the 6-byte region; without a
+    // sanitizer it silently reads whatever the allocator left there.
+    EXPECT_EQ(0, memcmp("def", mf.GetMemoryPos(), 3));
     // Read past end is clamped
     char big[16] = {};
     EXPECT_EQ((UINT)3, mf.Read(big, 16));
@@ -4762,6 +4767,12 @@ TEST(DocBase, OnSaveThenOnOpenRoundTrip) {
     EXPECT_FALSE(bad.OnSaveDocument("/nonexistent-r4/doc.txt"));
 }
 
+// The one-element index array below is load-bearing, and only a sanitizer can
+// see it: the LONG* overload used to copy index[1] as well, reading off the
+// end of it.  An out-of-bounds READ has no observable effect, so this test
+// passes either way in a normal build -- under -DMUSHCLIENT_SANITIZE=address
+// the unfixed shim reports a stack-buffer-overflow here.  Do not "tidy" the
+// array to two elements.  See docs/SANITIZERS.md.
 TEST(MiscShims, SafeArrayLongPointerOverloads) {
     COleSafeArray sa;
     sa.CreateOneDim(VT_VARIANT, 3, NULL, 0);

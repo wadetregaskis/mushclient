@@ -662,6 +662,27 @@ TEST(LuaScripting, ErrorCodeTable)
     EXPECT_EQ(30073.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
+    // ePluginCouldNotSaveState is its OWN code (30038, errors.h), not
+    // ePluginDoesNotSaveState's (30037) — MakeIntFlagsTable does lua_rawset
+    // per row, so a duplicate key here is last-write-wins and leaves
+    // error_desc[30037] holding the wrong text with error_desc[30038] nil.
+    n = run_ret(L, "return error_code.ePluginCouldNotSaveState");
+    EXPECT_EQ(1, n);
+    EXPECT_EQ(30038.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    n = run_ret(L, "return error_desc[30037]");
+    EXPECT_EQ(1, n);
+    ASSERT_TRUE(lua_isstring(L, -1));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "does not support saving state") != nullptr);
+    lua_settop(L, 0);
+
+    n = run_ret(L, "return error_desc[30038]");
+    EXPECT_EQ(1, n);
+    ASSERT_TRUE(lua_isstring(L, -1));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "could not save state") != nullptr);
+    lua_settop(L, 0);
+
     lua_close(L);
 }
 
@@ -4039,6 +4060,106 @@ TEST(SweepR4, ScriptErrorLogFileAppended)
     unlink(logPath.c_str());
     rmdir(dir);
     App.m_strDefaultLogFileDirectory = savedDir.c_str();
+}
+
+// R2-07-F1: WriteErrorLines used to be fenced behind #ifdef _WIN32, so
+// log_script_errors omitted the "Error context in script:" block the output
+// window already shows unconditionally (ShowErrorLines, right above it in
+// ReportScriptError, was never fenced).  Reaching the branch needs a chunk
+// name of "Plugin" or "Script file" -- LuaError only clears bImmediate when
+// the Lua error message starts "[string \"Plugin\"]:" or
+// "[string \"Script file\"]:" -- so <logged> above (bImmediate stays true)
+// never exercises it.
+TEST(SweepR4, ScriptErrorLogFileIncludesContextBlock)
+{
+    char dir[128];
+    snprintf(dir, sizeof dir, "/tmp/mc_test_r4_errlog_ctx_%d/", (int)getpid());
+    mkdir(dir, 0755);
+    std::string savedDir = (const char*)App.m_strDefaultLogFileDirectory.c_str();
+    App.m_strDefaultLogFileDirectory = dir;
+
+    CMUSHclientDoc doc;
+    doc.m_bLogScriptErrors = TRUE;
+    // WriteErrorLines reads its lines from m_strScript (or the current
+    // plugin's), not from the buffer Parse compiled -- both are set to the
+    // same 3-line chunk here so the "2*: " marker has real text to show.
+    CString script3Lines = "local x = 1\nerror('ctx-boom')\nlocal y = 2";
+    doc.m_strScript = script3Lines;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc.m_ScriptEngine = engine;
+    EXPECT_TRUE(engine->Parse(script3Lines, "Plugin"));   // errors at line 2
+
+    std::string logPath = std::string(dir) + "script_error_log.txt";
+    FILE* f = fopen(logPath.c_str(), "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[4096] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    EXPECT_TRUE(strstr(buf, "Error context in script:") != nullptr);
+    EXPECT_TRUE(strstr(buf, "   2*: ") != nullptr);   // asterisked error line
+    unlink(logPath.c_str());
+    rmdir(dir);
+    App.m_strDefaultLogFileDirectory = savedDir.c_str();
+}
+
+// R2-02-F7 / R2-07-F2: the same defect found twice.  Both ExecuteLua overloads
+// save m_iNoteStyle and force it to NORMAL before looking the callback up,
+// then `return true` from the "function not found" (!GetNestedFunction) arm
+// without restoring it -- so a note style an outer handler set is silently
+// discarded for the rest of the session.  The five embedded engines' forward
+// (further up in this file) already restores unconditionally.  A live dispid
+// (not DISPID_UNKNOWN) with a procedure name absent from the Lua state is what
+// takes this arm rather than the "don't do it if previous problems" early-out.
+TEST(SweepR4, ExecuteLuaMissingRoutineRestoresNoteStyle)
+{
+    CMUSHclientDoc doc;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc.m_ScriptEngine = engine;
+
+    doc.m_iNoteStyle = HILITE;   // non-degenerate: differs from the NORMAL the
+                                 // call forces mid-flight, so a leaked reset
+                                 // is observable rather than a coincidence.
+
+    long count = 0;
+    bool keepGoing = false;
+    list<double> nparams;
+    list<string> sparams;
+    DISPID dispid = 1;   // "live" so ExecuteLua actually attempts the call
+                         // instead of short-circuiting on DISPID_UNKNOWN.
+    const bool err = engine->ExecuteLua(dispid, "no_such_routine_r207f2",
+                                        eDontChangeAction, "test", "test",
+                                        nparams, sparams, count,
+                                        nullptr, nullptr, nullptr, &keepGoing);
+
+    EXPECT_TRUE(err);                          // the failure branch WAS taken
+    EXPECT_EQ((DISPID) DISPID_UNKNOWN, dispid);   // ...and it disabled the dispid
+    EXPECT_EQ((int) HILITE, (int) doc.m_iNoteStyle);   // ...without leaking NORMAL
+}
+
+// The SIMPLE overload has the identical shape (ExecutePluginScriptRtn's
+// callback) -- same bug, same fix, so pin it separately: a fix that only
+// touches the rich overload's copy must still fail this one.
+TEST(SweepR4, ExecuteLuaSimpleOverloadMissingRoutineRestoresNoteStyle)
+{
+    CMUSHclientDoc doc;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc.m_ScriptEngine = engine;
+
+    doc.m_iNoteStyle = HILITE;
+
+    long count = 0;
+    DISPID dispid = 1;
+    CString io = "unused";
+    const bool err = engine->ExecuteLua(dispid, "no_such_routine_r207f2_simple",
+                                        eDontChangeAction, "test", "test",
+                                        io, count, io);
+
+    EXPECT_TRUE(err);
+    EXPECT_EQ((DISPID) DISPID_UNKNOWN, dispid);
+    EXPECT_EQ((int) HILITE, (int) doc.m_iNoteStyle);
 }
 
 // ── round 5: lua_methods / methods_info / spellchecker corners ────────────

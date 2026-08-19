@@ -60,6 +60,8 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 49 | Plugins dialog reads a stale `CPlugin*` once it leaves `m_PluginList` | this commit | dialogs/plugins/PluginsDlg.cpp `CPluginsDlg::OnUpdateNeedDescription` |
 | 50 | Seven file dialogs `strcpy` an unbounded suggested name into a `_MAX_PATH` buffer | this commit | doc.cpp / dialogs (log-session, save-notes, select-sound et al) — bounded with `lstrcpyn` |
 | 51 | A duplicate trigger/alias label whose replacement fails validation leaves the freed original in the map | this commit | xml_load_world.cpp `CMUSHclientDoc::Load_One_Trigger_XML` / `Load_One_Alias_XML` |
+| 52 | The Lua `error_code`/`error_desc` tables key `ePluginCouldNotSaveState` on 30037 instead of 30038, duplicating `ePluginDoesNotSaveState`'s code | this commit | lua_methods.cpp `error_codes[]`; errors.cpp `error_descriptions[]` |
+| 53 | `ExecuteLua`'s "function not found" arm returns without restoring `m_iNoteStyle` | this commit | lua_scripting.cpp `CScriptEngine::ExecuteLua` (both overloads) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1128,3 +1130,37 @@ driven without a property sheet; covered by
 `WizardTest.RemovingSelectedItemsSortsOncePerCategory` in
 `tests/test_plugins.cpp`, which pins the complexity with a timed 3,000-trigger
 run rather than a comment.
+## 54 — The Lua `error_code`/`error_desc` tables collide on 30037 (this commit)
+**Bug:** `errors.h` numbers `ePluginCouldNotSaveState` as 30038 — the next
+code after `ePluginDoesNotSaveState`'s 30037 — and that is what
+`methods_plugins.cpp` actually returns from a failed `world.SaveState`.  But
+`lua_methods.cpp`'s `error_codes[]` (the `error_code.*` table a script reads)
+and `errors.cpp`'s `error_descriptions[]` (`world.ErrorDesc` / the
+`error_desc[]` table) both key the entry `30037` — the code
+`ePluginDoesNotSaveState` already owns.  `MakeIntFlagsTable` builds each table
+with one `lua_rawset` per row, so the duplicate key is last-write-wins:
+`error_desc[30037]` ends up holding "Plugin could not save state..." text
+overwriting "Plugin does not support saving state...", and `error_desc[30038]`
+— the code `SaveState` actually returns — is nil.  A script cannot recognise
+or report the failure it was actually given.
+**Fix:** change the second entry to `30038` in both tables
+(`lua_methods.cpp:7444`, `errors.cpp:58`) so each of the two distinct plugin
+save-state errors has its own code and description.  Covered by
+`LuaScripting.ErrorCodeTable` in `tests/test_lua_scripting.cpp`.
+
+## 55 — `ExecuteLua`'s "function not found" arm drops the note style (this commit)
+**Bug:** both `CScriptEngine::ExecuteLua` overloads save `m_iNoteStyle` and
+force it to `NORMAL` before looking the callback up, meaning to restore it
+once the callback returns — but the `!GetNestedFunction` ("this callback name
+does not exist") arm `return true`s before reaching that restore.  A Lua
+callback whose name was later removed or renamed therefore leaves the world's
+note style stuck at `NORMAL` for the rest of the script batch, discarding
+whatever an outer handler had set with `world.NoteStyle`.  The five embedded
+engines' forward, immediately above in the same file, already restores
+unconditionally on every path — Lua was the odd one out on both platforms; the
+COM host's equivalent early return (`scriptengine.cpp:101`) restores too.
+**Fix:** add the missing `m_pDoc->m_iNoteStyle = iOldStyle;` to the
+`!GetNestedFunction` arm of both overloads.  Covered by
+`SweepR4.ExecuteLuaMissingRoutineRestoresNoteStyle` and
+`SweepR4.ExecuteLuaSimpleOverloadMissingRoutineRestoresNoteStyle` in
+`tests/test_lua_scripting.cpp`.

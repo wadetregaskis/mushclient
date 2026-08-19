@@ -454,10 +454,8 @@ void ReportScriptError (CMUSHclientDoc * pDoc,
       fputs ("\n", errorLogFile);
       fputs (strDescription, errorLogFile);
       fputs ("\n", errorLogFile);
-#ifdef _WIN32
       if (!bImmediate)
         pDoc->WriteErrorLines (nLine, errorLogFile);
-#endif
       fclose (errorLogFile);
       }
     }
@@ -563,53 +561,24 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
 
 #ifndef _WIN32
   // Alt-language world (the call sites gate on UsesEmbeddedCallback(), so an
-  // embedded Python/Perl/JS/Tcl engine lands here).  The forward has to give
-  // the callback the same SURROUNDINGS Lua's own body gets further down, because
-  // the dispatch happens before any of it:
-  //   * m_iNoteStyle saved and reset to NORMAL, restored UNCONDITIONALLY (:765).
-  //     Without it a style set by world.SetNoteStyle inside one handler leaked
-  //     into every later note and out into the next callback.
-  //   * the elapsed time added to the world and, inside a plugin, to the
-  //     plugin -- but only when the call did NOT error, which is where Lua's
-  //     `if (error) return true;` sits relative to its timing block (:767-781).
-  //     Without it world Trace timings and GetScriptTime read zero for five of
-  //     the six languages.
-  if (m_pyEngine || m_perlEngine || m_jsEngine || m_tclEngine || m_rubyEngine)
-    {
-    const unsigned short iOldStyle = m_pDoc->m_iNoteStyle;
-    m_pDoc->m_iNoteStyle = NORMAL;
-
-    LARGE_INTEGER embStart, embFinish;
-    if (App.m_iCounterFrequency)
-      QueryPerformanceCounter (&embStart);
-    else
-      { embStart.QuadPart = 0; embFinish.QuadPart = 0; }
-
-    bool err = true;
-    if      (m_pyEngine)   err = ExecutePython (dispid, szProcedure, iReason, szType, szReason,
+  // embedded Python/Perl/JS/Tcl engine lands here).  DispatchEmbedded gives the
+  // callback the same SURROUNDINGS Lua's own body gets further down, because
+  // the dispatch happens before any of it -- see its comment in scripting.h.
+  bool embErr;
+  if (DispatchEmbedded (&embErr, [&] () -> bool
+        {
+        if      (m_pyEngine)   return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
                                                 nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
-    else if (m_perlEngine) err = ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
+        else if (m_perlEngine) return ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
                                                 nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
-    else if (m_jsEngine)   err = ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
+        else if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
                                                 nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
-    else if (m_tclEngine)  err = ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
+        else if (m_tclEngine)  return ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
                                                 nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
-    else                   err = ExecuteRuby   (dispid, szProcedure, iReason, szType, szReason,
+        else                   return ExecuteRuby   (dispid, szProcedure, iReason, szType, szReason,
                                                 nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
-
-    m_pDoc->m_iNoteStyle = iOldStyle;
-
-    if (!err && App.m_iCounterFrequency)
-      {
-      QueryPerformanceCounter (&embFinish);
-      const LONGLONG elapsed = embFinish.QuadPart - embStart.QuadPart;
-      m_pDoc->m_iScriptTimeTaken += elapsed;
-      if (m_pDoc->m_CurrentPlugin)
-        m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += elapsed;
-      }
-
-    return err;
-    }
+        }))
+    return embErr;
 #endif
 
   // Deliberately unused past this point: Lua's callback gets the wildcards raw,
@@ -649,6 +618,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   if (!GetNestedFunction (L, szProcedure, true))
     {
     dispid = DISPID_UNKNOWN;   // stop further invocations
+    m_pDoc->m_iNoteStyle = iOldStyle;
     return true;    // error return
     }
 
@@ -844,6 +814,51 @@ void CScriptEngine::TraceCallback (LPCTSTR szType, LPCTSTR szProcedure)
   m_pDoc->Trace ("%s",
     (LPCTSTR) TFormat ("Executing %s script \"%s\"", szType, szProcedure));
   }
+
+// The SURROUNDINGS both ExecuteLua overloads give the five embedded engines --
+// factored out of what used to be two ~35-line near-clones (one per overload).
+// The dispatch happens before any of Lua's own body further down, so it has to
+// re-supply what that body gives Lua itself:
+//   * m_iNoteStyle saved and reset to NORMAL, restored UNCONDITIONALLY.
+//     Without it a style set by world.SetNoteStyle inside one handler leaked
+//     into every later note and out into the next callback.
+//   * the elapsed time added to the world and, inside a plugin, to the
+//     plugin -- but only when the call did NOT error, which is where Lua's own
+//     `if (error) return true;` sits relative to its timing block below.
+//     Without it world Trace timings and GetScriptTime read zero for five of
+//     the six languages.
+// Returns false (callEmbedded not invoked, *pErr untouched) when no embedded
+// engine is active, so the caller falls through to its own Lua path.
+bool CScriptEngine::DispatchEmbedded (bool * pErr, const std::function<bool ()> & callEmbedded)
+  {
+  if (!(m_pyEngine || m_perlEngine || m_jsEngine || m_tclEngine || m_rubyEngine))
+    return false;
+
+  const unsigned short iOldStyle = m_pDoc->m_iNoteStyle;
+  m_pDoc->m_iNoteStyle = NORMAL;
+
+  LARGE_INTEGER embStart, embFinish;
+  if (App.m_iCounterFrequency)
+    QueryPerformanceCounter (&embStart);
+  else
+    { embStart.QuadPart = 0; embFinish.QuadPart = 0; }
+
+  const bool err = callEmbedded ();
+
+  m_pDoc->m_iNoteStyle = iOldStyle;
+
+  if (!err && App.m_iCounterFrequency)
+    {
+    QueryPerformanceCounter (&embFinish);
+    const LONGLONG elapsed = embFinish.QuadPart - embStart.QuadPart;
+    m_pDoc->m_iScriptTimeTaken += elapsed;
+    if (m_pDoc->m_CurrentPlugin)
+      m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += elapsed;
+    }
+
+  *pErr = err;
+  return true;
+  }
 #endif // !_WIN32
 
 // returns true if script error
@@ -858,44 +873,24 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
   {
 
 #ifndef _WIN32
-  // Same surroundings as the rich overload above -- see the comment there for
-  // why the note style and the timing have to live at the dispatch point.
-  if (m_pyEngine || m_perlEngine || m_jsEngine || m_tclEngine || m_rubyEngine)
-    {
-    const unsigned short iOldStyle = m_pDoc->m_iNoteStyle;
-    m_pDoc->m_iNoteStyle = NORMAL;
-
-    LARGE_INTEGER embStart, embFinish;
-    if (App.m_iCounterFrequency)
-      QueryPerformanceCounter (&embStart);
-    else
-      { embStart.QuadPart = 0; embFinish.QuadPart = 0; }
-
-    bool err = true;
-    if      (m_pyEngine)   err = ExecutePython (dispid, szProcedure, iReason, szType, szReason,
+  // Same surroundings as the rich overload above -- see DispatchEmbedded's
+  // comment in scripting.h for why the note style and the timing have to live
+  // at the dispatch point.
+  bool embErr;
+  if (DispatchEmbedded (&embErr, [&] () -> bool
+        {
+        if      (m_pyEngine)   return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
                                                 strParam, nInvocationCount, result);
-    else if (m_perlEngine) err = ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
+        else if (m_perlEngine) return ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
                                                 strParam, nInvocationCount, result);
-    else if (m_jsEngine)   err = ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
+        else if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
                                                 strParam, nInvocationCount, result);
-    else if (m_tclEngine)  err = ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
+        else if (m_tclEngine)  return ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
                                                 strParam, nInvocationCount, result);
-    else                   err = ExecuteRuby   (dispid, szProcedure, iReason, szType, szReason,
+        else                   return ExecuteRuby   (dispid, szProcedure, iReason, szType, szReason,
                                                 strParam, nInvocationCount, result);
-
-    m_pDoc->m_iNoteStyle = iOldStyle;
-
-    if (!err && App.m_iCounterFrequency)
-      {
-      QueryPerformanceCounter (&embFinish);
-      const LONGLONG elapsed = embFinish.QuadPart - embStart.QuadPart;
-      m_pDoc->m_iScriptTimeTaken += elapsed;
-      if (m_pDoc->m_CurrentPlugin)
-        m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += elapsed;
-      }
-
-    return err;
-    }
+        }))
+    return embErr;
 #endif
 
   // safety check ;)
@@ -930,6 +925,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
   if (!GetNestedFunction (L, szProcedure, true))
     {
     dispid = DISPID_UNKNOWN;   // stop further invocations
+    m_pDoc->m_iNoteStyle = iOldStyle;
     return true;    // error return
     }
 

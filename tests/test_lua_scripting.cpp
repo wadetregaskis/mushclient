@@ -1819,6 +1819,44 @@ TEST(LuaScripting, StaleWorldUserdatumRaisesErrorNotCrash)
     lua_close(L);
 }
 
+// lua_methods.cpp doc(): the documented "other:Method (...)" form works for
+// every world-table entry, because doc() removes the userdatum from the stack
+// before the arguments are checked.  Three entries never called doc() at all,
+// so the userdatum arrived where a string was expected.
+TEST(LuaScripting, WorldUserdatumFormWorksForStripANSIAndGetWorld)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    CMUSHclientDoc* pOther = new CMUSHclientDoc();
+    pOther->m_mush_name  = "stripworld";
+    pOther->m_strWorldID = "abcdefabcdefabcdefabcdef";
+
+    int n = run_ret(L,
+        "local w = world.GetWorld('stripworld')\n"
+        "return w ~= nil,\n"
+        "       w:StripANSI('\\27[1;31maredb'),\n"
+        "       w:GetWorld('stripworld') ~= nil,\n"
+        "       w:GetWorldById('abcdefabcdefabcdefabcdef') ~= nil");
+    ASSERT_EQ(4, n);
+    ASSERT_TRUE(lua_toboolean(L, -4));       // found the other world
+    EXPECT_STREQ("aredb", lua_tostring(L, -3));
+    EXPECT_TRUE(lua_toboolean(L, -2));
+    EXPECT_TRUE(lua_toboolean(L, -1));
+    lua_settop(L, 0);
+
+    // the plain form is unaffected - doc() only removes argument 1 when it
+    // really is a world userdatum
+    n = run_ret(L, "return world.StripANSI('\\27[0mplain')");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("plain", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    delete pOther;
+    lua_close(L);
+}
+
 // lua_scripting.cpp GetLuaDispid: "Version 3.75+ supports dotted functions
 // (eg. string.gsub)" — dispid resolution reaches functions nested in tables.
 TEST(LuaScripting, PluginSupportsResolvesDottedFunctionNames)
@@ -1834,6 +1872,50 @@ TEST(LuaScripting, PluginSupportsResolvesDottedFunctionNames)
     EXPECT_NE(DISPID_UNKNOWN, engine->GetDispid("string.gsub"));
     EXPECT_EQ(DISPID_UNKNOWN, engine->GetDispid("helpers.missing"));
     EXPECT_EQ(DISPID_UNKNOWN, engine->GetDispid("no.such.table"));
+}
+
+// lua_methods.cpp L_CallPlugin: the plugin ID and the routine name are taken
+// off our stack before the call ("so, if the called function does a CallPlugin
+// back to us, it won't matter"), which leaves the two Lua strings unreferenced
+// for the whole of it — a collectgarbage inside the called routine frees them,
+// and every error message built afterwards names the routine.  A plugin
+// calling itself is the sharpest case: caller and callee share one Lua state,
+// so the collection really does run over the caller's strings.
+TEST(LuaScripting, CallPluginErrorStillNamesRoutineAfterCollectGarbage)
+{
+    CMUSHclientDoc doc;
+
+    CPlugin* p = new CPlugin(&doc);
+    p->m_bSaveState = false;
+    p->m_strID   = "ccccccccccccccccccccccc1";   // 24 chars, as GetPlugin wants
+    p->m_strName = "GCPlugin";
+    p->m_ScriptEngine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!p->m_ScriptEngine->CreateScriptEngine());
+    doc.m_PluginList.push_back(p);
+
+    // 'zz.tgt' is built at run time and nothing else holds it: the globals
+    // table has 'zz' and the sub-table has 'tgt', never the dotted name.  The
+    // loop after the collection re-uses the freed block.
+    ASSERT_TRUE(!p->m_ScriptEngine->Parse(CString(
+        "zz = {}\n"
+        "function zz.tgt ()\n"
+        "  collectgarbage ('collect')\n"
+        "  local t = {}\n"
+        "  for i = 1, 2000 do t [i] = 'wwwww' .. i end\n"
+        "  error ('deliberate')\n"
+        "end\n"
+        "rc, msg = world.CallPlugin ('ccccccccccccccccccccccc1', 'zz' .. '.' .. 'tgt')\n"),
+        "<test>"));
+
+    lua_State* L = p->m_ScriptEngine->L;
+    lua_getglobal(L, "rc");
+    EXPECT_EQ((double)eErrorCallingPluginRoutine, lua_tonumber(L, -1));
+    lua_getglobal(L, "msg");
+    const char* msg = lua_tostring(L, -1);
+    ASSERT_TRUE(msg != nullptr);
+    EXPECT_TRUE(strstr(msg, "zz.tgt") != nullptr);
+    EXPECT_TRUE(strstr(msg, "ccccccccccccccccccccccc1") != nullptr);
+    lua_settop(L, 0);
 }
 
 // The `progress` (progress-dialog) library is part of every world/plugin Lua
@@ -2949,6 +3031,24 @@ TEST(LuaMarshal, ArrayImportTableVariantArms)
     ASSERT_EQ(2, n);
     EXPECT_TRUE(!lua_toboolean(L, -2));
     EXPECT_TRUE(strstr(lua_tostring(L, -1), "string keys") != nullptr);
+    lua_settop(L, 0);
+
+    // non-string value → error, not a crash: lua_tostring returns NULL for a
+    // boolean, and building the value string from that took the process down
+    n = run_ret(L,
+        "local ok, err = pcall(function() return world.ArrayImport('t', {zz=true}) end)\n"
+        "return ok, tostring(err), world.ArrayGet('t', 'zz') == nil");
+    ASSERT_EQ(3, n);
+    EXPECT_TRUE(!lua_toboolean(L, -3));
+    EXPECT_TRUE(strstr(lua_tostring(L, -2), "string values") != nullptr);
+    EXPECT_TRUE(lua_toboolean(L, -1));      // nothing was imported
+    lua_settop(L, 0);
+
+    // a number value is still accepted (lua_tostring coerces it in place)
+    n = run_ret(L, "return world.ArrayImport('t', {num=42}), world.ArrayGet('t', 'num')");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -2));
+    EXPECT_STREQ("42", lua_tostring(L, -1));
     lua_settop(L, 0);
 
     lua_close(L);

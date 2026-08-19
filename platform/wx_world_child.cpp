@@ -6176,10 +6176,49 @@ pal::Colour CWorldChildFrame::infobarBackgroundColourForTest() const
 // ── OnClose ───────────────────────────────────────────────────────────────
 void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 {
-    // ── Unsaved-changes prompt ────────────────────────────────────────────
-    // If the document has been modified (triggers, aliases, properties changed)
-    // since it was last saved, offer to save before closing.
-    // Only when the close event can be vetoed (not a forced app shutdown).
+    // Which questions this close asks is a pure function of six flags, and it
+    // lives in platform/world_close_decision.h so the whole truth table can be
+    // checked headlessly — nothing below this point could be, because a modal
+    // cannot complete without the event loop the selftests run before.  They
+    // are the questions CMUSHclientDoc::SaveModified asks, so Cmd+W and Cmd+Q
+    // put up the same prompts for the same world.
+    const std::string worldName =
+        m_doc ? static_cast<const char*>(m_doc->m_mush_name) : std::string();
+    const std::string name = worldName.empty() ? std::string("this world")
+                                               : worldName;
+    // The pair SaveModified tests (doc.cpp:2103): a socket alone is not a
+    // session — the connect phase has to have got all the way to the MUD.
+    const bool connected = m_doc && m_doc->ConnectionOpen() &&
+                           m_doc->m_iConnectPhase == eConnectConnectedToMud;
+    const bool canVeto = evt.CanVeto() && m_doc != nullptr;
+    // Re-read rather than cached, because the automatic save below changes the
+    // answer: askEndSession depends on none of it, the other two on all of it.
+    auto decide = [&]() {
+        return DecideWorldClose(canVeto,
+                                connected,
+                                m_doc && m_doc->IsModified(),
+                                m_doc && m_doc->m_bVariablesChanged,
+                                App.m_bConfirmBeforeSavingVariables != 0,
+                                App.m_bConfirmBeforeClosingWorld != 0);
+    };
+
+    // Every prompt goes through ::UMessageBox rather than wxMessageBox: it is
+    // the same seam (g_wxhook_message_box) the rest of the app's prompts use,
+    // and the only way an automated test can answer them.
+
+    // ── "This will end your <world> session." ─────────────────────────────
+    // Windows asks this FIRST — before the automatic save — so cancelling it
+    // leaves the world file untouched as well as the window open.  Cmd+W never
+    // asked it at all: closing a connected world just dropped the session.
+    if (decide().askEndSession) {
+        const std::string msg = "This will end your " + name + " session.";
+        if (::UMessageBox(msg.c_str(), MB_OKCANCEL | MB_ICONINFORMATION,
+                          "MUSHclient") != IDOK) {
+            evt.Veto();
+            return;
+        }
+    }
+
     // "Save world automatically on close" (world prefs ▸ General).  Mirrors
     // CMUSHclientDoc::SaveModified (doc.cpp:2121-2122): save first, silently,
     // which then leaves the document unmodified so the prompt below does not
@@ -6194,26 +6233,9 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // modified so the normal prompt still protects the user's work.
     }
 
-    // Which questions this close asks is a pure function of five flags, and it
-    // lives in platform/world_close_decision.h so the whole truth table can be
-    // checked headlessly — nothing below this point could be, because a modal
-    // cannot complete without the event loop the selftests run before.
     // `modified` is read HERE, after the automatic save above, so a save that
     // failed still reaches the unsaved-changes prompt.
-    const std::string worldName =
-        m_doc ? static_cast<const char*>(m_doc->m_mush_name) : std::string();
-    const std::string name = worldName.empty() ? std::string("this world")
-                                               : worldName;
-    const WorldClosePlan plan = DecideWorldClose(
-        evt.CanVeto() && m_doc != nullptr,
-        m_doc && m_doc->IsModified(),
-        m_doc && m_doc->m_bVariablesChanged,
-        App.m_bConfirmBeforeSavingVariables != 0,
-        App.m_bConfirmBeforeClosingWorld != 0);
-
-    // Every prompt goes through ::UMessageBox rather than wxMessageBox: it is
-    // the same seam (g_wxhook_message_box) the rest of the app's prompts use,
-    // and the only way an automated test can answer them.
+    const WorldClosePlan plan = decide();
     // "Offer to save world if only Variables have changed" (Global Prefs ▸
     // Closing, default ON).  This ADDS a prompt rather than suppressing one:
     // changing a script variable does not mark the document modified, so
@@ -6263,21 +6285,11 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // answer == IDNO → discard changes and fall through to close.
     }
 
-    // ── Close confirmation ────────────────────────────────────────────────
-    // General "are you sure?" prompt (separate from the save prompt above).
-    // Skipped when we already asked about saving — no need to ask twice.
-    // MB_DEFBUTTON2 = "No" is the default button, as the destructive answer is
-    // the other one.
-    if (plan.askConfirmClose) {
-        const std::string msg = "Close " + name + "?";
-        int answer = ::UMessageBox(msg.c_str(),
-                                   MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION,
-                                   "Confirm Close");
-        if (answer != IDYES) {
-            evt.Veto();
-            return;
-        }
-    }
+    // No general "Close <world>?" confirmation follows.  The port used to put
+    // one up whenever m_bConfirmBeforeClosingWorld was set and the world was
+    // not modified, which meant an idle, saved, disconnected world could not be
+    // dismissed without answering a question Windows never asks.  That
+    // preference buys the session warning above, and only that.
 
     // ── Save child frame geometry for next session ──────────────────────────
     // Persist the current window size AND position so the next world that

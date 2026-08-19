@@ -1575,10 +1575,15 @@ int RunWorldFrameSelfTest()
         static int  s_answer  = IDNO;   // what the user "presses"
         static int  s_saves   = 0;      // calls to the save hook
         static bool s_saveOK  = true;   // whether that save succeeds
+        // WHICH question was asked, not just how many.  Two of the checks below
+        // would pass on a count alone: the close chain used to put up exactly
+        // one prompt for a connected world too -- the wrong one.
+        static std::string s_lastPrompt;
         int  (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
         bool (*savedSaveWorld)(void*, bool, void*)          = g_wxhook_save_world;
-        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+        g_wxhook_message_box = [](const char* text, const char*, unsigned) -> int {
             ++s_prompts;
+            s_lastPrompt = text ? text : "";
             return s_answer;
         };
         // A save that neither touches the disk nor opens the Save As dialog the
@@ -1728,6 +1733,68 @@ int RunWorldFrameSelfTest()
                   "...and the document is still modified, so the user IS asked");
             check(closed, "...and No closes it");
             s_saveOK = true;
+        }
+
+        // ── Cmd+W asks the questions Cmd+Q asks, and no others ─────────────
+        // The close chain is CMUSHclientDoc::SaveModified's, not one the port
+        // invented.  It used to differ in both directions: no warning that
+        // closing would drop a live session, and m_bConfirmBeforeClosingWorld
+        // (default ON) spent on a "Close <world>?" prompt Windows never shows.
+        {
+            App.m_bConfirmBeforeClosingWorld    = 1;
+            App.m_bConfirmBeforeSavingVariables = 1;
+
+            // An idle world -- saved, no variables, not connected -- with the
+            // preference ON.  Nothing to warn about, so nothing is asked.
+            // Cancel is the answer, so a prompt appearing would VETO: `closed`
+            // is what makes this falsifiable rather than a bare count of zero.
+            {
+                CWorldChildFrame* f = makeWorld("zz_selftest_close_idle");
+                CMUSHclientDoc*   d = f->GetDoc();
+                d->SetModifiedFlag(FALSE);
+                d->m_bVariablesChanged = false;
+
+                s_prompts = 0; s_saves = 0; s_answer = IDCANCEL;
+                const bool closed = f->Close(false);
+                wxYield();
+                check(s_prompts == 0,
+                      "an idle, saved, disconnected world is not questioned at "
+                      "all (it used to ask \"Close <world>?\" every time)");
+                check(closed, "...and simply closes");
+            }
+
+            // The same world with a live session: warned, in SaveModified's
+            // words.  Both the count AND the text matter -- the old chain also
+            // asked exactly one question here, just a different one.
+            {
+                CWorldChildFrame* f = makeWorld("zz_selftest_close_connected");
+                CMUSHclientDoc*   d = f->GetDoc();
+                d->SetModifiedFlag(FALSE);
+                d->m_bVariablesChanged = false;
+                d->m_iConnectPhase = eConnectConnectedToMud;
+                d->m_pTransport    = new RecordingTransport();  // the doc owns it
+
+                s_prompts = 0; s_answer = IDCANCEL; s_lastPrompt.clear();
+                const bool vetoed = !f->Close(false);
+                check(vetoed,
+                      "Cancel on the session warning keeps the world open");
+                check(s_prompts == 1, "...after exactly one question");
+                check(s_lastPrompt.find("end your") != std::string::npos &&
+                      s_lastPrompt.find("zz_selftest_close_connected")
+                          != std::string::npos,
+                      "...which is the session warning, naming the world");
+
+                // ...and the preference really is what buys it.
+                App.m_bConfirmBeforeClosingWorld = 0;
+                s_prompts = 0; s_answer = IDCANCEL;
+                const bool closed = f->Close(false);
+                wxYield();
+                check(s_prompts == 0,
+                      "with confirm-before-closing off, a connected world "
+                      "closes without a word");
+                check(closed, "...and it does close");
+                App.m_bConfirmBeforeClosingWorld = 1;
+            }
         }
 
         // ── the command history reaches disk on BOTH close paths ───────────

@@ -5168,75 +5168,189 @@ TEST(WorldClose, AForcedCloseAsksNothingAtAll)
 {
     // Cmd+Q, app shutdown, Close(true): the event cannot be vetoed, so a
     // question nobody can answer would only wedge the teardown.  Every
-    // combination of the other four flags, because this must hold for all of
+    // combination of the other five flags, because this must hold for all of
     // them -- it is the property the whole teardown path depends on.
-    for (int bits = 0; bits < 16; ++bits) {
+    for (int bits = 0; bits < 32; ++bits) {
         WorldClosePlan p = DecideWorldClose(/*canVeto*/ false,
-                                            (bits & 1) != 0, (bits & 2) != 0,
-                                            (bits & 4) != 0, (bits & 8) != 0);
+                                            (bits &  1) != 0, (bits &  2) != 0,
+                                            (bits &  4) != 0, (bits &  8) != 0,
+                                            (bits & 16) != 0);
+        EXPECT_FALSE(p.askEndSession);
         EXPECT_FALSE(p.askSaveVariables);
         EXPECT_FALSE(p.askSaveModified);
-        EXPECT_FALSE(p.askConfirmClose);
     }
 }
 
-TEST(WorldClose, AModifiedWorldIsAskedAboutOnceAndOnlyOnce)
+// ── The matrix ─────────────────────────────────────────────────────────────
+// {connected, disconnected} x {modified, unmodified} x {confirm-before-closing
+// on, off}, with the questions written out per cell as literal text rather than
+// derived, so the table pins behaviour instead of restating the formula -- and
+// so a failure names the cell.
+//
+// Three of the eight cells changed when the connection dimension arrived, and
+// each is marked.  Before, Cmd+W could not see the connection at all and spent
+// m_bConfirmBeforeClosingWorld on a general "Close <world>?" prompt, which is
+// the one question CMUSHclientDoc::SaveModified never asks in any state.
+TEST(WorldClose, TheFullConnectionByModifiedByPreferenceMatrix)
 {
-    // The save question covers the close, so neither of the other two may join
-    // it -- whatever the two global preferences say, and whether or not script
-    // variables changed as well.
+    auto cell = [](bool connected, bool modified, bool confirmClosing) {
+        // Variables are held steady (none changed) so the cells speak about the
+        // other two questions only; the variables arm has its own tests below.
+        const WorldClosePlan p =
+            DecideWorldClose(/*canVeto*/ true, connected, modified,
+                             /*variablesChanged*/ false,
+                             /*confirmSavingVariables*/ true, confirmClosing);
+        char buf[160];
+        snprintf(buf, sizeof buf,
+                 "connected=%d modified=%d confirmClosing=%d -> "
+                 "endSession=%d saveModified=%d saveVariables=%d",
+                 (int) connected, (int) modified, (int) confirmClosing,
+                 (int) p.askEndSession, (int) p.askSaveModified,
+                 (int) p.askSaveVariables);
+        return std::string(buf);
+    };
+
+    // CHANGED: was the save prompt alone; now warned about the session too.
+    EXPECT_EQ(std::string("connected=1 modified=1 confirmClosing=1 -> "
+                          "endSession=1 saveModified=1 saveVariables=0"),
+              cell(true, true, true));
+    // unchanged: the preference is off, so only the save prompt.
+    EXPECT_EQ(std::string("connected=1 modified=1 confirmClosing=0 -> "
+                          "endSession=0 saveModified=1 saveVariables=0"),
+              cell(true, true, false));
+    // CHANGED: was the port's invented "Close <world>?"; now Windows' warning.
+    EXPECT_EQ(std::string("connected=1 modified=0 confirmClosing=1 -> "
+                          "endSession=1 saveModified=0 saveVariables=0"),
+              cell(true, false, true));
+    // unchanged: nothing to save and no warning asked for.
+    EXPECT_EQ(std::string("connected=1 modified=0 confirmClosing=0 -> "
+                          "endSession=0 saveModified=0 saveVariables=0"),
+              cell(true, false, false));
+    // unchanged: no session to end, so just the save prompt.
+    EXPECT_EQ(std::string("connected=0 modified=1 confirmClosing=1 -> "
+                          "endSession=0 saveModified=1 saveVariables=0"),
+              cell(false, true, true));
+    // unchanged.
+    EXPECT_EQ(std::string("connected=0 modified=1 confirmClosing=0 -> "
+                          "endSession=0 saveModified=1 saveVariables=0"),
+              cell(false, true, false));
+    // CHANGED: an idle, saved, disconnected world used to demand an answer
+    // before it would close -- on a stock installation, every single time.
+    EXPECT_EQ(std::string("connected=0 modified=0 confirmClosing=1 -> "
+                          "endSession=0 saveModified=0 saveVariables=0"),
+              cell(false, false, true));
+    // unchanged: closes without a word.
+    EXPECT_EQ(std::string("connected=0 modified=0 confirmClosing=0 -> "
+                          "endSession=0 saveModified=0 saveVariables=0"),
+              cell(false, false, false));
+}
+
+TEST(WorldClose, OnlyALiveSessionIsWarnedAbout)
+{
+    // doc.cpp:2103 gates the warning on the connection, and Cmd+W could not see
+    // one: closing a connected world dropped the session without a word, while
+    // Cmd+Q (which goes through SaveModified) always asked.
+    //
+    // It depends on the connection and the preference and NOTHING else, so
+    // sweep the other three flags -- a mutation folding `modified` or the
+    // variables state into this arm has to survive all eight.
     for (int bits = 0; bits < 8; ++bits) {
-        WorldClosePlan p = DecideWorldClose(/*canVeto*/ true, /*modified*/ true,
-                                            (bits & 1) != 0, (bits & 2) != 0,
-                                            (bits & 4) != 0);
+        const bool modified   = (bits & 1) != 0;
+        const bool varsChgd   = (bits & 2) != 0;
+        const bool confirmVar = (bits & 4) != 0;
+
+        EXPECT_TRUE(DecideWorldClose(true, /*connected*/ true, modified,
+                                     varsChgd, confirmVar,
+                                     /*confirmClosing*/ true).askEndSession);
+        // The preference gates it...
+        EXPECT_FALSE(DecideWorldClose(true, /*connected*/ true, modified,
+                                      varsChgd, confirmVar,
+                                      /*confirmClosing*/ false).askEndSession);
+        // ...and so does there actually being a session to lose.
+        EXPECT_FALSE(DecideWorldClose(true, /*connected*/ false, modified,
+                                      varsChgd, confirmVar,
+                                      /*confirmClosing*/ true).askEndSession);
+    }
+}
+
+TEST(WorldClose, AModifiedWorldIsAskedAboutSavingOnceAndOnlyOnce)
+{
+    // The unsaved-changes question is asked exactly when there are unsaved
+    // changes, and the variables question -- which exists only to cover the
+    // case where there are NOT -- may never join it, whatever the preferences
+    // say and whether or not script variables changed as well.
+    for (int bits = 0; bits < 16; ++bits) {
+        WorldClosePlan p = DecideWorldClose(/*canVeto*/ true,
+                                            (bits & 1) != 0, /*modified*/ true,
+                                            (bits & 2) != 0, (bits & 4) != 0,
+                                            (bits & 8) != 0);
         EXPECT_TRUE(p.askSaveModified);
-        EXPECT_FALSE(p.askConfirmClose);
         EXPECT_FALSE(p.askSaveVariables);
     }
+}
+
+TEST(WorldClose, AnIdleDisconnectedWorldClosesWithoutBeingQuestioned)
+{
+    // The prompt the port invented, now gone.  m_bConfirmBeforeClosingWorld is
+    // ON by default, so a stock installation had to answer "Close <world>?"
+    // every time it dismissed a world that was saved and not connected.
+    WorldClosePlan p = DecideWorldClose(/*canVeto*/ true, /*connected*/ false,
+                                        /*modified*/ false,
+                                        /*variablesChanged*/ false,
+                                        /*confirmSavingVariables*/ true,
+                                        /*confirmClosingWorld*/ true);
+    EXPECT_FALSE(p.askEndSession);
+    EXPECT_FALSE(p.askSaveModified);
+    EXPECT_FALSE(p.askSaveVariables);
 }
 
 TEST(WorldClose, VariablesOnlyChangesGetTheirOwnQuestion)
 {
     // Changing a script variable does not mark the document modified, so
     // without this question the world would close and lose them silently.
-    WorldClosePlan p = DecideWorldClose(true, false, true, true, false);
+    WorldClosePlan p = DecideWorldClose(true, false, false, true, true, false);
     EXPECT_TRUE(p.askSaveVariables);
     EXPECT_FALSE(p.askSaveModified);
-    EXPECT_FALSE(p.askConfirmClose);
+    EXPECT_FALSE(p.askEndSession);
 
     // The global preference gates it...
-    p = DecideWorldClose(true, false, true, false, false);
+    p = DecideWorldClose(true, false, false, true, false, false);
     EXPECT_FALSE(p.askSaveVariables);
     // ...and so does something actually having changed.
-    p = DecideWorldClose(true, false, false, true, false);
+    p = DecideWorldClose(true, false, false, false, true, false);
     EXPECT_FALSE(p.askSaveVariables);
 }
 
-TEST(WorldClose, ConfirmBeforeClosingIsTheOtherwiseSilentCase)
+TEST(WorldClose, TheTwoPreferencesBuyDifferentQuestions)
 {
-    WorldClosePlan p = DecideWorldClose(true, false, false, false, true);
-    EXPECT_TRUE(p.askConfirmClose);
-    EXPECT_FALSE(p.askSaveModified);
-    EXPECT_FALSE(p.askSaveVariables);
-
-    // With the preference off an unmodified world closes without a word.
-    p = DecideWorldClose(true, false, false, false, false);
-    EXPECT_FALSE(p.askConfirmClose);
-    EXPECT_FALSE(p.askSaveModified);
-    EXPECT_FALSE(p.askSaveVariables);
-}
-
-TEST(WorldClose, VariablesAndConfirmCloseBothAsk)
-{
-    // Two questions in a row, which is what the handler does today: saving the
-    // variables leaves the document unmodified, so the confirm-close arm is
-    // still live.  Pinned rather than fixed -- both preferences are opt-in and
-    // both default ON, so the pair is what a stock installation sees, and
-    // changing it is a UX decision rather than a bug fix.
-    WorldClosePlan p = DecideWorldClose(true, false, true, true, true);
+    // They used to overlap: confirm-before-closing produced a second prompt
+    // after the variables one, so a stock installation (both default ON) was
+    // asked twice about a world it had nothing to warn about.  Now each
+    // preference gates exactly one question and neither touches the other's.
+    WorldClosePlan p = DecideWorldClose(true, /*connected*/ false,
+                                        /*modified*/ false,
+                                        /*variablesChanged*/ true,
+                                        /*confirmSavingVariables*/ true,
+                                        /*confirmClosingWorld*/ true);
     EXPECT_TRUE(p.askSaveVariables);
-    EXPECT_TRUE(p.askConfirmClose);
-    EXPECT_FALSE(p.askSaveModified);
+    EXPECT_FALSE(p.askEndSession);      // disconnected: the pref buys nothing
+
+    // Connected, the same world is warned AND asked about its variables --
+    // both of SaveModified's first two questions, in that order.
+    p = DecideWorldClose(true, /*connected*/ true, false, true, true, true);
+    EXPECT_TRUE(p.askEndSession);
+    EXPECT_TRUE(p.askSaveVariables);
+
+    // The variables preference has no say in the session warning...
+    p = DecideWorldClose(true, /*connected*/ true, false, true,
+                         /*confirmSavingVariables*/ false, true);
+    EXPECT_TRUE(p.askEndSession);
+    EXPECT_FALSE(p.askSaveVariables);
+    // ...and the closing preference none in the variables question.
+    p = DecideWorldClose(true, /*connected*/ true, false, true, true,
+                         /*confirmClosingWorld*/ false);
+    EXPECT_FALSE(p.askEndSession);
+    EXPECT_TRUE(p.askSaveVariables);
 }
 
 // ── UMessageBox's headless fallback answers the RIGHT button ────────────────

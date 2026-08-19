@@ -2167,7 +2167,17 @@ static int menufontsize (lua_State *L)
   memset (&metrics, 0, sizeof (metrics));   // on the port SystemParametersInfo is a no-op,
                                             // so zero-init to avoid reading uninitialised fields
   metrics.cbSize = sizeof (metrics);
-  SystemParametersInfo (SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0);
+
+  // If the metrics cannot be read there is no old size to report.  Return nil
+  // rather than a fabricated 0: the usual plugin idiom is read-the-size, set a
+  // new one, set the old one back, and handing it a 0 makes that restore
+  // silently impossible.  The zeroed struct must not be written back either,
+  // so the "set" half is skipped along with it.
+  if (!SystemParametersInfo (SPI_GETNONCLIENTMETRICS, sizeof (metrics), &metrics, 0))
+    {
+    lua_pushnil (L);
+    return 1;   // nil = could not determine the menu font size
+    }
 
   int oldSize = - metrics.lfMenuFont.lfHeight;
   if (points >= 5 && points <= 30)

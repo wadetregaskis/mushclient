@@ -4909,6 +4909,131 @@ TEST(LuaScripting, ByRefGettersReturnNilsWhenTheObjectIsMissing)
     ));
 }
 
+// Index of the first buffered line whose text contains `needle`, or -1.
+// (The line list is the only place emitted output is observable headless.)
+static int find_output_line (CMUSHclientDoc& doc, const char* needle)
+{
+    int idx = 0;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ++idx) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find(needle) != std::string::npos)
+            return idx;
+    }
+    return -1;
+}
+
+// D-17: world.SetTrace must go through CMUSHclientDoc::SetTrace, which routes to
+// OnGameTrace and emits the "Trace on"/"Trace off" marker.  The binding used to
+// assign m_bTrace directly, so Lua was the only language whose SetTrace was
+// silent — the dispatch map binds the real accessor, so world.Trace = 1 from
+// Python/Perl/JS/Tcl/Ruby has always printed it.
+TEST(LuaScripting, SetTraceEmitsTheTraceMarker)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    ASSERT_FALSE(doc.m_bTrace);
+
+    // ── on ──
+    ASSERT_TRUE(run(L, "world.SetTrace(1)"));
+    EXPECT_TRUE(doc.m_bTrace);                                // the member still lands
+    EXPECT_GE(find_output_line(doc, "TRACE: Trace on"), 0);   // ...and it SAYS so
+    EXPECT_EQ(-1, find_output_line(doc, "Trace off"));
+
+    // ── off ──
+    ASSERT_TRUE(run(L, "world.SetTrace(0)"));
+    EXPECT_FALSE(doc.m_bTrace);
+    EXPECT_GE(find_output_line(doc, "TRACE: Trace off"), 0);
+
+    // world.GetTrace agrees with the member both ways round.
+    ASSERT_TRUE(run(L, "world.SetTrace(1)"));
+    int n = run_ret(L, "return world.GetTrace()");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_toboolean(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// D-17, second observable: turning tracing ON flushes a half-built line first,
+// so a pending prompt is pushed out as its own line BEFORE the marker rather
+// than having "TRACE: Trace on" appended to it.
+TEST(LuaScripting, SetTraceFlushesAHalfBuiltLine)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    char text[] = "partial-prompt> ";
+    doc.OnBytesReceived(text, (int)sizeof text - 1);
+
+    ASSERT_TRUE(run(L, "world.SetTrace(1)"));
+
+    int prompt = find_output_line(doc, "partial-prompt>");
+    int marker = find_output_line(doc, "TRACE: Trace on");
+    EXPECT_GE(prompt, 0);
+    EXPECT_GE(marker, 0);
+    EXPECT_LT(prompt, marker);      // flushed onto its own line, ahead of the marker
+
+    lua_close(L);
+}
+
+// D-18: GetLineInfo(n).time is a 64-bit time_t widened to a Lua double.  It used
+// to be truncated through (int), so every timestamp from 2038-01-19 came back
+// negative.
+TEST(LuaScripting, GetLineInfoTimeSurvives2038)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    ASSERT_TRUE(run(L, "world.Note('a line from the future')"));
+    ASSERT_GT((long)doc.m_LineList.GetCount(), 0L);
+
+    // One day past the signed-32-bit time_t rollover (2038-01-19 03:14:08 UTC):
+    // the smallest realistic value an (int) narrowing turns negative.
+    const time_t kPost2038 = (time_t) 2147483648LL + 86400;   // 2038-01-20
+    doc.m_LineList.GetHead()->m_theTime = kPost2038;
+
+    int n = run_ret(L, "local t = world.GetLineInfo(1) return t.time");
+    ASSERT_EQ(1, n);
+    ASSERT_TRUE(lua_isnumber(L, -1));
+    double got = lua_tonumber(L, -1);
+    EXPECT_GT(got, 0.0);                        // the sign flip itself
+    EXPECT_EQ((double) kPost2038, got);         // and the exact instant, losslessly
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// D-25: utils.menufontsize() reports nil when the system metrics cannot be read,
+// rather than a fabricated 0.  0 is indistinguishable from a real font size, so
+// the read-modify-restore idiom every plugin uses would pass 0 back as "the old
+// size" and silently fail to restore.
+TEST(LuaScripting, MenuFontSizeIsNilWhenItCannotBeDetermined)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    int n = run_ret(f.L, "return utils.menufontsize()");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_isnil(f.L, -1));
+    EXPECT_FALSE(lua_isnumber(f.L, -1));    // specifically NOT 0
+    lua_settop(f.L, 0);
+
+    // The plugin idiom must be able to DETECT that it cannot restore.  A 0 would
+    // sail past the nil check and fall through to the `return false` below.
+    EXPECT_LUA_OK(f.L,
+        "local old = utils.menufontsize()\n"
+        "if old == nil then return true end\n"   // detected: nothing to restore
+        "utils.menufontsize(12)\n"
+        "utils.menufontsize(old)\n"
+        "return false\n");
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

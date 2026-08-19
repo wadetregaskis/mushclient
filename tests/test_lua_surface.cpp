@@ -4347,7 +4347,7 @@ TEST(LuaSurface, UtilsPureFunctions)
         "assert(utils.glyph_available('Courier', 65) == 0)\n"
         "local info = utils.info()\n"
         "assert(type(info) == 'table' and type(info.current_directory) == 'string')\n"
-        "assert(utils.menufontsize() == 0)\n"
+        "assert(utils.menufontsize() == nil)\n"   // nil, not a fabricated 0
         "utils.showdebugstatus(false)\n"
     ));
 }

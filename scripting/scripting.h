@@ -16,6 +16,10 @@ extern "C"
 
 #include "paneline.h"
 
+#ifndef _WIN32
+#include <functional>   // std::function — DispatchEmbedded's callback argument
+#endif
+
 // Opaque per-engine state for each embedded alt-language interpreter (one per
 // world/plugin).  Defined in platform/{py_engine,perl_engine,js_engine}.cpp;
 // null unless the world's scripting language is that one.
@@ -162,6 +166,16 @@ class CScriptEngine : public CObject
   // themselves the same way.  Suppressed for the two per-frame callbacks, which
   // would otherwise flood the output window.  Defined in lua_scripting.cpp.
   void   TraceCallback (LPCTSTR szType, LPCTSTR szProcedure);
+
+  // The SURROUNDINGS both ExecuteLua overloads give the five embedded engines,
+  // factored out so the two overloads share one copy instead of two near-clones:
+  // save/reset/restore m_iNoteStyle around callEmbedded (), and — only when it
+  // did not error — add the elapsed time to the world and, inside a plugin, to
+  // the plugin.  Returns false untouched (callEmbedded not invoked, *pErr not
+  // set) when no embedded engine is active, so the caller falls through to its
+  // own Lua path; otherwise runs callEmbedded (), sets *pErr, and returns true.
+  // Defined in lua_scripting.cpp.
+  bool   DispatchEmbedded (bool * pErr, const std::function<bool ()> & callEmbedded);
 
   void   OpenPython ();   void   OpenPerl ();   void   OpenJS ();   void   OpenTcl ();   void   OpenRuby ();
   void   ClosePython ();  void   ClosePerl ();  void   CloseJS ();  void   CloseTcl ();  void   CloseRuby ();

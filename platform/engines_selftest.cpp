@@ -286,7 +286,10 @@ const Dialect kDialects[] = {
   "def wrap(s):\n    return '<' + s + '>'\n"
   "def size(s):\n    return str(len(s.encode('utf-8', 'surrogateescape')))\n"
   "def boom(s):\n    raise RuntimeError('deliberate')\n"
-  "def rnothing():\n    pass\n"
+  // *a: called via both the rich overload (zero args) and the simple one
+  // (one string arg, R2-07-F6's DispatchEmbedded coverage) -- unlike Lua,
+  // Python raises on an unexpected positional argument.
+  "def rnothing(*a):\n    pass\n"
   "def rtrue():\n    return True\n"
   "def rfalse():\n    return False\n"
   "def rzero():\n    return 0\n"
@@ -312,7 +315,7 @@ const Dialect kDialects[] = {
   "    world.SetVariable('big', 4611686018427387905)\n"
   "def readdate():\n"
   "    world.SetVariable('dt', str(world.GetInfo(301)))\n"
-  "def stylish():\n"
+  "def stylish(*a):\n"
   "    world.SetVariable('ns', 'normal' if world.GetNoteStyle() == 0 else 'inherited')\n"
   "    world.NoteStyle(4)\n"
   "def wc(n, l, w):\n"
@@ -488,7 +491,9 @@ const Dialect kDialects[] = {
   "proc wrap {s} { return \"<$s>\" }\n"
   "proc size {s} { return [string length $s] }\n"
   "proc boom {s} { error deliberate }\n"
-  "proc rnothing {} { }\n"
+  // args: called via both overloads (see the Python rnothing comment above);
+  // Tcl also errors on an unexpected positional argument.
+  "proc rnothing {args} { }\n"
   "proc rtrue {} { return 1 }\n"
   "proc rfalse {} { return 0 }\n"
   "proc rzero {} { return 0 }\n"
@@ -512,7 +517,7 @@ const Dialect kDialects[] = {
   "proc rawnum {a b c d} { world SetVariable r $a }\n"
   "proc bignum {s} { world SetVariable big 4611686018427387905 }\n"
   "proc readdate {} { world SetVariable dt [world GetInfo 301] }\n"
-  "proc stylish {} {\n"
+  "proc stylish {args} {\n"
   "  world SetVariable ns [expr {[world GetNoteStyle] == 0 ? \"normal\" : \"inherited\"}]\n"
   "  world NoteStyle 4 }\n"
   "proc wc {n l w} { world SetVariable wc [join $w |] }\n"
@@ -553,7 +558,9 @@ const Dialect kDialects[] = {
   "def wrap(s); '<' + s + '>'; end\n"
   "def size(s); s.bytesize.to_s; end\n"
   "def boom(s); raise 'deliberate'; end\n"
-  "def rnothing; nil; end\n"
+  // (*a): called via both overloads (see the Python rnothing comment above);
+  // Ruby also errors on an unexpected positional argument.
+  "def rnothing(*a); nil; end\n"
   "def rtrue; true; end\n"
   "def rfalse; false; end\n"
   "def rzero; 0; end\n"
@@ -573,7 +580,7 @@ const Dialect kDialects[] = {
   "def rawnum(a, b, c, d); world.SetVariable('r', a.to_s); end\n"
   "def bignum(s); world.SetVariable('big', 4611686018427387905); end\n"
   "def readdate; world.SetVariable('dt', world.GetInfo(301).to_s); end\n"
-  "def stylish\n"
+  "def stylish(*a)\n"
   "  world.SetVariable('ns', world.GetNoteStyle() == 0 ? 'normal' : 'inherited')\n"
   "  world.NoteStyle(4)\n"
   "end\n"
@@ -933,6 +940,21 @@ void battery_call_surroundings(Engine& e, const Dialect& d)
     check(e.doc->m_iNoteStyle == HILITE, L,
           "a note style set inside a callback does not leak back to the world");
 
+    // R2-07-F6: the SIMPLE overload (ExecutePluginScriptRtn's shape) gives its
+    // five embedded engines the identical surroundings, from what used to be a
+    // second ~35-line near-clone of the block above -- now DispatchEmbedded,
+    // shared by both.  Same handler, same assertions, so a "refactor" that only
+    // services one copy's surroundings fails exactly one half of this function.
+    e.doc->m_iNoteStyle = HILITE;
+    e.seed("ns", "handler never ran");
+    bool errSimple = false;
+    e.callRtn("stylish", "unused", &errSimple);
+    check(!errSimple, L, "[simple] a callback may set the note style without erroring");
+    check(e.var("ns") == "normal", L,
+          "[simple] a callback starts with the note style reset to NORMAL");
+    check(e.doc->m_iNoteStyle == HILITE, L,
+          "[simple] a note style set inside a callback does not leak back to the world");
+
     // GetScriptTime divides by App.m_iCounterFrequency, which InitInstance
     // normally fills in -- and InitInstance has not run this early, so seed it
     // or the whole timing path is skipped and the check is vacuous.
@@ -952,6 +974,13 @@ void battery_call_surroundings(Engine& e, const Dialect& d)
     for (int i = 0; i < 50; i++) e.callRich("rnothing");
     const double after = e.doc->GetScriptTime();
     check(after > before, L, "a successful callback accumulates script time");
+
+    // Same accumulation check, through the SIMPLE overload's copy.
+    const double beforeSimple = e.doc->GetScriptTime();
+    for (int i = 0; i < 50; i++) e.callRtn("rnothing", "x");
+    const double afterSimple = e.doc->GetScriptTime();
+    check(afterSimple > beforeSimple, L,
+          "[simple] a successful callback accumulates script time");
 }
 
 // 3a-bis. The POSITIONAL wildcards -- the parameter every trigger and alias

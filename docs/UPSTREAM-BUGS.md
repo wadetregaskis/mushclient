@@ -60,6 +60,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 49 | Plugins dialog reads a stale `CPlugin*` once it leaves `m_PluginList` | this commit | dialogs/plugins/PluginsDlg.cpp `CPluginsDlg::OnUpdateNeedDescription` |
 | 50 | Seven file dialogs `strcpy` an unbounded suggested name into a `_MAX_PATH` buffer | this commit | doc.cpp / dialogs (log-session, save-notes, select-sound et al) — bounded with `lstrcpyn` |
 | 51 | The Lua `error_code`/`error_desc` tables key `ePluginCouldNotSaveState` on 30037 instead of 30038, duplicating `ePluginDoesNotSaveState`'s code | this commit | lua_methods.cpp `error_codes[]`; errors.cpp `error_descriptions[]` |
+| 52 | `ExecuteLua`'s "function not found" arm returns without restoring `m_iNoteStyle` | this commit | lua_scripting.cpp `CScriptEngine::ExecuteLua` (both overloads) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1067,3 +1068,20 @@ or report the failure it was actually given.
 (`lua_methods.cpp:7444`, `errors.cpp:58`) so each of the two distinct plugin
 save-state errors has its own code and description.  Covered by
 `LuaScripting.ErrorCodeTable` in `tests/test_lua_scripting.cpp`.
+
+## 52 — `ExecuteLua`'s "function not found" arm drops the note style (this commit)
+**Bug:** both `CScriptEngine::ExecuteLua` overloads save `m_iNoteStyle` and
+force it to `NORMAL` before looking the callback up, meaning to restore it
+once the callback returns — but the `!GetNestedFunction` ("this callback name
+does not exist") arm `return true`s before reaching that restore.  A Lua
+callback whose name was later removed or renamed therefore leaves the world's
+note style stuck at `NORMAL` for the rest of the script batch, discarding
+whatever an outer handler had set with `world.NoteStyle`.  The five embedded
+engines' forward, immediately above in the same file, already restores
+unconditionally on every path — Lua was the odd one out on both platforms; the
+COM host's equivalent early return (`scriptengine.cpp:101`) restores too.
+**Fix:** add the missing `m_pDoc->m_iNoteStyle = iOldStyle;` to the
+`!GetNestedFunction` arm of both overloads.  Covered by
+`SweepR4.ExecuteLuaMissingRoutineRestoresNoteStyle` and
+`SweepR4.ExecuteLuaSimpleOverloadMissingRoutineRestoresNoteStyle` in
+`tests/test_lua_scripting.cpp`.

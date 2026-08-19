@@ -2,9 +2,9 @@
 
 > ## Status — worked through 2026-08-19
 >
-> **All 32 items were taken. 28 landed, 2 are documentation-only outcomes, 1 was
-> stopped at a false premise, and 2 are still in progress** (D-12 and D-15 had not
-> reached `refs/heads/main` when this scorecard was written).
+> **All 32 items were taken. 30 landed, 2 are documentation-only outcomes, and 1 was
+> stopped at a false premise.** (D-12 and D-15 reached `refs/heads/main` after this
+> scorecard was first written and are marked accordingly; the table is current.)
 >
 > The per-item sections below are preserved **as the questions were posed** — several
 > of their context paragraphs turned out to be wrong, and the corrections are recorded
@@ -24,10 +24,10 @@
 | D-09 | Cancelled quit leaves worlds half-closed | **Fixed (port)** `4d7168f` | UPSTREAM-BUGS 81 · WINDOWS-VALIDATION §4c-quadragies · **premise was false, below** |
 | D-10 | Notepad line-ending conversions inert | **Fixed** `7f95a15`, `97b6f7e` | the *real feature* arm; also closed a silent CRLF corruption · UPSTREAM-BUGS 82 · CLAUDE.md |
 | D-11 | "Icon Placement: System tray" does nothing | **Implemented** `1ed8720` | a real `NSStatusItem`; `--statusitem-selftest` · WINDOWS-VALIDATION §4c-unquadragies |
-| D-12 | Two dead window-geometry features | **IN PROGRESS** | branch `fixD12` carried no commits at `ea781b2`; not landed |
+| D-12 | Two dead window-geometry features | **Fixed** `4e4ce04`, `b29469d`, `37bebec` | both, through a new `pal::IWorldView` geometry seam · WINDOWS-VALIDATION §4c-quinquadragies · **one open item below** |
 | D-13 | Status-bar click shortcuts | **Fixed** `7d733e4` (+ `04e5443`) | all four; the connected-time pane was a live port bug · WINDOWS-VALIDATION §4c-unquadragies |
 | D-14 | Colour dropdowns show text, not swatches | **Fixed** `8314538`, `65365aa`, `89defbf` | port-only bridge capability · WINDOWS-VALIDATION §4c-terquadragies |
-| D-15 | Three "Add …" dialogs add one file per click | **IN PROGRESS** | `5d6345e` sits on branch `fixD15`, not in `refs/heads/main` at `ea781b2` |
+| D-15 | Three "Add …" dialogs add one file per click | **Fixed** `5d6345e` | multi-select through the shim · WINDOWS-VALIDATION §4c-quinquadragies |
 | D-16 | `ReplaceNotepad` returns nil in Lua | **Fixed** `203c0fe` | UPSTREAM-BUGS 83 · DIVERGENCES §13 · WINDOWS-VALIDATION §4c-sextricies |
 | D-17 | Lua `SetTrace` prints no marker | **Fixed** `092c1f4` | DIVERGENCES §14 · WINDOWS-VALIDATION §4c-sextricies |
 | D-18 | `GetLineInfo(n).time` negative in 2038 | **Fixed** `43e27b8` | UPSTREAM-BUGS 84 · WINDOWS-VALIDATION §4c-sextricies |
@@ -749,6 +749,22 @@ which the call site must reuse rather than restate. Notepad (32333) is the only 
 is not a straight pass-through: it is forwarded to 40001 at `wx_toolbar.cpp:70`. The
 brief's `MenuCount() == 14` invariant is at `wx_dialog_resource.cpp:413` inside the
 `WX_DIALOG_RESOURCE_TEST` harness; adding a consumer does not touch it.
+
+**D-12 residual — the global window-geometry key.** `/geometry/child_w|h|x|y` is a
+single **global** key, written only by `wx_save_child_geometry`
+(`platform/wx_world_child.cpp:101`) from exactly two callers,
+`CWorldChildFrame::OnClose` and the quit hook (`wx_mfc_impl.cpp:3146`). Neither is on
+D-12's code path — nothing it added touches `wxConfig`. **But** a window widened by
+*Adjust size to width* is persisted at close, in that same key, by that same code, and is
+**indistinguishable from the user dragging the window edge**. So a width chosen in one
+world becomes every world's opening width.
+
+This was deliberately **not** suppressed: doing so needs a "this resize does not count"
+flag, which would make the button's effect vanish on the next launch while a mouse drag's
+survives — and `world.MoveWorldWindow` (the existing seam, the same `SetSize`) has had
+this property all along. The real fix is **per-world geometry persistence**, which is a
+separate feature and needs its own call. Windows has it: a per-world
+`"<name> World Position"` key (`sendvw.cpp:1237`).
 
 **D-26 — documented, not fixed.** The `col++`/`col--` asymmetry in
 `CMUSHView::calculate_line_and_column` (`mushview.cpp:1931-1948`) is recorded as

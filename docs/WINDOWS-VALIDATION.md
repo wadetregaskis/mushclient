@@ -1516,6 +1516,92 @@ Do **not** treat the headless `pal::CpuRaster` numbers as the parity target — 
 the em as `tmHeight` and is short by the internal leading (ratio ~1.18). See
 `docs/FONT-PARITY-2026-08.md` §3.
 
+### 4c-quinquadragies. The window-geometry seam, and multi-select file dialogs (2026-08-19)
+
+D-12 and D-15, which landed after the rest of the campaign's documentation was
+consolidated. Commits `4e4ce04`, `b29469d`, `37bebec` (D-12) and `5d6345e` (D-15).
+
+**1. Two engine bodies were split into an engine half and a `pal::IWorldView` half**
+(`setCommandWindowHeight`, `setOutputWidthPixels`). Both Windows arms live in
+`pal/win_worldview.cpp` and were **mechanically diffed** against the deleted originals
+with whitespace normalised: 24/24 and 21/21 lines identical. The only substitutions:
+
+| Original | Adapter | Why |
+|---|---|---|
+| `GetChildFrame ()` | `m_pDoc->GetChildFrame ()` | the adapter's standard doc reach, as every other method there |
+| `m_doc->` | `m_pDoc->` | same |
+| `return eBadParameter;` | `return false;` | the engine site converts it back to `eBadParameter` |
+| `return eOK;` | `return true;` | ditto |
+| `(tm.tmAveCharWidth * iColumn) + … + m_iPixelOffset +` | `textWidth +` | the same sum; the engine site computes `aveCharWidth * column + pixelOffset` |
+
+Windows behaviour is therefore unchanged **by construction**. Still worth a run, because
+`CSendView` / `CMUSHView` are never instantiated here:
+
+- [ ] `world.SetCommandWindowHeight(n)` still resizes the splitter, and still returns
+      `eBadParameter` for `n < 0`, for a too-small top view, and with no child frame.
+- [ ] World Properties ▸ Output ▸ **Adjust size to width** still widens the world window
+      to the typed column, using the **document's** current font (`m_font[0]`) — *not*
+      the font offered on the page. That asymmetry with the sibling **Adjust width to
+      size** button (which builds a `CFont` from the page's own pending fields) is
+      upstream's, and was preserved deliberately. The two buttons are not exact inverses.
+- [ ] One deliberate **non-verbatim** addition on Windows:
+      `CMUSHclientDoc::OutputFontCharWidth` returns 0 if `m_font[0]` is NULL rather than
+      calling `SelectObject(NULL)`. Upstream reached that code only from behind an "a
+      view exists" guard, so this can only change a path that previously crashed.
+
+**Two port-only behaviours introduced, recorded here rather than as divergences** (they
+are macOS-vs-Windows differences, which this project keeps in code comments and notes,
+not in `UPSTREAM-DIVERGENCES.md`):
+
+* `CWorldChildFrame::setCommandWindowHeight` imposes a **minimum command-bar height of
+  one text line plus the control's chrome** (the bar's default height, Menlo 9 is about
+  20 px here). Windows has no such floor — it hands the splitter row a 9-pixel `cyMin`
+  and relies on the user dragging the sash back. The port has **no sash and no per-world
+  geometry persistence**, so a bar shorter than one line would be unrecoverable except by
+  editing the world file. A request below the floor is refused with `eBadParameter`
+  rather than clamped, matching the shape of the canonical body's own "too small, want to
+  see a line at least" refusal.
+* `CWorldChildFrame::setOutputWidthPixels` **refuses while maximised or full screen**
+  (`eBadParameter`). wxOSX has no `rcNormalPosition` equivalent, so there is no restored
+  rect to widen; approximating one would resize the wrong rectangle — the trap
+  `wx_geometry_rect_for_save` already exists to avoid.
+
+Neither feature writes `m_nWrapColumn`: `AutoWrapColumnFor` still owns "does the window
+width drive the wrap column?", and only when `auto_wrap_window_width` is on. And
+`m_pActiveCommandView` / `m_pActiveOutputView` were **not** faked — they are read only
+inside the Windows adapter, under the original guard.
+
+**2. Multi-select file dialogs (D-15).** Nothing here needs a Windows run for
+correctness — the change is entirely inside the non-Windows shim and
+`platform/wx_mfc_impl.cpp`, and no canonical `.cpp` was touched. One behavioural claim
+*about* Windows is inferred from MFC's source rather than observed, so it is worth an
+eyeball if anyone is in front of a Windows build:
+
+- [ ] Global Preferences ▸ Startup Worlds ▸ Add, select several worlds: all of them are
+      added. This is the already-working Windows behaviour the port now matches; nothing
+      in the port changes it. The entry exists only to record that the macOS behaviour is
+      now claimed identical.
+
+Note what Windows does with the *other* accessors under multi-select, because the port
+deliberately does **not** copy it: MFC packs the answer into `m_ofn.lpstrFile` as
+`"dir\0name1\0name2\0\0"`, so `GetPathName()` returns the **directory**, and
+`GetFileName`/`GetFileExt`/`GetFileTitle` read `lpstrFileTitle`, which the common dialog
+does not fill under multi-select (MFC `ASSERT`s against calling them in that state).
+None of the three multi-select call sites calls any of the four — all use
+`GetStartPosition`/`GetNextPathName` exclusively — so the port makes all four report the
+**first** path chosen, documented at the accessors in `platform/mfc_ui.h`. A bare
+directory returned from something named `GetPathName` is the *golden adapter,
+plausible-wrong* shape.
+
+**Coverage limit, stated:** the panel is a `wxFileDialog` inside `mushgui_adapters`,
+which `mushcore` deliberately does not link, and it is modal — so it cannot be shown from
+a headless test and an in-app selftest would block on it. The tests drive the
+**iteration layer** through the `g_wxhook_file_dialog` seam. Covered: the shim's request
+(does it ask for multi-select, and only on open panels), its parse of the returned block,
+and the enumeration. **Not** covered: `hook_file_dialog`'s `wxFD_MULTIPLE` style bit and
+its packing of `wxFileDialog::GetPaths()` — that half runs only with a real panel on
+screen.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

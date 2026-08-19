@@ -38,6 +38,10 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 27 | The Timers list's Contents column header does not sort | this commit | prefspropertypages.cpp `CPrefsP16::CompareObjects` |
 | 28 | The alias page's column arrays are indexed with the trigger page's enum | this commit | configuration.cpp `CMUSHclientDoc::LoadPrefsP7` |
 | 29 | The printer-font picker opens on the font from before the sheet opened | this commit | GlobalPrefs.cpp `CGlobalPrefsP4::OnFont` |
+| 30 | Greyscale PNGs decode garbled, and palette PNGs do too from memory | this commit | png_load_shared.cpp ← Utilities.cpp `LoadPng` / `LoadPngMemory` |
+| 31 | `world.BlendPixel` mode 64 (HSL) ignores the blend colour entirely | this commit | methods_pixel_shared.cpp ← methods_miniwindows.cpp `CMUSHclientDoc::BlendPixel` |
+| 32 | `world.WindowWrite` writes a .bmp strict readers refuse to open | this commit | miniwindow.cpp `CMiniWindow::Write` |
+| 33 | `Blend_ColorBurn`'s underflow clamp is dead code (unsigned comparison) | this commit | blending.h `Blend_ColorBurn` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -729,3 +733,53 @@ the size half already uses the page's own `m_nPrinterFontSize`.
 matching `CGlobalPrefsP10::OnFont`.  `needs: windows-run` — the port's font
 picker is the wx one behind `g_wxhook_font_dialog`, so only a Windows build
 confirms the `CFontDialog` seeding end to end.
+
+## 30 — Greyscale PNGs decode garbled, and palette PNGs do too from memory (this commit)
+**Bug:** both decoders ask libpng for `STRIP_16 | PACKING | BGR`, and only
+`LoadPng` adds `EXPAND`.  Neither asks for `GRAY_TO_RGB`, which is a *separate*
+transform: `EXPAND` promotes sub-8-bit samples and expands a palette, but leaves
+an 8-bit greyscale image at one byte per pixel and a grey+alpha one at two.  The
+row bytes are then `memcpy`'d straight into a 24/32bpp DIB as if they were BGR,
+so every greyscale PNG renders as coloured noise a third of its width — and
+`world.WindowLoadImage`/`WindowLoadImageMemory` still return `eOK`.  The missing
+`EXPAND` in `LoadPngMemory` does the same to palette-indexed images, so the same
+file loads correctly from disk and garbled from memory.
+**Fix:** add `PNG_TRANSFORM_GRAY_TO_RGB` to both, and `PNG_TRANSFORM_EXPAND` to
+`LoadPngMemory`.  Both are no-ops for truecolour input, so existing RGB/RGBA
+decodes are byte-identical; `png_read_png` calls `png_read_update_info`, so the
+`png_get_color_type` test that picks 24 vs 32bpp already sees the transformed
+image.
+
+## 31 — `world.BlendPixel` mode 64 (HSL) ignores the blend colour entirely (this commit)
+**Bug:** case 64 declares `CColor cA, cB`, populates only `cA`, and then reads
+`cB.GetRed/GetGreen/GetBlue` — a default-constructed colour, i.e. black.  Each
+channel is therefore `Simple_Opacity (base, 0, Opacity)`: the base scaled by
+`(1 - Opacity)`, which is pure black at opacity 1.0 and merely darkened below
+it.  The blend colour never participates.
+**Fix:** mirror what `CMiniWindow::BlendImage` case 64 does over a whole
+surface — hue/360*255 to red, saturation*255 to green, luminance*255 to blue,
+each `Simple_Opacity`-blended against the base — and drop the unused `cB`.
+
+## 32 — `world.WindowWrite` writes a .bmp strict readers refuse to open (this commit)
+**Bug:** `CMiniWindow::Write` fills a `BITMAPINFO` with
+`biSize = sizeof bmi` — 44 bytes, because `BITMAPINFO` carries a trailing
+`bmiColors [1]` — and then writes out only `bmi.bmiHeader`, which is 40.  The
+`biSize` field is how a reader knows which header dialect follows, so the file
+claims a 44-byte header it does not have.  Windows' own GDI is lenient enough to
+open it; macOS ImageIO (Preview, Quick Look, `sips`) is not, and `WindowWrite`
+returns `eOK` either way.
+**Fix:** `bmi.bmiHeader.biSize = sizeof bmi.bmiHeader;`.  The same `bmi` goes on
+to `WritePng`, which reads only `biWidth`/`biHeight`, so the PNG path is
+unchanged.
+
+## 33 — `Blend_ColorBurn`'s underflow clamp is dead code (this commit)
+**Bug:** the macro tests `(255 - (((unsigned long)(255 - B)) << 8) / A) < 0`.
+The division yields an `unsigned long`, so the subtraction is done unsigned and
+the result can never be negative: the clamp never fires, and the `(uint8)` cast
+truncates the wrapped value instead.  For the 32640 of 65536 (A, B) pairs where
+the burn *should* clamp to 0, the macro returns an arbitrary byte — `A=1, B=0`
+gives 255 (the opposite of the intended answer) and `A=100, B=0` gives 115.  It
+corrupts modes 7 (ColorBurn), 9 (InverseColorBurn) and 20 (VividLight) of both
+`world.WindowBlendImage` and `world.BlendPixel`.
+**Fix:** cast the division result to `long` so the subtraction is signed, in the
+test and in the value — the shape `Blend_Freeze` already uses two lines below.

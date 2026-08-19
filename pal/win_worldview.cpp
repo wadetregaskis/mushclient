@@ -16,6 +16,8 @@
 //   setOutputSelection  methods_utilities.cpp SetSelection
 //   setOutputFont       methods_output.cpp  SetOutputFont (ChangeFont)
 //   setInputFont        methods_commands.cpp SetInputFont (ChangeInputFont)
+//   setCommandWindowHeight methods_commands.cpp SetCommandWindowHeight
+//                       (the whole CSplitterWnd SetRowInfo/RecalcLayout dance)
 //   outputSelection     methods_info.cpp    GetSelection{Start,End}{Line,Column}
 //   scrollPos           methods_info.cpp    GetInfo 296
 //   currentCommand      methods_commands.cpp GetCommand
@@ -34,6 +36,8 @@
 //   isFullscreen        methods_info.cpp    GetInfo 125 (Frame.IsFullScreen)
 //   saveWorld           methods_utilities.cpp Save ("" name: !DoSave(path))
 //   outputRect          methods_output.cpp  GetWorldWindowPositionX (Which 1)
+//   setOutputWidthPixels dialogs/world_prefs/prefspropertypages.cpp
+//                       CPrefsP14::OnAdjustToWidth ("Adjust size to width")
 //   mainRect            methods_info.cpp    GetMainWindowPosition
 //   infobar*            methods_infobar.cpp ShowInfoBar/InfoClear/Info/
 //                       InfoColour/InfoBackground/InfoFont
@@ -62,6 +66,8 @@
 #include "doc.h"
 #include "MUSHview.h"
 #include "sendvw.h"
+#include "childfrm.h"  // CChildFrame + m_wndSplitter (setCommandWindowHeight,
+                        //   setOutputWidthPixels)
 #include "mainfrm.h"
 #include "winplace.h"   // CWindowPlacement — outputRect/mainRect GetWindowPlacement
 
@@ -759,6 +765,95 @@ public:
         }
 
         return out;
+    }
+
+    bool setOutputWidthPixels(int textWidth) override
+    {
+        // World Properties ▸ Output ▸ "Adjust size to width"
+        // (CPrefsP14::OnAdjustToWidth, dialogs/world_prefs/prefspropertypages.cpp).
+        // Every statement below is that handler's, verbatim, with only the two
+        // pieces that are not platform work moved out to the engine site: the
+        // font metric (CMUSHclientDoc::OutputFontCharWidth, the same memory-DC
+        // measurement of m_font [0]) and the 20 .. MAX_LINE_WIDTH column clamp
+        // (ClampWrapColumn).  textWidth is therefore
+        // tm.tmAveCharWidth * iColumn + m_iPixelOffset, i.e. exactly the two
+        // terms this body used to add inside the rect.right sum.
+        if (!(m_pDoc->m_pActiveCommandView || m_pDoc->m_pActiveOutputView))
+            return false;
+
+        RECT rect;
+
+        CChildFrame * pFrame;
+
+        if (m_pDoc->m_pActiveCommandView)
+            pFrame = m_pDoc->m_pActiveCommandView->m_owner_frame;
+        else
+            pFrame = m_pDoc->m_pActiveOutputView->m_owner_frame;
+
+        // get current window size and position (we only want to change the width)
+
+        WINDOWPLACEMENT wp;
+        wp.length = sizeof (wp);
+        pFrame->GetWindowPlacement (&wp);
+        rect = wp.rcNormalPosition;
+
+        // calculate new width
+        rect.right = rect.left +
+                textWidth +                          // columns wanted (+ offset)
+                GetSystemMetrics (SM_CXVSCROLL) +    // scroll bar
+                GetSystemMetrics (SM_CXSIZEFRAME) * 2 +  // frame
+                GetSystemMetrics (SM_CXBORDER) * 2 +     // border
+                5;    // fudge factor, it always seemed to be out by a column
+
+        pFrame->MoveWindow (&rect);
+
+        return true;
+    }
+
+    bool setCommandWindowHeight(int Height) override
+    {
+        // world.SetCommandWindowHeight
+        // (scripting/methods/methods_commands.cpp).  Every statement below is
+        // that body's, verbatim, from the GetChildFrame() lookup down to
+        // RecalcLayout -- comments included, so a diff against the original is
+        // a diff of nothing.  Only the `Height < 0` parameter check stays
+        // engine-side (it is not platform work), and the two
+        // `return eBadParameter` exits become `return false`, which the engine
+        // site turns straight back into eBadParameter.
+        CChildFrame * pFrame = m_pDoc->GetChildFrame ();
+
+        // fail if we can't find one
+        if (pFrame == NULL)
+            return false;
+
+        CRect rectInside;
+        pFrame->m_wndSplitter.GetClientRect(rectInside);
+        rectInside.InflateRect(-9, -9); // allow for borders and splitter bar
+
+        // we have to root around like this, because recalclayout lays out the top
+        // view first, and allocates the rest (possibly nothing) to the bottom view.
+        // I don't really want this, the important thing is that you can see where
+        // you are going to type. Thus I work out how much the maxmimum top view
+        // can be.
+
+        int iRoom = rectInside.bottom - rectInside.top - Height
+            + 7;    // 7 pixels for the splitter bar
+
+        int cyCurTop = iRoom;
+
+        if (cyCurTop < 20)
+            return false;  // too small, want to see a line at least
+
+        // set the info for the top view
+        pFrame->m_wndSplitter.SetRowInfo (OUTPUT_PANE, cyCurTop, 20);
+
+        // set the info for the bottom view
+        pFrame->m_wndSplitter.SetRowInfo (COMMAND_PANE, Height, 9);
+
+        // recalculate it all
+        pFrame->m_wndSplitter.RecalcLayout ();
+
+        return true;
     }
 
     // ── world/main window management ───────────────────────────────────────

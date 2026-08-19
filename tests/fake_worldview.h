@@ -128,6 +128,19 @@ struct FakeWorldView : pal::IWorldView {
     void setOutputSelection(int sl, int el, int sc, int ec) override {
         selSL = sl; selEL = el; selSC = sc; selEC = ec;
     }
+    // world.SetCommandWindowHeight.  `commandHeightFloor` makes the fake
+    // decline anything shorter, the way both real adapters decline a height
+    // that would leave a pane unusable, so the caller's error arm is reachable.
+    int commandHeight      = 0;
+    int commandHeightCalls = 0;
+    int commandHeightFloor = 0;
+    bool setCommandWindowHeight(int px) override {
+        ++commandHeightCalls;
+        if (px < commandHeightFloor) return false;
+        commandHeight = px;
+        return true;
+    }
+
     void setOutputFont(const char* face, int pointSize,
                        bool bold, bool italic) override {
         outFontFace.assign(face); outFontPts = pointSize;
@@ -135,6 +148,19 @@ struct FakeWorldView : pal::IWorldView {
     }
     void textRectChanged() override { ++textRectChanges; }
     pal::Rect outputRect() const override { return outRect; }
+
+    // "Adjust size to width".  Records the text width the engine asked for;
+    // `widthRefused` makes the fake decline, so the caller's error arm has a
+    // way to be reached (the real adapters decline while maximised).
+    int  outputWidthPixels = 0;
+    int  outputWidthCalls  = 0;
+    bool widthRefused      = false;
+    bool setOutputWidthPixels(int textWidth) override {
+        ++outputWidthCalls;
+        if (widthRefused) return false;
+        outputWidthPixels = textWidth;
+        return true;
+    }
 
     // ── world/main window management (P2 window family) ────────────────────
     std::string mainTitle;

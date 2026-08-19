@@ -8987,58 +8987,24 @@ BOOL CPrefsP23::OnInitDialog()
 
 
 
-void CPrefsP14::OnAdjustToWidth() 
+void CPrefsP14::OnAdjustToWidth()
 {
-if (m_doc->m_pActiveCommandView || m_doc->m_pActiveOutputView)
-  {
+  // "Adjust size to width" — the mirror of OnAdjustWidth above: that one
+  // derives a column from the window, this one resizes the window to fit a
+  // column.  The whole body used to sit behind
+  // `if (m_doc->m_pActiveCommandView || m_doc->m_pActiveOutputView)`, two
+  // members only CSendView / CMUSHView ever write, so on the port the button
+  // was visible and did nothing at all.  The document answers for both
+  // frontends now (doc_shared.cpp), measuring the font and clamping the column
+  // exactly as the deleted statements did, and the frame resize goes through
+  // pal::IWorldView::setOutputWidthPixels — whose Windows adapter IS the
+  // deleted GetWindowPlacement / MoveWindow block, verbatim.
 
-  CDC dc;
-
-  dc.CreateCompatibleDC (NULL);
-
-  dc.SelectObject(m_doc->m_font [0]);
-
-  TEXTMETRIC tm;
-  dc.GetTextMetrics(&tm);
-
-  RECT rect;
-
-  CChildFrame * pFrame;
-
-  if (m_doc->m_pActiveCommandView)
-    pFrame = m_doc->m_pActiveCommandView->m_owner_frame;
-  else
-    pFrame = m_doc->m_pActiveOutputView->m_owner_frame;
-
-  // find column number they currently have
+  // find column number they currently have (the LIVE control text, not the
+  // DDX'd member: the button acts on what the user has just typed)
   CString strColumn = GetText (m_ctlWrapColumn);
-  int iColumn = atoi (strColumn);
 
-  if (iColumn < 20)
-    iColumn = 20;
-  if (iColumn > MAX_LINE_WIDTH)
-    iColumn = MAX_LINE_WIDTH;
-
-  // get current window size and position (we only want to change the width)
-
-WINDOWPLACEMENT wp;
-  wp.length = sizeof (wp);
-  pFrame->GetWindowPlacement (&wp);
-  rect = wp.rcNormalPosition;
-
-  // calculate new width
-  rect.right = rect.left + 
-          (tm.tmAveCharWidth * iColumn) +      // columns wanted
-          GetSystemMetrics (SM_CXVSCROLL) +    // scroll bar
-          GetSystemMetrics (SM_CXSIZEFRAME) * 2 +  // frame
-          GetSystemMetrics (SM_CXBORDER) * 2 +     // border
-          m_iPixelOffset +                     // pixel offset requires more room
-          5;    // fudge factor, it always seemed to be out by a column
-
-  pFrame->MoveWindow (&rect);
-
-  }
-	
+  m_doc->ResizeWindowToWrapColumn (atoi (strColumn), m_iPixelOffset);
 }
 
 void CPrefsP14::OnBrowseSounds2() 

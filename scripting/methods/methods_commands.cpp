@@ -426,39 +426,22 @@ long CMUSHclientDoc::SetCommandWindowHeight(short Height)
   if (Height < 0)
     return eBadParameter;
 
-  CChildFrame * pFrame = GetChildFrame ();
-
-  // fail if we can't find one
-  if (pFrame == NULL)
+  // Everything below the parameter check used to be MFC splitter work reached
+  // through GetChildFrame(), which walks the doc's views for a CSendView.  The
+  // port constructs no such view, so GetChildFrame() returned NULL and this
+  // method was a guaranteed eBadParameter that moved nothing -- one of the
+  // dead-reader settings this port keeps finding.
+  //
+  // The splitter dance is now the WINDOWS ARM of
+  // pal::IWorldView::setCommandWindowHeight (pal/win_worldview.cpp), verbatim:
+  // the GetChildFrame() lookup, the inflated client rect, the +7 splitter-bar
+  // allowance, the "top view under 20 pixels" refusal, both SetRowInfo calls
+  // and RecalcLayout.  Its two refusal exits return false, which is turned
+  // back into the same eBadParameter here.  The wx arm pins the command bar
+  // instead (there is no splitter to drive), and refuses a height too short to
+  // show the line being typed -- it has no sash to drag back.
+  if (!EmitCommandWindowHeight (Height))
     return eBadParameter;
-
-	CRect rectInside;
-	pFrame->m_wndSplitter.GetClientRect(rectInside);
-	rectInside.InflateRect(-9, -9); // allow for borders and splitter bar
-
-  // we have to root around like this, because recalclayout lays out the top
-  // view first, and allocates the rest (possibly nothing) to the bottom view.
-  // I don't really want this, the important thing is that you can see where
-  // you are going to type. Thus I work out how much the maxmimum top view
-  // can be.
-
-  int iRoom = rectInside.bottom - rectInside.top - Height 
-      + 7;    // 7 pixels for the splitter bar
-
-  int cyCurTop = iRoom;
-
-  if (cyCurTop < 20)
-    return eBadParameter;  // too small, want to see a line at least
-
-  // set the info for the top view
-  pFrame->m_wndSplitter.SetRowInfo (OUTPUT_PANE, cyCurTop, 20);
-
-  // set the info for the bottom view
-  pFrame->m_wndSplitter.SetRowInfo (COMMAND_PANE, Height, 9);
-
-  // recalculate it all
-  pFrame->m_wndSplitter.RecalcLayout ();
-
 
 	return eOK;
 }   // end of CMUSHclientDoc::SetCommandWindowHeight

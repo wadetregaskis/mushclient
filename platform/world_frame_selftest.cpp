@@ -37,6 +37,14 @@
                                      // clear-buffer confirmation prompt
 #include "dialogs/TextAttributesDlg.h"    // Display ▸ Text Attributes
 #include "dialogs/HighlightPhraseDlg.h"   // Display ▸ Highlight Word
+#include "scripting/errors.h"             // eOK / eBadParameter
+
+// Defined in wx_mfc_impl.cpp: enter/leave full screen on a window, stashing
+// (or discarding) its pre-full-screen rect -- the same bookkeeping the real
+// View ▸ Full Screen menu handler does, exposed so a harness can drive it
+// without a fully wired MDI parent + wxEVT_MENU dispatch.  Declared the same
+// way in platform/gui_bridge_selftest.cpp, which drives it too.
+void wx_toggle_full_screen(wxTopLevelWindow* target);
 
 #include <climits>        // LONG_MIN — "no saved child_x/child_y" sentinel below
 #include <cstdio>
@@ -3451,6 +3459,227 @@ int RunWorldFrameSelfTest()
         doc->GetMainRect(mx, my, mw, mh);
         check(mx == child->GetRect().x && mw == child->GetRect().width,
               "...and GetMainWindowPosition with it");
+    }
+
+    // ── World Properties ▸ Output ▸ "Adjust size to width" ─────────────────
+    // The button's whole body used to sit behind
+    // `m_pActiveCommandView || m_pActiveOutputView` -- written only by the MFC
+    // views -- so on the port it was visible and completely inert.  It resizes
+    // the WINDOW so a given wrap column fits; asserting the pane's real client
+    // width (not "the seam was called") is what makes "it did nothing" fail.
+    {
+        // The wrap column must NOT follow the window: that is the port bug
+        // AutoWrapColumnFor was introduced to fix, and it also rewrote the
+        // user's world file.  Turn the option off, which is its default.
+        doc->m_bAutoWrapWindowWidth = FALSE;
+        doc->m_nWrapColumn          = 80;
+
+        child->SetSize(150, 170, 700, 480);
+        wxYield();
+
+        COutputPane * op = child->OutputPane();
+        const int charW = doc->m_gui_font_width;
+
+        check(op != NULL && charW > 0,
+              "adjust-size-to-width: fixture -- the pane has a measured char width");
+
+        const int widthBefore = op ? op->GetClientSize().x : 0;
+
+        // 60 columns + a 3-pixel offset.  Neither number is a multiple of the
+        // other and the offset is not a multiple of the char width, so a body
+        // that dropped either term lands somewhere else.
+        check(doc->ResizeWindowToWrapColumn(60, 3) == eOK,
+              "adjust-size-to-width: the engine entry point reports success");
+        wxYield();
+
+        const int paneW60 = op ? op->GetClientSize().x : 0;
+        check(paneW60 == charW * 60 + 3,
+              "adjust-size-to-width: the output pane is EXACTLY 60 columns "
+              "plus the pixel offset wide");
+        check(paneW60 > 0,
+              "adjust-size-to-width: ...and the sizer did not squeeze the pane "
+              "to nothing");
+        check(paneW60 != widthBefore,
+              "adjust-size-to-width: ...and it really moved (control)");
+        check((int) doc->m_nWrapColumn == 80,
+              "adjust-size-to-width: the WINDOW changed, the wrap column did not");
+
+        // A second, different column: the width tracks the request rather than
+        // landing on one lucky number.
+        check(doc->ResizeWindowToWrapColumn(90, 3) == eOK,
+              "adjust-size-to-width: a second call succeeds too");
+        wxYield();
+        const int paneW90 = op ? op->GetClientSize().x : 0;
+        check(paneW90 == charW * 90 + 3,
+              "adjust-size-to-width: 90 columns gives a 90-column pane");
+        check(paneW90 > paneW60,
+              "adjust-size-to-width: ...which is wider than the 60-column one");
+
+        // Only the width moves -- x, y and height are re-applied, exactly as
+        // the Windows handler's "we only want to change the width" comment says.
+        const wxRect r = child->GetRect();
+        check(r.x == 150 && r.y == 170 && r.height == 480,
+              "adjust-size-to-width: position and height are left alone");
+
+        // Refused while full screen: wxOSX has no rcNormalPosition, so there is
+        // no restored rect to widen -- approximating one would resize the wrong
+        // rectangle (the same trap wx_geometry_rect_for_save exists for).
+        wx_toggle_full_screen(child);
+        wxYield();
+        check(child->IsFullScreen(),
+              "adjust-size-to-width: control -- the frame really is full screen");
+        const int fsPaneW = op ? op->GetClientSize().x : 0;
+        check(doc->ResizeWindowToWrapColumn(50, 3) == eBadParameter,
+              "adjust-size-to-width: refused while full screen");
+        wxYield();
+        check(op != NULL && op->GetClientSize().x == fsPaneW,
+              "adjust-size-to-width: ...and the refusal moved nothing");
+
+        wx_toggle_full_screen(child);
+        wxYield();
+        check(!child->IsFullScreen(),
+              "adjust-size-to-width: control -- and back out of full screen");
+        check(doc->ResizeWindowToWrapColumn(60, 3) == eOK,
+              "adjust-size-to-width: ...where it works again");
+    }
+
+    // ── world.SetCommandWindowHeight ───────────────────────────────────────
+    // The canonical body drove the world window's CSplitterWnd through a
+    // CSendView; the port constructs none, so GetChildFrame() returned NULL and
+    // every call was a guaranteed eBadParameter that moved nothing.  What is
+    // asserted here is the command bar's REAL height, not that a seam fired.
+    {
+        child->SetSize(150, 170, 700, 520);
+        wxYield();
+
+        wxTextCtrl * bar = child->NormalInputPublic();
+        COutputPane * op = child->OutputPane();
+        check(bar != NULL && op != NULL,
+              "command-window-height: fixture -- the bar and pane exist");
+
+        // The floor is one whole line plus the control's own chrome: the
+        // height the bar already has by default.  Asserted against the frame's
+        // own measurements rather than a number copied into this test.
+        const int lineH  = child->InputBarLineHeight();
+        const int chrome = child->InputBarChromeHeight();
+        const int floorH = lineH + chrome;
+        check(lineH > 1 && floorH > lineH,
+              "command-window-height: fixture -- a real line height and chrome");
+
+        const int heightBefore = bar ? bar->GetSize().y : 0;
+
+        // A height well clear of both floors really is applied.
+        const int wanted = floorH + 3 * lineH;
+        check(doc->SetCommandWindowHeight((short) wanted) == eOK,
+              "command-window-height: a roomy height is accepted");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == wanted,
+              "command-window-height: the command bar is EXACTLY that tall");
+        check(bar != NULL && bar->GetSize().y != heightBefore,
+              "command-window-height: ...and it really moved (control)");
+        check(op != NULL && op->GetClientSize().y >= 20,
+              "command-window-height: ...and the output pane was not squeezed "
+              "to nothing");
+
+        // The pin survives a text change.  Without it the very next keystroke
+        // would drop the bar straight back to its content height, which is what
+        // makes a scripted height worth having at all.
+        const int pinned = bar ? bar->GetSize().y : 0;
+        if (bar) bar->SetValue(wxT("typed after the height was set"));
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == pinned,
+              "command-window-height: the height survives typing "
+              "(auto_resize_command_window off)");
+        if (bar) bar->SetValue(wxEmptyString);
+        wxYield();
+
+        // ...and it survives the wrap_input toggle, which REBUILDS the control.
+        // The replacement carries no minimum size of its own, so a pin that
+        // only suppressed content sizing (rather than re-applying itself) would
+        // be lost here -- and lost irrecoverably, since with the pin still set
+        // nothing would resize the bar again either.
+        {
+            const BOOL wrapWas = doc->m_bAutoWrapInput;
+
+            doc->m_bAutoWrapInput = wrapWas ? FALSE : TRUE;
+            pumpUntil([&] { return child->NormalInputPublic() != bar; });
+            wxTextCtrl* rebuilt = child->NormalInputPublic();
+            check(rebuilt != NULL && rebuilt != bar,
+                  "command-window-height: control -- toggling wrap_input really "
+                  "did replace the command bar");
+            check(rebuilt != NULL && rebuilt->GetSize().y == pinned,
+                  "command-window-height: the pinned height survives the "
+                  "wrap_input rebuild");
+
+            doc->m_bAutoWrapInput = wrapWas;      // put the world back
+            pumpUntil([&] { return child->NormalInputPublic() != rebuilt; });
+            bar = child->NormalInputPublic();
+            check(bar != NULL && bar->GetSize().y == pinned,
+                  "command-window-height: ...and the rebuild back again");
+        }
+
+        // ...but a world that asks for auto-resizing still wins, exactly as
+        // CSendView::AdjustCommandWindowSize does on Windows.  Without this
+        // arm the check above could pass by the bar simply being frozen.
+        doc->m_bAutoResizeCommandWindow  = TRUE;
+        doc->m_iAutoResizeMinimumLines   = 1;
+        doc->m_iAutoResizeMaximumLines   = 4;
+        if (bar) bar->SetValue(wxT("one line"));
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == floorH,
+              "command-window-height: auto_resize_command_window takes the bar "
+              "back to its content height");
+        doc->m_bAutoResizeCommandWindow = FALSE;
+        if (bar) bar->SetValue(wxEmptyString);
+        wxYield();
+
+        // REFUSAL 1 -- shorter than one line.  Windows can hand the splitter a
+        // 9-pixel row because the user can drag the sash back; there is no sash
+        // here, so a bar that cannot show the line being typed is unrecoverable.
+        check(doc->SetCommandWindowHeight((short) floorH) == eOK,
+              "command-window-height: exactly the one-line floor is accepted");
+        wxYield();
+        const int atFloor = bar ? bar->GetSize().y : 0;
+        check(atFloor == floorH,
+              "command-window-height: ...and lands there");
+
+        check(doc->SetCommandWindowHeight((short) (floorH - 1)) == eBadParameter,
+              "command-window-height: one pixel under the floor is refused");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == atFloor,
+              "command-window-height: ...and the refusal moved nothing");
+
+        check(doc->SetCommandWindowHeight(1) == eBadParameter,
+              "command-window-height: a 1-pixel command bar is refused");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == atFloor,
+              "command-window-height: ...and that refusal moved nothing either");
+
+        // REFUSAL 2 -- the output pane must keep 20 pixels, which is the
+        // canonical body's own "too small, want to see a line at least" rule.
+        // Sizer failure here is SILENT: without the check the pane is squeezed
+        // to zero and nothing says so.
+        int frameClientH = 0;
+        child->GetClientSize(NULL, &frameClientH);
+        check(frameClientH > 0,
+              "command-window-height: fixture -- the frame has a client height");
+
+        check(doc->SetCommandWindowHeight((short) frameClientH) == eBadParameter,
+              "command-window-height: a bar as tall as the whole window is "
+              "refused rather than collapsing the output pane");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == atFloor,
+              "command-window-height: ...and that refusal moved nothing either");
+        check(op != NULL && op->GetClientSize().y >= 20,
+              "command-window-height: ...so the output pane still has room");
+
+        // A negative height never reaches the frontend at all -- the engine's
+        // own parameter check, where the canonical body had it.
+        check(doc->SetCommandWindowHeight(-1) == eBadParameter,
+              "command-window-height: a negative height is refused");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == atFloor,
+              "command-window-height: ...and moved nothing");
     }
 
     // Tear down without running the close/save flow (this doc has no file).

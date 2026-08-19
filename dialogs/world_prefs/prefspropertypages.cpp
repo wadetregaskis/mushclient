@@ -5296,7 +5296,7 @@ CString str;
   if (App.platform == VER_PLATFORM_WIN32s)
     strcpy (filedlg.m_ofn.lpstrFile, "");
   else
-    strcpy (filedlg.m_ofn.lpstrFile, suggested_name);
+    lstrcpyn (filedlg.m_ofn.lpstrFile, suggested_name, _MAX_PATH);
 
   ChangeToFileBrowsingDirectory ();
   int nResult = filedlg.DoModal();
@@ -9123,7 +9123,7 @@ CString filename;
   if (App.platform == VER_PLATFORM_WIN32s)
     strcpy (filedlg.m_ofn.lpstrFile, "");
   else
-    strcpy (filedlg.m_ofn.lpstrFile, m_sound_pathname);
+    lstrcpyn (filedlg.m_ofn.lpstrFile, m_sound_pathname, _MAX_PATH);
 
   if (m_sound_pathname == NOSOUNDLIT)
     strcpy (filedlg.m_ofn.lpstrFile, "");

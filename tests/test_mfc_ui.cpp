@@ -3159,6 +3159,81 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// App.platform, and the suggested name every file dialog puts in the box
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Seven call sites decide whether to suggest a file name by testing
+// App.platform against VER_PLATFORM_WIN32s — and Win32s is zero, so a platform
+// that was never assigned reads as Win32s and every suggestion is thrown away.
+// Windows assigns it from GetVersionEx in InitInstance; off Windows nothing
+// did, and InitInstance does not run in this binary at all.
+TEST(AppPlatform, ItIsNotWin32sBeforeInitInstanceRuns)
+{
+    EXPECT_EQ((DWORD) VER_PLATFORM_WIN32_NT, App.platform);
+    EXPECT_NE((DWORD) VER_PLATFORM_WIN32s, App.platform);
+}
+
+// The command handler is a protected message-map entry; re-publish it rather
+// than route a WM_COMMAND through a frame this binary does not have.
+struct LogSessionDoc : public CMUSHclientDoc
+{
+    using CMUSHclientDoc::OnFileLogsession;
+};
+
+static std::string s_logLeaf;
+static bool        s_logHookCalled;
+
+// Install a file-dialog hook that records the leaf name and then cancels, so
+// no log file is created.
+static void InstallLogLeafRecorder ()
+{
+    s_logLeaf.clear ();
+    s_logHookCalled = false;
+    g_wxhook_file_dialog = [](bool, const char*, const char*,
+                              const char* leaf, const char*, bool) -> char* {
+        s_logHookCalled = true;
+        s_logLeaf = leaf ? leaf : "";
+        return nullptr;      // as if the user cancelled the Save panel
+    };
+}
+
+// File ▸ Log Session put up a Save panel with an empty "Save As" field,
+// because the suggested name went down the Win32s arm and was replaced by "".
+TEST(LogSession, TheSavePanelArrivesWithTheSuggestedLogFileName)
+{
+    HookGuard<decltype(g_wxhook_file_dialog)> fdGuard(g_wxhook_file_dialog);
+    InstallLogLeafRecorder ();
+
+    LogSessionDoc doc;
+    doc.m_bLogRaw = TRUE;                    // skips the modal CLogDlg
+    doc.m_strAutoLogFileName = "session log.txt";
+    doc.OnFileLogsession ();
+
+    EXPECT_TRUE(s_logHookCalled);
+    EXPECT_STREQ("session log.txt", s_logLeaf.c_str ());
+}
+
+// ...and the copy into the dialog's buffer is bounded.  Nothing limits how
+// long an auto-log file name may be, and CString::GetBuffer (_MAX_PATH) hands
+// out exactly _MAX_PATH + 1 bytes — so the raw strcpy that used to be here was
+// an overrun waiting for a long enough name, and it became reachable the
+// moment platform stopped saying Win32s.
+TEST(LogSession, AnOverlongSuggestedNameIsTruncatedRatherThanOverrunning)
+{
+    HookGuard<decltype(g_wxhook_file_dialog)> fdGuard(g_wxhook_file_dialog);
+    InstallLogLeafRecorder ();
+
+    LogSessionDoc doc;
+    doc.m_bLogRaw = TRUE;
+    doc.m_strAutoLogFileName = CString ('x', 400);
+    doc.OnFileLogsession ();
+
+    EXPECT_TRUE(s_logHookCalled);
+    EXPECT_EQ((size_t) (_MAX_PATH - 1), s_logLeaf.size ());
+    EXPECT_EQ(std::string (_MAX_PATH - 1, 'x'), s_logLeaf);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Cheap sweeps: inert stub families that ship in mushcore
 // ═══════════════════════════════════════════════════════════════════════════
 

@@ -202,6 +202,13 @@ CMUSHclientApp::CMUSHclientApp()
 	// TODO: add construction code here,
 	// Place all significant initialization in InitInstance
 
+// Which flavour of Windows we are on.  InitInstance replaces this with the
+// GetVersionEx answer, so Windows is unaffected - but InitInstance does not
+// run at all in the headless test binaries, and a zero here means Win32s,
+// which is what the file dialogs test to decide whether to suggest a name.
+
+platform = VER_PLATFORM_WIN32_NT;
+
 EnableAutomation();
    
 //::AfxOleLockApp();

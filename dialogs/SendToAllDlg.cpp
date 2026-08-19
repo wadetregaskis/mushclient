@@ -144,9 +144,7 @@ CDC dc;
 
     dc.SelectObject(&m_font);
 
-    m_ctlSendText.SendMessage (WM_SETFONT,
-                                 (WPARAM) m_font.m_hObject,
-                                 MAKELPARAM (TRUE, 0));
+    m_ctlSendText.SetFont (&m_font);
 
 	return TRUE;  // return TRUE unless you set the focus to a control
 	              // EXCEPTION: OCX Property Pages should return FALSE

@@ -121,7 +121,7 @@ BOOL CLuaInputBox::OnInitDialog()
 
   // limit text entry length if desired
   if (m_iMaxReplyLength > 0)
-    ::SendMessage(m_ctlReply, EM_LIMITTEXT, m_iMaxReplyLength, 0);
+    m_ctlReply.LimitText (m_iMaxReplyLength);
 
   // new OK button label
   if (!m_strOKbuttonLabel.IsEmpty ())

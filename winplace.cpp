@@ -15,7 +15,7 @@ static char BASED_CODE THIS_FILE[] = __FILE__;
 
 // Version 10 of the MFC framework removed functions we need.
 // Which means we need to force generation of stubs in that case.
-// See: http://cppdepend.wordpress.com/2010/08/29/visual-c-2010-what’s-new-for-mfc-library/
+// See: http://cppdepend.wordpress.com/2010/08/29/visual-c-2010-whatï¿½s-new-for-mfc-library/
 #if _MFC_VER >= 0x0A00
 #define COMPILE_MULTIMON_STUBS
 #endif
@@ -66,7 +66,20 @@ BOOL CWindowPlacement::Restore(LPCSTR lpKeyName,
      }
    else
      {
+#ifdef _WIN32
      ::GetClientRect (((CMDIFrameWnd *)&Frame)->m_hWndMDIClient, &rcScreen);
+#else
+     // Port only.  There is no MDI client window here (the active child IS the
+     // visible window), so m_hWndMDIClient is always NULL, ::GetClientRect left
+     // rcScreen empty and the intersect test below could never pass: EVERY
+     // saved dialog and world position was silently discarded and every window
+     // opened at its default place.  The rectangle being tested is in screen
+     // coordinates on this platform (the placement hook reports
+     // wxWindow::GetRect), so the screen is what it has to be checked against.
+     rcScreen.SetRect (0, 0,
+                       GetSystemMetrics (SM_CXSCREEN),
+                       GetSystemMetrics (SM_CYSCREEN));
+#endif
      rcScreen.InflateRect (-10, -10); // margin for error
      }
 

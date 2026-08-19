@@ -101,9 +101,7 @@ CDC dc;
 
     dc.SelectObject(&m_font);
 
-    m_ctlCreditsText.SendMessage (WM_SETFONT,
-                                 (WPARAM) m_font.m_hObject,
-                                 MAKELPARAM (TRUE, 0));
+    m_ctlCreditsText.SetFont (&m_font);
 
     // update window title
     SetWindowText (m_strTitle);

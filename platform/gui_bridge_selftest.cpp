@@ -39,6 +39,9 @@
 #include "dialogs/world_prefs/prefspropertypages.h"  // CPrefsP17 — ScriptBrowser
 #include "dialogs/world_prefs/triggdlg.h"             // CTriggerDlg
 #include "dialogs/global_prefs/GlobalPrefs.h"         // CGlobalPrefsP4 — printer font
+#include "dialogs/DebugWorldInputDlg.h"                // CDebugWorldInputDlg — fixed-pitch font
+
+#include <cctype>                       // isxdigit/islower — the GUID shape check
 
 #include <vector>
 
@@ -1275,9 +1278,10 @@ void TestPrinterFontPickerSeedsFromThePage()
         ++s_calls;
         return 0;                            // cancel — nothing is chosen
     };
-    // The page has no window here, so DDX zeroes the numeric fields and the
-    // lines-per-page DDV (10..500) objects.  Swallow that: the assertion below
-    // is about which string seeded the picker, not about the margins.
+    // The page has no window here.  DDX now leaves a member alone when the
+    // control is missing (it used to zero it, which then tripped the
+    // lines-per-page DDV), but keep the swallow: the assertion below is about
+    // which string seeded the picker, not about the margins.
     g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
         return IDOK;
     };
@@ -1328,6 +1332,95 @@ void TestTimerListSortsByContents()
           "the Label column still sorts too");
 }
 
+// Three dialogs put their fixed-pitch font on their edit control with a raw
+// WM_SETFONT ::SendMessage, and the port's send-message hook handles only
+// WM_COMMAND and the two LVM_*EXTENDEDLISTVIEWSTYLE messages — so the font was
+// simply dropped and the World ▸ Debug input box, the Credits box and Send To
+// All showed the proportional default.  They now go through CWnd::SetFont, as
+// Utilities.cpp's FixFont already did (with the WM_SETFONT form commented out).
+void TestFixedPitchFontReachesTheDialogs()
+{
+    printf("Fixed-pitch font on the raw-SendMessage dialogs:\n");
+
+    static std::string s_face;
+    static int s_calls = 0;
+    void (*const savedFont)(void*, void*) = g_wxhook_set_font;
+    g_wxhook_set_font = [](void*, void* font) {
+        ++s_calls;
+        wxFont* f = (wxFont*) font;
+        s_face = f ? std::string(f->GetFaceName().utf8_str()) : std::string();
+    };
+
+    App.m_strFixedPitchFont  = "Menlo";
+    App.m_iFixedPitchFontSize = 9;
+
+    s_calls = 0; s_face.clear();
+    struct Probe : CDebugWorldInputDlg { using CDebugWorldInputDlg::OnInitDialog; };
+    Probe dlg;
+    dlg.OnInitDialog();
+
+    check(s_calls >= 1, "World > Debug input box sets a font at all (was: 0 calls)");
+    check(s_face == "Menlo", "...and it is the fixed-pitch font from the preferences");
+
+    g_wxhook_set_font = savedFont;
+}
+
+// GUID::Data1 was declared `unsigned long`, which is 64 bits here and 32 on
+// Windows, while GetGUID's format was "%08lX" — a MINIMUM width.  So the first
+// group came out sixteen hex digits and world.CreateGUID returned a malformed
+// 44-character GUID.  Only the GUI build compiles Utilities.cpp (mushcore has
+// its own twin in doc_port_glue.cpp), so this cannot be caught headlessly.
+void TestCreateGuidShape()
+{
+    printf("GetGUID (world.CreateGUID):\n");
+
+    const CString guid = GetGUID ();
+    const std::string s ((LPCTSTR) guid);
+
+    check(s.size() == 36, "the GUID is 36 characters (was: 44 on any LP64 host)");
+
+    // 8-4-4-4-12 hex with dashes, checked positionally so a wrong group WIDTH
+    // fails rather than merely a wrong total length.
+    static const int groups[5] = { 8, 4, 4, 4, 12 };
+    bool shape = s.size() == 36;
+    size_t at = 0;
+    for (int g = 0; g < 5 && shape; g++) {
+        if (g > 0) shape = shape && at < s.size() && s[at++] == '-';
+        for (int i = 0; i < groups[g] && shape; i++, at++)
+            shape = at < s.size() && isxdigit((unsigned char) s[at]) != 0
+                                  && !islower((unsigned char) s[at]);
+    }
+    check(shape && at == s.size(), "...in 8-4-4-4-12 uppercase hex groups");
+
+    // The control: it is not a constant.
+    check(GetGUID () != guid, "consecutive calls differ");
+}
+
+// metaphone() clamps its OUTPUT length to the size of its 61-byte stack buffer
+// and then fills that buffer from the input with no bound at all, so any word of
+// more than 60 letters smashes the stack frame (upstream bug 30).  It has no
+// caller in the tree, and only the GUI build compiles Utilities.cpp, so this is
+// the only place the shipping body can be driven.
+void TestMetaphoneBoundsItsInput()
+{
+    printf("metaphone() input bound:\n");
+
+    char out[64];
+
+    // The control first: an ordinary word still comes back with something.
+    out[0] = '\0';
+    metaphone ("Thompson", out, (int) sizeof (out) - 1);
+    check(out[0] != '\0', "an ordinary word produces a result");
+
+    std::string huge;
+    while (huge.size() < 200) huge += "Thompson";
+    out[0] = '\0';
+    metaphone (huge.c_str (), out, (int) sizeof (out) - 1);
+    check(out[0] != '\0', "a 200-letter word produces one too (was: stack smash)");
+    check(std::string (out).size () < sizeof (out),
+          "...inside the caller's buffer");
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1351,6 +1444,9 @@ int RunGuiBridgeSelfTest()
     TestCommandColoursSurviveAPageChange();
     TestPrinterFontPickerSeedsFromThePage();
     TestTimerListSortsByContents();
+    TestFixedPitchFontReachesTheDialogs();
+    TestCreateGuidShape();
+    TestMetaphoneBoundsItsInput();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

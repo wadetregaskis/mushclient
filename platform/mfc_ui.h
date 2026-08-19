@@ -1206,6 +1206,19 @@ inline BOOL CWnd::GetWindowPlacement(WINDOWPLACEMENT* wp) const {
     return TRUE;
 }
 
+// CWnd::SetWindowPlacement — the other half of the pair, and a permanent FALSE
+// until now, so CWindowPlacement::Restore had nowhere to put the geometry it
+// had read back out of the database.  Only rcNormalPosition is honoured:
+// showCmd (minimised / maximised) has no MoveWindow equivalent, and Save()
+// declines to write a minimised placement in the first place.
+inline BOOL CWnd::SetWindowPlacement(const WINDOWPLACEMENT* wp) {
+    if (!wp || !g_wxhook_move_window) return FALSE;
+    const RECT& r = wp->rcNormalPosition;
+    g_wxhook_move_window(m_hWnd, (int) r.left, (int) r.top,
+                         (int) (r.right - r.left), (int) (r.bottom - r.top), true);
+    return TRUE;
+}
+
 typedef CREATESTRUCT *        LPCREATESTRUCT;
 typedef const CREATESTRUCT *  LPCCREATESTRUCT;
 
@@ -1889,7 +1902,10 @@ public:
 #ifndef GUID_DEFINED
 #define GUID_DEFINED
 struct GUID {
-    unsigned long  Data1;
+    // 32 bits, NOT `unsigned long`: the Windows SDK's long is 32-bit, so
+    // GetGUID's "%08lX" printed 8 hex digits there and SIXTEEN here, giving
+    // world.CreateGUID a malformed 44-character result on every LP64 host.
+    unsigned int   Data1;
     unsigned short Data2, Data3;
     unsigned char  Data4[8];
 };
@@ -3220,7 +3236,32 @@ public:
     virtual void Serialize(CArchive&)       {}
     virtual void Dump(CDumpContext&) const  {}
     virtual void AssertValid() const        {}
-    virtual BOOL SaveModified()             { return TRUE; }
+    // MFC's CDocument::SaveModified: the "Save changes to X?" prompt.  The old
+    // unconditional TRUE meant CMUSHclientDoc::SaveModified (doc.cpp:2105) —
+    // which calls straight into this base — never asked, so quitting with a
+    // modified world (Cmd-Q, the app menu, the Dock) discarded it in silence.
+    // Only the variables-only branch above it ever prompted, and that one is
+    // reached only when the doc is NOT modified.
+    virtual BOOL SaveModified() {
+        if (!IsModified())
+            return TRUE;                   // ok to continue
+        // MFC names the doc by its path, falling back to the caption.
+        CString name = m_strPathName.IsEmpty() ? m_strTitle : m_strPathName;
+        if (name.IsEmpty())
+            name = "Untitled";             // AFX_IDS_UNTITLED; no string table here
+        switch (UMessageBox(CString("Save changes to ") + name + "?",
+                            MB_YESNOCANCEL | MB_ICONQUESTION, "MUSHclient")) {
+        case IDCANCEL:
+            return FALSE;                  // don't continue
+        case IDYES:
+            if (!DoFileSave())
+                return FALSE;              // don't continue
+            break;
+        default:                           // IDNO — discard the changes
+            break;
+        }
+        return TRUE;                       // keep going
+    }
     // Real MFC's CDocument::DoSave writes via OnSaveDocument (which Serialises).
     // The old no-op was fine while CMUSHclientDoc::DoSave was a headless inline
     // that called OnSaveDocument itself; the adopted doc.cpp::DoSave delegates to
@@ -3234,7 +3275,11 @@ public:
         SetPathName(strName);
         return TRUE;
     }
-    virtual BOOL DoFileSave()               { return TRUE; }
+    // MFC's DoFileSave saves to the current path (Save As when there isn't one).
+    // A bare TRUE would make SaveModified's Yes answer report success without
+    // writing anything — CMUSHclientDoc::DoSave is the real world writer, and
+    // it is virtual, so this reaches it.
+    virtual BOOL DoFileSave()               { return DoSave(m_strPathName, TRUE); }
 
     void SetChangedFlag(BOOL mod=TRUE) { SetModifiedFlag(mod); }
     // IsKindOf inherited from CObject
@@ -3551,48 +3596,123 @@ inline void DDX_Text(CDataExchange* pDX, int id, CString& s) {
 // integer DDX (minus the locale plumbing).  Without these, every numeric prefs
 // field (port, font sizes, line spacing, timer intervals, …) silently failed to
 // load OR save on the port.
-inline void DDX_TextNumImpl(CDataExchange* pDX, int id, CString& text) {
+// Returns FALSE when the dialog has no such control — the load direction wrote
+// nothing and the save direction has nothing to parse, so the caller must leave
+// its member alone rather than treat the empty text as a value.  (The bridge
+// legitimately skips controls Windows hides; see wx_dialog_bridge.cpp's
+// WS_VISIBLE arm.)
+inline BOOL DDX_TextNumImpl(CDataExchange* pDX, int id, CString& text) {
     CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
-    if (!w) { text.Empty(); return; }
+    if (!w) { text.Empty(); return FALSE; }
     if (pDX->m_bSaveAndValidate) w->GetWindowText(text);   // control -> text (caller parses)
     else                         w->SetWindowText((LPCTSTR) text);  // text -> control
+    return TRUE;
+}
+// MFC's DDX_TextWithFormat scanf's the control's text and, when the scan matches
+// nothing, shows "Please enter an integer." / "a number." / "a positive integer."
+// and calls pDX->Fail() — which aborts the exchange, keeps the dialog open and
+// leaves the member at its old value.  The port fed the text straight to
+// strtol/strtod and took their 0, so garbage (or an emptied field) in any of the
+// ~100 numeric prefs fields was silently accepted AS ZERO and saved.
+//
+// Like the scanf it stands in for, trailing rubbish after a valid number is
+// tolerated ("12x" is 12); only a text with no number at all fails.
+inline void McDdxFailParse(CDataExchange* pDX, const char* pszWhat)
+{
+    // TMessageBox, not AfxMessageBox: the latter is declared much further down
+    // this header (same reason as McDdvFailRange below).
+    TMessageBox(CString("Please enter ") + pszWhat + ".", MB_ICONEXCLAMATION);
+    pDX->Fail();
+}
+inline BOOL McDdxScanLong(const char* p, long& out) {
+    if (!p) return FALSE;
+    char* end = nullptr;
+    long v = strtol(p, &end, 10);
+    if (end == p) return FALSE;            // nothing numeric there at all
+    out = v;
+    return TRUE;
+}
+inline BOOL McDdxScanULong(const char* p, unsigned long& out) {
+    if (!p) return FALSE;
+    char* end = nullptr;
+    unsigned long v = strtoul(p, &end, 10);
+    if (end == p) return FALSE;
+    out = v;
+    return TRUE;
+}
+inline BOOL McDdxScanDouble(const char* p, double& out) {
+    if (!p) return FALSE;
+    char* end = nullptr;
+    double v = strtod(p, &end);
+    if (end == p) return FALSE;
+    out = v;
+    return TRUE;
 }
 inline void DDX_Text(CDataExchange* pDX, int id, int& value) {
     CString s;
     if (!pDX->m_bSaveAndValidate) s.Format("%d", value);
-    DDX_TextNumImpl(pDX, id, s);
-    if (pDX->m_bSaveAndValidate) value = (int) strtol((LPCTSTR) s, nullptr, 10);
+    if (!DDX_TextNumImpl(pDX, id, s)) return;
+    if (pDX->m_bSaveAndValidate) {
+        long v = 0;
+        if (!McDdxScanLong((LPCTSTR) s, v)) McDdxFailParse(pDX, "an integer");
+        value = (int) v;
+    }
 }
 inline void DDX_Text(CDataExchange* pDX, int id, short& value) {
     CString s;
     if (!pDX->m_bSaveAndValidate) s.Format("%d", (int) value);
-    DDX_TextNumImpl(pDX, id, s);
-    if (pDX->m_bSaveAndValidate) value = (short) strtol((LPCTSTR) s, nullptr, 10);
+    if (!DDX_TextNumImpl(pDX, id, s)) return;
+    if (pDX->m_bSaveAndValidate) {
+        long v = 0;
+        if (!McDdxScanLong((LPCTSTR) s, v)) McDdxFailParse(pDX, "an integer");
+        value = (short) v;
+    }
 }
 inline void DDX_Text(CDataExchange* pDX, int id, long& value) {
     CString s;
     if (!pDX->m_bSaveAndValidate) s.Format("%ld", value);
-    DDX_TextNumImpl(pDX, id, s);
-    if (pDX->m_bSaveAndValidate) value = strtol((LPCTSTR) s, nullptr, 10);
+    if (!DDX_TextNumImpl(pDX, id, s)) return;
+    if (pDX->m_bSaveAndValidate) {
+        long v = 0;
+        if (!McDdxScanLong((LPCTSTR) s, v)) McDdxFailParse(pDX, "an integer");
+        value = v;
+    }
 }
 inline void DDX_Text(CDataExchange* pDX, int id, UINT& value) {
     CString s;
     if (!pDX->m_bSaveAndValidate) s.Format("%u", value);
-    DDX_TextNumImpl(pDX, id, s);
-    if (pDX->m_bSaveAndValidate) value = (UINT) strtoul((LPCTSTR) s, nullptr, 10);
+    if (!DDX_TextNumImpl(pDX, id, s)) return;
+    if (pDX->m_bSaveAndValidate) {
+        unsigned long v = 0;
+        if (!McDdxScanULong((LPCTSTR) s, v)) McDdxFailParse(pDX, "a positive integer");
+        value = (UINT) v;
+    }
 }
 // DWORD == UINT == uint32_t; no separate overload needed
 inline void DDX_Text(CDataExchange* pDX, int id, float& value) {
     CString s;
+    // MFC formats a float with FLT_DIG (6) significant digits, which "%g" is.
     if (!pDX->m_bSaveAndValidate) s.Format("%g", (double) value);
-    DDX_TextNumImpl(pDX, id, s);
-    if (pDX->m_bSaveAndValidate) value = (float) strtod((LPCTSTR) s, nullptr);
+    if (!DDX_TextNumImpl(pDX, id, s)) return;
+    if (pDX->m_bSaveAndValidate) {
+        double v = 0;
+        if (!McDdxScanDouble((LPCTSTR) s, v)) McDdxFailParse(pDX, "a number");
+        value = (float) v;
+    }
 }
 inline void DDX_Text(CDataExchange* pDX, int id, double& value) {
     CString s;
-    if (!pDX->m_bSaveAndValidate) s.Format("%g", value);
-    DDX_TextNumImpl(pDX, id, s);
-    if (pDX->m_bSaveAndValidate) value = strtod((LPCTSTR) s, nullptr);
+    // DBL_DIG (15), as MFC uses — NOT "%g"'s default 6.  With six, opening the
+    // Timer dialog on a timer of 59.999999 seconds rewrote it as 60, and a value
+    // near the top of its DDV range rounded PAST that range, so OK could no
+    // longer be pressed on a dialog the user had not touched.
+    if (!pDX->m_bSaveAndValidate) s.Format("%.15g", value);
+    if (!DDX_TextNumImpl(pDX, id, s)) return;
+    if (pDX->m_bSaveAndValidate) {
+        double v = 0;
+        if (!McDdxScanDouble((LPCTSTR) s, v)) McDdxFailParse(pDX, "a number");
+        value = v;
+    }
 }
 // Note: BOOL == int so no separate BOOL& overload needed.  DDX_Check is real,
 // but defined after CButton below (it casts GetDlgItem's result to CButton*).
@@ -3762,13 +3882,37 @@ public:
     DWORD_PTR GetItemData(int i) const {
         return g_wxhook_listbox_get_item_data ? (DWORD_PTR) g_wxhook_listbox_get_item_data(m_hWnd, i) : 0;
     }
-    int       FindString(int, LPCTSTR) const { return LB_ERR; }
+    // LB_FINDSTRING: a case-insensitive PREFIX match, wrapping once from
+    // `after`+1.  Not FindStringExact — the Complete Word dialog's filter is the
+    // part of the word already typed, so an exact entry usually does not exist.
+    // Built on the hooked GetCount/GetText, so it needs no hook of its own.
+    int       FindString(int after, LPCTSTR s) const {
+        int n = GetCount();
+        if (n <= 0) return LB_ERR;
+        CString want(s ? s : "");
+        int len = want.GetLength();
+        int start = (after < 0) ? 0 : (after + 1) % n;
+        for (int i = 0; i < n; i++) {
+            int idx = (start + i) % n;
+            CString item;
+            GetText(idx, item);
+            if (item.Left(len).CompareNoCase(want) == 0) return idx;
+        }
+        return LB_ERR;
+    }
     int       FindStringExact(int after, LPCTSTR s) const {
         return g_wxhook_listbox_find_string_exact
              ? g_wxhook_listbox_find_string_exact(m_hWnd, after, s ? s : "")
              : LB_ERR;
     }
-    int       SelectString(int, LPCTSTR) { return LB_ERR; }
+    // LB_SELECTSTRING: find as above, then select it.  The permanent LB_ERR left
+    // the Complete Word dialog with nothing selected, so OK/Enter inserted
+    // nothing at all.
+    int       SelectString(int after, LPCTSTR s) {
+        int idx = FindString(after, s);
+        if (idx != LB_ERR) SetCurSel(idx);
+        return idx;
+    }
     int       GetSelCount() const {
         return g_wxhook_listbox_get_sel_count ? g_wxhook_listbox_get_sel_count(m_hWnd) : 0;
     }
@@ -3880,12 +4024,12 @@ public:
     // route to the wx hooks.  Stubbing them here silently broke direct reads/
     // writes such as CImmediateDlg::OnRun (Execute Lua read an empty script).
     int  GetWindowTextLength() const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 4, 0) : 0; }
-    void LimitText(int) {}
+    void LimitText(int n = 0) { if (g_wxhook_edit_set_max_length) g_wxhook_edit_set_max_length((void*) m_hWnd, n); }
     void SetSel(int s, int e, BOOL=FALSE) { if (g_wxhook_edit_set_sel) g_wxhook_edit_set_sel((void*) m_hWnd, s, e); }
     void GetSel(DWORD& nS, DWORD& nE) const { int a=0,b=0; if (g_wxhook_edit_get_sel) g_wxhook_edit_get_sel((void*) m_hWnd, &a, &b); nS=(DWORD)a; nE=(DWORD)b; }
     void GetSel(int&  nS, int&  nE) const { int a=0,b=0; if (g_wxhook_edit_get_sel) g_wxhook_edit_get_sel((void*) m_hWnd, &a, &b); nS=a; nE=b; }
     void ReplaceSel(LPCTSTR t, BOOL=FALSE) { if (g_wxhook_edit_replace_sel) g_wxhook_edit_replace_sel((void*) m_hWnd, t); }
-    void SetReadOnly(BOOL=TRUE) {}
+    void SetReadOnly(BOOL bReadOnly = TRUE) { if (g_wxhook_edit_set_readonly) g_wxhook_edit_set_readonly((void*) m_hWnd, bReadOnly != FALSE); }
     int  GetLineCount() const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 0, 0) : 0; }
     int  LineIndex(int n=-1) const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 1, n) : 0; }
     int  LineLength(int n=-1) const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 2, n) : 0; }
@@ -4340,74 +4484,129 @@ public:
 // mfc_ui.h is the sole provider of these MFC string-collection types on
 // non-Windows (every build sees them through this header).
 
-// CStringList — stable-pointer POSITION, compatible with MFC iteration idiom
+// CStringList — an INTRUSIVE doubly-linked list whose POSITION is the node
+// address, which is what MFC's POSITION actually is.  The std::list version it
+// replaces also handed out element addresses, but had no way to get the
+// ITERATOR back from one, so every cursor step (GetNext, GetPrev, RemoveAt,
+// InsertBefore/After) scanned the list to find it: O(N) per step where MFC is
+// O(1), i.e. O(N^2) for a full walk.  That is the same defect that was fixed for
+// CTypedPtrList in 5cb6681 (see platform/mfc_collections.h) — and the list that
+// pays for it here is m_strMapList, which CalculateSpeedWalkString walks in full
+// and which grows unbounded across a mapping session.
+//
+// A POSITION stays valid until its own element is removed, exactly as in MFC.
 class CStringList : public CObject {
-    std::list<CString> m_data;
-public:
-    void     RemoveAll()               { m_data.clear(); }
-    bool     IsEmpty() const           { return m_data.empty(); }
-    int      GetCount() const          { return (int)m_data.size(); }
-    POSITION AddTail(const CString& s) { m_data.push_back(s);  return (POSITION)&m_data.back(); }
-    POSITION AddHead(const CString& s) { m_data.push_front(s); return (POSITION)&m_data.front(); }
-    CString  RemoveHead() { CString v=m_data.front(); m_data.pop_front(); return v; }
-    CString  RemoveTail() { CString v=m_data.back();  m_data.pop_back();  return v; }
-    const CString& GetHead() const { return m_data.front(); }
-    const CString& GetTail() const { return m_data.back(); }
+    struct Node {
+        CString val;
+        Node*   prev;
+        Node*   next;
+    };
+    Node* m_head = nullptr;
+    Node* m_tail = nullptr;
+    int   m_count = 0;
 
-    POSITION GetHeadPosition() const {
-        return m_data.empty() ? nullptr : (POSITION)&m_data.front();
+    Node* NodeAt(POSITION pos) const { return reinterpret_cast<Node*>(pos); }
+    void  Unlink(Node* n) {
+        if (!n) return;
+        if (n->prev) n->prev->next = n->next; else m_head = n->next;
+        if (n->next) n->next->prev = n->prev; else m_tail = n->prev;
+        delete n;
+        --m_count;
     }
-    POSITION GetTailPosition() const {
-        return m_data.empty() ? nullptr : (POSITION)&m_data.back();
+public:
+    CStringList() {}
+    ~CStringList() { RemoveAll(); }
+    // The std::list member gave these implicitly; nodes do not, and a shallow
+    // copy would double-free.
+    CStringList(const CStringList& other) { *this = other; }
+    CStringList& operator=(const CStringList& other) {
+        if (this == &other) return *this;
+        RemoveAll();
+        for (Node* n = other.m_head; n; n = n->next) AddTail(n->val);
+        return *this;
     }
+
+    void     RemoveAll() {
+        for (Node* n = m_head; n; ) { Node* nx = n->next; delete n; n = nx; }
+        m_head = m_tail = nullptr;
+        m_count = 0;
+    }
+    bool     IsEmpty() const           { return m_count == 0; }
+    int      GetCount() const          { return m_count; }
+    POSITION AddTail(const CString& s) {
+        Node* n = new Node{ s, m_tail, nullptr };
+        if (m_tail) m_tail->next = n; else m_head = n;
+        m_tail = n;
+        ++m_count;
+        return (POSITION)n;
+    }
+    POSITION AddHead(const CString& s) {
+        Node* n = new Node{ s, nullptr, m_head };
+        if (m_head) m_head->prev = n; else m_tail = n;
+        m_head = n;
+        ++m_count;
+        return (POSITION)n;
+    }
+    CString  RemoveHead() { CString v = m_head ? m_head->val : CString(); Unlink(m_head); return v; }
+    CString  RemoveTail() { CString v = m_tail ? m_tail->val : CString(); Unlink(m_tail); return v; }
+    const CString& GetHead() const { static const CString e; return m_head ? m_head->val : e; }
+    const CString& GetTail() const { static const CString e; return m_tail ? m_tail->val : e; }
+
+    POSITION GetHeadPosition() const { return (POSITION)m_head; }
+    POSITION GetTailPosition() const { return (POSITION)m_tail; }
     CString& GetNext(POSITION& pos) const {
-        CString* p = (CString*)pos;
-        for (auto it = m_data.begin(); it != m_data.end(); ++it) {
-            if (&*it == p) {
-                auto cur = it++;
-                pos = (it != m_data.end()) ? (POSITION)&*it : nullptr;
-                return const_cast<CString&>(*cur);
-            }
-        }
-        pos = nullptr;
-        return const_cast<CString&>(m_data.back()); // fallback
+        static CString e;
+        Node* n = NodeAt(pos);
+        if (!n) { pos = nullptr; return e; }
+        pos = (POSITION)n->next;
+        return n->val;
     }
     CString& GetPrev(POSITION& pos) const {
-        CString* p = (CString*)pos;
-        for (auto it = m_data.rbegin(); it != m_data.rend(); ++it) {
-            if (&*it == p) {
-                auto cur = it++;
-                pos = (it != m_data.rend()) ? (POSITION)&*it : nullptr;
-                return const_cast<CString&>(*cur);
-            }
-        }
-        pos = nullptr;
-        return const_cast<CString&>(m_data.front());
+        static CString e;
+        Node* n = NodeAt(pos);
+        if (!n) { pos = nullptr; return e; }
+        pos = (POSITION)n->prev;
+        return n->val;
     }
-    CString& GetAt(POSITION pos) const { return const_cast<CString&>(*(CString*)pos); }
-    void     RemoveAt(POSITION pos) {
-        CString* p = (CString*)pos;
-        for (auto it = m_data.begin(); it != m_data.end(); ++it)
-            if (&*it == p) { m_data.erase(it); return; }
+    // A foreign / stale POSITION used to fall through to m_data.back(), which is
+    // undefined behaviour on an empty list; a static empty string is not.
+    CString& GetAt(POSITION pos) const {
+        static CString e;
+        Node* n = NodeAt(pos);
+        return n ? n->val : e;
     }
-    POSITION Find(const CString& val, POSITION = nullptr) const {
-        for (auto& s : m_data) if (s == val) return (POSITION)&s;
+    void     RemoveAt(POSITION pos) { Unlink(NodeAt(pos)); }
+    // MFC searches strictly AFTER startAfter (NULL = from the head).
+    POSITION Find(const CString& val, POSITION startAfter = nullptr) const {
+        Node* n = startAfter ? NodeAt(startAfter)->next : m_head;
+        for (; n; n = n->next) if (n->val == val) return (POSITION)n;
         return nullptr;
     }
-    POSITION FindIndex(int n) const {
-        int i = 0;
-        for (auto& s : m_data) if (i++ == n) return (POSITION)&s;
-        return nullptr;
+    POSITION FindIndex(int i) const {
+        if (i < 0) return nullptr;
+        Node* n = m_head;
+        for (; n && i > 0; n = n->next, --i) {}
+        return (POSITION)n;
     }
     POSITION InsertAfter(POSITION pos, const CString& v) {
-        for (auto it = m_data.begin(); it != m_data.end(); ++it)
-            if (&*it == (CString*)pos) { auto r = m_data.insert(std::next(it), v); return (POSITION)&*r; }
-        return AddTail(v);
+        Node* at = NodeAt(pos);
+        if (!at) return AddTail(v);
+        if (!at->next) return AddTail(v);
+        Node* n = new Node{ v, at, at->next };
+        at->next->prev = n;
+        at->next = n;
+        ++m_count;
+        return (POSITION)n;
     }
     POSITION InsertBefore(POSITION pos, const CString& v) {
-        for (auto it = m_data.begin(); it != m_data.end(); ++it)
-            if (&*it == (CString*)pos) { auto r = m_data.insert(it, v); return (POSITION)&*r; }
-        return AddHead(v);
+        Node* at = NodeAt(pos);
+        if (!at) return AddHead(v);
+        if (!at->prev) return AddHead(v);
+        Node* n = new Node{ v, at->prev, at };
+        at->prev->next = n;
+        at->prev = n;
+        ++m_count;
+        return (POSITION)n;
     }
 };
 
@@ -4781,9 +4980,20 @@ public:
 
         bool overwrite = (m_ofn.Flags & OFN_OVERWRITEPROMPT) != 0;
 
+        // "Open OR create": an open-style dialog whose flags say the file need
+        // not exist and that it should warn before overwriting.  On Windows an
+        // open dialog will happily return a name that is not there; a macOS
+        // NSOpenPanel will not, and wxFD_FILE_MUST_EXIST is a no-op there, so
+        // honouring the flag would not help — it has to be a SAVE panel.
+        // Exactly one call site in the tree is shaped this way: the world-prefs
+        // Notes page's "Save notes" (prefspropertypages.cpp:5290), which could
+        // therefore never write to a file that did not already exist.
+        bool openOrCreate = m_bOpenFileDialog && overwrite &&
+                            (m_ofn.Flags & OFN_FILEMUSTEXIST) == 0;
+
         if (g_wxhook_file_dialog) {
             char* path = g_wxhook_file_dialog(
-                m_bOpenFileDialog,
+                m_bOpenFileDialog && !openOrCreate,
                 m_ofn.lpstrTitle,
                 initDir.IsEmpty() ? nullptr : static_cast<const char*>(initDir),
                 leaf,
@@ -4883,19 +5093,36 @@ public:
     // Out-of-line (in wx_tree_property_sheet.cpp): routes to the flat-sheet hook.
     // Virtual so CTreePropertySheet::DoModal properly overrides it.
     virtual INT_PTR DoModal();
-    void SetActivePage(int)   {}
-    void SetActivePage(CPropertyPage*) {}
-    int  GetActiveIndex() const { return 0; }
-    CPropertyPage* GetActivePage() const { return nullptr; }
-    CPropertyPage* GetPage(int) const { return nullptr; }
-    int  GetPageCount() const   { return 0; }
+    // The page accessors answer over the recorded page list.  GetActivePage()
+    // used to be a permanent nullptr, which every sheet's OnKickIdle handler
+    // dereferences unconditionally (GlobalPrefsSheet.cpp:59, PluginWizardSheet.cpp:90,
+    // PrefsPropertySheet.cpp:45) — safe today only because nothing on the port
+    // routes WM_KICKIDLE to a sheet, and a landmine the moment something does.
+    // MFC's initial active page is the first one, which is what index 0 gives.
+    void SetActivePage(int n) {
+        if (n >= 0 && n < (int) m_flatPages.size()) m_iActivePage = n;
+    }
+    void SetActivePage(CPropertyPage* p) {
+        int n = GetPageIndex(p);
+        if (n >= 0) m_iActivePage = n;
+    }
+    int  GetActiveIndex() const { return m_iActivePage; }
+    CPropertyPage* GetActivePage() const { return GetPage(m_iActivePage); }
+    CPropertyPage* GetPage(int n) const {
+        return (n >= 0 && n < (int) m_flatPages.size()) ? m_flatPages[n] : nullptr;
+    }
+    int  GetPageCount() const   { return (int) m_flatPages.size(); }
     void EnableStackedTabs(BOOL) {}
     void SetTitle(LPCTSTR s, UINT=0) { if (s) m_strSheetCaption = s; }
     virtual BOOL OnInitDialog() { return TRUE; }
     void SetWizardMode() {}
     void SetFinishText(LPCTSTR) {}
     void SetWizardButtons(DWORD) {}
-    int  GetPageIndex(CPropertyPage*) const { return -1; }
+    int  GetPageIndex(CPropertyPage* p) const {
+        for (size_t i = 0; i < m_flatPages.size(); i++)
+            if (m_flatPages[i] == p) return (int) i;
+        return -1;
+    }
     CTabCtrl* GetTabControl() const { return nullptr; }
     // Mouse/paint virtuals needed by TreePropertySheet which subclasses CPropertySheet
     virtual void OnLButtonDown(UINT, CPoint) {}
@@ -4911,6 +5138,9 @@ public:
 
     // Port: pages recorded by AddPage(), handed to the flat-sheet bridge hook.
     std::vector<CPropertyPage*> m_flatPages;
+    // Port: which of them is showing.  The bridges keep it in step with the
+    // wxNotebook / wxTreebook selection; MFC starts on the first page.
+    int m_iActivePage = 0;
     // Port: the sheet's window caption.  Set directly from the LPCTSTR ctor /
     // SetTitle, or as a string-resource id from the UINT ctor (the bridge maps
     // the id to text — the port has no string table).  See hook_run_property_sheet*.
@@ -6105,10 +6335,14 @@ public:
     POSITION GetHeadPosition() const {
         return m_list.empty() ? nullptr : (POSITION)(uintptr_t)1;
     }
-    POSITION GetTailPosition() const { return GetHeadPosition(); }
+    POSITION GetTailPosition() const {
+        return m_list.empty() ? nullptr : (POSITION)(uintptr_t)m_list.size();
+    }
     // POSITION encodes a 1-based element index.  (The previous iterator-cached
     // implementation reset to begin() on every call — pos was always 1 — so
     // iterating any list with 2+ elements spun forever on the first element.)
+    // Unlike MFC's node-address POSITION, an index does not survive a removal
+    // ahead of it; nothing in the tree holds one across a RemoveAt.
     TYPE& GetNext(POSITION& pos) const {
         static TYPE dummy{};
         size_t idx = (size_t)(uintptr_t)pos;   // 1-based
@@ -6119,18 +6353,67 @@ public:
         pos = (idx == m_list.size()) ? nullptr : (POSITION)(uintptr_t)(idx + 1);
         return r;
     }
-    TYPE& GetPrev(POSITION& pos) const { return GetNext(pos); }
+    // MFC walks BACKWARDS here.  Forwarding to GetNext made a tail-to-head walk
+    // run head-to-tail and then stop, which is neither an error nor the answer.
+    TYPE& GetPrev(POSITION& pos) const {
+        static TYPE dummy{};
+        size_t idx = (size_t)(uintptr_t)pos;   // 1-based
+        if (idx == 0 || idx > m_list.size()) { pos = nullptr; return dummy; }
+        auto it = m_list.begin();
+        std::advance(it, idx - 1);
+        TYPE& r = const_cast<TYPE&>(*it);
+        pos = (idx == 1) ? nullptr : (POSITION)(uintptr_t)(idx - 1);
+        return r;
+    }
     TYPE& GetHead() const { static TYPE d{}; return m_list.empty() ? d : const_cast<TYPE&>(m_list.front()); }
     TYPE& GetTail() const { static TYPE d{}; return m_list.empty() ? d : const_cast<TYPE&>(m_list.back()); }
-    TYPE& GetAt(POSITION) const { static TYPE d{}; return d; }
-    void RemoveAt(POSITION) {}
-    POSITION Find(ARG_TYPE, POSITION = nullptr) const { return nullptr; }
+    TYPE& GetAt(POSITION pos) const {
+        static TYPE d{};
+        size_t idx = (size_t)(uintptr_t)pos;
+        if (idx == 0 || idx > m_list.size()) return d;
+        auto it = m_list.begin();
+        std::advance(it, idx - 1);
+        return const_cast<TYPE&>(*it);
+    }
+    void RemoveAt(POSITION pos) {
+        size_t idx = (size_t)(uintptr_t)pos;
+        if (idx == 0 || idx > m_list.size()) return;
+        auto it = m_list.begin();
+        std::advance(it, idx - 1);
+        m_list.erase(it);
+    }
+    // The `return nullptr` stub is why the Chat List dialog lost the user's
+    // selection and focus on every refresh: CChatListDlg asks Find whether each
+    // chat id was selected before, and the answer was always "no".
+    // MFC searches strictly AFTER startAfter (NULL = from the head).
+    POSITION Find(ARG_TYPE v, POSITION startAfter = nullptr) const {
+        size_t first = startAfter ? (size_t)(uintptr_t)startAfter + 1 : 1;
+        size_t idx   = 1;
+        for (auto it = m_list.begin(); it != m_list.end(); ++it, ++idx)
+            if (idx >= first && *it == v)
+                return (POSITION)(uintptr_t)idx;
+        return nullptr;
+    }
     POSITION FindIndex(int n) const {
         if (n < 0 || n >= (int)m_list.size()) return nullptr;
         return (POSITION)(uintptr_t)(n+1);
     }
-    POSITION InsertBefore(POSITION, ARG_TYPE v) { return AddHead(v); }
-    POSITION InsertAfter(POSITION, ARG_TYPE v)  { return AddTail(v); }
+    POSITION InsertBefore(POSITION pos, ARG_TYPE v) {
+        size_t idx = (size_t)(uintptr_t)pos;
+        if (idx == 0 || idx > m_list.size()) return AddHead(v);
+        auto it = m_list.begin();
+        std::advance(it, idx - 1);
+        m_list.insert(it, v);
+        return (POSITION)(uintptr_t)idx;
+    }
+    POSITION InsertAfter(POSITION pos, ARG_TYPE v) {
+        size_t idx = (size_t)(uintptr_t)pos;
+        if (idx == 0 || idx > m_list.size()) return AddTail(v);
+        auto it = m_list.begin();
+        std::advance(it, idx);
+        m_list.insert(it, v);
+        return (POSITION)(uintptr_t)(idx + 1);
+    }
 };
 
 // ── CMemFile additional constructors ──────────────────────────────────────

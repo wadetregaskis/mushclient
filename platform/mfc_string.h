@@ -387,9 +387,14 @@ public:
 
     // ── Span operations ───────────────────────────────────────────────────────
 
-    int SpanIncluding(const char* chars) const {
-        if (!chars) return 0;
-        return (int)s_.find_first_not_of(chars);
+    // MFC returns the leading run of characters that ARE in `chars` — the exact
+    // mirror of SpanExcluding below.  This used to return an int (the position of
+    // the first character NOT in the set), i.e. a different operation entirely
+    // under MFC's name, with -1 for the all-match case.
+    CString SpanIncluding(const char* chars) const {
+        if (!chars) return CString();
+        auto p = s_.find_first_not_of(chars);
+        return (p == std::string::npos) ? *this : CString(s_.substr(0, p));
     }
     CString SpanExcluding(const char* chars) const {
         if (!chars) return *this;

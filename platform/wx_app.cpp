@@ -61,6 +61,14 @@ int RunWorldFrameSelfTest();
 // key) are both completely silent.
 int RunMenuBarSelfTest();
 
+// In-app conformance harness for the macOS menu-bar ("system tray") item
+// (platform/statusitem_selftest.cpp), run via the hidden --statusitem-selftest
+// flag.  The item is an NSStatusItem living in an Obj-C++ TU that only the
+// executable compiles, so no headless test can observe it -- and the
+// preference behind it used to reach a canonical function that could not
+// possibly do anything.
+int RunStatusItemSelfTest();
+
 // In-app conformance harness for the five embedded scripting engines
 // (platform/engines_selftest.cpp), run via the hidden --engines-selftest flag.
 // They cannot be tested headlessly: each pulls in a whole interpreter, which the
@@ -251,6 +259,17 @@ public:
         for (int i = 1; i < argc; ++i) {
             if (wxString(argv[i]) == wxT("--menubar-selftest")) {
                 const int failures = RunMenuBarSelfTest();
+                SelftestExit(failures == 0 ? 0 : 1);
+            }
+        }
+        // The menu-bar ("tray") item harness needs the dialog resources loaded
+        // above: it reads IDR_RIGHT_TRAY_MENU and the bundled tray artwork out
+        // of them.  It exits before InitInstance like the rest, and removes its
+        // own status item on the way out so nothing is left in the real menu
+        // bar.
+        for (int i = 1; i < argc; ++i) {
+            if (wxString(argv[i]) == wxT("--statusitem-selftest")) {
+                const int failures = RunStatusItemSelfTest();
                 SelftestExit(failures == 0 ? 0 : 1);
             }
         }

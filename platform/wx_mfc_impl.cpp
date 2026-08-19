@@ -57,6 +57,7 @@
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "StatLink.h"                 // CStaticLink — the only real SubclassDlgItem client
 #include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
+#include "platform/wx_statusitem.h"   // ApplyTrayItemFromPrefs (the menu-bar "tray" item)
 #include "platform/wx_activity.h"     // ShowActivityWindow (Game ▸ Activity List)
 #include "platform/ma_sound.h"        // miniaudio sound engine (volume/pan/buffers)
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
@@ -2529,6 +2530,12 @@ static void hook_file_preferences(wxWindow* /*parent*/)
 {
     DoGlobalPrefs(NULL);
     ApplyDockIconFromPrefs();   // the Tray/Taskbar page may have changed the icon
+    // ...and the same page's "Icon Placement" decides whether there is a
+    // menu-bar item at all.  Called UNCONDITIONALLY, unlike the canonical
+    // GlobalPrefs.cpp:1495 guard: that one calls AddTrayIcon only when the
+    // setting is on, so turning it OFF would leave the item in the menu bar
+    // until the next launch (nothing canonical ever removes it).
+    ApplyTrayItemFromPrefs();
     // Push the App-level settings that each world's output pane caches at
     // construction (currently the double-click word delimiters).  Without this
     // they were applied once per world open and a prefs change appeared to do

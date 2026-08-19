@@ -6067,6 +6067,14 @@ void CWorldChildFrame::mouseMoveMiniWindow(long x, long y)
     MouseMoveMiniWindow(m_doc, CPoint((int) x, (int) y), hooks);
 }
 
+// The read side of the same seam — the pane's capture IS the one the routing
+// takes and releases (WxMouseHooks::IsCaptured above), so WindowAddHotspot
+// gets the answer ::GetCapture() gives it on Windows.
+bool CWorldChildFrame::mouseCaptured() const
+{
+    return m_output && m_output->HasCapture();
+}
+
 // ── the info bar (P2 infobar family) ─────────────────────────────────────────
 // On Windows these drive a CRichEditCtrl on the main frame; here the world
 // child frame hosts a styled wxTextCtrl.  world.Info appends text in the

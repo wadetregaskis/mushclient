@@ -575,7 +575,11 @@ long CMUSHclientDoc::WindowAddHotspot(LPCTSTR Name,
                            Flags);
 
   // in mouse was over hotspot when it was created, do a "mouse move" to detect this
-  if ((status == eOK) && !(GetCapture()))
+  // Through the typed view seam as well (pal::IWorldView::mouseCaptured): the
+  // Windows adapter answers with the same ::GetCapture() this used to call, but
+  // the free function is a permanent nullptr off Windows, so the guard was dead
+  // there and a hotspot added from a drag callback re-entered the routing.
+  if ((status == eOK) && !(m_pWorldView && m_pWorldView->mouseCaptured ()))
     {
 
     // only check the current hotspot, not all of them

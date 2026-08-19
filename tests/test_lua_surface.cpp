@@ -1210,6 +1210,44 @@ TEST(LuaSurface, WindowAddHotspotGuardIsPerDocument)
     docA.m_pWorldView = NULL;
 }
 
+// The other half of WindowAddHotspot's re-detect guard: upstream skips it
+// entirely while the mouse is CAPTURED, so a hotspot added from inside a drag's
+// own Move/Release callback does not re-enter the mouse routing and fire a
+// second drag MoveCallback plus a second ON_PLUGIN_MOUSE_MOVED.  It asked
+// ::GetCapture(), which off Windows is a permanent nullptr stub, so the guard
+// was dead here; it now reads pal::IWorldView::mouseCaptured().
+struct CapturedMouseView : FakeWorldView {
+    bool captured;
+
+    CapturedMouseView () : captured (false) {}
+
+    bool mouseCaptured () const override { return captured; }
+};
+
+TEST(LuaSurface, WindowAddHotspotSkipsTheReDetectWhileTheMouseIsCaptured)
+{
+    CMUSHclientDoc doc;
+    CapturedMouseView view;
+    doc.m_pWorldView = &view;
+
+    ASSERT_EQ((long) eOK, doc.WindowCreate("mw", 0, 0, 20, 20, 0, 0, 0));
+
+    // Control: with nothing captured, a hotspot created under the resting
+    // pointer (the miniwindow's last mouse position is the origin) re-detects,
+    // exactly as it always has.  A "never re-detect" fix fails here.
+    EXPECT_EQ((long) eOK, doc.WindowAddHotspot("mw", "h1", 0, 0, 10, 10,
+                                               "", "", "", "", "", "", 0, 0));
+    EXPECT_EQ(1, view.mouseMoves);
+
+    // ...and mid-drag it does not.
+    view.captured = true;
+    EXPECT_EQ((long) eOK, doc.WindowAddHotspot("mw", "h2", 0, 0, 10, 10,
+                                               "", "", "", "", "", "", 0, 0));
+    EXPECT_EQ(1, view.mouseMoves);
+
+    doc.m_pWorldView = NULL;
+}
+
 // Stage 2: the pixels are real.
 //
 // platform/headless_surface.cpp installs pal::CpuRaster as the headless

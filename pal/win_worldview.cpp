@@ -877,6 +877,14 @@ public:
         } // end of looping through views
     }
 
+    bool mouseCaptured() const override
+    {
+        // WindowAddHotspot's guard, verbatim: on Windows the capture is held
+        // for the whole miniwindow drag (Mouse_Down_MiniWindow's SetCapture),
+        // so a hotspot added from a drag callback skips the re-detect.
+        return ::GetCapture() != NULL;
+    }
+
     // ── the info bar ───────────────────────────────────────────────────────
     void infobarShow(bool visible) override
     {

@@ -299,6 +299,7 @@ public:
     bool        saveWorld() override;
     pal::Rect   mainRect() const override;
     void        mouseMoveMiniWindow(long x, long y) override;
+    bool        mouseCaptured() const override;
     void        infobarShow(bool visible) override;
     void        infobarClear() override;
     void        infobarText(const char* text) override;

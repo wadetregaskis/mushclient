@@ -1245,6 +1245,91 @@ TEST(WorldLoad, WorldSettingsNumericOptions)
     EXPECT_STREQ("user1",             (const char*)doc.m_strProxyUserName);
 }
 
+TEST(WorldLoad, AbsentUtf8FollowsTheOptionTableDefault)
+{
+    // utf_8 is off by default — scriptingoptions_numeric.inc:172,
+    //   {"utf_8",  false,  O(m_bUTF_8)}
+    // — and a world file that does not mention it must come up in that state,
+    // exactly as on Windows.  Two arms, because the loader treats them
+    // differently (xml_load_world.cpp Load_World_Numeric_Options_XML, boolean
+    // branch):
+    //
+    //   no defaults="y"  → the "take zero" arm forces the member to 0.
+    //   defaults="y"     → Get_XML_boolean returns false and NOTHING is
+    //                      written, so whatever the document carried INTO the
+    //                      load survives it.
+    //
+    // The second arm is why this matters on the port.  wx_seed_new_world_defaults
+    // (wx_mfc_impl.cpp) runs on the Open World File path as well as File ▸ New
+    // World, and it used to set m_bUTF_8 = 1 before the load — against the table.
+    // A hand-written defaults="y" world therefore opened in UTF-8 on macOS and
+    // in ANSI on Windows, and the flip was saved back into the user's file.
+    // Arm three below pins the "survives the load" semantics that made the seed
+    // load-bearing, so a future re-seed of a table-contradicting value is not
+    // silently invisible again.  (The seed itself is GUI-side, so the assertion
+    // ON it lives in platform/gui_bridge_selftest.cpp, TestNewWorldDefaults.)
+
+    // The ctor's SetDefaults(false) walks the same table: a brand-new document
+    // — the "new world" starting point — is already ANSI.
+    {
+        CMUSHclientDoc fresh;
+        EXPECT_EQ(0, (int)fresh.m_bUTF_8);
+    }
+
+    const char* plain = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(plain).c_str()));
+        EXPECT_EQ(0, (int)doc.m_bUTF_8);
+    }
+
+    const char* withDefaults = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000" defaults="y">
+</world>
+</muclient>)";
+
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(withDefaults).c_str()));
+        EXPECT_EQ(0, (int)doc.m_bUTF_8);
+    }
+
+    // ...and the load really is a no-op for this attribute under defaults="y" —
+    // a value planted before the load (what the port's pre-load seed did) comes
+    // straight back out.  Without this arm the two assertions above would also
+    // pass if the loader happened to zero the member for its own reasons, and
+    // the seeding bug would look harmless.
+    {
+        CMUSHclientDoc doc;
+        doc.m_bUTF_8 = 1;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(withDefaults).c_str()));
+        // defaults="y" + absent utf_8 must leave the member untouched — which is
+        // precisely why nothing may seed it against the option table pre-load.
+        EXPECT_EQ(1, (int)doc.m_bUTF_8);
+    }
+
+    // The explicit attribute still wins over both, in both directions.
+    {
+        const char* explicitOn = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000" defaults="y" utf_8="y">
+</world>
+</muclient>)";
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(explicitOn).c_str()));
+        EXPECT_EQ(1, (int)doc.m_bUTF_8);
+    }
+}
+
 TEST(WorldLoad, WorldSettingsVisibleViaOptionAPI)
 {
     // Values loaded from XML must be visible through the real option API

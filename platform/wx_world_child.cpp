@@ -1634,7 +1634,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_statusBar->SetFieldsCount(kStatusPaneCount);
     {
         // Indexed by StatusPaneId; -1 = stretch (the message pane).
-        const int widths[kStatusPaneCount] = { -1, 70, 160, 90, 130, 70 };
+        // The time pane is 150, not 90: its widest state is now two durations
+        // ("0:01:30 (2:15:00)") rather than one.  Only the stretch pane at [0]
+        // gives up the width.
+        const int widths[kStatusPaneCount] = { -1, 70, 160, 150, 130, 70 };
         m_statusBar->SetStatusWidths(kStatusPaneCount, widths);
     }
     // The four CMyStatusBar click shortcuts (MyStatusBar.cpp).  Bound here
@@ -3147,6 +3150,114 @@ void CWorldChildFrame::LogLine(const SOutputLine& line)
     fflush(m_logFile);
 }
 
+// ── FormatTimePane ────────────────────────────────────────────────────────
+// The text of ID_STATUSLINE_TIME, and a deliberate divergence from Windows.
+//
+// Windows shows `CTime::GetCurrentTime() - m_tStatusTime` and nothing else
+// (CMUSHclientDoc::OnUpdateStatuslineTime, doc.cpp:1069).  Despite the name,
+// m_tStatusTime has exactly three writers -- the doc constructor
+// (doc_construct.cpp:364), Game > Reset Connected Time (doc.cpp:3607) and
+// world.ResetStatusTime (methods_output.cpp:87) -- and nothing on connect or
+// disconnect touches it, so that clock measures wall time since the world
+// WINDOW was opened (or last reset) and keeps counting while disconnected.
+// It answers "how long has this window been up", not "how long have I been
+// connected", which is what a pane labelled connected-time should say.
+//
+// So, port-side:
+//
+//   connected, first connection       "0:01:30"
+//   connected, earlier ones too       "0:01:30 (2:15:00)"
+//   disconnected, history to report   "past 2:15:00"
+//   disconnected, nothing to report   ""
+//
+// H:MM:SS throughout -- the format the pane already used, and the most
+// compact one that never needs units.  The parenthetical is the cumulative
+// total INCLUDING the session ticking in front of it, and it appears only
+// when that differs from the current session, so a world that has connected
+// exactly once shows a single number and the second number can never be read
+// as a rival clock for the same thing.  "past" is a word, not a symbol,
+// because the failure mode to avoid is a stale duration that reads as a live
+// one; the freeze pane says "CLOSED" one pane over at the same time.
+//
+// ── how the resets stay observable ────────────────────────────────────────
+// Game > Reset Connected Time and world.ResetStatusTime() write m_tStatusTime
+// and nothing else, so once the pane stops being a plain function of it they
+// would go dead -- which is exactly the bug that reading m_tConnectTime here
+// used to cause, in the other direction.
+//
+// Re-pointing those two handlers at m_tConnectTime was rejected twice over:
+// they live in canonical Windows source (doc.cpp, methods_output.cpp), so it
+// would change Windows too, AND it would corrupt the cumulative total, since
+// doc_shared.cpp:1631 accrues `m_tsConnectDuration += now - m_tConnectTime`
+// on every disconnect -- moving the connect instant forward silently discards
+// the time before it.
+//
+// Instead `resetEpoch` (= m_tStatusTime) is read here as a DISPLAY EPOCH: the
+// pane never reports more time than has passed since it.  A reset therefore
+// drops both numbers to zero and they climb again from there, connected or
+// not, with no canonical source touched.  In normal use m_tStatusTime holds
+// the doc's construction instant, which predates every connection this world
+// has had, so the clamp is inert and the raw figures show through unchanged.
+//
+// static
+std::string CWorldChildFrame::FormatTimePane(bool   connected,
+                                             time_t now,
+                                             time_t connectStart,
+                                             long   completedSecs,
+                                             time_t resetEpoch)
+{
+    auto hms = [](long s) {
+        if (s < 0) s = 0;
+        char buf[32];
+        snprintf(buf, sizeof buf, "%ld:%02ld:%02ld",
+                 s / 3600, (s / 60) % 60, s % 60);
+        return std::string(buf);
+    };
+
+    // Seconds since the last reset; -1 when there is no usable epoch (a doc
+    // whose constructor never ran, or a clock that has gone backwards), in
+    // which case nothing is clamped.
+    const long sinceReset =
+        (resetEpoch > 0 && now >= resetEpoch) ? (long) (now - resetEpoch) : -1;
+    auto clamp = [sinceReset](long s) {
+        if (s < 0) return 0L;
+        return (sinceReset >= 0 && s > sinceReset) ? sinceReset : s;
+    };
+
+    if (completedSecs < 0) completedSecs = 0;
+
+    if (connected) {
+        const long current = clamp(
+            (connectStart > 0 && now >= connectStart) ? (long) (now - connectStart) : 0);
+        const long total = clamp(completedSecs + current);
+        if (total > current)
+            return hms(current) + " (" + hms(total) + ")";
+        return hms(current);
+    }
+
+    const long total = clamp(completedSecs);
+    return total > 0 ? "past " + hms(total) : std::string();
+}
+
+// ── RefreshTimePane ───────────────────────────────────────────────────────
+// Just kStatusPaneTime, from the doc's three clocks.  Deliberately NOT
+// UpdateStatusBar(): the world timer drives this every second, and rewriting
+// pane 0 that often would wipe SetTransientStatus's text ("Reconnecting", the
+// queued-command counts, find results, the mapper's speedwalk line) inside a
+// second of its arriving.
+void CWorldChildFrame::RefreshTimePane()
+{
+    if (!m_doc || !m_statusBar) return;
+    const std::string s = FormatTimePane(
+        m_doc->m_iConnectPhase == eConnectConnectedToMud,
+        time(nullptr),
+        m_doc->m_tConnectTime.GetTime(),
+        m_doc->m_tsConnectDuration.GetTotalSeconds(),
+        m_doc->m_tStatusTime.GetTime());
+    m_statusBar->SetStatusText(wxString::FromUTF8(s.c_str(), s.size()),
+                               kStatusPaneTime);
+}
+
 // ── UpdateStatusBar ───────────────────────────────────────────────────────
 // Writes the current connection state to the MDI parent's status bar.
 // Only meaningful when this frame is the active MDI child; callers should
@@ -3213,29 +3324,10 @@ void CWorldChildFrame::UpdateStatusBar()
     }
     pane(kStatusPaneMessage, msg);
 
-    // ── Pane 2: connection duration (H:MM:SS) while connected ──────────────
-    // m_tStatusTime, NOT m_tConnectTime.  This pane is CMainFrame's
-    // ID_STATUSLINE_TIME, whose canonical text comes from
-    // CMUSHclientDoc::OnUpdateStatuslineTime (doc.cpp:1069) -- and that reads
-    // m_tStatusTime, which is seeded at doc construction and re-seeded by the
-    // only two things that claim to reset this pane: Game > Reset Connected
-    // Time (OnGameResetconnectedtime, doc.cpp:3691) and world.ResetStatusTime
-    // (methods_output.cpp:87).  Reading m_tConnectTime instead made BOTH of
-    // them dead on the port: they wrote a member the pane never looked at.
-    // (m_tConnectTime is a different clock -- the connect instant that
-    // GetInfo(301) and the "--- Connected on ... ---" banner report -- and
-    // nothing resets it but a fresh connection, which is why the difference
-    // was invisible until you tried the menu item.)
-    if (connected) {
-        time_t start = m_doc->m_tStatusTime.GetTime();
-        time_t now   = time(nullptr);
-        long secs = (start > 0 && now >= start) ? (long)(now - start) : 0;
-        char buf[32];
-        snprintf(buf, sizeof buf, "%ld:%02ld:%02ld", secs / 3600, (secs / 60) % 60, secs % 60);
-        pane(kStatusPaneTime, buf);
-    } else {
-        pane(kStatusPaneTime, "");
-    }
+    // ── Pane 3: connection duration ────────────────────────────────────────
+    // See FormatTimePane above: the current connection, the cumulative total
+    // in parentheses when it differs, "past H:MM:SS" once disconnected.
+    RefreshTimePane();
 
     // ── Pane 3: lines received ↓ / sent ↑ this connection ──────────────────
     {
@@ -5247,6 +5339,21 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // (UpdateState only touches wx state that actually changed).
     if (m_toolbars)
         m_toolbars->UpdateState(m_doc);
+
+    // Keep the connected-time pane moving.  Nothing did: UpdateStatusBar()'s
+    // only callers are the connection-phase edge, activation, world.SetStatus
+    // and the status-pane clicks, so the duration sat at whatever second the
+    // world happened to connect on until some unrelated event repainted it.
+    // (wx_world_child.h said "normally driven by the world timer"; it was not.)
+    // Only the one pane, and only on the tick that crosses a second -- see
+    // RefreshTimePane for why this must not be UpdateStatusBar().
+    {
+        const time_t nowSec = time(NULL);
+        if (nowSec != m_lastStatusTick) {
+            m_lastStatusTick = nowSec;
+            RefreshTimePane();
+        }
+    }
 
     // Keep the fade moving.  It changes by the SECOND (the arithmetic is all in
     // time_t), so repainting on every 100 ms tick would be nine repaints out of

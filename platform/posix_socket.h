@@ -7,8 +7,10 @@
 //
 // On macOS/Linux we provide a compatible class backed by POSIX sockets.
 // Event dispatch is triggered by calling CAsyncSocket::Poll() from the
-// application's main loop — it runs select(2) with a short timeout and calls
-// the appropriate On* virtual method for each socket that has a pending event.
+// application's main loop — it runs poll(2) (read/write/accept/connect) plus
+// select(2) (out-of-band data only — see the comment in Poll()) with a short
+// timeout and calls the appropriate On* virtual method for each socket that
+// has a pending event.
 //
 // Guard: this header is only included on non-Windows (see platform/compat.h).
 
@@ -24,6 +26,7 @@
 
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <poll.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -330,28 +333,69 @@ public:
         auto& s_sockets = AllSockets();
         if (s_sockets.empty()) return;
 
-        fd_set rd, wr, ex;
-        FD_ZERO(&rd); FD_ZERO(&wr); FD_ZERO(&ex);
+        // poll(2), unlike select(2)'s fd_set, has no FD_SETSIZE-style ceiling
+        // on the descriptor number, so it replaces select(2) for the ordinary
+        // read/write/accept/connect events below -- in a long, many-world+
+        // plugin+db+log session the process fd count can exceed 1024, and a
+        // socket fd past that point is now polled correctly.
+        //
+        // Out-of-band (urgent) data stays on select(2)'s exceptfds: measured
+        // on this platform, poll(2)'s POLLPRI never fires for TCP urgent data
+        // at all -- a lone MSG_OOB byte left poll() timed out with revents ==
+        // 0, while select()'s exceptfds saw it immediately.  A poll()-only
+        // rewrite would silently break telnet SYNCH handling (see the OOB
+        // test below).  That narrow path keeps the FD_SETSIZE guard it always
+        // had, so the ceiling this fixes only remains for a socket that is
+        // BOTH >= 1024 AND receiving urgent data -- doubly rare, and no
+        // narrower than before this change.
+        std::vector<struct pollfd> fds;
+        fds.reserve(s_sockets.size());
+
+        fd_set ex;
+        FD_ZERO(&ex);
         int maxfd = -1;
 
         for (CAsyncSocket* s : s_sockets) {
             if (s->m_hSocket == INVALID_SOCKET) continue;
             int fd = s->m_hSocket;
-            // FD_SET on an fd >= FD_SETSIZE writes past the fd_set (stack
-            // corruption).  In a long, many-world+plugin+db+log session the
-            // process fd count can exceed 1024, so skip such sockets here rather
-            // than corrupt memory.  (A poll(2)-based loop would lift this limit.)
-            if (fd >= FD_SETSIZE) continue;
-            if (s->m_events & (FD_READ  | FD_CLOSE | FD_ACCEPT)) FD_SET(fd, &rd);
-            if (s->m_events & (FD_WRITE | FD_CONNECT)) FD_SET(fd, &wr);
-            if (s->m_events & FD_OOB)                  FD_SET(fd, &ex);
-            if (fd > maxfd) maxfd = fd;
-        }
-        if (maxfd < 0) return;
+            short events = 0;
+            if (s->m_events & (FD_READ  | FD_CLOSE | FD_ACCEPT)) events |= POLLIN;
+            if (s->m_events & (FD_WRITE | FD_CONNECT)) events |= POLLOUT;
+            if (events != 0) fds.push_back({ fd, events, 0 });
 
-        struct timeval tv { timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
-        int rc = ::select(maxfd + 1, &rd, &wr, &ex, &tv);
-        if (rc <= 0) return;
+            if ((s->m_events & FD_OOB) && fd < FD_SETSIZE) {
+                FD_SET(fd, &ex);
+                if (fd > maxfd) maxfd = fd;
+            }
+        }
+        if (fds.empty() && maxfd < 0) return;
+
+        bool ready = false;
+        if (!fds.empty()) {
+            ready = ::poll(fds.data(), fds.size(), timeout_ms) > 0;
+            if (maxfd >= 0) {
+                // poll() already did the waiting above, so this is just a
+                // non-blocking peek at the urgent-data set -- a real wait
+                // here would double the worst-case latency of every call.
+                struct timeval tv{0, 0};
+                if (::select(maxfd + 1, nullptr, nullptr, &ex, &tv) > 0) ready = true;
+            }
+        } else {
+            // No socket wants ordinary read/write events -- only OOB is
+            // being watched (not something any caller does today, but kept
+            // correct) -- so select() alone does the waiting, exactly as
+            // before this change.
+            struct timeval tv{ timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
+            ready = ::select(maxfd + 1, nullptr, nullptr, &ex, &tv) > 0;
+        }
+        if (!ready) return;
+
+        // Look up the revents poll(2) reported for a given fd -- the
+        // replacement for FD_ISSET(fd, &rd/&wr) against the old fd_sets.
+        auto revents_for = [&fds](int fd) -> short {
+            for (auto& p : fds) if (p.fd == fd) return p.revents;
+            return 0;
+        };
 
         // Take a snapshot: callbacks may modify s_sockets — and may even DELETE
         // a socket (e.g. a TLS certificate-verification failure tears the
@@ -368,7 +412,18 @@ public:
             if (!IsLive(s, gen) || s->m_hSocket == INVALID_SOCKET) continue;
             int fd = s->m_hSocket;
 
-            if (FD_ISSET(fd, &wr)) {
+            // A refused/failed non-blocking connect is where poll() and
+            // select() part ways: select()'s writefds marks an errored
+            // socket ready to write (a write would return the error without
+            // blocking), but poll() on this platform reports the same
+            // condition as POLLHUP (sometimes POLLERR), NOT POLLOUT --
+            // measured directly: a refused loopback connect produced
+            // revents == POLLIN|POLLHUP, no POLLOUT bit at all.  POLLERR and
+            // POLLHUP are always reported when they occur regardless of the
+            // requested event mask, so checking for them here costs nothing
+            // on the ordinary POLLOUT path and is what makes the SO_ERROR
+            // check below actually run for a refused connect.
+            if (revents_for(fd) & (POLLOUT | POLLERR | POLLHUP)) {
                 if (s->m_state == kConnecting) {
                     // Check whether non-blocking connect succeeded
                     int err = 0;
@@ -389,7 +444,7 @@ public:
             if (!IsLive(s, gen) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
             fd = s->m_hSocket;   // re-read: a callback may have closed/reopened this slot, so never reuse the stale fd
 
-            if (FD_ISSET(fd, &rd)) {
+            if (revents_for(fd) & POLLIN) {
                 if (s->m_state == kListening) {
                     // A pending inbound connection makes a listening socket
                     // readable — hand off to OnAccept (which calls Accept()).
@@ -424,7 +479,7 @@ public:
             if (!IsLive(s, gen) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
             fd = s->m_hSocket;   // re-read: a callback may have closed/reopened this slot, so never reuse the stale fd
 
-            if (FD_ISSET(fd, &ex)) {
+            if (fd < FD_SETSIZE && FD_ISSET(fd, &ex)) {
                 s->OnOutOfBandData(0);
                 // Then consume the urgent byte.  Winsock's FD_OOB is
                 // edge-triggered -- it fires once per arrival -- but select()

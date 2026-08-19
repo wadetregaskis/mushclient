@@ -12,6 +12,7 @@ macro(mc_test name)
     if(MUSHCLIENT_COVERAGE)
         target_compile_options(${name} PRIVATE -fprofile-instr-generate -fcoverage-mapping)
     endif()
+    mc_sanitize(${name})
     target_include_directories(${name} PRIVATE
         ${CMAKE_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/platform
@@ -287,7 +288,13 @@ if(TARGET mushgui)
     # failure (measured 6/6 with the yield, 0/6 without), which is what
     # makes it a test rather than a coin toss.  APPLE-only: libgmalloc is
     # a macOS facility.
-    if(APPLE AND EXISTS /usr/lib/libgmalloc.dylib)
+    # ...but NOT under -DMUSHCLIENT_SANITIZE: libgmalloc and a sanitizer are
+    # both allocator replacements and cannot both be loaded -- the process is
+    # killed on startup ("Subprocess killed", before any harness runs).  The
+    # sanitized build brings its own, different allocator checking; see
+    # docs/SANITIZERS.md, which also records that libgmalloc has been the more
+    # effective of the two here at least once.
+    if(APPLE AND EXISTS /usr/lib/libgmalloc.dylib AND NOT MUSHCLIENT_SANITIZE)
         add_test(NAME selftest_notepad_loopfree
                  COMMAND ${CMAKE_COMMAND} -E env
                          DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib

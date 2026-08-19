@@ -3773,6 +3773,16 @@ TEST(LuaSurface, MappingFamily)
         "assert(type(world.GetMappingString()) == 'string')\n"
         "world.SetRemoveMapReverses(1)\n"
         "assert(world.GetRemoveMapReverses() == true)\n"
+        // the boolean form is what the docs show, and what every other
+        // Set<flag> takes - it used to raise "number expected, got boolean"
+        "world.SetRemoveMapReverses(false)\n"
+        "assert(world.GetRemoveMapReverses() == false)\n"
+        "world.SetRemoveMapReverses(true)\n"
+        "assert(world.GetRemoveMapReverses() == true)\n"
+        // and, like the other flag setters, it defaults to on with no argument
+        "world.SetRemoveMapReverses(0)\n"
+        "world.SetRemoveMapReverses()\n"
+        "assert(world.GetRemoveMapReverses() == true)\n"
         "world.SetMapping(false)\n"
         "assert(world.GetMapping() == false)\n"
         "world.DeleteAllMapItems()\n"

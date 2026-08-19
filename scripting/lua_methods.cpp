@@ -170,6 +170,7 @@ int pushVariant (lua_State *L, VARIANT & v, const bool bOwned)
       SafeArrayGetUBound(psa, 1, &lUBound);
 
       VARIANT val;
+      VariantInit (&val);   // SafeArrayGetElement clears the destination first
       int extra = 0;
       if (lLBound == 0)
         extra = 1;
@@ -774,6 +775,11 @@ static int L_ArrayImport (lua_State *L)
       if (lua_type (L, -2) != LUA_TSTRING)
         luaL_error (L, "table must have string keys");
 
+      // lua_tostring on a boolean/table/function/nil returns NULL, and making
+      // a string from that crashes us - so check the value too
+      if (!lua_isstring (L, -1))
+        luaL_error (L, "table must have string values");
+
       // get key and value
       string sKey = lua_tostring (L, -2);
       string sValue = lua_tostring (L, -1);
@@ -1000,8 +1006,14 @@ static int L_CallPlugin (lua_State *L)
   {
   CMUSHclientDoc *pDoc = doc (L);
 
-  const char * sPluginID = my_checkstring (L, 1);
-  const char * sRoutine = my_checkstring (L, 2);
+  // take copies - we remove both from the stack below, so a garbage collection
+  // during the plugin call could otherwise free the strings we are pointing at
+
+  CString strPluginID = my_checkstring (L, 1);
+  CString strRoutine  = my_checkstring (L, 2);
+
+  const char * sPluginID = strPluginID;
+  const char * sRoutine  = strRoutine;
 
   // remove plugin ID and function name
   // this is so, after the lua_pcall the stack should be empty
@@ -4119,6 +4131,8 @@ static int L_GetVariableList (lua_State *L)
 //----------------------------------------
 static int L_GetWorld (lua_State *L)
   {
+  doc (L);    // allow the world:GetWorld (name) form (removes the userdatum)
+
   CString strName = my_checkstring (L, 1);
 
   for (POSITION docPos = App.m_pWorldDocTemplate->GetFirstDocPosition();
@@ -4147,6 +4161,8 @@ static int L_GetWorld (lua_State *L)
 //----------------------------------------
 static int L_GetWorldById (lua_State *L)
   {
+  doc (L);    // allow the world:GetWorldById (id) form (removes the userdatum)
+
   CString WorldID = my_checkstring (L, 1);
 
   for (POSITION docPos = App.m_pWorldDocTemplate->GetFirstDocPosition();
@@ -5022,7 +5038,7 @@ static int L_GetRemoveMapReverses (lua_State *L)
 static int L_SetRemoveMapReverses (lua_State *L)
   {
   CMUSHclientDoc *pDoc = doc (L);
-  pDoc->m_bRemoveMapReverses = my_checknumber (L, 1) != 0;
+  pDoc->m_bRemoveMapReverses = optboolean (L, 1, 1) != 0;
   return 0;  // number of result fields
   } // end of L_SetRemoveMapReverses
 
@@ -5760,6 +5776,8 @@ CString StripAnsi (const CString strMessage);
 //----------------------------------------
 static int L_StripANSI (lua_State *L)
   {
+  doc (L);    // allow the world:StripANSI (s) form (removes the userdatum)
+
   // this is a helper function that returns a CString, not a BSTR
   lua_pushstring (L, StripAnsi (my_checkstring (L, 1)));
   return 1;  // number of result fields

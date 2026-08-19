@@ -44,6 +44,11 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 33 | `world.WindowWrite` writes a .bmp strict readers refuse to open | this commit | miniwindow.cpp `CMiniWindow::Write` |
 | 34 | `Blend_ColorBurn`'s underflow clamp is dead code (unsigned comparison) | this commit | blending.h `Blend_ColorBurn` |
 | 35 | `WindowAddHotspot`'s re-entrancy guard is shared by every open world | this commit | methods_miniwindows.cpp `CMUSHclientDoc::WindowAddHotspot` |
+| 36 | `world.ArrayImport`'s table form crashes on any non-string value | this commit | lua_methods.cpp `L_ArrayImport` |
+| 37 | `world.CallPlugin` keeps pointers into two Lua strings it has removed from the stack | this commit | lua_methods.cpp `L_CallPlugin` |
+| 38 | `world.SetRemoveMapReverses` raises an error when passed a boolean | this commit | lua_methods.cpp `L_SetRemoveMapReverses` |
+| 39 | Three world-table entries reject the documented `other:Method (…)` form | this commit | lua_methods.cpp `L_StripANSI`, `L_GetWorld`, `L_GetWorldById` |
+| 40 | `pushVariant` hands an uninitialised `VARIANT` to `SafeArrayGetElement` | this commit | lua_methods.cpp `pushVariant` (VT_ARRAY arm) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -808,3 +813,65 @@ depending on what another world happens to be doing.
 **Fix:** make it the `CMUSHclientDoc` member `m_bInWindowAddHotspot`, cleared in
 the constructor.  Per-document scope still terminates any A→B→A recursion,
 because the document's own flag is set on the way in.
+
+## 36 — `world.ArrayImport`'s table form crashes on any non-string value (this commit)
+**Bug:** the table extension checks the *key* (`lua_type (L, -2) != LUA_TSTRING`
+→ "table must have string keys") but not the value: it builds
+`string sValue = lua_tostring (L, -1)` unconditionally.  `lua_tostring` returns
+NULL for a boolean, table, function, thread, userdatum or nil, and constructing
+a `std::string` from NULL is undefined — in practice MUSHclient dies on the
+spot.  `world.ArrayImport ('t', {a = true})` — the natural way to import a set
+of flags — takes the whole client down, taking any unsaved world with it.
+**Fix:** check the value alongside the key with
+`if (!lua_isstring (L, -1)) luaL_error (L, "table must have string values");`.
+`lua_isstring` still accepts a number, which `lua_tostring` coerces in place;
+that is safe here because it is the value slot, not the key `lua_next` is
+iterating on.
+
+## 37 — `world.CallPlugin` keeps pointers into two Lua strings it has removed from the stack (this commit)
+**Bug:** `sPluginID` and `sRoutine` are raw `const char *` into Lua-owned
+strings, and the next two statements are `lua_remove (L, 1)` twice — a
+deliberate step, so a plugin calling back into us finds a clean stack.  Both
+strings are then unreferenced for the entire call while eleven later sites read
+them, including every error message.  A `collectgarbage` anywhere inside the
+called routine frees them; the error text then reports whatever now occupies
+that memory.  A plugin calling a routine in itself is the sharpest case, since
+caller and callee share one Lua state.
+**Fix:** copy both into `CString`s before the removes and point the two locals
+at those copies, so every later read is of memory this frame owns.
+
+## 38 — `world.SetRemoveMapReverses` raises an error when passed a boolean (this commit)
+**Bug:** it is the only flag setter in the Lua world table that uses
+`my_checknumber` rather than `optboolean`; its ten siblings (`SetMapping`,
+`SetTrace`, `LogInput`, `Pause`, …) all take `optboolean (L, 1, 1)`.
+`world.SetRemoveMapReverses (true)` — the form the documentation shows, and the
+form every other flag accepts — therefore raises "number expected, got boolean"
+and aborts the script.
+**Fix:** `optboolean (L, 1, 1) != 0`.  `optboolean` falls through to
+`my_checknumber`, so the numeric form is unchanged, and a missing argument now
+defaults to on exactly as it does for the siblings.
+
+## 39 — Three world-table entries reject the documented `other:Method (…)` form (this commit)
+**Bug:** every entry in the world table is supposed to start with `doc (L)`,
+which is what makes the file's own documented alternative form —
+`other:AddMapperComment ("…")` against a world userdatum from
+`world.GetWorld`  — work: `doc()` removes the userdatum from index 1 so the
+arguments line up.  `L_StripANSI`, `L_GetWorld` and `L_GetWorldById` never call
+it, so all three see the userdatum where they check for a string and raise
+"string expected, got userdata".  `StripANSI` is the one a script would
+naturally write that way.
+**Fix:** `doc (L);` as the first statement of each.  The plain
+`world.StripANSI (s)` form is unaffected — `doc()` only removes argument 1 when
+it really is a `mushclient.world` userdatum.
+
+## 40 — `pushVariant` hands an uninitialised `VARIANT` to `SafeArrayGetElement` (this commit)
+**Bug:** the `VT_ARRAY + VT_VARIANT` arm declares `VARIANT val;` and passes it
+straight to `SafeArrayGetElement`, which on Windows calls `VariantClear` on the
+destination before filling it — i.e. it frees whatever the uninitialised `vt`
+and pointer happen to name.  It is the same defect the file already fixes for
+`L_GetTrigger`/`L_GetAlias`/`L_GetTimer` 2,480 lines below, which do call
+`VariantInit`.  Every array-returning world method (`ArrayListAll`,
+`GetTriggerList`, `GetVariableList`, …) goes through this arm.
+**Fix:** `VariantInit (&val);` after the declaration.  No behaviour change on
+the port — its `SafeArrayGetElement` shim copies without clearing — so this one
+needs a **Windows debug run** (poisoned stack) to see the original fault.

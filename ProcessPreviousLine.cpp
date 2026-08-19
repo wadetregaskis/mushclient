@@ -1021,6 +1021,15 @@ int iStartCol,
     iEndCol;
 POSITION pos;
 
+// Colour-matching triggers resolve their condition in RGB space (see the
+// block below), which needs the world's palette.  GetStylePalette copies 48
+// COLORREFs; this loop body runs once per trigger per line, so snapshot it at
+// most once per line, and only if some trigger actually asks about a colour.
+// A trigger that fires into a script can repaint the palette under us, so
+// the snapshot is dropped there (bPaletteValid = false, below).
+pal::StylePalette palette;
+bool bPaletteValid = false;
+
   for (iItem = 0; iItem < GetTriggerArray ().GetSize (); iItem++)
     {
     trigger_item = EvaluateTrigger (strCurrentLine, 
@@ -1044,6 +1053,7 @@ POSITION pos;
         int iFlags = 0;
         COLORREF iForeColour = NO_COLOUR; 
         COLORREF iBackColour = NO_COLOUR; 
+        bool bStyleFound = false;
         int iCurrentCol = 0;
         for (pos = prevpos; pos; )  // scan to end of buffer
          {
@@ -1072,6 +1082,7 @@ POSITION pos;
              iFlags = pStyle->iFlags & STYLE_BITS;  // get style
              iForeColour = pStyle->iForeColour;
              iBackColour = pStyle->iBackColour;
+             bStyleFound = true;
              }
            break;                      // done
            }
@@ -1079,14 +1090,75 @@ POSITION pos;
          }    // end of doing each line
 
 
-       if (trigger_item->iMatch & TRIGGER_MATCH_TEXT)
-          if (get_foreground (trigger_item->iMatch) !=
-              ((iFlags & INVERSE) ? iBackColour : iForeColour))
-            continue;   // wrong text colour
-        if (trigger_item->iMatch & TRIGGER_MATCH_BACK)
-          if (get_background (trigger_item->iMatch) !=
-              ((iFlags & INVERSE) ? iForeColour : iBackColour))
-            continue;   // wrong background colour
+    /*
+    Colour conditions compare in RESOLVED RGB space, not against the raw style
+    members.  iForeColour/iBackColour only hold ANSI colour NUMBERS while the
+    style's COLOURTYPE is COLOUR_ANSI: for COLOUR_RGB (xterm-256, 24-bit ANSI,
+    MXP <color>, an earlier trigger's own colour change) they hold a COLORREF,
+    and for COLOUR_CUSTOM iForeColour is a 0-15 index into the custom table.
+    Comparing the trigger's 0-7 ANSI index straight against them therefore
+    rejected every non-ANSI line outright, matched a small COLORREF (black
+    above all, 0 == 0x000000) by coincidence, and read a custom-palette index
+    as if it were an ANSI one.
+
+    Both sides go through pal::resolveStyleColours -- the same arithmetic
+    CMUSHclientDoc::GetStyleRGB uses to decide what is painted -- so the
+    condition asks the question the user thinks they are asking: "is the
+    matched text the colour I can see?"
+
+    The trigger's side is resolved as an ANSI style carrying the SAME
+    HILITE/INVERSE flags as the run under the match.  That keeps "red" matching
+    bold red exactly as before (boldness is the separate TRIGGER_MATCH_HILITE
+    condition).  Under INVERSE the displayed foreground comes from the
+    BACKGROUND index, hence the crossed-over arguments -- the old code got that
+    index right too, but being index-only it never had to ask which TABLE the
+    index was read from, and m_bAlternativeInverse decides exactly that for an
+    inverted bold run.  Handing the whole question to the resolver is what keeps
+    the two sides in step whatever that option is set to.
+    */
+
+        if (trigger_item->iMatch & (TRIGGER_MATCH_TEXT | TRIGGER_MATCH_BACK))
+          {
+          if (!bStyleFound)
+            continue;   // no style under the match - as before, no colour match
+
+          if (!bPaletteValid)
+            {
+            GetStylePalette (palette);
+            bPaletteValid = true;
+            }
+
+          const bool bInverse = (iFlags & INVERSE) != 0;
+          unsigned int c1 = 0,
+                       c2 = 0;
+
+          // what the matched run actually displays
+          pal::resolveStyleColours ((unsigned short) iFlags,
+                                    iForeColour, iBackColour,
+                                    palette,
+                                    (const unsigned int *) xterm_256_colours,
+                                    c1, c2);
+          const COLORREF iDisplayedFore = (COLORREF) c1;
+          const COLORREF iDisplayedBack = (COLORREF) c2;
+
+          // what the trigger's ANSI numbers would display in that same context
+          const long iWantedForeIndex = get_foreground (trigger_item->iMatch);
+          const long iWantedBackIndex = get_background (trigger_item->iMatch);
+          pal::resolveStyleColours (
+                    (unsigned short) (iFlags & (HILITE | INVERSE)),  // COLOUR_ANSI
+                    bInverse ? iWantedBackIndex : iWantedForeIndex,
+                    bInverse ? iWantedForeIndex : iWantedBackIndex,
+                    palette,
+                    (const unsigned int *) xterm_256_colours,
+                    c1, c2);
+
+          if (trigger_item->iMatch & TRIGGER_MATCH_TEXT)
+            if ((COLORREF) c1 != iDisplayedFore)
+              continue;   // wrong text colour
+          if (trigger_item->iMatch & TRIGGER_MATCH_BACK)
+            if ((COLORREF) c2 != iDisplayedBack)
+              continue;   // wrong background colour
+          }   // end of a colour condition
         if (trigger_item->iMatch & TRIGGER_MATCH_HILITE)
           if ((get_style (trigger_item->iMatch) & HILITE) != 
               (iFlags & HILITE))
@@ -1190,6 +1262,12 @@ POSITION pos;
                   );
           m_iCurrentActionSource = eUnknownActionSource;
           trigger_item->bExecutingScript = false;     // can be deleted now
+          // eSendToScript ran user code, which may have called SetNormalColour
+          // / SetCustomColourText: drop the palette snapshot the colour
+          // conditions below cache, so a LATER trigger on this same line is
+          // matched against the palette as it now is.  One store, on the
+          // already-expensive fired path only.
+          bPaletteValid = false;
           }
       
         m_iExecutionDepth =  iSavedDepth;

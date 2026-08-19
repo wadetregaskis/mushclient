@@ -346,6 +346,28 @@ static int penToPs(PenStyle st) {
     return PS_SOLID;
 }
 
+// The whole style word CPen::CreatePen takes — the PS_ENDCAP_* / PS_JOIN_* bits
+// included.  The shim already maps them (MapPenCap / MapPenJoin,
+// platform/wx_gdi_compat.cpp), so only the bits were missing: every draw here
+// passed the bare style and PS_ENDCAP_ROUND / PS_JOIN_ROUND are 0, which made
+// the flags WindowLine / WindowPolygon / WindowCircleOp accept and validate
+// invisible.  The Windows adapter re-encodes the same two fields into
+// ExtCreatePen (pal/gdi_surface.cpp makePen).
+static int psFromPen(const PenSpec& p) {
+    int ps = penToPs(p.style);
+    switch (p.endcap) {
+    case PenEndcap::Square: ps |= PS_ENDCAP_SQUARE; break;
+    case PenEndcap::Flat:   ps |= PS_ENDCAP_FLAT;   break;
+    default:                ps |= PS_ENDCAP_ROUND;  break;
+    }
+    switch (p.join) {
+    case PenJoin::Bevel: ps |= PS_JOIN_BEVEL; break;
+    case PenJoin::Miter: ps |= PS_JOIN_MITER; break;
+    default:             ps |= PS_JOIN_ROUND; break;
+    }
+    return ps;
+}
+
 // Build a CBrush for the spec; returns false for a malformed spec. Sets up
 // the DC hatch-gap state the way the engine does (bg colour with OPAQUE gaps,
 // or TRANSPARENT gaps for bg == -1).
@@ -375,24 +397,56 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
             // Arbitrary-image pattern (WindowImageOp): materialize the engine's
             // BGR24 buffer as a bitmap and tile it. GDI ignores the text/bk
             // colours for COLOUR pattern brushes; the wx stipple does too.
+            //
+            // Built at PHYSICAL resolution for exactly the reason the mono arm
+            // below is: a 1x tile on a 2x canvas is scaled up and interpolated
+            // by wx, so a fine-detail image flattens toward one averaged
+            // colour.  Replicate each pattern pixel across the scale x scale
+            // block and tell the bitmap its logical size is still the
+            // pattern's, so wx lays it down 1:1 on the physical grid.
             const PixelBuffer* pat = spec.pattern;
             if (!pat->valid()) return false;
+            const double sc = wx_canvas_scale();
+            int isc = (sc > 0) ? (int)(sc + 0.5) : 1;
+            if (isc < 1) isc = 1;
+            const int dimW = pat->size.w * isc, dimH = pat->size.h * isc;
+
             BITMAPINFO bmi;
             memset(&bmi, 0, sizeof bmi);
             bmi.bmiHeader.biSize        = sizeof bmi;
-            bmi.bmiHeader.biWidth       = pat->size.w;
-            bmi.bmiHeader.biHeight      = pat->size.h;   // bottom-up, as the buffer
+            bmi.bmiHeader.biWidth       = dimW;
+            bmi.bmiHeader.biHeight      = dimH;          // bottom-up, as the buffer
             bmi.bmiHeader.biPlanes      = 1;
             bmi.bmiHeader.biBitCount    = 24;
             bmi.bmiHeader.biCompression = BI_RGB;
-            bmi.bmiHeader.biSizeImage   = pat->size.h * BytesPerLine(pat->size.w, 24);
-            if ((size_t)bmi.bmiHeader.biSizeImage > pat->bytes.size()) return false;
+            const int stride = (int) BytesPerLine(dimW, 24);
+            bmi.bmiHeader.biSizeImage   = dimH * stride;
             unsigned char* bits = NULL;
             HBITMAP hbm = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS,
                                            (void**)&bits, NULL, 0);
             if (!hbm || !bits) return false;
-            memcpy(bits, pat->bytes.data(), bmi.bmiHeader.biSizeImage);
+            memset(bits, 0, bmi.bmiHeader.biSizeImage);
+
+            for (int y = 0; y < pat->size.h; ++y) {
+                const unsigned char* src = pat->row(y);   // image row (0 = top)
+                for (int ry = 0; ry < isc; ++ry) {
+                    // both stores are bottom-up, so image row y*isc+ry sits
+                    // that far from the end
+                    unsigned char* out = bits +
+                        (size_t)(dimH - 1 - (y * isc + ry)) * stride;
+                    for (int x = 0; x < pat->size.w; ++x) {
+                        const unsigned char* px = src + (size_t)x * 3;
+                        for (int rx = 0; rx < isc; ++rx) {
+                            *out++ = px[0]; *out++ = px[1]; *out++ = px[2];
+                        }
+                    }
+                }
+            }
             patternBmp.Attach((HGDIOBJ)hbm);     // materializes + frees the DIB
+            if (isc > 1) {
+                if (wxBitmap* wb = static_cast<wxBitmap*>(patternBmp.m_impl))
+                    if (wb->IsOk()) wb->SetScaleFactor((double) isc);
+            }
             return br.CreatePatternBrush(&patternBmp) != 0;
         }
         if (!spec.monoPattern) return false;
@@ -527,7 +581,7 @@ void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
     Surf* s = mutate(id);
     if (!s) return;
     CPen cpen;
-    cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
+    cpen.CreatePen(psFromPen(pen), pen.width, pen.colour);
     CBrush cbr;
     CBitmap patternBmp;
     if (!makeBrush(cbr, s->dc, brSpec, patternBmp)) {
@@ -553,7 +607,7 @@ void WxSurface::line(SurfaceId id, Point p1, Point p2, const PenSpec& pen) {
     if (!s || pen.style == PenStyle::Null) return;
     s->dc->SetBkMode(TRANSPARENT);               // == the old Line() SetBkMode (dashed gaps)
     CPen cpen;
-    cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
+    cpen.CreatePen(psFromPen(pen), pen.width, pen.colour);
     CPen* old = s->dc->SelectObject(&cpen);
     s->dc->MoveTo(p1.x, p1.y);
     s->dc->LineTo(p2.x, p2.y);   // shim draws INCLUSIVE (documented deviation)
@@ -564,7 +618,7 @@ void WxSurface::polyline(SurfaceId id, const Point* pts, size_t n, const PenSpec
     Surf* s = mutate(id);
     if (!s || !pts || n < 2) return;
     CPen cpen;
-    cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
+    cpen.CreatePen(psFromPen(pen), pen.width, pen.colour);
     CPen* old = s->dc->SelectObject(&cpen);
     std::vector<POINT> v(n);
     for (size_t i = 0; i < n; ++i) v[i] = { pts[i].x, pts[i].y };
@@ -577,7 +631,7 @@ void WxSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec&
     Surf* s = mutate(id);
     if (!s || !pts || n < 2) return;
     CPen cpen;
-    cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
+    cpen.CreatePen(psFromPen(pen), pen.width, pen.colour);
     CBrush cbr;
     CBitmap patternBmp;
     if (!makeBrush(cbr, s->dc, brSpec, patternBmp)) {
@@ -598,7 +652,7 @@ void WxSurface::bezier(SurfaceId id, const Point* pts, size_t n, const PenSpec& 
     Surf* s = mutate(id);
     if (!s || !pts || n < 4) return;
     CPen cpen;
-    cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
+    cpen.CreatePen(psFromPen(pen), pen.width, pen.colour);
     CPen* old = s->dc->SelectObject(&cpen);
     std::vector<POINT> v(n);
     for (size_t i = 0; i < n; ++i) v[i] = { pts[i].x, pts[i].y };
@@ -611,7 +665,7 @@ void WxSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen) 
     if (!s) return;
     s->dc->SetBkMode(TRANSPARENT);               // == the old Arc() SetBkMode
     CPen cpen;
-    cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
+    cpen.CreatePen(psFromPen(pen), pen.width, pen.colour);
     CPen* old = s->dc->SelectObject(&cpen);
     s->dc->Arc(r.x, r.y, r.x + r.w, r.y + r.h, a.x, a.y, b.x, b.y);
     s->dc->SelectObject(old);

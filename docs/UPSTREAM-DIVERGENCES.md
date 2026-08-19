@@ -246,9 +246,26 @@ border where Windows paints nothing.
 Windows. This undoes the invented rule rather than adding a new one, so
 it is listed here as a correction, not a fresh design decision.
 
+**Correction: `BF_MIDDLE` had never been implemented, and the early return
+made that worse.** The interior fill is a separate flag (`BF_MIDDLE`,
+0x0800) that `miniwindow.cpp:370` lets straight through -- it validates
+only `(Colour2 & 0xFF) > 0x1F` -- and no version of this body has ever
+filled anything: the pre-fix code called `Draw3dRect`, the post-fix code
+strokes two rings. So `BF_RECT|BF_MIDDLE` drew the rings over an untouched
+interior, and `BF_MIDDLE` on its own, naming none of the four side bits,
+hit the new early return and became a complete no-op where Win32 fills the
+rectangle with the button-face colour and draws no border. The missing fill
+predates the side-flag fix; the early return only changed which wrong
+picture a fill-only call draws. `nFlags` is now tested as
+`(BF_RECT | BF_MIDDLE)`, and `BF_MIDDLE` fills the whole rect with
+`COLOR_3DFACE` before the rings are stroked over it (the same picture Win32
+leaves, since the rings paint last either way).
+
 **Status:** port-side only (platform/wx_gdi_compat.cpp); no canonical
 source changed. Still needs a Windows run to confirm real `DrawEdge`
-truly no-ops on `nFlags == 0` before this can be called verified.
+truly no-ops on `nFlags == 0`, and to confirm the `BF_MIDDLE` fill colour
+and extent, before this can be called verified. Covered in-app by the
+`DrawEdge` block of `--pal-miniwindow-selftest`.
 
 ## 9 — The miniwindow hit test measures from left/top by size, and only for windows that were drawn
 

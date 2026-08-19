@@ -1229,10 +1229,23 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
     const COLORREF kLight     = 0xE0E0E0;   // COLOR_3DLIGHT
     const COLORREF kShadow    = 0x808080;   // COLOR_3DSHADOW
     const COLORREF kDkShadow  = 0x404040;   // COLOR_3DDKSHADOW
+    const COLORREF kFace      = 0xC0C0C0;   // COLOR_3DFACE (the BF_MIDDLE fill)
 
-    if ((nFlags & BF_RECT) == 0) return;   // no sides named = Win32 draws nothing
+    // No sides named AND no interior asked for = Win32 draws nothing.  BF_MIDDLE
+    // on its own is a legitimate call (fill, no border), so it must not be
+    // caught by the side-flag test.
+    if ((nFlags & (BF_RECT | BF_MIDDLE)) == 0) return;
 
     RECT r = *lpRect;
+
+    // BF_MIDDLE fills the interior with the button-face colour.  Win32 strokes
+    // the rings over that fill, so filling the whole rect first leaves the same
+    // picture -- and it is the only thing drawn when no side flags are named.
+    if (nFlags & BF_MIDDLE) {
+        p->dc.SetPen(*wxTRANSPARENT_PEN);
+        p->dc.SetBrush(wxBrush(WxCol(kFace)));
+        p->dc.DrawRectangle(r.left, r.top, r.right - r.left, r.bottom - r.top);
+    }
 
     // Stroke one ring, honouring the BF_ side bits.  tl paints top+left,
     // br paints right+bottom -- the same split Draw3dRect uses.

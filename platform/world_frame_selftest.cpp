@@ -1779,6 +1779,58 @@ int RunWorldFrameSelfTest()
             wxYield();
         }
 
+        // ── world.Debug ("commands") reads the REAL command history ─────────
+        // Both this branch and the summary's "Commands in command history"
+        // line walked the document's views hunting for a CSendView to read
+        // m_msgList from.  The port never constructs one, so every world
+        // reported "0 command." however much had been typed — while the
+        // history the up-arrow browses sat in the frame all along.  Three
+        // distinct commands go in; all three must come back, oldest first,
+        // with a tail count that says 3.  Doing nothing fails all three
+        // checks: none of the texts appear and the tail reads "0 command.".
+        {
+            CWorldChildFrame* f = makeWorld("zz_selftest_debug_commands");
+            CMUSHclientDoc*   d = f->GetDoc();
+            const std::string histPath = f->HistoryFilePath();
+            if (!histPath.empty()) remove(histPath.c_str());
+
+            f->addToCommandHistory("north");
+            f->addToCommandHistory("look at the dragon");
+            f->addToCommandHistory("score");
+
+            d->Debug("commands");
+            d->UpdateAllViews(NULL);
+            wxYield();
+
+            // Index of the first buffer line whose text is exactly `want`.
+            auto lineIndexOf = [&](const char* want) -> long {
+                const int n = (int) strlen(want);
+                long i = 0;
+                for (POSITION p = d->m_LineList.GetHeadPosition(); p; ++i) {
+                    const CLine* l = d->m_LineList.GetNext(p);
+                    if (l && l->len == n && memcmp(l->text, want, n) == 0)
+                        return i;
+                }
+                return -1;
+            };
+
+            const long iNorth = lineIndexOf("north");
+            const long iLook  = lineIndexOf("look at the dragon");
+            const long iScore = lineIndexOf("score");
+            const long iTail  = lineIndexOf("3 commands.");
+
+            check(iNorth >= 0 && iLook >= 0 && iScore >= 0,
+                  "Debug(commands): every typed command is listed");
+            check(iNorth >= 0 && iLook > iNorth && iScore > iLook,
+                  "...oldest first, the order Windows prints");
+            check(iScore >= 0 && iTail > iScore,
+                  "...and the tail counts 3, not 0");
+
+            f->Close(true);
+            wxYield();
+            if (!histPath.empty()) remove(histPath.c_str());
+        }
+
         g_wxhook_message_box = savedMB;
         g_wxhook_save_world  = savedSaveWorld;
         App.m_bConfirmBeforeSavingVariables = savedConfirmVars;

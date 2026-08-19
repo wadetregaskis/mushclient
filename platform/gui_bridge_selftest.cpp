@@ -35,6 +35,7 @@
 #include "platform/wx_dialog_bridge.h"  // MfcDialogResources, BuildWxDialogFromTemplate
 #include "platform/wx_mfc_hooks.h"      // g_wxhook_progress_* — the progress seam
 #include "platform/wx_mfc_logic.h"      // the decisions lifted out of the wx entry points
+#include "platform/selftest_support.h"  // plugin-loading fixture (DebugHelper context)
 #include "dialogs/ProgDlg.h"            // CProgressDlg
 #include "dialogs/world_prefs/prefspropertypages.h"  // CPrefsP17 — ScriptBrowser
 #include "dialogs/world_prefs/triggdlg.h"             // CTriggerDlg
@@ -1436,6 +1437,81 @@ void TestSubstitutionTextResource()
     check(size > 0, "...with non-zero size");
 }
 
+// The Debug "summary" page is a wall of hyperlinks whose action is
+// "!!<DEBUG_PLUGIN_ID>:<command>(<arg>)"; HyperlinkClicked routes those to
+// DebugHelper, which is the ONLY caller.  Two defects lived there, both
+// upstream (no platform ifdef) and both reachable only through such a link —
+// never from MUD output, MXP, or any link the client itself emits.
+void TestDebugHelperPluginContext()
+{
+    printf("Debug hyperlink helper (plugin context):\n");
+
+    SelfTestEnablePluginLoading();
+
+    CMUSHclientDoc doc;
+    doc.m_mush_name   = "zz_selftest_debughelper";
+    doc.m_nWrapColumn = 80;
+    doc.m_maxlines    = 5000;
+    doc.SetUpOutputWindow();       // else Note has nowhere to put a line
+
+    // True if some line in the output buffer contains `want`.
+    auto sawLine = [&](const char* want) -> bool {
+        for (POSITION p = doc.m_LineList.GetHeadPosition(); p; ) {
+            const CLine* l = doc.m_LineList.GetNext(p);
+            if (l && l->len > 0 &&
+                std::string(l->text, l->len).find(want) != std::string::npos)
+                return true;
+        }
+        return false;
+    };
+
+    // ── callbacklist with no plugin in context ─────────────────────────────
+    // The branch walked m_CurrentPlugin->m_PluginCallbacks with no null guard,
+    // unlike the editplugin branch beside it, so a link naming no plugin took
+    // the whole app down.  Reaching this at all used to crash the selftest.
+    doc.m_CurrentPlugin = NULL;
+    doc.HyperlinkClicked("!!" DEBUG_PLUGIN_ID ":callbacklist()",
+                         ACTION_SEND, true);
+    check(sawLine("No plugin selected."),
+          "callbacklist with no plugin says so (was: dereferenced NULL)");
+
+    // ── an early return still puts the plugin context back ─────────────────
+    // Five branches returned before the restore at the end of DebugHelper, so
+    // clicking e.g. a trigger link that named something gone left the document
+    // stuck in that plugin's context: every later map lookup, and every script
+    // call, saw the plugin's tables instead of the world's.
+    {
+        const char* kPluginID = "0123456789abcdef01234567";
+        const std::string pluginPath = SelfTestWritePlugin(
+            "debughelper", kPluginID, "DebugCtx", "");
+        check(!pluginPath.empty(), "restore: wrote a fixture plugin file");
+
+        if (!pluginPath.empty()) {
+            const long rc = doc.LoadPlugin(CString(pluginPath.c_str()));
+            check(rc == 0 && doc.m_PluginList.size() == 1,
+                  "restore: the fixture plugin loaded");
+
+            doc.m_CurrentPlugin = NULL;
+            doc.HyperlinkClicked("!!" DEBUG_PLUGIN_ID
+                                 ":showtrigger(_0123456789abcdef01234567_nosuch)",
+                                 ACTION_SEND, true);
+
+            // The two controls: without them "m_CurrentPlugin is NULL" would
+            // also pass for a helper that never entered the plugin at all, or
+            // never reached the early return under test.
+            check(sawLine("(For plugin: DebugCtx)"),
+                  "restore: the link really did switch into the plugin");
+            check(sawLine("Trigger nosuch does not exist."),
+                  "restore: ...and took the missing-trigger early return");
+
+            check(doc.m_CurrentPlugin == NULL,
+                  "restore: the plugin context is put back on that return");
+
+            remove(pluginPath.c_str());
+        }
+    }
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1463,6 +1539,7 @@ int RunGuiBridgeSelfTest()
     TestCreateGuidShape();
     TestMetaphoneBoundsItsInput();
     TestSubstitutionTextResource();
+    TestDebugHelperPluginContext();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

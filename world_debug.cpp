@@ -28,6 +28,8 @@ extern CString strMacroDescriptions [MACRO_COUNT];
 extern CString strKeypadNames [eKeypad_Max_Items];
 extern tInfoTypeMapping InfoTypes [];
 
+extern CString OSVersionString (void);   // utilities_shared.cpp
+
 #define SHOW_TRUE(x) ((x) ? "yes" : "NO")
 #define SHOW_TRUE_LC(x) ((x) ? "yes" : "no")
 
@@ -489,6 +491,17 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
   else if (strcmp (Command, "commands") == 0)
     {
 
+#ifndef _WIN32
+    // Non-Windows: CSendView is never constructed, so take the command history
+    // from the world view instead. It arrives newest-first, so walk it
+    // backwards to print in the oldest-first order Windows uses.
+    const vector<string> commands = GetCommandListEntries (0);
+
+    for (vector<string>::const_reverse_iterator it = commands.rbegin ();
+         it != commands.rend ();
+         it++, iCount++)
+      Note (it->c_str ());
+#else
     int iViewNumber = 0;
 
     for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
@@ -512,6 +525,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
 	      }	  // end of being a CSendView
       }   // end of loop through views
+#endif
 
 
     Note (TFormat ("%i command%s.", PLURAL (iCount)));
@@ -987,54 +1001,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     
     // work out operating system
 
-    CString sVersion = TFormat ("Unknown (Platform %u, Major %u, Minor %u)",
-                               (unsigned) os_version.dwPlatformId,
-                               (unsigned) os_version.dwMajorVersion,
-                               (unsigned) os_version.dwMinorVersion);
-
-    if (os_version.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)  // Windows 95-style versions
-      {
-      switch (os_version.dwMinorVersion)
-        {
-        case  0: sVersion = "Windows 95"; break;
-        case 10: sVersion = "Windows 98"; break;
-        case 90: sVersion = "Windows ME"; break;
-        } // end of switch on dwMinorVersion
-      }  // end of dwPlatformId == 1
-    else if  (os_version.dwPlatformId == VER_PLATFORM_WIN32_NT)  // Windows NT versions
-      {
-      switch (os_version.dwMajorVersion)
-        {
-        case 3: sVersion = "Windows NT 3.51"; break;
-        case 4: sVersion = "Windows NT";      break;
-        case 5:   // Major version 5
-          switch (os_version.dwMinorVersion)
-            {
-            case 0: sVersion = "Windows 2000";        break;
-            case 1: sVersion = "Windows XP";          break;
-            case 2: sVersion = "Windows Server 2003"; break;
-            } // end of switch on dwMinorVersion
-          break;  // end case 5 of dwMajorVersion
-
-        case 6:   // Major version 6
-          switch (os_version.dwMinorVersion)
-            {
-            case 0: sVersion = "Windows Vista"; break;
-            case 1: sVersion = "Windows 7";     break;
-            case 2: sVersion = "Windows 8";     break;
-            case 3: sVersion = "Windows 8.1";   break;
-            } // end of switch on dwMinorVersion
-          break;  // end case 6 of dwMajorVersion
-
-        case 10:  // Major version 10
-          switch (os_version.dwMinorVersion)
-            {
-            case 0: sVersion = "Windows 10"; break;
-            } // end of switch on dwMinorVersion
-          break;  // end case 10 of dwMajorVersion
-
-        }  // end of switch on dwMajorVersion
-      }  // end of dwPlatformId == 2
+    CString sVersion = OSVersionString ();
 
 
     Note (TFormat ("Operating system: %s", (LPCTSTR) sVersion));
@@ -1480,6 +1447,11 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
     nTotal = 0;
 
+#ifndef _WIN32
+    // Non-Windows: CSendView is never constructed, so count the world view's
+    // command history instead.
+    nTotal = GetCommandListEntries (0).size ();
+#else
     for(pos = GetFirstViewPosition(); pos != NULL; )
 	    {
 	    CView* pView = GetNextView(pos);
@@ -1493,6 +1465,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
 	      }	  // end of being a CSendView
       }   // end of loop through views
+#endif
 
     Note (TFormat ("Commands in command history: %ld", nTotal));
     Note (TFormat ("Speed walking enabled: %s. Speed walking prefix: %s",
@@ -2107,23 +2080,32 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
     Note ("");
     int iCount = 0;
 
-    for (CScriptDispatchIDIterator it = m_CurrentPlugin->m_PluginCallbacks.begin ();
-         it != m_CurrentPlugin->m_PluginCallbacks.end ();
-         it++)
-      if (it->second.isvalid () || it->second._count > 0)
-        {
-        iCount++;
-        CString strColour = enabledFore;
-        if (!it->second.isvalid ())
-          strColour = disabledFore; 
+    // callbacks only exist inside a plugin: a link naming no plugin (or a
+    // plugin that has gone) leaves m_CurrentPlugin NULL, as editplugin allows for
 
-        ColourNote (strColour, "", CFormat ("%-30s -> Valid: %3s  %10I64i call%s.", 
-                                  it->first.c_str (),
-                                  SHOW_TRUE (it->second.isvalid ()),
-                                  PLURAL (it->second._count)
-                                  ));
+    if (m_CurrentPlugin)
+      {
+      for (CScriptDispatchIDIterator it = m_CurrentPlugin->m_PluginCallbacks.begin ();
+           it != m_CurrentPlugin->m_PluginCallbacks.end ();
+           it++)
+        if (it->second.isvalid () || it->second._count > 0)
+          {
+          iCount++;
+          CString strColour = enabledFore;
+          if (!it->second.isvalid ())
+            strColour = disabledFore;
 
-        }  // end if valid or non-zero count (and for loop)
+          ColourNote (strColour, "", CFormat ("%-30s -> Valid: %3s  %10I64i call%s.",
+                                    it->first.c_str (),
+                                    SHOW_TRUE (it->second.isvalid ()),
+                                    PLURAL (it->second._count)
+                                    ));
+
+          }  // end if valid or non-zero count (and for loop)
+
+      }   // end of having a plugin
+    else
+      Note (TFormat ("No plugin selected."));
 
     ColourNote  (SCRIPTERRORCONTEXTFORECOLOUR, "", TFormat ("%i callback%s.", PLURAL (iCount)));
 
@@ -2273,6 +2255,7 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
     if (!GetTriggerMap ().Lookup (strArgument, pTrigger))
       {
       Note (TFormat ("Trigger %s does not exist.", (LPCTSTR) strArgument));
+      m_CurrentPlugin = pSavedPlugin;
       return;
       }    // if not found
 
@@ -2343,6 +2326,7 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
     if (!GetAliasMap ().Lookup (strArgument, pAlias))
       {
       Note (TFormat ("Alias %s does not exist.", (LPCTSTR) strArgument));
+      m_CurrentPlugin = pSavedPlugin;
       return;
       }    // if not found
 
@@ -2411,6 +2395,7 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
     if (!GetTimerMap ().Lookup (strArgument, pTimer))
       {
       Note (TFormat ("Timer %s does not exist.", (LPCTSTR) strArgument));
+      m_CurrentPlugin = pSavedPlugin;
       return;
       }    // if not found
 
@@ -2487,6 +2472,7 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
           ::UMessageBox(TFormat ("Unable to edit the plugin file %s.",
                       (LPCTSTR) strName), 
                           MB_ICONEXCLAMATION);
+        m_CurrentPlugin = pSavedPlugin;
         return;
         }   // end of using inbuilt notepad
 
@@ -2516,6 +2502,7 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
         ::UMessageBox(TFormat ("Unable to edit the script file %s.",
                     (LPCTSTR) m_strScriptFilename), 
                         MB_ICONEXCLAMATION);
+      m_CurrentPlugin = pSavedPlugin;
       return;
       }   // end of using inbuilt notepad
 

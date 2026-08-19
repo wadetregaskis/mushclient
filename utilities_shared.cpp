@@ -31,6 +31,10 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+  #include <sys/utsname.h>   // OSVersionString asks the kernel, not os_version
+#endif
+
 using std::string;
 using std::vector;
 
@@ -1722,3 +1726,83 @@ int MacroCommandIdToSlot (const unsigned int nIDC)
 
   return -1;
   }   // end of MacroCommandIdToSlot
+
+// ── OSVersionString ─────────────────────────────────────────────────────────
+// The operating-system name world.Debug ("summary") reports.  Lifted out of
+// world_debug.cpp (which only ever links into the GUI product) so the
+// non-Windows arm is reachable from the test suite.  The Windows switch below
+// is the original verbatim.  Declared by its callers, like the other externs
+// at the top of world_debug.cpp.
+
+CString OSVersionString (void)
+  {
+
+#ifndef _WIN32
+
+  // Non-Windows: os_version is filled by the GetVersionEx shim, which reports a
+  // fixed Windows 10 and knows nothing about this machine, so ask the kernel
+  // instead.  Gives e.g. "Darwin 24.6.0".
+
+  struct utsname sUts;
+
+  if (uname (&sUts) == 0)
+    return CFormat ("%s %s", sUts.sysname, sUts.release);
+
+  // uname failed — fall through to the generic description below.
+
+#endif  // !_WIN32
+
+  // work out operating system
+
+  CString sVersion = TFormat ("Unknown (Platform %u, Major %u, Minor %u)",
+                             (unsigned) os_version.dwPlatformId,
+                             (unsigned) os_version.dwMajorVersion,
+                             (unsigned) os_version.dwMinorVersion);
+
+  if (os_version.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)  // Windows 95-style versions
+    {
+    switch (os_version.dwMinorVersion)
+      {
+      case  0: sVersion = "Windows 95"; break;
+      case 10: sVersion = "Windows 98"; break;
+      case 90: sVersion = "Windows ME"; break;
+      } // end of switch on dwMinorVersion
+    }  // end of dwPlatformId == 1
+  else if  (os_version.dwPlatformId == VER_PLATFORM_WIN32_NT)  // Windows NT versions
+    {
+    switch (os_version.dwMajorVersion)
+      {
+      case 3: sVersion = "Windows NT 3.51"; break;
+      case 4: sVersion = "Windows NT";      break;
+      case 5:   // Major version 5
+        switch (os_version.dwMinorVersion)
+          {
+          case 0: sVersion = "Windows 2000";        break;
+          case 1: sVersion = "Windows XP";          break;
+          case 2: sVersion = "Windows Server 2003"; break;
+          } // end of switch on dwMinorVersion
+        break;  // end case 5 of dwMajorVersion
+
+      case 6:   // Major version 6
+        switch (os_version.dwMinorVersion)
+          {
+          case 0: sVersion = "Windows Vista"; break;
+          case 1: sVersion = "Windows 7";     break;
+          case 2: sVersion = "Windows 8";     break;
+          case 3: sVersion = "Windows 8.1";   break;
+          } // end of switch on dwMinorVersion
+        break;  // end case 6 of dwMajorVersion
+
+      case 10:  // Major version 10
+        switch (os_version.dwMinorVersion)
+          {
+          case 0: sVersion = "Windows 10"; break;
+          } // end of switch on dwMinorVersion
+        break;  // end case 10 of dwMajorVersion
+
+      }  // end of switch on dwMajorVersion
+    }  // end of dwPlatformId == 2
+
+  return sVersion;
+
+  }   // end of OSVersionString

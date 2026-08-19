@@ -1349,107 +1349,7 @@ void CMUSHclientDoc::OnFilePluginwizard()
 
 
     if (propSheet.m_Page1.m_bRemoveItems)
-      {
-      // ---------- triggers ----------
-
-      iCount = 0;
-      for (pos = m_TriggerMap.GetStartPosition(); pos; )
-        {                                               
-        CTrigger * t;
-        m_TriggerMap.GetNextAssoc (pos, strName, t);  
-        if (t->bSelected)
-          {
-          iCount++;
-          // delete its pointer
-          delete t;
-          // now delete its entry
-          m_TriggerMap.RemoveKey (strName);
-          }   // end of selected trigger
-    
-        // sort remaining ones, show document modified
-        if (iCount)
-          {
-          m_CurrentPlugin = NULL;
-          SortTriggers ();
-          SetModifiedFlag (TRUE);   // document has changed
-          }
-
-        }  // end of doing all triggers
-
-      // ---------- aliases ----------
-
-      iCount = 0;
-      for (pos = m_AliasMap.GetStartPosition(); pos; )
-        {                                               
-        CAlias * a;
-        m_AliasMap.GetNextAssoc (pos, strName, a);  
-        if (a->bSelected)
-          {
-          iCount++;
-          // delete its pointer
-          delete a;
-          // now delete its entry
-          m_AliasMap.RemoveKey (strName);
-          }   // end of selected Alias
-    
-        //  show document modified
-        if (iCount)
-          {
-          m_CurrentPlugin = NULL;
-          SortAliases ();
-          SetModifiedFlag (TRUE);   // document has changed
-          }
-
-        }  // end of doing all aliases
-
-      // ---------- timers ----------
-
-      iCount = 0;
-      for (pos = m_TimerMap.GetStartPosition(); pos; )
-        {                                               
-        CTimer * t;
-        m_TimerMap.GetNextAssoc (pos, strName, t);  
-        if (t->bSelected)
-          {
-          iCount++;
-          // delete its pointer
-          delete t;
-          // now delete its entry
-          m_TimerMap.RemoveKey (strName);
-          }   // end of selected Timer
-    
-        // show document modified
-        if (iCount)
-          {
-          m_CurrentPlugin = NULL;
-          SortTimers ();
-          SetModifiedFlag (TRUE);   // document has changed
-          }
-
-        }  // end of doing all Timers
-
-      // ---------- variables ----------
-
-      iCount = 0;
-      for (pos = m_VariableMap.GetStartPosition(); pos; )
-        {                                               
-        CVariable * v;
-        m_VariableMap.GetNextAssoc (pos, strName, v);  
-        if (v->bSelected)
-          {
-          iCount++;
-          // delete its pointer
-          delete v;
-          // now delete its entry
-          m_VariableMap.RemoveKey (strName);
-          }   // end of selected Variable
-    
-        // show document modified
-        if (iCount)
-          SetModifiedFlag (TRUE);   // document has changed
-
-        }  // end of doing all Variables
-      } // end of removing wanted
+      RemoveSelectedWizardItems ();
     }      // end of try block
   catch (CException* e)
   {
@@ -1458,6 +1358,124 @@ void CMUSHclientDoc::OnFilePluginwizard()
   }       // end of catch
 
 }  // end of CMUSHclientDoc::OnFilePluginwizard
+
+
+// Throw away the triggers, aliases, timers and variables the plugin wizard
+// just exported.  Lifted out of OnFilePluginwizard so it can be driven
+// without a property sheet; the removal loops are otherwise unchanged, except
+// that each "sort what is left" block now sits AFTER its loop.  It used to be
+// inside, so a full sort ran once per surviving map entry - and with the
+// wizard pre-selecting everything that is O(N^2 log N) over the whole set.
+// Nothing in a loop body reads the sorted array or the modified flag, so
+// running the block once at the end is the same thing, only quicker.
+
+void CMUSHclientDoc::RemoveSelectedWizardItems (void)
+  {
+  POSITION pos;
+  CString strName;
+  int iCount;
+
+  // ---------- triggers ----------
+
+  iCount = 0;
+  for (pos = m_TriggerMap.GetStartPosition(); pos; )
+    {                                               
+    CTrigger * t;
+    m_TriggerMap.GetNextAssoc (pos, strName, t);  
+    if (t->bSelected)
+      {
+      iCount++;
+      // delete its pointer
+      delete t;
+      // now delete its entry
+      m_TriggerMap.RemoveKey (strName);
+      }   // end of selected trigger
+    
+    }  // end of doing all triggers
+
+  // sort remaining ones, show document modified
+  if (iCount)
+    {
+    m_CurrentPlugin = NULL;
+    SortTriggers ();
+    SetModifiedFlag (TRUE);   // document has changed
+    }
+
+  // ---------- aliases ----------
+
+  iCount = 0;
+  for (pos = m_AliasMap.GetStartPosition(); pos; )
+    {                                               
+    CAlias * a;
+    m_AliasMap.GetNextAssoc (pos, strName, a);  
+    if (a->bSelected)
+      {
+      iCount++;
+      // delete its pointer
+      delete a;
+      // now delete its entry
+      m_AliasMap.RemoveKey (strName);
+      }   // end of selected Alias
+    
+    }  // end of doing all aliases
+
+  //  show document modified
+  if (iCount)
+    {
+    m_CurrentPlugin = NULL;
+    SortAliases ();
+    SetModifiedFlag (TRUE);   // document has changed
+    }
+
+  // ---------- timers ----------
+
+  iCount = 0;
+  for (pos = m_TimerMap.GetStartPosition(); pos; )
+    {                                               
+    CTimer * t;
+    m_TimerMap.GetNextAssoc (pos, strName, t);  
+    if (t->bSelected)
+      {
+      iCount++;
+      // delete its pointer
+      delete t;
+      // now delete its entry
+      m_TimerMap.RemoveKey (strName);
+      }   // end of selected Timer
+    
+    }  // end of doing all Timers
+
+  // show document modified
+  if (iCount)
+    {
+    m_CurrentPlugin = NULL;
+    SortTimers ();
+    SetModifiedFlag (TRUE);   // document has changed
+    }
+
+  // ---------- variables ----------
+
+  iCount = 0;
+  for (pos = m_VariableMap.GetStartPosition(); pos; )
+    {                                               
+    CVariable * v;
+    m_VariableMap.GetNextAssoc (pos, strName, v);  
+    if (v->bSelected)
+      {
+      iCount++;
+      // delete its pointer
+      delete v;
+      // now delete its entry
+      m_VariableMap.RemoveKey (strName);
+      }   // end of selected Variable
+    
+    }  // end of doing all Variables
+
+  // show document modified
+  if (iCount)
+    SetModifiedFlag (TRUE);   // document has changed
+
+  }  // end of CMUSHclientDoc::RemoveSelectedWizardItems
 
 
 
@@ -1588,16 +1606,6 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
                                                const CString & sText,
                                                const bool bStopOnFalse)
   {
-  return SendToAllPluginCallbacks (sName, (const char *) sText, bStopOnFalse);
-  }
-
-bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
-                                               const CString & sText,
-                                               const bool bStopOnTrue,
-                                               const bool bStopOnFalse)
-  {
-  // This overload is a port convenience; the full build delegates to the two-arg form.
-  // bStopOnTrue is not supported in the base overload, so we ignore it here.
   return SendToAllPluginCallbacks (sName, (const char *) sText, bStopOnFalse);
   }
 

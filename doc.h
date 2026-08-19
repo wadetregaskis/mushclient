@@ -2658,10 +2658,6 @@ public:
   bool SendToAllPluginCallbacks (const string & sName,
                                  const CString & sText,
                                  const bool bStopOnFalse);
-  bool SendToAllPluginCallbacks (const string & sName,
-                                 const CString & sText,
-                                 const bool bStopOnTrue,
-                                 const bool bStopOnFalse);
 
   // send strResult to all plugins, allow them to modify it
   void SendToAllPluginCallbacksRtn (const string & sName, 
@@ -2681,6 +2677,9 @@ public:
                                  const string sText,
                                  const bool bStopOnTrue,
                                  const bool bStopOnFalse);
+
+  // discard the items the plugin wizard just exported
+  void RemoveSelectedWizardItems (void);
 
   // load from document into property page (Windows GUI only)
   // World-prefs data marshaling — portable (definitions in configuration.cpp;

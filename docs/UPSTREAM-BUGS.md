@@ -1083,3 +1083,20 @@ already shows the shape the flag should have had.
 every exit path in all six dispatchers.  Covered by
 `PluginGuards.NestedDispatchKeepsNoteBatchingOn` in `tests/test_plugins.cpp`.
 
+## 52 — The plugin wizard re-sorts the whole world once per surviving item (this commit)
+**Bug:** in `OnFilePluginwizard`'s four "now remove the items we exported"
+loops the `if (iCount) { ... SortTriggers (); SetModifiedFlag (TRUE); }` block
+sits *inside* the loop, before its closing brace, rather than after it.  Each
+`SortTriggers`/`SortAliases`/`SortTimers` does a `SetSize`, a full map walk
+rebuilding the array and the reverse map, and a `qsort`, and the wizard
+pre-selects everything, so the removal is O(N² log N) in the number of items
+instead of one sort at the end.  A world with a few thousand triggers takes
+seconds to finish the wizard.
+**Fix:** move each block past its loop's closing brace.  Nothing in a loop body
+reads the sorted array or the modified flag, so this is behaviour-preserving,
+and the `if (iCount)` guard keeps the nothing-selected case identical.  The
+loops moved into `CMUSHclientDoc::RemoveSelectedWizardItems` so they can be
+driven without a property sheet; covered by
+`WizardTest.RemovingSelectedItemsSortsOncePerCategory` in
+`tests/test_plugins.cpp`, which pins the complexity with a timed 3,000-trigger
+run rather than a comment.

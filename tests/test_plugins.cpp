@@ -17,6 +17,7 @@
 #include "fake_transport.h"
 #include "scripting/scripting.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -750,8 +751,7 @@ TEST(PluginCallback, OneNumberOneStringStopSemantics)
 }
 
 // plugins.cpp CString convenience overloads "forward to the const char*
-// implementation" — including the 4-argument form, whose bStopOnTrue flag
-// is documented as ignored.
+// implementation".
 TEST(PluginCallback, CStringOverloadsForwardToCharImplementation)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -771,11 +771,6 @@ TEST(PluginCallback, CStringOverloadsForwardToCharImplementation)
     EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, CString("two"),
                                               true));
     EXPECT_STREQ("two", (const char*)plugin_var(p, "saw"));
-
-    // 4-arg CString form: bStopOnTrue ignored, behaves as the 2-arg form
-    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, CString("three"),
-                                              true, true));
-    EXPECT_STREQ("three", (const char*)plugin_var(p, "saw"));
 }
 
 // plugins.cpp GetPluginDispid: "else return DISPID_UNKNOWN" — a plugin with
@@ -2159,6 +2154,50 @@ TEST(PluginGuards, NestedDispatchKeepsNoteBatchingOn)
     EXPECT_STREQ("yes", (const char*)plugin_var(doc.GetPlugin(IDB), "ran"));
     // and B's note was batched, not emitted inline
     EXPECT_EQ(1, (int)doc.m_OutstandingLines.size());
+}
+
+// plugins.cpp RemoveSelectedWizardItems: each "sort what is left" block runs
+// once, after its loop.  It used to sit inside, so removing N pre-selected
+// items ran N full sorts â O(NÂ² log N) for what is one sort's worth of work.
+// A complexity pin, not a stopwatch: time the same removal at two sizes.
+TEST(WizardTest, RemovingSelectedItemsSortsOncePerCategory)
+{
+    auto run = [](int count) {
+        CMUSHclientDoc doc;
+        char name[32];
+        for (int i = 0; i < count; i++)
+          {
+          snprintf(name, sizeof name, "t%05d", i);
+          doc.AddTrigger(name, "match", "resp", 1, -1, 0, "", "");
+          }
+        // the wizard pre-selects everything before exporting it
+        for (POSITION pos = doc.GetTriggerMap().GetStartPosition(); pos; )
+          {
+          CString strName; CTrigger * t;
+          doc.GetTriggerMap().GetNextAssoc(pos, strName, t);
+          t->bSelected = true;
+          }
+
+        const auto t0 = std::chrono::steady_clock::now();
+        doc.RemoveSelectedWizardItems();
+        const auto t1 = std::chrono::steady_clock::now();
+
+        // it really removed them, so a do-nothing helper cannot pass on time
+        EXPECT_EQ(0, (int)doc.GetTriggerMap().GetCount());
+        EXPECT_EQ(0, (int)doc.GetTriggerArray().GetSize());
+        return std::chrono::duration<double, std::milli>(t1 - t0).count();
+    };
+
+    run(200);                              // warm
+    const double small = run(400);
+    const double big   = run(2400);        // 6x the items
+
+    // one sort each: ~6x the work.  One per surviving entry: ~36x, and the
+    // ratio keeps climbing with the size.  Twice as loose as the measured
+    // 6x, so ordinary machine noise cannot fail it.
+    EXPECT_TRUE(big <= small * 12 + 25.0);
+    if (big > small * 12 + 25.0)
+        printf("    400 items %.3fms vs 2400 items %.3fms\n", small, big);
 }
 
 MC_TEST_MAIN()

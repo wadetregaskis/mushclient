@@ -19,6 +19,15 @@
 #include "mc_test.h"
 #include "pal/chat_protocol.h"
 
+// The zChat wire-stamp round trip (CChatSocket::GetStamp / MakeStamp /
+// Process_Stamp) is not part of pal::chat_protocol.h -- it lives in the real
+// chatsock.cpp, which the chat family adoption (docs/STUB-ADOPTION-2026-08.md
+// §5 step 2) put in mushcore, so it is reachable here directly.
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "chatsock.h"
+
 #include <string>
 
 using std::string;
@@ -368,6 +377,52 @@ TEST(ChatProtocol, ACommaInTheNameIsNotEscaped) {
     const string s = pal::chatAcceptCallbackArgument("10.0.0.1", "a,b");
     EXPECT_EQ(string("10.0.0.1,a,b"), s);
     EXPECT_EQ(8u, s.find(','));
+}
+
+// ── the zChat stamp: LP64 sign-extension ────────────────────────────────────
+
+TEST(ChatProtocol, ProcessStampRecognisesASelfCollisionWithTheTopBitSet) {
+    // Process_Stamp's rule is "if the incoming stamp equals ours, we have a
+    // collision -- mint a new one" (chatsock.cpp:1680).  GetStamp rebuilds the
+    // 4-byte wire stamp through `int` arithmetic; if the top byte has bit 7
+    // set, an `int` accumulator sign-extends the result to a huge negative
+    // `long` on LP64, while m_zChatStamp (assigned straight from an
+    // `unsigned int` SHS digest word) zero-extends to a small positive one.
+    // The two then never compare equal for such a stamp, so a genuine
+    // self-collision went unrecognised and the colliding stamp was kept
+    // forever instead of being regenerated.
+    CMUSHclientDoc doc;
+    CChatSocket sock(&doc);
+    sock.m_iChatConnectionType = eChatZMud;
+
+    const long kOriginalStamp = 0x80000001L;
+    sock.m_zChatStamp = kOriginalStamp;
+
+    // The peer echoes back exactly our own stamp.
+    CString wire = sock.MakeStamp (kOriginalStamp);
+    ASSERT_EQ(4, wire.GetLength ());
+
+    sock.Process_Stamp (wire);
+
+    // A recognised collision regenerates m_zChatStamp via MakeRandomNumber;
+    // the buggy comparison missed the match, so the stamp never changed.
+    EXPECT_NE(kOriginalStamp, sock.m_zChatStamp);
+}
+
+TEST(ChatProtocol, GetStampZeroExtendsLikeTheDigestAssignmentDoes) {
+    // Same defect, isolated to the extraction itself: bytes decoding to
+    // 0x80000001 must come back as that same positive value cast to `long`,
+    // not sign-extended to 0xFFFFFFFF80000001.
+    CMUSHclientDoc doc;
+    CChatSocket sock(&doc);
+    sock.m_iChatConnectionType = eChatZMud;
+
+    CString wire = sock.MakeStamp (0x80000001L);
+    ASSERT_EQ(4, wire.GetLength ());
+
+    const long iStamp = sock.GetStamp (wire);
+    EXPECT_EQ(0x80000001L, iStamp);
+    EXPECT_TRUE(wire.IsEmpty ());   // the 4 stamp bytes were consumed
 }
 
 MC_TEST_MAIN()

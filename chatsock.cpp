@@ -1721,14 +1721,14 @@ long CChatSocket::GetStamp (CString & strMessage)    // extracts message stamp
   if (strMessage.GetLength () < 4)
     return 0;   // should be 4-byte stamp
 
-  long iStamp = (int) (unsigned char) strMessage [0] |
-              (((int) (unsigned char) strMessage [1]) << 8) |
-              (((int) (unsigned char) strMessage [2]) << 16) |
-              (((int) (unsigned char) strMessage [3]) << 24);
+  unsigned int iStamp = (unsigned int) (unsigned char) strMessage [0] |
+              (((unsigned int) (unsigned char) strMessage [1]) << 8) |
+              (((unsigned int) (unsigned char) strMessage [2]) << 16) |
+              (((unsigned int) (unsigned char) strMessage [3]) << 24);
 
   strMessage = strMessage.Mid (4);  // get rid of stamp part
 
-  return iStamp;
+  return (long) iStamp;   // zero-extend, matching how m_zChatStamp is assigned from an unsigned SHS digest word
 
   }  // end of CChatSocket::GetStamp
 

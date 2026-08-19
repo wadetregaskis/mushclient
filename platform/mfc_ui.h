@@ -1989,8 +1989,15 @@ inline HRESULT SafeArrayGetElement(SAFEARRAY* psa, long* index, void* pv) {
     return S_OK;
 }
 inline HRESULT SafeArrayGetElement(SAFEARRAY* psa, LONG* index, void* pv) {
-    long ix[2] = { index ? index[0] : 0, index ? index[1] : 0 };
-    return SafeArrayGetElement(psa, ix, pv);
+    // One subscript, not two.  This shim only ever handles one-dimensional
+    // arrays -- every path above indexes rgsabound[0] and the long* overload
+    // reads index[0] alone -- so callers pass a ONE-element array, as
+    // COleSafeArray::GetElement and the tests both do.  Widening it to two
+    // here read one element off the end of the caller's array on every call,
+    // to build a value nothing then looked at.  AddressSanitizer reports it
+    // as a stack-buffer-overflow READ of size 4.
+    long ix = index ? index[0] : 0;
+    return SafeArrayGetElement(psa, &ix, pv);
 }
 inline HRESULT SafeArrayDestroy(SAFEARRAY* psa) {
     if (!psa) return S_OK;

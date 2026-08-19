@@ -262,8 +262,11 @@ static int MonthDays[13] =
 	{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365};
 
 
+// nSecond is a double, not a WORD: MUSHclient allows a fractional second
+// (eg. an "at time" timer set to 30.75), and truncating it here made every such
+// timer fire up to a second early.
 static BOOL  mcDateFromTm(WORD wYear, WORD wMonth, WORD wDay,
-	WORD wHour, WORD wMinute, WORD wSecond, DATE& dtDest)
+	WORD wHour, WORD wMinute, double nSecond, DATE& dtDest)
 {
 	// Validate year and month (ignore day of week and milliseconds)
 	if (wYear > 9999 || wMonth < 1 || wMonth > 12)
@@ -280,7 +283,7 @@ static BOOL  mcDateFromTm(WORD wYear, WORD wMonth, WORD wDay,
 	// Finish validating the date
 	if (wDay < 1 || wDay > nDaysInMonth ||
 		wHour > 23 || wMinute > 59 ||
-		wSecond > 59)
+		nSecond < 0.0 || nSecond >= 60.0)
 	{
 		return FALSE;
 	}
@@ -302,7 +305,7 @@ static BOOL  mcDateFromTm(WORD wYear, WORD wMonth, WORD wDay,
 
 	dblTime = (((long)wHour * 3600L) +  // hrs in seconds
 		((long)wMinute * 60L) +  // mins in seconds
-		  wSecond) / SECS_IN_DAY;
+		  nSecond) / SECS_IN_DAY;
 
 	dtDest = (double) nDate + ((nDate >= 0) ? dblTime : -dblTime);
 
@@ -404,18 +407,15 @@ static LONGLONG iCounterFrequency = 0;
   // POSIX: clock_gettime gives nanosecond precision directly — no need for the
   // performance-counter resync trick used on Windows.
   //
-  // But the fraction must NOT be handed to the constructor.  SetDateTime takes
-  // a `double nSec` and passes it straight into mcDateFromTm, whose parameter
-  // is a WORD — so the implicit conversion truncates, and every sub-second
-  // timer was quantised to 1 Hz (a 0.5 s timer fired once a second; DoAfter(0.2)
-  // landed anywhere up to a second late).  Windows does not hit this because it
-  // never puts a fraction through the constructor either: it builds from whole
-  // seconds and then adds the elapsed QueryPerformanceCounter delta straight
-  // onto m_dt, a few lines up.
-  //
-  // Same shape here: whole seconds through the constructor, the fraction added
-  // to the DATE double afterwards.  m_dt is days, so nanoseconds scale by
+  // Whole seconds through the constructor, the fraction added to the DATE
+  // double afterwards — the same shape as the Windows arm a few lines up, which
+  // builds from whole seconds and then adds the elapsed QueryPerformanceCounter
+  // delta straight onto m_dt.  m_dt is days, so nanoseconds scale by
   // 1e9 * SECS_IN_DAY.
+  //
+  // (The constructor itself no longer truncates: mcDateFromTm's second
+  // parameter used to be a WORD, which quantised every sub-second timer to 1 Hz
+  // until it was widened to a double.)
   struct timespec ts;
   clock_gettime(CLOCK_REALTIME, &ts);
   struct tm local_tm;

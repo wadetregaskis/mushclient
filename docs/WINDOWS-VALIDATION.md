@@ -2514,3 +2514,39 @@ only visible effect should be that a wall-placed miniwindow's hotspots respond
 at all (upstream's `PtInRect` could not match a `CRect (start, 0, width,
 height)`), and that a window the layout could not fit stops answering at the
 pane's top-left corner — which upstream's `PtInRect` also never did.
+
+### Engine-core upstream bugs in shared source (2026-08-19)
+
+Each is unconditional shared source with no `#ifdef` anywhere near it, and each
+file is in `MUSHclient.vcxproj`, so Windows carries the bug and the fix changes
+Windows behaviour.  Each has headless coverage, and each new test was confirmed
+to fail with its fix reverted, so what a Windows run adds is confirmation
+against the real view, the real timer wheel and a real MUD.
+
+- **Bold now reaches white** (`docs/UPSTREAM-BUGS.md` #56).  **To check:** a
+  world with *Use custom colour 16 as default output colour* ticked, then send
+  it `ESC[37m` (white) followed by `ESC[1m`.  The text should brighten to the
+  *bold* white swatch and go back to the normal one on `ESC[22m`; stock 5.06
+  leaves it at the normal swatch through both.  Set the two white entries to
+  obviously different colours on the world's ANSI-colour page first, or the
+  change is invisible.  Confirm the other seven colours are unchanged — they
+  already worked, and the loop bound is the only thing that moved.
+
+- **Fractional `at_time` timers** (`docs/UPSTREAM-BUGS.md` #57).  **To check:**
+  a timer set to *at time* with a second field of, say, 30.75, against the
+  world clock.  It should fire three quarters of a second later than stock
+  5.06 does — i.e. at the time configured, not at the whole second below it.
+  Worth re-running the ordinary *every* timers and `DoAfter` alongside: they go
+  through `CmcDateTimeSpan`, not this constructor, and must be unaffected.  The
+  range the dialog accepts must also be unchanged — 59.9999 still valid, 60
+  still rejected.
+
+- **Tab stops in a UTF-8 world** (`docs/UPSTREAM-BUGS.md` #58).  **To check:**
+  a UTF-8 world (*Use UTF-8* on the world's output page), then have the MUD
+  send a line of accented or CJK text followed by a tab and a marker
+  character — a two-column table is the natural shape.  The marker should line
+  up with the same column an all-ASCII line puts it in; stock 5.06 pulls the
+  multi-byte row left.  Also worth a look: an ASCII world must be
+  byte-identical (the helper returns the byte length when `m_bUTF_8` is off),
+  and the `<P>` period-space rule, which shared the same confusion, should
+  still give two spaces after a full stop well inside the wrap column.

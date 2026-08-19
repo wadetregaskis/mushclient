@@ -171,6 +171,60 @@ TEST(PosixSocket, EofFiresOnCloseOnceThenSocketIsClosed)
     lis.Close();
 }
 
+// posix_socket.h Poll: the readable-event handler's MSG_PEEK-returns-0-means-
+// EOF heuristic is TCP-specific.  A SOCK_DGRAM socket (world.UdpListen) has no
+// concept of a peer closing the connection, and a legitimate zero-length UDP
+// datagram peeks as 0 bytes exactly like TCP EOF — Poll() used to treat it as
+// the peer going away and permanently close the listening socket.
+namespace {
+struct UdpRecorder : CAsyncSocket {
+    int receives = 0, closes = 0;
+    std::string last;
+    void OnReceive(int) override
+    {
+        ++receives;
+        char buf[64] = {};
+        int n = Receive(buf, sizeof buf);
+        last = (n > 0) ? std::string(buf, n) : std::string();
+    }
+    void OnClose(int) override { ++closes; }
+};
+} // namespace
+
+TEST(PosixSocket, ZeroLengthUdpDatagramIsDataNotEof)
+{
+    UdpRecorder udp;
+    ASSERT_TRUE(udp.Create(0, SOCK_DGRAM, FD_READ | FD_WRITE, "127.0.0.1"));
+    SOCKADDR_IN addr{}; int len = sizeof addr;
+    ASSERT_TRUE(udp.GetSockName((SOCKADDR*)&addr, &len));
+    UINT port = ntohs(addr.sin_port);
+
+    SOCKET sender = ::socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_TRUE(sender != INVALID_SOCKET);
+    SOCKADDR_IN dst{};
+    dst.sin_family      = AF_INET;
+    dst.sin_port        = htons((uint16_t)port);
+    dst.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    // A zero-length datagram used to be indistinguishable from TCP EOF and
+    // made Poll() close the socket on it.
+    EXPECT_EQ(0, (int)::sendto(sender, "", 0, 0, (SOCKADDR*)&dst, sizeof dst));
+    ASSERT_TRUE(poll_until([&] { return udp.receives > 0; }));
+    EXPECT_EQ(1, udp.receives);
+    EXPECT_EQ(0, udp.closes);
+    ASSERT_TRUE(udp.m_hSocket != INVALID_SOCKET);   // socket survives
+
+    // ...and the listener keeps working afterwards: a following non-empty
+    // datagram is still delivered with the right bytes.
+    EXPECT_EQ(4, (int)::sendto(sender, "ping", 4, 0, (SOCKADDR*)&dst, sizeof dst));
+    ASSERT_TRUE(poll_until([&] { return udp.receives > 1; }));
+    EXPECT_EQ(2, udp.receives);
+    EXPECT_EQ("ping", udp.last);
+
+    ::close(sender);
+    udp.Close();
+}
+
 // posix_socket.h Poll: "callbacks may modify s_sockets — and may even
 // DELETE a socket ... Re-check IsLive(s) after every callback so we never
 // dereference a pointer in the snapshot that a callback has since freed."

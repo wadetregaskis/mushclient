@@ -3593,6 +3593,31 @@ int RunWorldFrameSelfTest()
         if (bar) bar->SetValue(wxEmptyString);
         wxYield();
 
+        // ...and it survives the wrap_input toggle, which REBUILDS the control.
+        // The replacement carries no minimum size of its own, so a pin that
+        // only suppressed content sizing (rather than re-applying itself) would
+        // be lost here -- and lost irrecoverably, since with the pin still set
+        // nothing would resize the bar again either.
+        {
+            const BOOL wrapWas = doc->m_bAutoWrapInput;
+
+            doc->m_bAutoWrapInput = wrapWas ? FALSE : TRUE;
+            pumpUntil([&] { return child->NormalInputPublic() != bar; });
+            wxTextCtrl* rebuilt = child->NormalInputPublic();
+            check(rebuilt != NULL && rebuilt != bar,
+                  "command-window-height: control -- toggling wrap_input really "
+                  "did replace the command bar");
+            check(rebuilt != NULL && rebuilt->GetSize().y == pinned,
+                  "command-window-height: the pinned height survives the "
+                  "wrap_input rebuild");
+
+            doc->m_bAutoWrapInput = wrapWas;      // put the world back
+            pumpUntil([&] { return child->NormalInputPublic() != rebuilt; });
+            bar = child->NormalInputPublic();
+            check(bar != NULL && bar->GetSize().y == pinned,
+                  "command-window-height: ...and the rebuild back again");
+        }
+
         // ...but a world that asks for auto-resizing still wins, exactly as
         // CSendView::AdjustCommandWindowSize does on Windows.  Without this
         // arm the check above could pass by the bar simply being frozen.

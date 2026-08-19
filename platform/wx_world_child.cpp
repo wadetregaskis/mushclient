@@ -4886,8 +4886,20 @@ void CWorldChildFrame::UpdateInputBarHeight()
     // for it.  A world that HAS asked still wins, exactly as on Windows -- and
     // taking the bar back means giving up the pin.
     if (m_inputBarPinnedHeight > 0) {
-        if (!(m_doc && m_doc->m_bAutoResizeCommandWindow))
-            return;                      // pinned: leave the height alone
+        if (!(m_doc && m_doc->m_bAutoResizeCommandWindow)) {
+            // RE-APPLY, rather than just returning.  BuildInputBar REPLACES
+            // the control when wrap_input is toggled, and the replacement
+            // carries no minimum size -- so a bare return here would drop the
+            // pinned height on the floor while m_inputBarPinnedHeight still
+            // claimed it was pinned, leaving the bar stuck at its default size
+            // with nothing able to resize it again.  Guarded so the common
+            // case (every keystroke) costs a comparison, not a relayout.
+            if (m_input->GetMinSize().y != m_inputBarPinnedHeight) {
+                m_input->SetMinSize(wxSize(-1, m_inputBarPinnedHeight));
+                Layout();
+            }
+            return;                      // pinned: content does not size it
+        }
         m_inputBarPinnedHeight = 0;      // the world auto-resizes; the pin yields
         m_inputBarLines        = -1;     // ...so force a fresh fit below
     }

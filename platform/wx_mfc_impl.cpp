@@ -4213,9 +4213,21 @@ static int hook_popup_menu(CMenu* menu, int x, int y, unsigned flags)
     // from an alias, a trigger or a timer got its menu wherever the pointer
     // happened to be, possibly over another window altogether, and the "drop it
     // under my toolbar button" idiom never lined up.
+    //
+    // NO (x, y) == (0, 0) fallback to the mouse position, deliberately, even
+    // though one lived here until GetCursorPos (platform/mfc_ui.h) was wired
+    // up for real. That fallback existed to paper over CMainFrame::LeftTrayClick
+    // (mainfrm.cpp) calling GetCursorPos into a CPoint and getting FALSE back —
+    // the point stayed value-initialised at (0, 0), which this fallback then
+    // quietly turned back into the mouse position, close enough that the bug
+    // was never seen. GetCursorPos now really works, so that caller supplies a
+    // genuine anchor and no longer needs it. Keeping the fallback anyway would
+    // trade one silent wrong answer for another: CMiniWindow::Menu (WindowMenu)
+    // legitimately resolves to screen (0, 0) whenever the miniwindow's own
+    // origin is there — the top-left corner of the primary screen is an
+    // ordinary place to dock one — and a plugin asking for its menu at (0, 0)
+    // would have it silently relocated to wherever the mouse happened to be.
     wxPoint anchor(x, y);
-    if (anchor == wxPoint(0, 0))
-        anchor = ::wxGetMousePosition();   // no usable anchor — the old behaviour
     if (flags & (TPM_CENTERALIGN | TPM_RIGHTALIGN |
                  TPM_VCENTERALIGN | TPM_BOTTOMALIGN)) {
         // The alignment bits name which edge of the MENU sits on the anchor;
@@ -6025,6 +6037,18 @@ static void hook_screen_to_client(const void* hwnd, int* x, int* y)
     wxPoint p = w->ScreenToClient(wxPoint(*x, *y));
     *x = p.x; *y = p.y;
 }
+// Win32 GetCursorPos: the mouse pointer's position in screen coordinates,
+// right now.  wxGetMousePosition() answers this directly — no window needed,
+// unlike ClientToScreen/ScreenToClient above — and always succeeds (there is
+// no "no cursor" state on any platform this port targets), so this hook never
+// fails; only a null out-param does.
+static int hook_get_cursor_pos(int* x, int* y)
+{
+    if (!x || !y) return 0;
+    const wxPoint p = ::wxGetMousePosition();
+    *x = p.x; *y = p.y;
+    return 1;
+}
 
 void wx_mfc_install_hooks()
 {
@@ -6105,6 +6129,7 @@ void wx_mfc_install_hooks()
     g_wxhook_get_placement_rect       = hook_get_placement_rect;
     g_wxhook_client_to_screen         = hook_client_to_screen;
     g_wxhook_screen_to_client         = hook_screen_to_client;
+    g_wxhook_get_cursor_pos           = hook_get_cursor_pos;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

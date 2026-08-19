@@ -5625,8 +5625,33 @@ inline BOOL   ScreenToClient(HWND, POINT*)   { return FALSE; }
 inline BOOL   ClientToScreen(HWND, POINT*)   { return FALSE; }
 inline BOOL   ClientToScreen(HWND, CPoint*)  { return FALSE; }  // CPoint* overload
 inline BOOL   ScreenToClient(HWND, CPoint*)  { return FALSE; }
-inline BOOL   GetCursorPos(POINT*)           { return FALSE; }
-inline BOOL   GetCursorPos(CPoint*)          { return FALSE; }
+// Win32 GetCursorPos: the mouse pointer's position in screen coordinates.
+// CMainFrame::LeftTrayClick (mainfrm.cpp) is this port's live caller, reached
+// by clicking a world's status-bar name pane (CWorldChildFrame::ShowWorldSwitcher)
+// -- it anchors the open-worlds popup here.  Previously always FALSE, writing
+// nothing: LeftTrayClick's CPoint stayed value-initialised at (0,0), which
+// happened to still work only because wx_mfc_impl.cpp's popup-menu hook used
+// to fall back to the live mouse position for an anchor of exactly (0,0).
+// That fallback is now GONE (hook_popup_menu, wx_mfc_impl.cpp) precisely
+// because this fix makes it unnecessary for LeftTrayClick and it was
+// otherwise a latent bug for anyone with a genuine reason to anchor at
+// screen (0,0) -- see the comment at its old site for the full reasoning.
+inline BOOL   GetCursorPos(POINT* pt)
+{
+    if (!pt || !g_wxhook_get_cursor_pos) return FALSE;
+    int x = 0, y = 0;
+    if (!g_wxhook_get_cursor_pos(&x, &y)) return FALSE;
+    pt->x = x; pt->y = y;
+    return TRUE;
+}
+inline BOOL   GetCursorPos(CPoint* pt)
+{
+    if (!pt) return FALSE;
+    POINT p;
+    if (!GetCursorPos(&p)) return FALSE;
+    pt->x = p.x; pt->y = p.y;
+    return TRUE;
+}
 inline BOOL   SetCursorPos(int, int)         { return FALSE; }
 inline HCURSOR SetCursor(HCURSOR)            { return nullptr; }
 inline HMENU  GetSystemMenu(HWND, BOOL)      { return 0; }

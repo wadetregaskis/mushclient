@@ -165,5 +165,6 @@ void (*g_wxhook_get_window_rect)(const void*, RECT*)             = nullptr;
 void (*g_wxhook_get_placement_rect)(const void*, RECT*)          = nullptr;
 void (*g_wxhook_client_to_screen)(const void*, int*, int*)       = nullptr;
 void (*g_wxhook_screen_to_client)(const void*, int*, int*)       = nullptr;
+int  (*g_wxhook_get_cursor_pos)(int*, int*)                      = nullptr;
 
 #endif // !_WIN32

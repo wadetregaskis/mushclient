@@ -3516,9 +3516,24 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
     // ── 8. destructive, alone at the far end ─────────────────────────────────
     // The canonical command's own label (kCanonCmds, wx_mfc_impl.cpp:705) —
     // this item IS that command, not a second, weaker one.  Windows binds it to
-    // Shift+Ctrl+C; Ctrl+L is an extra binding the port adds.
+    // Shift+Ctrl+C; physical Ctrl+L is an extra binding the port adds
+    // (COutputPane::OnKeyDown / CWorldChildFrame::OnInputKeyDown, both gated on
+    // RawControlDown so it is the literal Control key, not Cmd).
+    //
+    // NO "\tCtrl+L" on the label, deliberately.  wx renders "Ctrl+" as Cmd on
+    // macOS, so that text would promise Cmd+L — and Cmd+L is not free: the
+    // View menu's "Clear To Mark" (kAccelClearToMark, wx_mfc_impl.cpp) is a
+    // real, natively-registered Cmd+L, a DIFFERENT and much less destructive
+    // operation (it keeps everything above the mark; this command keeps
+    // nothing). A user who presses what this label promised would silently
+    // get that command instead of this one — worse than the accelerator
+    // simply doing nothing, since the wrong amount of history survives with
+    // no error. Same reasoning, and the same fix shape, as this menu's Find
+    // item above (ID_CANON_FIND): its "…\tCtrl+F" was dropped for the same
+    // reason -- see "No Ctrl+F accelerator here" at wx_mfc_impl.cpp's Display
+    // menu, which this item now matches too.
     menu.AppendSeparator();
-    menu.Append(ID_CLEAR, wxT("Clear Output Buffer…\tCtrl+L"));
+    menu.Append(ID_CLEAR, wxT("Clear Output Buffer…"));
 }
 
 // Hotspots get FIRST refusal, before the modifier is looked at.  Windows orders

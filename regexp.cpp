@@ -166,12 +166,19 @@ pcre * program;
   dlg.m_iColumn = erroroffset + 1;
   dlg.DoModal ();
 #else
-  // Same information, in a real message box.  IDD_REGEXP_PROBLEM is not among
-  // the recovered dialog templates, so CRegexpProblemDlg cannot be built here
-  // and DoModal would decline silently -- but a bad pattern must not be a
-  // silent failure: the caller's dialog simply refuses to close, and stderr is
-  // not somewhere a user of a .app ever looks.  Text laid out like the dialog's
-  // three fields, caret line included.
+  // Same information, in a real message box.  IDD_REGEXP_PROBLEM *is* among the
+  // recovered dialog templates (platform/mushclient_dialogs.rc), so on its own
+  // that would be no obstacle -- but this file is CORE_SOURCES, compiled once
+  // into mushcore and linked by BOTH mushgui (which carries CRegexpProblemDlg,
+  // in mushgui_adapters) and the headless test executables (which do not).
+  // Constructing the dialog unconditionally here would leave its ctor/DDX/
+  // message-map symbols undefined for every one of the ~40 test binaries that
+  // pull in CheckRegularExpression -- ld64 needs them defined even in code that
+  // never runs.  Building the canonical dialog from a mushcore TU needs a
+  // runtime hook (like g_wxhook_load_text_resource) or adopting
+  // RegexpProblemDlg.cpp into mushcore outright (as ProgDlg.cpp was); until
+  // one of those lands, a bad pattern must still not be a silent failure, so:
+  // text laid out like the dialog's three fields, caret line included.
   {
   CString strMessage = Translate (error);
   strMessage += ".";

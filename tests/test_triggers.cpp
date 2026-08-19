@@ -1509,6 +1509,288 @@ TEST(TriggerR5, BackgroundOnlyColourChange)
     EXPECT_TRUE(sawOriginalFore);
 }
 
+// -- D-02: colour-match conditions compare RESOLVED colours ------------------
+//
+// ProcessPreviousLine.cpp used to compare the trigger's stored 0-7 ANSI colour
+// number straight against CStyle::iForeColour / iBackColour.  Those members
+// only hold ANSI colour NUMBERS while the style's COLOURTYPE is COLOUR_ANSI:
+//
+//   COLOUR_ANSI   with an index >= 8 (ESC[38;5;n -- the xterm lookup is
+//                 deferred to display time, so 196 sits there raw)
+//   COLOUR_RGB    (ESC[38;2;r;g;b, MXP <color>, a trigger's own colour change)
+//                 holds a literal COLORREF
+//   COLOUR_CUSTOM holds a 0-15 index into m_customtext / m_customback
+//
+// so a "red" condition could not fire on any of them, while a COLORREF that
+// happened to be a small integer -- black above all, 0 == 0x000000 -- matched
+// by coincidence.  Both sides now go through pal::resolveStyleColours, the
+// same arithmetic GetStyleRGB paints with.
+
+// A palette with no accidental coincidences: every entry is large and
+// distinct, so no value can be mistaken for an ANSI index (0-7), a custom
+// index (0-15), an xterm index, or another entry.  A fixture that lets an
+// index and its resolved colour be the same number cannot tell the old
+// comparison from the new one.
+static void distinct_palette(CMUSHclientDoc& doc)
+{
+    for (int i = 0; i < 8; i++) {
+        doc.m_normalcolour[i] = (COLORREF)(0x310000 + i * 0x1111);
+        doc.m_boldcolour  [i] = (COLORREF)(0x620000 + i * 0x1111);
+    }
+    for (int i = 0; i < MAX_CUSTOM; i++) {
+        doc.m_customtext[i] = (COLORREF)(0x930000 + i * 0x1111);
+        doc.m_customback[i] = (COLORREF)(0xA40000 + i * 0x1111);
+    }
+}
+
+// add_trigger() reuses the pattern as the map label; these need an explicit
+// iMatch, so spell the registration out.
+static CTrigger* add_colour_trigger(CMUSHclientDoc& doc, unsigned short iMatch)
+{
+    CTrigger* t  = new CTrigger();
+    t->trigger   = CString("alert");
+    t->bEnabled  = TRUE;
+    t->bRegexp   = false;
+    t->iSendTo   = eSendToOutput;
+    t->iSequence = DEFAULT_TRIGGER_SEQUENCE;
+    t->iMatch    = iMatch;
+    t->colour    = SAMECOLOUR;   // do NOT repaint the run under test
+    t->strLabel  = CString("c");
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+    return t;
+}
+
+static void emit(CMUSHclientDoc& doc, const char* text)
+{
+    doc.DisplayMsg(text, (int)strlen(text), 0);
+}
+
+// Paint the line in `paint`'s style, then report whether a trigger carrying
+// `iMatch` fired on it.  Every case gets its own doc, so a "must not fire"
+// expectation cannot be perturbed by a sibling trigger that did.
+typedef std::function<void(CMUSHclientDoc&)> Painter;
+
+static long fires(const Painter& paint, int iMatch)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    distinct_palette(doc);
+    paint(doc);
+    CTrigger* t = add_colour_trigger(doc, (unsigned short) iMatch);
+    feed_line(doc, "alert");
+    return t->nMatched;
+}
+
+// StartNewLine seeds every line it creates from the doc's CURRENT style, and
+// make_doc's m_pCurrentLine is an orphan that never reaches m_LineList -- so
+// painting the run the fed text actually lands in means setting those members,
+// not calling AddStyle on that line.  (This is also how ansi.cpp gets its
+// colours across a line boundary: it calls RememberStyle.)
+static Painter paint_style(unsigned short iFlags, COLORREF fore, COLORREF back)
+{
+    return [iFlags, fore, back](CMUSHclientDoc& doc) {
+        doc.m_iFlags      = iFlags;
+        doc.m_iForeColour = fore;
+        doc.m_iBackColour = back;
+    };
+}
+
+static Painter paint_ansi(int fore, int back, unsigned short iExtraFlags = 0)
+{
+    return paint_style((unsigned short)(COLOUR_ANSI | iExtraFlags),
+                       (COLORREF) fore, (COLORREF) back);
+}
+
+// The fixture itself, pinned: nothing below can pass because two numbers
+// coincided.
+TEST(TriggerColourMatch, FixturePaletteIsNonDegenerate)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    distinct_palette(doc);
+    for (int i = 0; i < 8; i++) {
+        EXPECT_TRUE(doc.m_normalcolour[i] > 0xFFFFu);   // never an index
+        EXPECT_TRUE(doc.m_boldcolour[i]   > 0xFFFFu);
+        EXPECT_NE(doc.m_normalcolour[i], doc.m_boldcolour[i]);   // bold matters
+        for (int j = 0; j < 8; j++)
+            if (i != j) {
+                EXPECT_NE(doc.m_normalcolour[i], doc.m_normalcolour[j]);
+                EXPECT_NE(doc.m_normalcolour[i], doc.m_boldcolour[j]);
+            }
+    }
+    for (int i = 0; i < MAX_CUSTOM; i++) {
+        EXPECT_TRUE(doc.m_customtext[i] > 0xFFFFu);
+        EXPECT_NE(doc.m_customtext[i], doc.m_customback[i]);
+    }
+    // and the xterm entry the tests below lean on is neither its own index nor
+    // an ANSI colour number
+    EXPECT_NE((COLORREF)196, xterm_256_colours[196]);
+    EXPECT_NE((COLORREF)RED, xterm_256_colours[196]);
+}
+
+// (a) THE GUARD.  A plain ANSI line still matches exactly what it always did.
+// This test must pass before the fix as well as after it.
+TEST(TriggerColourMatch, PlainAnsiConditionsAreUnchanged)
+{
+    EXPECT_EQ(1L, fires(paint_ansi(RED, BLACK), TRIGGER_MATCH_TEXT | (RED  << 4)));
+    EXPECT_EQ(0L, fires(paint_ansi(RED, BLACK), TRIGGER_MATCH_TEXT | (BLUE << 4)));
+    EXPECT_EQ(1L, fires(paint_ansi(WHITE, BLUE), TRIGGER_MATCH_BACK | (BLUE << 8)));
+    EXPECT_EQ(0L, fires(paint_ansi(WHITE, BLUE), TRIGGER_MATCH_BACK | (RED  << 8)));
+
+    // both conditions at once: each must hold independently
+    const int both = TRIGGER_MATCH_TEXT | TRIGGER_MATCH_BACK;
+    EXPECT_EQ(1L, fires(paint_ansi(RED, BLUE), both | (RED  << 4) | (BLUE << 8)));
+    EXPECT_EQ(0L, fires(paint_ansi(RED, BLUE), both | (RED  << 4) | (RED  << 8)));
+    EXPECT_EQ(0L, fires(paint_ansi(RED, BLUE), both | (BLUE << 4) | (BLUE << 8)));
+
+    // and through the ANSI escape path, not just a hand-built style
+    Painter escRed = [](CMUSHclientDoc& doc) { emit(doc, "\x1b[31m"); };
+    EXPECT_EQ(1L, fires(escRed, TRIGGER_MATCH_TEXT | (RED  << 4)));
+    EXPECT_EQ(0L, fires(escRed, TRIGGER_MATCH_TEXT | (BLUE << 4)));
+}
+
+// Pin the xterm-256 fixture: ESC[38;5;n leaves a COLOUR_ANSI style holding the
+// RAW index, which is what makes the case below a test of the deferred lookup.
+TEST(TriggerColourMatch, Xterm256FixtureStoresTheRawIndex)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    emit(doc, "\x1b[38;5;196m");
+    CStyle* s = doc.m_pCurrentLine->styleList.GetTail();
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_ANSI, s->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)196, s->iForeColour);
+}
+
+// (b) An xterm-256 / truecolor line fires the trigger for the colour it
+// DISPLAYS, and not for any other.  Neither could fire at all before.
+TEST(TriggerColourMatch, Xterm256AndTruecolorLinesMatchTheColourTheyDisplay)
+{
+    // the world's red is configured to be exactly what xterm index 196 paints
+    Painter xterm196 = [](CMUSHclientDoc& doc) {
+        doc.m_normalcolour[RED] = xterm_256_colours[196];
+        emit(doc, "\x1b[38;5;196m");
+    };
+    EXPECT_EQ(1L, fires(xterm196, TRIGGER_MATCH_TEXT | (RED  << 4)));
+    EXPECT_EQ(0L, fires(xterm196, TRIGGER_MATCH_TEXT | (BLUE << 4)));
+
+    // ... same for a 256-colour background
+    Painter xtermBack = [](CMUSHclientDoc& doc) {
+        doc.m_normalcolour[BLUE] = xterm_256_colours[21];
+        emit(doc, "\x1b[48;5;21m");
+    };
+    EXPECT_EQ(1L, fires(xtermBack, TRIGGER_MATCH_BACK | (BLUE << 8)));
+    EXPECT_EQ(0L, fires(xtermBack, TRIGGER_MATCH_BACK | (RED  << 8)));
+
+    // ESC[38;2;r;g;b switches the style to COLOUR_RGB outright
+    Painter truecolour = [](CMUSHclientDoc& doc) {
+        doc.m_normalcolour[GREEN] = RGB(18, 52, 86);
+        emit(doc, "\x1b[38;2;18;52;86m");
+    };
+    EXPECT_EQ(1L, fires(truecolour, TRIGGER_MATCH_TEXT | (GREEN  << 4)));
+    EXPECT_EQ(0L, fires(truecolour, TRIGGER_MATCH_TEXT | (YELLOW << 4)));
+}
+
+// (c) A COLOUR_CUSTOM run matches on its resolved colour, not on the palette
+// index it stores.
+TEST(TriggerColourMatch, CustomColourMatchesResolvedColourNotPaletteIndex)
+{
+    // custom slot 1 is NOT ANSI red -- but the old matcher read the stored 1 as
+    // if it were, so this fired.
+    EXPECT_EQ(0L, fires(paint_style(COLOUR_CUSTOM, 1, 0),
+                        TRIGGER_MATCH_TEXT | (RED << 4)));
+    // ... and slot 0 is not ANSI black, for the same reason
+    EXPECT_EQ(0L, fires(paint_style(COLOUR_CUSTOM, 0, 0),
+                        TRIGGER_MATCH_TEXT | (BLACK << 4)));
+
+    // slot 9 painted the world's green/magenta pair: 9 is not an ANSI colour
+    // number, so only a resolved comparison can match it.
+    Painter custom9 = [](CMUSHclientDoc& doc) {
+        doc.m_customtext[9] = doc.m_normalcolour[GREEN];
+        doc.m_customback[9] = doc.m_normalcolour[MAGENTA];
+        doc.m_iFlags = COLOUR_CUSTOM;  doc.m_iForeColour = 9;  doc.m_iBackColour = 0;
+    };
+    EXPECT_EQ(1L, fires(custom9, TRIGGER_MATCH_TEXT | (GREEN   << 4)));
+    EXPECT_EQ(0L, fires(custom9, TRIGGER_MATCH_TEXT | (CYAN    << 4)));
+    EXPECT_EQ(1L, fires(custom9, TRIGGER_MATCH_BACK | (MAGENTA << 8)));
+    EXPECT_EQ(0L, fires(custom9, TRIGGER_MATCH_BACK | (BLUE    << 8)));
+}
+
+// (d) COLORREF is 0x00BBGGRR, so a near-black red IS the integer 1 -- which the
+// old matcher read as ANSI colour 1.  There was one such collision per ANSI
+// colour, and black's (0 == 0x000000) is the one that made the bug look
+// half-working.
+TEST(TriggerColourMatch, LiteralRgbNeverCollidesWithAnAnsiColourNumber)
+{
+    for (int i = 0; i < 8; i++) {
+        Painter tiny = paint_style(COLOUR_RGB, (COLORREF) i, (COLORREF) i);
+        EXPECT_EQ(0L, fires(tiny, TRIGGER_MATCH_TEXT | (i << 4)));   // was 1, every i
+        EXPECT_EQ(0L, fires(tiny, TRIGGER_MATCH_BACK | (i << 8)));   // was 1, every i
+    }
+
+    // the same style DOES match once the literal really is the world's colour
+    Painter realPair = [](CMUSHclientDoc& doc) {
+        doc.m_iFlags      = COLOUR_RGB;
+        doc.m_iForeColour = doc.m_normalcolour[RED];
+        doc.m_iBackColour = doc.m_normalcolour[BLUE];
+    };
+    EXPECT_EQ(1L, fires(realPair, TRIGGER_MATCH_TEXT | (RED  << 4)));
+    EXPECT_EQ(1L, fires(realPair, TRIGGER_MATCH_BACK | (BLUE << 8)));
+    EXPECT_EQ(0L, fires(realPair, TRIGGER_MATCH_TEXT | (BLUE << 4)));
+    EXPECT_EQ(0L, fires(realPair, TRIGGER_MATCH_BACK | (RED  << 8)));
+
+    // black is not special: a literal black run matches a "black" condition
+    // only when the world's black really is 0x000000.
+    EXPECT_EQ(0L, fires(paint_style(COLOUR_RGB, RGB(0, 0, 0), RGB(0, 0, 0)),
+                        TRIGGER_MATCH_TEXT | (BLACK << 4)));
+    Painter blackWorld = [](CMUSHclientDoc& doc) {
+        doc.m_normalcolour[BLACK] = RGB(0, 0, 0);
+        doc.m_iFlags = COLOUR_RGB;  doc.m_iForeColour = 0;  doc.m_iBackColour = 0;
+    };
+    EXPECT_EQ(1L, fires(blackWorld, TRIGGER_MATCH_TEXT | (BLACK << 4)));
+}
+
+// (e) HILITE and INVERSE.  Boldness is the separate TRIGGER_MATCH_HILITE
+// condition, so a "red" condition must keep matching bold red -- which means
+// the trigger's index is resolved through the same table the run used.
+// INVERSE swaps what is displayed, so the run's BACKGROUND index paints text.
+TEST(TriggerColourMatch, HiliteAndInverseInteractionsSurvive)
+{
+    const int wantRed  = TRIGGER_MATCH_TEXT | (RED  << 4);
+    const int wantBlue = TRIGGER_MATCH_TEXT | (BLUE << 4);
+
+    EXPECT_EQ(1L, fires(paint_ansi(RED, BLACK),         wantRed));
+    EXPECT_EQ(1L, fires(paint_ansi(RED, BLACK, HILITE), wantRed));   // bold red is red
+    EXPECT_EQ(0L, fires(paint_ansi(RED, BLACK, HILITE), wantBlue));
+
+    // backgrounds are never bolded, on either side of the comparison
+    EXPECT_EQ(1L, fires(paint_ansi(WHITE, BLUE, HILITE),
+                        TRIGGER_MATCH_BACK | (BLUE << 8)));
+
+    // INVERSE: red-on-blue displays BLUE text on a RED ground
+    EXPECT_EQ(1L, fires(paint_ansi(RED, BLUE, INVERSE), wantBlue));
+    EXPECT_EQ(0L, fires(paint_ansi(RED, BLUE, INVERSE), wantRed));
+    EXPECT_EQ(1L, fires(paint_ansi(RED, BLUE, INVERSE), TRIGGER_MATCH_BACK | (RED  << 8)));
+    EXPECT_EQ(0L, fires(paint_ansi(RED, BLUE, INVERSE), TRIGGER_MATCH_BACK | (BLUE << 8)));
+
+    // ... and inverse over a literal RGB run, which nothing could match before
+    Painter rgbInverse = [](CMUSHclientDoc& doc) {
+        doc.m_iFlags      = COLOUR_RGB | INVERSE;
+        doc.m_iForeColour = doc.m_normalcolour[RED];
+        doc.m_iBackColour = doc.m_normalcolour[BLUE];
+    };
+    EXPECT_EQ(1L, fires(rgbInverse, wantBlue));
+    EXPECT_EQ(0L, fires(rgbInverse, wantRed));
+
+    // m_bAlternativeInverse changes WHICH table an inverse+bold run reads; both
+    // sides move together because both go through the one resolver.
+    Painter altInverse = [](CMUSHclientDoc& doc) {
+        doc.m_bAlternativeInverse = TRUE;
+        doc.m_iFlags = COLOUR_ANSI | INVERSE | HILITE;
+        doc.m_iForeColour = RED;  doc.m_iBackColour = BLUE;
+    };
+    EXPECT_EQ(1L, fires(altInverse, wantBlue));
+    EXPECT_EQ(0L, fires(altInverse, wantRed));
+}
+
 MC_TEST_MAIN()
 
 // The numeric half of the recompile (methods_triggers.cpp:757-793).  Only

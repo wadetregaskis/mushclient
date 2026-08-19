@@ -1863,7 +1863,10 @@ static int L_DatabaseColumnText (lua_State *L)
 // The Lua flavour of the int64 column banding (scripting/db_int64.h): both Lua
 // column readers go through here, so they cannot drift from each other or from
 // the VARIANT readers the other five languages use.  A Lua number is a double,
-// so anything past 2^53 is pushed as a decimal string instead of being rounded.
+// so a value a double cannot hold exactly is pushed as a decimal string rather
+// than being silently rounded.  That is a round-trip test on the value, not a
+// 2^53 magnitude cap -- see db_int64.h, and lsqlite/lsqlite3.c:115-121 which
+// reaches for the same rule for the bundled Lua sqlite3 module.
 static void PushDatabaseInteger (lua_State *L, const sqlite3_int64 iValue)
   {
   switch (DatabaseIntegerBand (iValue))

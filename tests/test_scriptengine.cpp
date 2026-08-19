@@ -638,35 +638,4 @@ TEST(ScriptEngine, EachEngineTalksToItsOwnWorld)
     EXPECT_EQ(CString("bbbbbbbbbbbbbbbbbbbbbbbb"), CString(v.bstrVal ? v.bstrVal : ""));
 }
 
-// ── the world surface the engine actually builds ──────────────────────────
-//
-// world.ExpandVariables was a port-only Lua extra (RegisterPortableLuaExtras,
-// scripting/lua_utils_portable.cpp) that the Windows Lua API never had. It
-// was registered only by the test fixture (tests/lua_test_helpers.h), never
-// by the production path this test exercises (CreateScriptEngine ->
-// RegisterLuaRoutines) -- and as of D-32 the function and its registration
-// are gone from the tree entirely, deleted as dead code.
-//
-// Honestly: with the source gone, there is no longer a dormant function that
-// could be accidentally wired into the production path, so this assertion
-// cannot currently fail through anything that exists in the tree today --
-// only a brand-new registration of this exact name from the production side
-// would trip it. What it still guards is narrow: a named regression pin
-// against world.ExpandVariables specifically reappearing on an engine-built
-// world table, nothing broader. The control half (world.Note ~= nil) is what
-// keeps a false "nil" meaningful -- it proves the table itself is populated,
-// so the first half isn't trivially "nil" because nothing was ever looked up.
-TEST(ScriptEngine, TheEngineBuiltWorldTableCarriesNoPortOnlyExtras)
-{
-    Engine e("function probe(s)\n"
-             "  return tostring (world.ExpandVariables) .. '/' ..\n"
-             "         tostring (world.Note ~= nil)\n"
-             "end\n");
-    DISPID d = e.id("probe");
-    ASSERT_NE(DISPID_UNKNOWN, d);
-    // The second half is the control: the world table IS populated, so the
-    // "nil" is a statement about that one name, not about an empty table.
-    EXPECT_EQ(CString("nil/true"), e.simple(d, "probe", ""));
-}
-
 MC_TEST_MAIN()

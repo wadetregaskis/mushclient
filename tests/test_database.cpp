@@ -35,6 +35,11 @@ extern "C" {
 lua_State* MakeLuaState();
 int RegisterLuaRoutines(lua_State*);
 
+// The bundled Lua `sqlite3` module (lsqlite/lsqlite3.c, compiled into mushcore).
+// OpenLuaDelayed opens it for every world; make_lua below deliberately does not,
+// so the one test that needs it opens it itself.
+extern "C" int luaopen_lsqlite3(lua_State*);
+
 static lua_State* make_lua(CMUSHclientDoc* pDoc)
 {
     lua_State* L = MakeLuaState();
@@ -861,10 +866,20 @@ TEST(DatabaseTest, CppGetFieldBadSqlOrNoRowsIsEmptyVariant)
 // ── 64-bit INTEGER columns (all four readers) ────────────────────────────
 // SQLite INTEGER is a signed 64-bit value; every reader used to fetch it with
 // sqlite3_column_int (32 bits) and truncate.  scripting/db_int64.h now bands it:
-//   32-bit range: the integral form (VT_I4 / Lua number) -- unchanged;
-//   |v| <= 2^53:  a double (VT_R8 / Lua number) -- exact;
-//   larger:       a decimal string (BSTR / Lua string) -- lossless.
-// Both bands and both boundaries are checked through all four readers.
+//   32-bit range:              the integral form (VT_I4 / Lua number) -- as before;
+//   survives (int64)(double)v: a double (VT_R8 / Lua number) -- exact;
+//   otherwise:                 a decimal string (BSTR / Lua string) -- lossless.
+//
+// The middle band is a test on the VALUE, not on its magnitude: it is what the
+// bundled lsqlite3 module reaches for (lsqlite/lsqlite3.c:115-121), and the two
+// SQLite surfaces the app ships used to disagree about every exactly
+// representable value above 2^53 -- 2^60 being the obvious one.
+//
+// So the fixture below deliberately carries BOTH answers at the SAME magnitude:
+// 2^53+1 (odd, rounds) against 2^53+2 (even, exact), and 2^60+1 against 2^60.
+// A magnitude rule cannot separate those pairs, which is what stops this suite
+// from passing if the round trip is ever quietly replaced by a threshold again.
+// Both bands and every boundary are checked through all four readers.
 
 // One row, one column per interesting magnitude.  Column numbers are 1-based
 // and are used as-is by the single-column readers.
@@ -880,7 +895,10 @@ TEST(DatabaseTest, CppGetFieldBadSqlOrNoRowsIsEmptyVariant)
 #define BIG_COL_P60     10
 #define BIG_COL_I64MAX  11
 #define BIG_COL_I64MIN  12
-#define BIG_COLUMNS     12
+#define BIG_COL_P53P2   13
+#define BIG_COL_N53M2   14
+#define BIG_COL_P60P1   15
+#define BIG_COLUMNS     15
 
 struct BigIntFixture {
     CMUSHclientDoc doc;
@@ -898,12 +916,14 @@ struct BigIntFixture {
                "CREATE TABLE big (i32max INTEGER, i32min INTEGER, p31 INTEGER,\n"
                "  p40 INTEGER, n31 INTEGER, p53 INTEGER, n53 INTEGER,\n"
                "  p53p1 INTEGER, n53m1 INTEGER, p60 INTEGER, i64max INTEGER,\n"
-               "  i64min INTEGER);\n"
+               "  i64min INTEGER, p53p2 INTEGER, n53m2 INTEGER, p60p1 INTEGER);\n"
                "INSERT INTO big VALUES (2147483647, -2147483648, 2147483648,\n"
                "  1099511627776, -2147483649, 9007199254740992,\n"
                "  -9007199254740992, 9007199254740993, -9007199254740993,\n"
                "  1152921504606846976, 9223372036854775807,\n"
-               "  -9223372036854775807 - 1);]]) == 0)");
+               "  -9223372036854775807 - 1,\n"
+               "  9007199254740994, -9007199254740994,\n"
+               "  1152921504606846977);]]) == 0)");
     }
     ~BigIntFixture() { if (L) lua_close(L); }
 
@@ -983,17 +1003,35 @@ TEST(DatabaseTest, LuaColumnValueWidensBeyond32BitsExactly)
     EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_N53, -9007199254740992.0);
 }
 
-// (c)+(d) past 2^53: the decimal string, byte-exact, both signs.
-TEST(DatabaseTest, LuaColumnValueGivesStringPast2To53)
+// (c)+(d) a double would round it: the decimal string, byte-exact, both signs.
+// i64max is the one that needs the guard in DatabaseIntegerBand: (double)
+// INT64_MAX rounds UP to 2^63, and casting THAT back is undefined -- arm64
+// saturates to INT64_MAX, so a naive round trip would call it exact.
+TEST(DatabaseTest, LuaColumnValueGivesStringWhenADoubleWouldRound)
 {
     BigIntFixture f;
     ASSERT_NE(nullptr, f.L);
     ASSERT_TRUE(f.row());
     EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_P53P1,  "9007199254740993");
     EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_N53M1, "-9007199254740993");
-    EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_P60,    "1152921504606846976");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_P60P1,  "1152921504606846977");
     EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_I64MAX, "9223372036854775807");
-    EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_I64MIN, "-9223372036854775808");
+}
+
+// (f) THE discriminator: values a magnitude band would stringify but a double
+// holds perfectly.  Each is paired above with a neighbour of the same size that
+// really does round, so no threshold -- 2^53, 2^60, anything -- can satisfy both
+// this test and the one above.  -2^63 is here because it is exactly a power of
+// two: the most negative int64 is representable even though INT64_MAX is not.
+TEST(DatabaseTest, LuaColumnValueBandsByValueNotByMagnitude)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_P53P2,  9007199254740994.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_N53M2, -9007199254740994.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_P60,    1152921504606846976.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_I64MIN, -9223372036854775808.0);
 }
 
 // (e) the row reader must band identically to the single-column reader.
@@ -1009,11 +1047,14 @@ TEST(DatabaseTest, LuaColumnValuesRowBandsIdentically)
     EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_N31, -2147483649.0);
     EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_P53, 9007199254740992.0);
     EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_N53, -9007199254740992.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_P53P2,  9007199254740994.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_N53M2, -9007199254740994.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_P60,    1152921504606846976.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_I64MIN, -9223372036854775808.0);
     EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_P53P1,  "9007199254740993");
     EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_N53M1, "-9007199254740993");
-    EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_P60,    "1152921504606846976");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_P60P1,  "1152921504606846977");
     EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_I64MAX, "9223372036854775807");
-    EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_I64MIN, "-9223372036854775808");
 }
 
 // The widened value is not merely exact in C -- feeding it back into SQL as a
@@ -1074,20 +1115,24 @@ TEST(DatabaseTest, CppColumnValueBandsInt64)
     EXPECT_EQ((int)VT_I4, (int)v.vt);
     EXPECT_EQ(-2147483648L, (long)v.lVal);
 
-    // (b)+(d) up to 2^53: VT_R8, exact.
+    // (b)+(d)+(f) a double holds it exactly: VT_R8.  Includes the four the old
+    // magnitude band got wrong, so this list is the VARIANT-side discriminator.
     v = f.doc.DatabaseColumnValue("db", BIG_COL_P31);  expect_variant_number(v, 2147483648.0);
     v = f.doc.DatabaseColumnValue("db", BIG_COL_P40);  expect_variant_number(v, 1099511627776.0);
     v = f.doc.DatabaseColumnValue("db", BIG_COL_N31);  expect_variant_number(v, -2147483649.0);
     v = f.doc.DatabaseColumnValue("db", BIG_COL_P53);  expect_variant_number(v, 9007199254740992.0);
     v = f.doc.DatabaseColumnValue("db", BIG_COL_N53);  expect_variant_number(v, -9007199254740992.0);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_P53P2); expect_variant_number(v, 9007199254740994.0);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_N53M2); expect_variant_number(v, -9007199254740994.0);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_P60);  expect_variant_number(v, 1152921504606846976.0);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_I64MIN); expect_variant_number(v, -9223372036854775808.0);
 
-    // (c)+(d) past 2^53: a BSTR holding the exact decimal.
+    // (c)+(d) a double would round it: a BSTR holding the exact decimal.
     static const struct { int col; const char* text; } kStrings[] = {
         { BIG_COL_P53P1,  "9007199254740993" },
         { BIG_COL_N53M1,  "-9007199254740993" },
-        { BIG_COL_P60,    "1152921504606846976" },
+        { BIG_COL_P60P1,  "1152921504606846977" },
         { BIG_COL_I64MAX, "9223372036854775807" },
-        { BIG_COL_I64MIN, "-9223372036854775808" },
     };
     for (size_t i = 0; i < sizeof kStrings / sizeof kStrings[0]; i++) {
         v = f.doc.DatabaseColumnValue("db", kStrings[i].col);
@@ -1118,12 +1163,15 @@ TEST(DatabaseTest, CppColumnValuesRowBandsInt64)
     expect_variant_number(e[BIG_COL_N31 - 1], -2147483649.0);
     expect_variant_number(e[BIG_COL_P53 - 1], 9007199254740992.0);
     expect_variant_number(e[BIG_COL_N53 - 1], -9007199254740992.0);
+    expect_variant_number(e[BIG_COL_P53P2 - 1], 9007199254740994.0);
+    expect_variant_number(e[BIG_COL_N53M2 - 1], -9007199254740994.0);
+    expect_variant_number(e[BIG_COL_P60 - 1], 1152921504606846976.0);
+    expect_variant_number(e[BIG_COL_I64MIN - 1], -9223372036854775808.0);
 
     expect_variant_string(e[BIG_COL_P53P1 - 1],  "9007199254740993");
     expect_variant_string(e[BIG_COL_N53M1 - 1],  "-9007199254740993");
-    expect_variant_string(e[BIG_COL_P60 - 1],    "1152921504606846976");
+    expect_variant_string(e[BIG_COL_P60P1 - 1],  "1152921504606846977");
     expect_variant_string(e[BIG_COL_I64MAX - 1], "9223372036854775807");
-    expect_variant_string(e[BIG_COL_I64MIN - 1], "-9223372036854775808");
 
     VariantClear(&v);
 }
@@ -1151,9 +1199,100 @@ TEST(DatabaseTest, GetFieldBandsInt64Too)
 
     VARIANT v = f.doc.DatabaseGetField("db", "SELECT p40 FROM big");
     expect_variant_number(v, 1099511627776.0);
-    v = f.doc.DatabaseGetField("db", "SELECT i64min FROM big");
-    expect_variant_string(v, "-9223372036854775808");
+    v = f.doc.DatabaseGetField("db", "SELECT i64max FROM big");
+    expect_variant_string(v, "9223372036854775807");
     if (v.vt == VT_BSTR) SysFreeString(v.bstrVal);
+}
+
+// ── the OTHER SQLite surface: the bundled Lua `sqlite3` module ───────────
+//
+// A script can read an SQLite INTEGER two ways: the four world.Database*
+// readers above, or lsqlite3 (`sqlite3.open_memory()`, opened for every world
+// by OpenLuaDelayed).  db_int64.h adopted lsqlite3's round-trip rule precisely
+// so the two stop disagreeing -- so both halves of the comparison belong in the
+// suite, or the alignment can rot without anything going red.
+//
+// Read one INTEGER literal through lsqlite3 and report "<sqlite typeof>/<lua
+// type>".  The typeof half is the anti-degenerate guard: SQLite's tokenizer
+// turns some big literals into REAL, and if that happened the lua type would be
+// answering a question about a float column instead of the int64 path.
+struct Lsqlite3Fixture {
+    CMUSHclientDoc doc;
+    lua_State* L = nullptr;
+    Lsqlite3Fixture()
+    {
+        L = make_lua(&doc);
+        if (!L) return;
+        lua_pushcfunction(L, luaopen_lsqlite3);       // registers the global `sqlite3`
+        if (lua_pcall(L, 0, 0, 0) != 0) { lua_close(L); L = nullptr; }
+        else lua_settop(L, 0);
+    }
+    ~Lsqlite3Fixture() { if (L) lua_close(L); }
+};
+
+static CString lsqlite3_reads(lua_State* L, const char* literal)
+{
+    char code[512];
+    snprintf(code, sizeof code,
+        "local db = sqlite3.open_memory()\n"
+        "assert(db:exec('CREATE TABLE t (v INTEGER);') == sqlite3.OK)\n"
+        "assert(db:exec('INSERT INTO t VALUES (%s);') == sqlite3.OK)\n"
+        "local ty for x in db:urows('SELECT typeof(v) FROM t') do ty = x end\n"
+        "local lt for x in db:urows('SELECT v FROM t') do lt = type(x) end\n"
+        "db:close()\n"
+        "return ty .. '/' .. lt", literal);
+    lua_settop(L, 0);
+    if (run_ret(L, code) != 1)
+        return CString("<chunk failed>");
+    CString result(lua_tostring(L, -1));
+    lua_settop(L, 0);
+    return result;
+}
+
+TEST(DatabaseTest, Lsqlite3ModuleAgreesOnWhatADoubleCanHold)
+{
+    Lsqlite3Fixture d;
+    ASSERT_NE(nullptr, d.L);
+
+    // The values our band now calls numbers -- lsqlite3 always did.  2^60 is
+    // the case that used to differ: a magnitude cap at 2^53 stringified it here
+    // while lsqlite3 handed back a (perfectly exact) number.
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "1152921504606846976"));
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "9007199254740994"));
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "-9223372036854775807 - 1"));
+}
+
+// The residual disagreement, asserted rather than assumed.  lsqlite3's test is
+//     lua_Number n = (lua_Number) i64;  if (n == i64) ...
+// and C widens the int64 operand to double before comparing, so it reads
+// (double) i64 == (double) i64 and is vacuously TRUE -- its string branch
+// (lsqlite/lsqlite3.c:121) is unreachable.  lsqlite3 therefore hands back a
+// silently rounded number for values a double cannot hold, where we return the
+// lossless decimal string.  Vendored third-party behaviour, deliberately left
+// alone; pinned here so a change to it -- in either direction -- is visible.
+TEST(DatabaseTest, Lsqlite3ModuleStillNumbersWhatWeStringify)
+{
+    Lsqlite3Fixture d;
+    ASSERT_NE(nullptr, d.L);
+
+    // Our four string-band columns, every one of them a number over there.
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "9007199254740993"));
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "-9007199254740993"));
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "1152921504606846977"));
+    EXPECT_EQ(CString("integer/number"), lsqlite3_reads(d.L, "9223372036854775807"));
+
+    // ... and the rounding that costs: 2^53+1 comes back as 2^53.  This is the
+    // assertion that makes the paragraph above a fact rather than a claim.
+    lua_settop(d.L, 0);
+    ASSERT_EQ(1, run_ret(d.L,
+        "local db = sqlite3.open_memory()\n"
+        "assert(db:exec('CREATE TABLE t (v INTEGER);') == sqlite3.OK)\n"
+        "assert(db:exec('INSERT INTO t VALUES (9007199254740993);') == sqlite3.OK)\n"
+        "local got for x in db:urows('SELECT v FROM t') do got = x end\n"
+        "db:close()\n"
+        "return string.format('%.0f', got)"));
+    EXPECT_STREQ("9007199254740992", lua_tostring(d.L, -1));   // NOT ...93
+    lua_settop(d.L, 0);
 }
 
 MC_TEST_MAIN()

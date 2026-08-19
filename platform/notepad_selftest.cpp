@@ -496,7 +496,18 @@ int RunNotepadSelfTest()
             npCheck(world->MoveNotepadWindow("selftest_np_worldbound",
                                              60, 80, 300, 200) != FALSE,
                     "MoveNotepadWindow moves the world-bound notepad");
-            wxYield();
+            // NO wxYield() here, and none anywhere else in this harness.
+            // The loop-free entry point (--notepad-selftest) exits from
+            // wxApp::OnInit, so no event loop is active; wxYield() then
+            // builds a TEMPORARY one (wxAppConsoleBase::Yield) and pumps
+            // AppKit events into a half-booted app, which corrupts the
+            // malloc tiny-zone free list.  That was this harness's
+            // intermittent SIGSEGV/SIGABRT: ~2 runs in 12 normally, and
+            // 6 of 6 under Guard Malloc, which selftest_notepad_loopfree
+            // now pins.  Nothing needs the yield: m_fn_move_window is
+            // wxWindow::SetSize and m_fn_get_rect is wxWindow::GetRect,
+            // both applied synchronously on this side of the window
+            // server, so the read-back below is already exact.
 
             BSTR bstrPos = world->GetNotepadWindowPosition("selftest_np_worldbound");
             CString pos = bstrPos;

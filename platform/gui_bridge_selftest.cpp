@@ -41,6 +41,7 @@
 #include "dialogs/world_prefs/triggdlg.h"             // CTriggerDlg
 #include "dialogs/global_prefs/GlobalPrefs.h"         // CGlobalPrefsP4 — printer font
 #include "dialogs/DebugWorldInputDlg.h"                // CDebugWorldInputDlg — fixed-pitch font
+#include "dialogs/plugins/PluginsDlg.h"                // CPluginsDlg — description liveness guard
 
 #include <cctype>                       // isxdigit/islower — the GUID shape check
 
@@ -1593,6 +1594,145 @@ void TestDebugHelperPluginContext()
     }
 }
 
+// CPluginsDlg::OnUpdateNeedDescription read `p->m_strDescription` straight off
+// the selected row's item data with no find()-in-m_PluginList liveness check,
+// unlike every sibling handler (OnShowDescription, OnEdit, OnEnable,
+// OnDisable, OnRdblclkPluginsList).  A plugin destroyed while the dialog is
+// open without LoadList() rebuilding the rows — world.UnloadPlugin /
+// ReloadPlugin from a trigger or timer firing during the dialog's modal loop
+// — leaves that row's item data pointing at a CPlugin the idle-driven
+// update-UI pump then reads.  This drives the real ON_UPDATE_COMMAND_UI
+// handler through AfxDispatchUpdateUI over a real wxListCtrl-backed
+// CListCtrl, the same path idle processing uses; the erased plugin is kept
+// ALIVE (just removed from m_PluginList) so the test itself never touches
+// freed memory — only the liveness check under test does.
+void TestPluginsDlgDescriptionLiveness()
+{
+    printf("Plugins dialog: description liveness guard:\n");
+
+    SelfTestEnablePluginLoading();
+
+    CMUSHclientDoc doc;
+    doc.m_mush_name   = "zz_selftest_pluginsdlg";
+    doc.m_nWrapColumn = 80;
+    doc.m_maxlines    = 5000;
+    doc.SetUpOutputWindow();
+
+    const std::string livePath = SelfTestWritePlugin(
+        "pluginsdlg_live", "aaaaaaaaaaaaaaaaaaaaaaaa", "AAALive", "");
+    const std::string erasedPath = SelfTestWritePlugin(
+        "pluginsdlg_erased", "bbbbbbbbbbbbbbbbbbbbbbbb", "ZZZErased", "");
+    check(!livePath.empty() && !erasedPath.empty(),
+          "wrote both fixture plugin files");
+
+    if (livePath.empty() || erasedPath.empty()) return;
+
+    check(doc.LoadPlugin(CString(livePath.c_str())) == 0 &&
+          doc.LoadPlugin(CString(erasedPath.c_str())) == 0 &&
+          doc.m_PluginList.size() == 2,
+          "both fixture plugins loaded");
+
+    remove(livePath.c_str());
+    remove(erasedPath.c_str());
+
+    auto findPluginById = [&](const char* id) -> CPlugin* {
+        for (CPlugin* pl : doc.m_PluginList)
+            if (pl->m_strID == id) return pl;
+        return nullptr;
+    };
+
+    CPlugin* live   = findPluginById("aaaaaaaaaaaaaaaaaaaaaaaa");
+    CPlugin* erased = findPluginById("bbbbbbbbbbbbbbbbbbbbbbbb");
+    check(live && erased, "both plugin objects are reachable by ID");
+    if (!live || !erased) return;
+
+    live->m_strDescription   = "The live plugin's long description.";
+    erased->m_strDescription = "The erased plugin's long description.";
+
+    const RcDialog* t = MfcDialogResources().FindDialog(IDD_PLUGINS);
+    check(t != nullptr, "IDD_PLUGINS is in the recovered resources");
+    if (!t) return;
+
+    wxDialog* wxdlg = BuildWxDialogFromTemplate(nullptr, *t);
+    wxListCtrl* lv = wxDynamicCast(wxdlg->FindWindow(IDC_PLUGINS_LIST), wxListCtrl);
+    check(lv != nullptr, "its plugin list is built as a wxListCtrl");
+
+    if (lv)
+    {
+        CPluginsDlg dlg;
+        dlg.m_pDoc = &doc;
+        dlg.m_ctlPluginList.m_hWnd = (HWND) lv;
+
+        // LoadList() only fills rows — the columns a report-mode list needs to
+        // hold them are normally inserted by OnInitDialog, which this test
+        // skips (it also touches the user's real column-width preferences).
+        dlg.m_ctlPluginList.InsertColumn(eColumnName,     "Name",     LVCFMT_LEFT,  130);
+        dlg.m_ctlPluginList.InsertColumn(eColumnPurpose,  "Purpose",  LVCFMT_LEFT,  130);
+        dlg.m_ctlPluginList.InsertColumn(eColumnAuthor,   "Author",   LVCFMT_LEFT,   55);
+        dlg.m_ctlPluginList.InsertColumn(eColumnLanguage, "Language", LVCFMT_LEFT,   55);
+        dlg.m_ctlPluginList.InsertColumn(eColumnFile,     "File",     LVCFMT_LEFT,   80);
+        dlg.m_ctlPluginList.InsertColumn(eColumnEnabled,  "Enabled",  LVCFMT_LEFT,   30);
+        dlg.m_ctlPluginList.InsertColumn(eColumnVersion,  "Ver",      LVCFMT_RIGHT,  20);
+
+        dlg.LoadList();   // sorts by name ascending: row 0 = AAALive, row 1 = ZZZErased
+        check(lv->GetItemCount() == 2, "both plugins became list rows");
+
+        // Simulate the hazard: the plugin is removed from the doc's list
+        // without LoadList() rebuilding the rows, so row 1's item data still
+        // points at `erased`.
+        PluginListIterator pit = find (doc.m_PluginList.begin (),
+                                       doc.m_PluginList.end (),
+                                       erased);
+        check(pit != doc.m_PluginList.end (), "erased plugin starts in m_PluginList");
+        if (pit != doc.m_PluginList.end ())
+            doc.m_PluginList.erase (pit);
+
+        auto selectOnly = [&](int item) {
+            dlg.m_ctlPluginList.SetItemState (-1, 0, LVIS_SELECTED);
+            dlg.m_ctlPluginList.SetItemState (item, LVIS_SELECTED, LVIS_SELECTED);
+        };
+
+        selectOnly(0);   // AAALive — still in m_PluginList
+        check(dlg.m_ctlPluginList.GetSelectedCount () == 1,
+              "selection landed on exactly the live plugin's row");
+
+        bool enabled = false;
+        CCmdUI cmdui;
+        cmdui.m_nID            = IDC_SHOW_DESCRIPTION;
+        cmdui.m_pCaptureEnable = &enabled;
+        check(AfxDispatchUpdateUI (&dlg, &cmdui) != FALSE,
+              "OnUpdateNeedDescription answered for the live-plugin row");
+        check(enabled,
+              "...and enables Show Info for a live plugin with a description");
+
+        selectOnly(1);   // ZZZErased — erased from m_PluginList, item data stale
+
+        // The over-broad-mutation control: a handler that unconditionally
+        // disabled Show Info would also pass the assertion below, so first
+        // confirm this row really is the erased plugin's stale item data.
+        check((CPlugin*) dlg.m_ctlPluginList.GetItemData (1) == erased,
+              "row 1's item data is still the erased plugin's stale pointer");
+        check(dlg.m_ctlPluginList.GetSelectedCount () == 1,
+              "selection landed on exactly the erased plugin's row");
+
+        enabled = true;   // the opposite of the expected answer below
+        cmdui = CCmdUI();
+        cmdui.m_nID            = IDC_SHOW_DESCRIPTION;
+        cmdui.m_pCaptureEnable = &enabled;
+        check(AfxDispatchUpdateUI (&dlg, &cmdui) != FALSE,
+              "OnUpdateNeedDescription answered for the erased-plugin row");
+        check(!enabled,
+              "...and disables Show Info once the plugin has left m_PluginList "
+              "(was: read the stale item data unchecked)");
+
+        dlg.m_ctlPluginList.m_hWnd = nullptr;   // don't outlive the wxDialog below
+    }
+
+    wxdlg->Destroy();
+
+    delete erased;   // no longer owned by doc.m_PluginList after the erase() above
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1622,6 +1762,7 @@ int RunGuiBridgeSelfTest()
     TestMetaphoneBoundsItsInput();
     TestSubstitutionTextResource();
     TestDebugHelperPluginContext();
+    TestPluginsDlgDescriptionLiveness();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

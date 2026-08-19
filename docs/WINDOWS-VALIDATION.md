@@ -2476,3 +2476,41 @@ see any of them work, and the third is not even confirmed to be a bug.
   status line was ever wrong on Windows before this — if `CSize(DWORD)` does
   not participate here (e.g. the assignment was ambiguous or resolved
   elsewhere), this was a no-op and the change is merely clearer.
+
+### Two miniwindow-layout corrections in shared source (2026-08-18)
+
+Both are in `miniwindow_compose.cpp`, which is `CMUSHView`'s old
+`Mouse_Over_Miniwindow` / `Calculate_MiniWindow_Rectangles` hoisted verbatim
+and is compiled into the Windows build too (`MUSHclient.vcxproj:316`).  Both
+have headless coverage in `tests/test_lua_surface.cpp`, so what a Windows run
+adds is confirmation against the real view and a real plugin.
+
+- **A MouseOver callback may now delete its own hotspot**
+  (`docs/UPSTREAM-BUGS.md` #19).  The re-lookup that sets `pHotspot = NULL`
+  when the callback deleted the hotspot was immediately followed by
+  `pHotspot->m_sCancelMouseOver`, so the client died.  **To check:** a plugin
+  whose hotspot MouseOver handler calls `WindowDeleteHotspot` (or
+  `WindowDeleteAllHotspots`) on itself — a self-redrawing button bar is the
+  natural shape — then mouse onto that hotspot.  Stock 5.06 should crash where
+  this build does not.  Also confirm the *ordinary* case still arms the
+  mouse-leave: a hotspot with a non-empty `CancelMouseOver` that survives its
+  MouseOver must still fire CancelMouseOver when the pointer leaves the
+  miniwindow entirely (that is `TrackMouseEvent`, which only Windows really
+  runs).
+
+- **`m_bTemporarilyHide` survives the other layout pass**
+  (`docs/UPSTREAM-BUGS.md` #20).  The two passes run back to back and the flag
+  was reset for every window in both, so `WindowInfo (name, 6)` always answered
+  false for a draw-underneath window that had no room.  **To check:** a
+  `MINIWINDOW_DRAW_UNDERNEATH` window at position 5 (centre top) wider than the
+  output pane — `WindowInfo (name, 6)` should now report true, and narrowing /
+  widening the world window should flip it both ways.  Worth watching that the
+  paint is unaffected: the flag is read by the same loop that sets it, so a
+  draw-underneath window that fits must still be painted.
+
+The hit-test half of the same commit is a deliberate divergence rather than a
+bug fix and is written up as `docs/UPSTREAM-DIVERGENCES.md` #9; on Windows its
+only visible effect should be that a wall-placed miniwindow's hotspots respond
+at all (upstream's `PtInRect` could not match a `CRect (start, 0, width,
+height)`), and that a window the layout could not fit stops answering at the
+pane's top-left corner — which upstream's `PtInRect` also never did.

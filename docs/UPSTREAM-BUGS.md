@@ -27,6 +27,8 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 16 | MXP hyperlink from the right-click menu refuses `https://` | this commit | mushview.cpp `CMUSHView::OnMXPMenu` ACTION_HYPERLINK arm |
 | 17 | Double-click word scan reads one byte past the line buffer | this commit | mushview.cpp `CMUSHView::OnLButtonDblClk`, `OnDisplayTextattributes` |
 | 18 | `CmcDateTime::operator-`'s Windows arm discards a null/invalid span status | this commit | mcdatetime.cpp `CmcDateTime::operator-(const CmcDateTime&)` |
+| 19 | A MouseOver callback that deletes its own hotspot crashes the client | this commit | mushview.cpp `CMUSHView::Mouse_Move_MiniWindow` (now `miniwindow_compose.cpp` `MouseMoveMiniWindow`) |
+| 20 | The second layout pass wipes the first pass's "would not fit" decision | this commit | mushview.cpp `CMUSHView::Calculate_MiniWindow_Rectangles` (now `miniwindow_compose.cpp` `CalculateMiniWindowRectangles`) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -586,3 +588,50 @@ early-out for an empty line — the same clamp `SetWordUnderMenu` already
 carries in this tree, so the two copies of the scan agree again.  The
 text-attributes clamp is applied *after* the valid-selection test, leaving the
 set of accepted selections unchanged.
+
+## 19 — A MouseOver callback that deletes its own hotspot crashes the client (this commit)
+**Bug:** after dispatching a hotspot's MouseOver, `Mouse_Move_MiniWindow`
+re-looks-up the hotspot by id "in case previous callback deleted it" and sets
+`pHotspot = NULL` when it is gone — then, five lines later, dereferences it
+anyway:
+
+```
+    if (!pHotspot->m_sCancelMouseOver.empty ())
+      hooks.TrackMouseLeave ();
+```
+
+so the exact scenario the re-lookup was added to survive takes the client down
+instead.  Deleting a hotspot from its own MouseOver is ordinary plugin practice
+— a button bar that redraws itself calls `WindowDeleteAllHotspots` and installs
+a new set — and every other one of the five re-establish sites in the file
+re-tests `pHotspot` before using it, so this one is simply the copy that was
+missed.
+**Fix:** `if (pHotspot && !pHotspot->m_sCancelMouseOver.empty ())`.  With the
+hotspot gone there is no cancel-mouse-over to deliver, so not arming the
+mouse-leave notification is also the right answer.  `needs: windows-run` only
+to confirm the crash reproduces there; the logic is platform-independent and
+`LuaSurface.MouseOverCallbackMayDeleteItsOwnHotspot`
+(`tests/test_lua_surface.cpp`) exercises it headless — before the fix that test
+SIGSEGVs, and its control (a MouseOver that leaves its hotspot alone) still
+arms the notification, so "never call `TrackMouseLeave`" fails too.
+
+## 20 — The second layout pass wipes the first pass's "would not fit" decision (this commit)
+**Bug:** `Calculate_MiniWindow_Rectangles` runs twice per paint — once for the
+draw-underneath windows, once for the rest — and clears `m_bTemporarilyHide`
+for **every** miniwindow at the top of its loop, before the pass filter that
+`continue`s past the windows this pass is not laying out.  The two passes run
+back to back, so the non-underneath pass resets the flag on the underneath
+windows the previous pass had just decided would not fit.  `WindowInfo (name,
+6)` therefore always answers false for a draw-underneath window that had no
+room, and any frontend that consults the flag between the two passes sees it
+flap.
+**Fix:** guard the reset with the same pass test the filter below uses —
+`if (((mw->GetFlags () & MINIWINDOW_DRAW_UNDERNEATH) != 0) == bUnderneath)` —
+so only the pass that actually lays a window out clears its flag.  Guarding
+rather than moving the line below the filters keeps the reset happening for
+windows that are not currently shown, which is what upstream's placement
+achieved.  `needs: windows-run`.  Covered headless by
+`LuaSurface.TemporarilyHideSurvivesTheOtherLayoutPass`
+(`tests/test_lua_surface.cpp`), which also runs both passes against a wall wide
+enough to fit the window and asserts the flag comes back false — so deleting
+the reset outright fails as well.

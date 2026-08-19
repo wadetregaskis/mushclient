@@ -20,8 +20,17 @@
 // hold WIDTH/HEIGHT after a paint (see Blit_Bitmap's mutation) — a
 // non-normalized rect PtInRect can never match, so hotspots silently died
 // for any window positioned beyond its own size. The explicit
-// left/top + size test below is a strict extension: every point the old
-// test matched still matches, and previously-dead windows become clickable.
+// left/top + size test below fixes that, and for every window the layout
+// pass DREW it answers exactly what PtInRect answered.
+//
+// It is NOT the strict extension this comment used to claim, though: a
+// window the pass could not fit keeps the constructor's (0,0,0,0) m_rect,
+// which PtInRect matched nothing against but which the size test reads as
+// the pane's top-left GetWidth() x GetHeight() corner — swallowing clicks
+// meant for the text underneath and hit-testing an undrawn window's
+// hotspots. The m_bTemporarilyHide skip below is the bound that keeps the
+// widened test honest: if it is not drawn it cannot be clicked, which is
+// the test both paint loops already apply.
 CMiniWindow * MouseOverMiniWindow (CMUSHclientDoc* pDoc,
                                    CPoint point,
                                    string & sHotspotId,
@@ -39,8 +48,10 @@ CMiniWindow * MouseOverMiniWindow (CMUSHclientDoc* pDoc,
        mwit++)  // NB you still go "up" to go backwards
          {
          CMiniWindow * mw = mwit->second;
-         // not if not being shown
-         if (!mw->GetShow ())
+         // not if not being shown, or if the layout pass could not fit it —
+         // the same pair both paint loops test (mushview.cpp:1007 and :1507,
+         // platform/wx_world_child.cpp:262)
+         if (!mw->GetShow () || mw->m_bTemporarilyHide)
            continue;
 
          // underneath ones can't be clicked on - or if set to ignore the mouse
@@ -113,7 +124,12 @@ void CalculateMiniWindowRectangles (CMUSHclientDoc* pDoc, const bool bUnderneath
    {
    CMiniWindow * mw = mwit->second;
 
-   mw->m_bTemporarilyHide = false;
+   // only the pass that lays this one out may clear its flag: the two passes
+   // run back to back, so an unconditional reset here had the second pass
+   // wipe the first pass's "would not fit" decision, and WindowInfo (6)
+   // always answered false for a draw-underneath window that had no room
+   if (((mw->GetFlags () & MINIWINDOW_DRAW_UNDERNEATH) != 0) == bUnderneath)
+     mw->m_bTemporarilyHide = false;
 
 
    // not if not to be shown
@@ -621,7 +637,7 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
         // capture mouse movements out of the miniwindow (version 4.46)
         // see: http://www.gammon.com.au/forum/?id=9980
 
-        if (!pHotspot->m_sCancelMouseOver.empty ())
+        if (pHotspot && !pHotspot->m_sCancelMouseOver.empty ())
           hooks.TrackMouseLeave ();
 
         }

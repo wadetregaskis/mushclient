@@ -576,8 +576,6 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
          strName += " temporary";
        if (pAlias->bIncluded)
          strName += " included";
-//       if (pAlias->bDelayed)
-//         strName += " delayed";
        strName += CFormat (" send_to:%s", (LPCTSTR) GetSendToString (pAlias->iSendTo));
        strName += CFormat (" seq:%i", pAlias->iSequence);
 

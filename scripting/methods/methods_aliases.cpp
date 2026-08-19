@@ -202,7 +202,6 @@ bool bReplace = false;
   alias_item->name             = MatchText;
   alias_item->contents         = ResponseText;
   alias_item->bIgnoreCase      = (Flags & eIgnoreAliasCase) != 0;
-//  alias_item->bDelayed         = (Flags & eDelayed) != 0;
   alias_item->bEnabled         = (Flags & eEnabled) != 0;
   alias_item->bOmitFromLog     = (Flags & eOmitFromLogFile) != 0;
   alias_item->bRegexp          = (Flags & eAliasRegularExpression) != 0;
@@ -286,8 +285,6 @@ CAlias * alias_item;
     iFlags |= eEnabled;
   if (alias_item->bIgnoreCase) 
     iFlags |= eIgnoreAliasCase;
-//  if (alias_item->bDelayed) 
-//    iFlags |= eDelayed;
   if (alias_item->bOmitFromLog) 
     iFlags |= eOmitFromLogFile;
   if (alias_item->bRegexp) 
@@ -410,7 +407,6 @@ CAlias * alias_item;
     case  21: SetUpVariantBool   (vaResult, alias_item->bEchoAlias); break;
     case  22: SetUpVariantBool   (vaResult, alias_item->bOmitFromCommandHistory); break;
     case  23: SetUpVariantLong   (vaResult, alias_item->iUserOption); break;
-//    case  ??: SetUpVariantBool   (vaResult, alias_item->bDelayed); break;
 
     case  24: // number of matches to regexp
       if (alias_item->regexp)      

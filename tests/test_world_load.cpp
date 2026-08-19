@@ -1330,6 +1330,64 @@ TEST(WorldLoad, AbsentUtf8FollowsTheOptionTableDefault)
     }
 }
 
+TEST(WorldLoad, FreshDocumentUtf8FollowsOptionsTableDefault)
+{
+    // doc_construct.cpp used to set m_bUTF_8 = false explicitly, right after
+    // SetDefaults(false) had already set it from OptionsTable's "utf_8" row
+    // two lines earlier -- a redundant second write.  The two agreed, so
+    // nothing looked wrong, but it meant OptionsTable was NOT actually the
+    // sole authority for a fresh document's m_bUTF_8: mutating the table's
+    // default alone would not have moved a fresh document at all (the "last
+    // writer wins hides a mutation" shape this project has been bitten by
+    // before). The redundant write is gone now; this test proves the table
+    // really is authoritative by mutating its default and checking that a
+    // freshly constructed document follows it, in both directions, then
+    // restores the default so other tests (e.g.
+    // AbsentUtf8FollowsTheOptionTableDefault above) are unaffected.
+    extern tConfigurationNumericOption OptionsTable[];
+
+    int utf8Index = -1;
+    for (int i = 0; OptionsTable[i].pName; i++)
+        if (strcmp(OptionsTable[i].pName, "utf_8") == 0)
+            { utf8Index = i; break; }
+    // "utf_8" row not found in OptionsTable
+    ASSERT_NE(-1, utf8Index);
+
+    const double originalDefault = OptionsTable[utf8Index].iDefault;
+    // test assumes utf_8 defaults to off
+    ASSERT_EQ(0.0, originalDefault);
+
+    // Sanity: with the table at its normal default, a fresh document is off.
+    {
+        CMUSHclientDoc doc;
+        EXPECT_EQ(0, (int)doc.m_bUTF_8);
+    }
+
+    // Flip the table default and construct a NEW document. If the
+    // constructor still hardcoded m_bUTF_8 anywhere (the bug this guards
+    // against), this fresh document would come up 0 regardless of the table.
+    // Everything from here to the restore below uses EXPECT, not ASSERT, so
+    // the restore always runs even if an assertion fails.
+    OptionsTable[utf8Index].iDefault = 1;
+
+    {
+        // If this fails: a fresh document did not follow OptionsTable's
+        // "utf_8" default -- something besides the table is writing
+        // m_bUTF_8 in the constructor.
+        CMUSHclientDoc doc;
+        EXPECT_EQ(1, (int)doc.m_bUTF_8);
+    }
+
+    OptionsTable[utf8Index].iDefault = originalDefault;
+
+    // Mutate both directions: confirm the restore is also honoured, not just
+    // the flip to 1.
+    {
+        CMUSHclientDoc doc;
+        EXPECT_EQ(0, (int)doc.m_bUTF_8);
+    }
+}
+
 TEST(WorldLoad, WorldSettingsVisibleViaOptionAPI)
 {
     // Values loaded from XML must be visible through the real option API

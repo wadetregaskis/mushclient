@@ -497,7 +497,6 @@ void CMUSHclientDoc::Save_One_Alias_XML (CArchive& ar, CAlias * a)
   Save_XML_number  (ar, "sequence",          a->iSequence);
   Save_XML_boolean (ar, "temporary",         a->bTemporary);
   Save_XML_number  (ar, "user",              a->iUserOption);
-  //     Save_XML_boolean (ar, "delayed",           t->bDelayed);
 
   ar.WriteString ("  >" NL);
   Save_XML_multi (ar, "send", a->contents);

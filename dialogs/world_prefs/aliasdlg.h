@@ -79,7 +79,6 @@ protected:
   afx_msg void OnUpdateMatchCount(CCmdUI* pCmdUI);
   afx_msg void OnUpdateProcedure(CCmdUI* pCmdUI);
   afx_msg void OnUpdateReverse(CCmdUI* pCmdUI);
-//  afx_msg void OnUpdateDelayed(CCmdUI* pCmdUI);
   afx_msg void OnUpdateNeedNoRegexp(CCmdUI* pCmdUI);
 	DECLARE_MESSAGE_MAP()
 };

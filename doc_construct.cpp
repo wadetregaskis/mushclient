@@ -101,7 +101,6 @@ int i;
   m_tLastMessageTime = 0;
   m_tLastGroupMessageTime = 0;
   m_bOmitFromCommandHistory = false;
-  m_bUTF_8 = false;
   m_bWorldClosing = false;
   m_bInSendToScript = true;
 

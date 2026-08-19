@@ -119,6 +119,7 @@ public:
     CTime     operator+(long seconds)          const { return CTime(t_ + seconds); }
     CTime     operator+(const CTimeSpan& ts)   const { return CTime(t_ + ts.m_secs); }
     CTime     operator-(long seconds)          const { return CTime(t_ - seconds); }
+    CTime     operator-(const CTimeSpan& ts)   const { return CTime(t_ - ts.m_secs); }
     CTimeSpan operator-(const CTime& o)        const { return CTimeSpan((long)(t_ - o.t_)); }
 
     // ── Accessors ─────────────────────────────────────────────────────────

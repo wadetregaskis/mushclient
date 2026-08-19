@@ -21,6 +21,11 @@
 #include "fake_transport.h"
 #include "scripting/scripting.h"
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_set_status (queued-command status seam)
+                                     // + g_wxhook_file_dialog / g_run_mfc_dialog,
+                                     // the two modals ID_FILE_LOGSESSION puts up
+#include "resource.h"                // ID_FILE_LOGSESSION / IDD_LINE_COUNT
+#include "dialogs/logdlg.h"          // CLogDlg — seeded by the handler, answered
+                                     // by the hook below
 #include "notepad_fixture.h"   // FakeNotepad / NotepadCapture
 
 #include <zlib.h>
@@ -715,6 +720,185 @@ TEST(Login, AutoLogHtmlModeUsesBreaks)
     EXPECT_TRUE(log.find("<br><br>") != std::string::npos);
     unlink(path);
     delete doc;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ID_FILE_LOGSESSION: the ONE session-log command
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// There used to be two logging implementations on the port.  The menu bar ran
+// the canonical CMUSHclientDoc::OnFileLogsession; the output pane's context
+// menu ran CWorldChildFrame::StartLogging, a raw fopen(path, "a") onto a second
+// FILE* that knew nothing about m_bLogOutput / m_log_input / m_bLogNotes, the
+// preamble, the postamble or append-vs-truncate.  Two commands both called
+// "Start Logging", two files, two formats.
+//
+// Every entry point now dispatches id 32117 to the document, so this is the
+// route they share, driven the way they drive it -- through the message map,
+// not by calling the (protected) handler.  The GUI-side proof that the two
+// menus really do produce the same BYTES is menubar_selftest.cpp; this is the
+// headless proof that the id reaches the canonical handler at all and that the
+// handler consults the world's options.
+//
+// Both modals are answered by hooks: the Save panel names the file, and CLogDlg
+// accepts whatever OnFileLogsession seeded it with -- which is the world's own
+// logging options, so accepting is what "the user pressed OK" means here.
+
+static std::string g_logSessionPath;
+
+// Answer the Save panel with g_logSessionPath.
+static char* LogSessionFileHook(bool, const char*, const char*, const char*,
+                                const char*, bool, bool)
+{
+    return strdup(g_logSessionPath.c_str());
+}
+
+// Read a whole file (empty string if it is not there).
+static std::string SlurpFile(const std::string& path)
+{
+    std::string out;
+    if (FILE* f = fopen(path.c_str(), "rb")) {
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+            out.append(buf, n);
+        fclose(f);
+    }
+    return out;
+}
+
+// Open a log through the canonical command, write one line of each kind, close
+// it through the same command, and hand back the bytes.
+static std::string RunLogSession(CMUSHclientDoc* doc, const std::string& path)
+{
+    g_logSessionPath = path;
+    unlink(path.c_str());
+
+    EXPECT_TRUE(AfxDispatchCommand(doc, 0 /*ON_COMMAND*/, ID_FILE_LOGSESSION));
+    EXPECT_TRUE(doc->m_logfile != nullptr);
+
+    doc->Note("a note");
+    doc->LogCommand("a command\r\n");
+    doc->DisplayMsg("some output\n", 12, 0);
+
+    EXPECT_TRUE(AfxDispatchCommand(doc, 0 /*ON_COMMAND*/, ID_FILE_LOGSESSION));
+    EXPECT_TRUE(doc->m_logfile == nullptr);
+
+    const std::string bytes = SlurpFile(path);
+    unlink(path.c_str());
+    return bytes;
+}
+
+// Seed a doc with %-free markers, so every byte the log gets is deterministic
+// and each logged CATEGORY is identifiable by its line preamble.
+static void SetUpMarkedLogging(CMUSHclientDoc* doc)
+{
+    doc->m_strLogFilePreamble        = "PREAMBLE";
+    doc->m_strLogFilePostamble       = "POSTAMBLE";
+    doc->m_strLogLinePreambleOutput  = "OUT:";
+    doc->m_strLogLinePreambleInput   = "IN:";
+    doc->m_strLogLinePreambleNotes   = "NOTE:";
+    doc->m_strLogLinePostambleOutput = "";
+    doc->m_strLogLinePostambleInput  = "";
+    doc->m_strLogLinePostambleNotes  = "";
+    doc->m_bWriteWorldNameToLog      = 0;   // it embeds the wall clock
+    doc->m_bLogHTML                  = 0;
+    doc->m_bLogRaw                   = FALSE;
+    doc->m_strAutoLogFileName        = "";
+}
+
+struct LogSessionHooks {
+    char* (*savedFile)(bool, const char*, const char*, const char*,
+                       const char*, bool, bool) = g_wxhook_file_dialog;
+    intptr_t (*savedDlg)(void*, unsigned)       = g_run_mfc_dialog;
+    unsigned savedConfirm                       = App.m_bConfirmLogFileClose;
+
+    LogSessionHooks()
+    {
+        g_wxhook_file_dialog = LogSessionFileHook;
+        // Accept the seeded options; take NO scrollback dump, because the
+        // buffer grows between runs and this is about live logging.
+        g_run_mfc_dialog = [](void* self, unsigned idd) -> intptr_t {
+            if (idd != IDD_LINE_COUNT) return IDCANCEL;
+            ((CLogDlg*) self)->m_lines = 0;
+            return IDOK;
+        };
+        App.m_bConfirmLogFileClose = 0;   // no modal on the close half
+    }
+    ~LogSessionHooks()
+    {
+        App.m_bConfirmLogFileClose = savedConfirm;
+        g_run_mfc_dialog     = savedDlg;
+        g_wxhook_file_dialog = savedFile;
+    }
+};
+
+// The command opens a log, writes the preamble, and closes it again writing the
+// postamble -- reached through the message map, which is how every menu reaches
+// it.  This is the whole of what the port's second implementation replaced.
+TEST(LogSession, TheCanonicalCommandOpensAndClosesWithPreambleAndPostamble)
+{
+    LogSessionHooks hooks;
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_logsession_%d.log", (int)getpid());
+
+    CMUSHclientDoc* doc = make_doc();
+    SetUpMarkedLogging(doc);
+    doc->m_bLogOutput = 1;
+    doc->m_log_input  = 1;
+    doc->m_bLogNotes  = 1;
+
+    const std::string log = RunLogSession(doc, path);
+
+    EXPECT_NE(std::string::npos, log.find("PREAMBLE"));
+    EXPECT_NE(std::string::npos, log.find("POSTAMBLE"));
+    EXPECT_NE(std::string::npos, log.find("NOTE:"));
+    EXPECT_NE(std::string::npos, log.find("IN:"));
+    EXPECT_NE(std::string::npos, log.find("OUT:"));
+    delete doc;
+}
+
+// ...and it consults the world's three logging options rather than writing
+// whatever it is handed.  Each is turned off ALONE, so a handler that ignored
+// one of them (as the port's own implementation ignored all three) fails on
+// that option only.
+TEST(LogSession, TheCanonicalCommandHonoursLogOutputInputAndNotes)
+{
+    LogSessionHooks hooks;
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_logsession_opt_%d.log",
+             (int)getpid());
+
+    {   // output off
+        CMUSHclientDoc* doc = make_doc();
+        SetUpMarkedLogging(doc);
+        doc->m_bLogOutput = 0; doc->m_log_input = 1; doc->m_bLogNotes = 1;
+        const std::string log = RunLogSession(doc, path);
+        EXPECT_EQ(std::string::npos, log.find("OUT:"));
+        EXPECT_NE(std::string::npos, log.find("IN:"));
+        EXPECT_NE(std::string::npos, log.find("NOTE:"));
+        delete doc;
+    }
+    {   // input off
+        CMUSHclientDoc* doc = make_doc();
+        SetUpMarkedLogging(doc);
+        doc->m_bLogOutput = 1; doc->m_log_input = 0; doc->m_bLogNotes = 1;
+        const std::string log = RunLogSession(doc, path);
+        EXPECT_NE(std::string::npos, log.find("OUT:"));
+        EXPECT_EQ(std::string::npos, log.find("IN:"));
+        EXPECT_NE(std::string::npos, log.find("NOTE:"));
+        delete doc;
+    }
+    {   // notes off
+        CMUSHclientDoc* doc = make_doc();
+        SetUpMarkedLogging(doc);
+        doc->m_bLogOutput = 1; doc->m_log_input = 1; doc->m_bLogNotes = 0;
+        const std::string log = RunLogSession(doc, path);
+        EXPECT_NE(std::string::npos, log.find("OUT:"));
+        EXPECT_NE(std::string::npos, log.find("IN:"));
+        EXPECT_EQ(std::string::npos, log.find("NOTE:"));
+        delete doc;
+    }
 }
 
 // ── logging: CloseLog postamble + LogCommand colour spans ──────────────────

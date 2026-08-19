@@ -147,18 +147,12 @@ static std::string SanitiseWorldNameForFile(const std::string& worldName,
     return safe;
 }
 
-// Display ▸ Toggle Log's default save-dialog filename:
-// WORLDNAME_YYYYMMDD_HHMMSS.log.  Was inlined a second time (byte-identical
-// but for the fallback string) in the log-toggle lambda below instead of
-// calling SanitiseWorldNameForFile, so the two copies could silently drift --
-// see world_frame_selftest.cpp for the check this is factored out for.
-std::string CWorldChildFrame::DefaultLogFileName(const std::string& worldName,
-                                                  time_t now)
-{
-    char ts[32];
-    strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
-    return SanitiseWorldNameForFile(worldName, "world") + "_" + ts + ".log";
-}
+// (DefaultLogFileName is gone with the frame's own log implementation.  The
+//  canonical handler suggests the name Windows suggests: the world's
+//  m_strAutoLogFileName run through FormatTime when it is set, else the
+//  sanitised world name plus " log" under App.m_strDefaultLogFileDirectory
+//  — doc.cpp:716-733.  Both are settings the user can configure; the port's
+//  WORLDNAME_YYYYMMDD_HHMMSS.log in ~/Documents was neither.)
 
 // FNV-1a over the raw name.  It only has to be stable across launches and
 // well spread — this disambiguates a filename, it is not a security property.
@@ -872,17 +866,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         m_doc->UpdateAllViews(nullptr);
     };
 
-    // ── Session logging callbacks ──────────────────────────────────────────
-    // Each line appended to the output pane is forwarded to LogLine() so that
-    // the log file always reflects exactly what the user sees on screen.
-    m_output->m_fn_on_line_appended = [this](const SOutputLine& line) {
-        LogLine(line);
-    };
-
-    // Tells the context menu whether a log is currently open.
-    m_output->m_fn_is_logging = [this]() -> bool {
-        return IsLogging();
-    };
+    // (No session-logging callbacks here.  The log is the DOCUMENT's, written
+    //  by the engine from the CLine as each line is committed
+    //  (ProcessPreviousLine.cpp:711 output, :313 notes, LogCommand for input),
+    //  and opened/closed by the canonical ID_FILE_LOGSESSION handler.  The
+    //  frame used to keep a second FILE* of its own and mirror the pane into
+    //  it, which is why the context menu and the menu bar wrote different
+    //  files — see BuildContextMenu's group 7.)
 
     // ── PULL MODEL (branch pull-model-worldview) ──────────────────────────
     // Wire the fetch seam and the pane stops KEEPING what it is pushed: the
@@ -927,41 +917,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
     // Ctrl+L / context menu → the canonical Display ▸ Clear Output Buffer.
     m_output->m_fn_clear_output_buffer = [this]() { ClearOutputBuffer(); };
-
-    // Toggle logging on/off: shows a save dialog when starting.
-    m_output->m_fn_toggle_log = [this]() {
-        if (IsLogging()) {
-            StopLogging();
-            if (m_output)
-                m_output->AppendNote("** Logging stopped **", RGB(200, 200, 0));
-        } else {
-            // Default filename: WORLDNAME_YYYYMMDD_HHMMSS.log
-            std::string worldName = m_doc
-                ? static_cast<const char*>(m_doc->m_mush_name) : "world";
-            std::string defName = DefaultLogFileName(worldName, time(nullptr));
-            const char* home = getenv("HOME");
-            std::string defDir = home ? std::string(home) + "/Documents" : ".";
-
-            wxFileDialog dlg(this,
-                             wxT("Save Session Log"),
-                             wxString::FromUTF8(defDir.c_str()),
-                             wxString::FromUTF8(defName.c_str()),
-                             wxT("Log files (*.log;*.txt)|*.log;*.txt|All files (*.*)|*.*"),
-                             wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-            if (dlg.ShowModal() != wxID_OK) return;
-
-            std::string path = dlg.GetPath().ToUTF8().data();
-            if (StartLogging(path)) {
-                if (m_output)
-                    m_output->AppendNote(
-                        "** Logging to " + path + " **", RGB(200, 200, 0));
-            } else {
-                wxMessageBox(
-                    wxString::FromUTF8(("Could not open log file:\n" + path).c_str()),
-                    wxT("Logging Error"), wxOK | wxICON_ERROR, this);
-            }
-        }
-    };
 
     // ── The output pane's right-click menu → canonical commands ────────────
     // The pane's context menu carries the whole of Windows'
@@ -3137,67 +3092,22 @@ bool CWorldChildFrame::IsActiveWorld() const
 
 // ── Session logging ───────────────────────────────────────────────────────
 //
-// Logging captures the plain-text content of each incoming output line to a
-// UTF-8 text file.  Horizontal rules are written as a dash line.  Style
-// attributes (colour, bold, underline) are not preserved — the log is plain
-// text, suitable for reading or grepping later.
-
-bool CWorldChildFrame::StartLogging(const std::string& path)
-{
-    if (m_logFile) return false;   // already logging
-
-    m_logFile = fopen(path.c_str(), "a");
-    if (!m_logFile) return false;
-
-    m_logFilePath = path;
-
-    // Write a timestamped header.
-    time_t now = time(nullptr);
-    char ts[64];
-    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
-    std::string worldName = m_doc
-        ? static_cast<const char*>(m_doc->m_mush_name) : "Unknown";
-    fprintf(m_logFile,
-            "===== Log started %s - World: %s =====\n",
-            ts, worldName.c_str());
-    fflush(m_logFile);
-    return true;
-}
-
-void CWorldChildFrame::StopLogging()
-{
-    if (!m_logFile) return;
-
-    time_t now = time(nullptr);
-    char ts[64];
-    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
-    fprintf(m_logFile, "===== Log stopped %s =====\n", ts);
-    fclose(m_logFile);
-    m_logFile = nullptr;
-    m_logFilePath.clear();
-}
-
-void CWorldChildFrame::LogLine(const SOutputLine& line)
-{
-    if (!m_logFile) return;
-
-    // Horizontal rules become a dashed separator.
-    if (line.size() == 1 && line[0].horiz_rule) {
-        fputs("----------------------------------------\n", m_logFile);
-        fflush(m_logFile);
-        return;
-    }
-
-    // Concatenate run texts; skip empty and horiz_rule runs.
-    std::string text;
-    for (const auto& run : line) {
-        if (!run.text.empty() && !run.horiz_rule)
-            text += run.text;
-    }
-    text += '\n';
-    fputs(text.c_str(), m_logFile);
-    fflush(m_logFile);
-}
+// There is no logging code here any more, and that is the point.  The frame
+// used to own a second, unrelated implementation — a raw fopen(path, "a") onto
+// its own FILE*, a "===== Log started =====" banner, and a mirror of every line
+// the pane was handed — reached only from the output pane's context menu.  The
+// menu bar's Start/Stop Logging meanwhile ran the canonical
+// CMUSHclientDoc::OnFileLogsession, so the two commands wrote DIFFERENT files
+// in DIFFERENT formats, and only the canonical one honoured the world's
+// m_bLogOutput / m_log_input / m_bLogNotes, the preamble and postamble, the
+// append-vs-truncate choice or the scrollback dump.
+//
+// Everything now goes through the document: OnFileLogsession opens and closes
+// it (CloseLog writes the postamble), the engine writes each line as it is
+// committed, and IsLogging() below simply reads m_logfile — so the status-bar
+// pane, the context menu's tick and the menu bar's caption cannot disagree
+// about whether a session is being logged, because they are all asking the
+// same question of the same field.
 
 // ── FormatTimePane ────────────────────────────────────────────────────────
 // The text of ID_STATUSLINE_TIME, and a deliberate divergence from Windows.
@@ -3916,7 +3826,11 @@ void CWorldChildFrame::SaveCommandHistoryFile()
 void CWorldChildFrame::PersistBeforeTeardown()
 {
     SaveCommandHistoryFile();
-    if (IsLogging()) StopLogging();
+    // CloseLog writes the user's configured POSTAMBLE and then fcloses.  It is
+    // idempotent (eLogFileNotOpen on a second call), which is what lets the
+    // quit hook call it again afterwards and the doc destructor call it on the
+    // Cmd+W path without anything having to work out who got there first.
+    if (m_doc) m_doc->CloseLog();
 }
 
 // ── CancelOutputFade ───────────────────────────────────────────────────────
@@ -5697,9 +5611,10 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         // Colours cannot change metrics, so the wrap cache, the scroll position
         // and the selection all stay valid -- which also retires three
         // workarounds the re-emit needed:
-        //   * detaching m_fn_on_line_appended, because every re-emitted line was
-        //     forwarded to LogLine and one colour tweak appended a verbatim
-        //     second copy of the whole buffer to an open session log;
+        //   * detaching m_fn_on_line_appended, because back when the frame kept
+        //     a log file of its own every re-emitted line was mirrored into it
+        //     and one colour tweak appended a verbatim second copy of the whole
+        //     buffer to an open session log;
         //   * restoring the scroll position afterwards;
         //   * the bookmark round-trip through the engine's CLines.
         pal::StylePalette palette;

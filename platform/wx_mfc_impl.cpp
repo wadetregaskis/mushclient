@@ -874,7 +874,12 @@ struct CanonMenuCmd {
 static const CanonMenuCmd kCanonCmds[] = {
   // ── File ──
   { SEC_FILE, 32980, "&Import\xE2\x80\xA6\tCtrl+Alt+I",      'D', false, true  }, // ID_FILE_IMPORT
-  { SEC_FILE, 32117, "&Log Session\xE2\x80\xA6",             'D', false, true  }, // ID_FILE_LOGSESSION
+  // Checkable: OnUpdateFileLogsession does SetCheck (m_logfile != NULL)
+  // (doc.cpp:1008), and the tick is how Windows says a session is being logged.
+  // Declaring it uncheckable here forced `checked` back to -1 in
+  // wx_canonical_menu_ui_state, so the tick never reached this item nor the
+  // output pane's copy of it.
+  { SEC_FILE, 32117, "&Log Session\xE2\x80\xA6",             'D', true,  true  }, // ID_FILE_LOGSESSION
   { SEC_FILE, 32954, "Open Worlds In Startup List",          'F', false, false }, // ID_FILE_OPENWORLDSINSTARTUPLIST
   { SEC_FILE, 32330, "Reload Defaults",                      'D', false, true  }, // ID_FILE_RELOADDEFAULTS
   { SEC_FILE, 32984, "Plugin &Wizard\xE2\x80\xA6",           'D', false, true  }, // ID_FILE_PLUGINWIZARD
@@ -3426,8 +3431,10 @@ static int hook_query_quit_save()
         //  * the session log.  CloseLog writes the log-file POSTAMBLE (the
         //    user's configured closing line, with its %-substitutions) and then
         //    fcloses; the doc destructor calls it on a normal close, and the doc
-        //    is never destroyed on quit.  StopLogging closes the frame's own
-        //    log, which OnClose also does.
+        //    is never destroyed on quit.  PersistBeforeTeardown now calls it too
+        //    (there is only one log), so the explicit call below is the arm for
+        //    a doc with no frame in the registry; both are no-ops after the
+        //    first, which returns eLogFileNotOpen.
         for (CMUSHclientDoc* d : worlds)
         {
             auto it = s_docFrameMap.find(d);

@@ -36,7 +36,7 @@ bool wx_canonical_menu_ui_state(int id, CMUSHclientDoc* doc,
 #include <wx/timer.h>
 #include <wx/textctrl.h>              // wxTextCtrl, wxTextAttr (info bar)
 #include <cstdio>
-#include <ctime>                      // time_t — DefaultLogFileName
+#include <ctime>                      // time_t — FormatTimePane, the tick clocks
 #include <functional>                 // std::function — the close-teardown observer
 #include <string>
 #include <vector>
@@ -165,15 +165,6 @@ public:
     // world name alone, since a hash of the full name disambiguates it.
     const std::string& HistoryFilePath() const { return m_historyFilePath; }
 
-    // Display ▸ Toggle Log's default save-dialog filename:
-    // WORLDNAME_YYYYMMDD_HHMMSS.log, sanitised the same way the history
-    // filename is (see the log-toggle lambda's own comment for why the two
-    // copies used to be able to drift).  A static, free-standing helper --
-    // exposed so the in-app selftest can pin the sanitising rule without
-    // driving the real wxFileDialog the toggle-log handler pops, which
-    // cannot be answered headlessly.
-    static std::string DefaultLogFileName(const std::string& worldName,
-                                          time_t now);
 
     // Both command bars, for the in-app selftest.  The password swap is the one
     // place where BOTH have to be inspected at once — shown/hidden, and empty or
@@ -523,6 +514,23 @@ public:
     // activation and the connection-phase change; public so the in-app
     // selftest can sample a pane without waiting a timer tick.
     void UpdateStatusBar();
+
+    // ── Session log ────────────────────────────────────────────────────────
+    // The frame owns none of it.  The session log belongs to the DOCUMENT
+    // (CMUSHclientDoc::m_logfile), is opened and closed by the canonical
+    // ID_FILE_LOGSESSION handler that File ▸ Log Session, Connection ▸
+    // Start/Stop Logging and the output pane's context menu all dispatch, and
+    // is written by the engine as each line is committed — so it honours the
+    // world's m_bLogOutput / m_log_input / m_bLogNotes, its preamble and
+    // postamble, and the append-vs-truncate choice.  The frame used to keep a
+    // second, unrelated log file of its own; see wx_world_child.cpp.
+    //
+    // This accessor is all that remains, and it is deliberately a READ of the
+    // document rather than a flag of the frame's own: the status bar's log pane
+    // asks it, and the Connection menu's caption asks the same m_logfile
+    // through menu_ui_rules.cpp, so the two cannot disagree about whether a
+    // session is being logged.
+    bool IsLogging() const { return m_doc && m_doc->m_logfile != nullptr; }
     bool IsStatusBarStripShown() const;
 
     // Show/hide the inline find bar (Ctrl+F to show, Escape in find bar to hide).
@@ -623,23 +631,6 @@ private:
     // miniwindows.  Used to settle the startup layout (see OnWorldTimer).
     void NotifyPluginLayoutSettle();
 
-    // ── Session log ────────────────────────────────────────────────────────
-    // Log is written as plain UTF-8 text to a user-chosen file.  Logging starts
-    // when the user chooses "Start Logging…" from the context menu and stops on
-    // "Stop Logging", window close, or disconnect.
-    FILE*       m_logFile     = nullptr;  // open file handle; nullptr = not logging
-    std::string m_logFilePath;            // path to the current log file
-
-    // Start a new log session: opens path for appending, writes a header.
-    // Returns true on success.  No-op if already logging.
-    bool StartLogging(const std::string& path);
-
-    // Stop the current log session: writes a footer and closes the file.
-    // No-op if not logging.
-    void StopLogging();
-
-    // Returns true if a log file is currently open.
-    bool IsLogging() const { return m_logFile != nullptr; }
 
     // Apply the correct foreground/background colors to both input bars based on
     // the output pane's background.  Factors out the luma logic so it can be
@@ -667,8 +658,6 @@ private:
     // No-op when the state is already correct (safe to call redundantly).
     void ApplyHistRSearch(bool on);
 
-    // Write a single output line to the log file as plain text.
-    void LogLine(const SOutputLine& line);
 
     // (miniwindow mouse-tracking state is doc-homed now, used by the
     //  engine-owned routing: CMUSHclientDoc::m_sPreviousMiniWindow +

@@ -758,7 +758,13 @@ public:
     std::function<void(const wxString& text)> m_fn_send_to_mud;
 
     // Called once per appended line (after trimming/batching).
-    // Wired by CWorldChildFrame to write to the session log file.
+    //
+    // Nothing in the product wires this: the session log is written by the
+    // engine (ProcessPreviousLine.cpp) from the CLine, not from what the pane
+    // was handed.  It survives as the in-app selftest's re-emit detector — the
+    // palette poll must recolour lines in place rather than re-append the
+    // buffer, and counting calls here is how that is asserted
+    // (world_frame_selftest.cpp).
     std::function<void(const SOutputLine&)> m_fn_on_line_appended;
 
     // ── PULL MODEL (spike, branch pull-model-worldview) ───────────────────
@@ -776,11 +782,6 @@ public:
     // pane's own count is derived from it rather than the other way round.
     std::function<int()> m_fn_line_count;
 
-    // Returns true if a log file is currently open (used by context menu label).
-    std::function<bool()> m_fn_is_logging;
-
-    // Toggles logging on/off: shows a file-save dialog when starting.
-    std::function<void()> m_fn_toggle_log;
 
     // Display ▸ Clear Output Buffer, the canonical command (prompt, engine
     // buffer, pane, find state).  Ctrl+L and the context-menu item route here

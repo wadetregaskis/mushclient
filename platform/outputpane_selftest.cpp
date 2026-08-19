@@ -2419,8 +2419,7 @@ void TestContextMenuShape()
         spy.Attach(h.pane);
         h.pane->m_fn_put_in_input = [](const wxString&) {};
         h.pane->m_fn_send_to_mud  = [](const wxString&) {};
-        h.pane->m_fn_toggle_log   = []() {};
-        h.pane->m_fn_is_logging   = []() { return false; };
+
 
         wxMenu menu;
         h.pane->BuildContextMenu(menu, 0, h.pane->LineHeight() / 2);
@@ -2457,7 +2456,7 @@ void TestContextMenuShape()
             { 32332, "Full Screen Mode" },
             { kSep,  "---" },
             // 7. this world and this session
-            { kAny,  "Start Logging\xE2\x80\xA6" },
+            { 32117, "Log Session\xE2\x80\xA6" },
             { 32203, "Activity List" },
             { 32333, "Notepad" },
             { 32158, "World Configuration\xE2\x80\xA6" },
@@ -2493,8 +2492,18 @@ void TestContextMenuShape()
 
         // Every canonical item must have ASKED the rules about itself; an item
         // that quietly skipped the question would still look right above.
-        opCheckEq((int) spy.asked.size(), 15,
+        opCheckEq((int) spy.asked.size(), 16,
                   "every canonical item asked menu_ui_rules about its own id");
+
+        // The session-log item is a CHECK item, because that is how the canonical
+        // update-UI reports an open log (SetCheck(m_logfile != NULL),
+        // doc.cpp:1008).  The port's item used to rename itself instead, which
+        // no amount of ON_UPDATE_COMMAND_UI could ever have driven.
+        {
+            const wxMenuItem* log = ItemNamed(menu, "Log Session\xE2\x80\xA6");
+            opCheck(log && log->IsCheckable(),
+                    "...and carries a tick for \"a log is open\", not a caption");
+        }
 
         // ── the id map the brief calls out ───────────────────────────────
         // Notepad is the one item whose id is not the command: it carries
@@ -2512,6 +2521,30 @@ void TestContextMenuShape()
             menu.ProcessEvent(pick);
             opCheck(spy.dispatched.size() == 2 && spy.dispatched[1] == 32248,
                     "control: Find\xE2\x80\xA6 dispatches its own id");
+        }
+
+        // ── ONE session log, reached from both menus ─────────────────────
+        // The assertion the unification exists for.  "Log Session…" here and
+        // "Start/Stop Logging" in the Connection menu used to be different
+        // COMMANDS driving different implementations onto different files --
+        // this one a port-local fopen(path, "a") on the world frame, that one
+        // the canonical CMUSHclientDoc::OnFileLogsession.  Choosing this item
+        // must now dispatch ID_FILE_LOGSESSION, the same id wx_mfc_impl.cpp's
+        // ID_CONN_LOG_TOGGLE arm hands to the document, so both entry points
+        // run one handler against one m_logfile.  (What the two then WRITE is
+        // compared byte for byte in menubar_selftest.cpp, which has the real
+        // dispatcher this spy stands in for.)
+        //
+        // On the DISPATCHED id, not the item's own: Notepad just above proves
+        // the two can differ.  Last of the three, so the exact-size checks
+        // above keep their teeth.
+        {
+            wxCommandEvent pick(wxEVT_MENU, 32117);
+            menu.ProcessEvent(pick);
+            opCheck(spy.dispatched.size() == 3 &&
+                    spy.dispatched[2] == 32117 /*ID_FILE_LOGSESSION*/,
+                    "Log Session dispatches ID_FILE_LOGSESSION -- the SAME "
+                    "command the menu bar's logging item runs");
         }
     }
 

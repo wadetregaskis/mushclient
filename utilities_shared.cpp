@@ -605,7 +605,13 @@ const char *strnrchr(const char *s, const char c, size_t count)
 {
   const char * ret = NULL;
   size_t n = 0;
-  while (*s && n < count++)
+  // n++ < count, NOT n < count++: the latter increments the BOUND every
+  // iteration (n stays 0), so 0 < count+iteration is always true and the
+  // scan runs to the first NUL, ignoring `count` entirely.  Both callers
+  // pass a CLine::text that is exactly `len` bytes with no NUL terminator
+  // (Line.cpp sizes the buffer to the content), so a hostile long line with
+  // no space read past the allocation.  Honour the length bound.
+  while (n++ < count && *s)
     {
     if( *s == c )
         ret = s;  // remember where character is, keep searching

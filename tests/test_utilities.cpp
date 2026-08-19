@@ -2254,4 +2254,26 @@ TEST(Utilities, HelpPassesBLuaAndZeroOffsetsToShowFunctionslist) {
 }
 #endif
 
+// strnrchr must honour its length bound: the historical body wrote `n < count++`,
+// incrementing the BOUND instead of the counter, so it ignored `count` and ran to
+// the first NUL — an out-of-bounds read for the CLine buffers (exactly `len` bytes,
+// no NUL) its two display callers pass with a hostile long, space-free line.
+TEST(Utilities, StrnrchrHonoursTheLengthBoundAndDoesNotReadPastIt) {
+    // A buffer with NO NUL terminator inside the searched region, and a `c`
+    // that appears ONLY past the bound.  A body that respects `count` returns
+    // NULL; the buggy body scans past `count` and finds the later space.
+    char buf[8] = { 'a','b','c','d',' ','x','y','z' };  // space at index 4
+    // Search only the first 4 bytes ("abcd"): the space is out of bounds.
+    const char * hit = strnrchr(buf, ' ', 4);
+    EXPECT_TRUE(hit == NULL);   // fails on the old `n < count++` (finds index 4)
+
+    // And it still finds an in-bounds occurrence, at the LAST such position.
+    char buf2[8] = { 'a',' ','c',' ','e','f','g','h' };  // spaces at 1 and 3
+    const char * hit2 = strnrchr(buf2, ' ', 5);
+    EXPECT_TRUE(hit2 == buf2 + 3);
+
+    // count == 0 searches nothing.
+    EXPECT_TRUE(strnrchr(buf2, ' ', 0) == NULL);
+}
+
 MC_TEST_MAIN()

@@ -171,6 +171,52 @@ bool NotepadWriteFile (const char * path, const std::string & strText, const int
   return bWrote && bClosed;
   }   // end of NotepadWriteFile
 
+// ── The four line-ending conversions ────────────────────────────────────────
+//
+// On Windows these four rewrite the CEdit buffer byte for byte, and since that
+// buffer IS the file, the rewrite IS the conversion.  Here the buffer cannot
+// carry the distinction at all, so the conversion is a change to the
+// document's TAG — which is the same thing one layer down, and is what the
+// menu items have always claimed to do.
+//
+// TWO DELIBERATE DIFFERENCES FROM WINDOWS, both toward not destroying the
+// document; see docs entry for D-10.
+//
+// 1. Each op names its TARGET, and is not conditional on the current style.
+//    The canonical bodies are keyed on the bytes they expect to find, so
+//    applying one to a document in the wrong style is destructive rather than
+//    inert: CTextView::OnConvertUnixtodos drops every CR it meets and only
+//    inserts one before an LF (TextView.cpp:305-311), so run over a Mac
+//    (CR-only) buffer it deletes every line break in the file.  DOS→Unix over
+//    the same buffer does likewise.  That is a consequence of the byte-level
+//    implementation, not of the intent, and there is nothing to reproduce.
+//
+// 2. Windows applies them to the SELECTION when there is one.  A line-ending
+//    style is a property of the file, and the control cannot hold two of them
+//    at once, so these are document-wide here whatever is selected.
+bool NotepadConvertLineEndingTarget (const int op, int * pStyle)
+  {
+  int style;
+  switch (op)
+    {
+    case eNotepadConvertUnixToDos:      // "Unix → DOS"
+    case eNotepadConvertMacToDos:       // "Mac → DOS"
+      style = eLineEndingsCRLF;
+      break;
+    case eNotepadConvertDosToUnix:      // "DOS → Unix"
+      style = eLineEndingsLF;
+      break;
+    case eNotepadConvertDosToMac:       // "DOS → Mac"
+      style = eLineEndingsCR;
+      break;
+    default:
+      return false;
+    }
+  if (pStyle)
+    *pStyle = style;
+  return true;
+  }   // end of NotepadConvertLineEndingTarget
+
 // ── Boundary normalisation ──────────────────────────────────────────────────
 
 // Control convention (LF-only) → canonical CEdit convention (CRLF).

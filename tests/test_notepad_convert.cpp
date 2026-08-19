@@ -301,6 +301,106 @@ TEST(NotepadLineEndings, AnEmptyFileRoundTripsAsEmpty)
     EXPECT_EQ(std::string(""), f.read());
 }
 
+// ── The four line-ending Convert ops ────────────────────────────────────────
+//
+// These were provable no-ops: the control cannot hold a CR, so the canonical
+// CR-keyed transforms had nothing to rewrite, and the test that "covered" them
+// asserted the text came back unchanged — which it does whether the op works or
+// does nothing at all.  With a tag on the document they mean what the menu says,
+// and the discriminator is the SAVED BYTES, not the text.
+
+TEST(NotepadLineEndings, EachConversionNamesTheStyleItTargets)
+{
+    int style = -1;
+
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertUnixToDos, &style));
+    EXPECT_EQ(eLineEndingsCRLF, style);
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertMacToDos, &style));
+    EXPECT_EQ(eLineEndingsCRLF, style);
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertDosToUnix, &style));
+    EXPECT_EQ(eLineEndingsLF, style);
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertDosToMac, &style));
+    EXPECT_EQ(eLineEndingsCR, style);
+
+    // The control: every OTHER op must be refused, or the Convert menu would
+    // start retagging the document for Base64 and UPPER CASE too.
+    const int kNotLineEndings[] = {
+        eNotepadConvertUpperCase,   eNotepadConvertLowerCase,
+        eNotepadConvertRemoveEol,   eNotepadConvertRemoveBlanks,
+        eNotepadConvertQuoteLines,  eNotepadConvertQuoteForum,
+        eNotepadConvertBase64Encode, eNotepadConvertBase64Decode,
+        eNotepadConvertHtmlSpecial,
+    };
+    for (int op : kNotLineEndings)
+        EXPECT_FALSE(NotepadConvertLineEndingTarget(op, &style));
+    EXPECT_FALSE(NotepadConvertLineEndingTarget(-1, &style));
+
+    // ...and a refusal must not have written through the out-parameter.
+    style = 12345;
+    EXPECT_FALSE(NotepadConvertLineEndingTarget(eNotepadConvertUpperCase, &style));
+    EXPECT_EQ(12345, style);
+
+    // A null out-parameter is allowed (a caller may only want the predicate).
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertDosToMac, nullptr));
+}
+
+TEST(NotepadLineEndings, EachConversionChangesTheSavedBytes)
+{
+    // The assertion the old test could not make.  Start from a Unix file, apply
+    // each conversion, and read back what actually lands on disk.
+    struct Case { int op; const char* expected; };
+    const Case kCases[] = {
+        { eNotepadConvertUnixToDos, "a\r\nb\r\n" },
+        { eNotepadConvertMacToDos,  "a\r\nb\r\n" },
+        { eNotepadConvertDosToMac,  "a\rb\r"     },
+        { eNotepadConvertDosToUnix, "a\nb\n"     },
+    };
+
+    for (const Case& c : kCases)
+    {
+        ScratchFile f("conv");
+        f.write("a\nb\n");
+
+        std::string text;
+        int style = -1;
+        EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+        EXPECT_EQ(eLineEndingsLF, style);
+
+        // What the Convert menu now does: retag, and leave the text alone.
+        int target = -1;
+        EXPECT_TRUE(NotepadConvertLineEndingTarget(c.op, &target));
+        CString dst;
+        EXPECT_TRUE(NotepadConvertText(c.op, CString(text.c_str()), dst));
+        EXPECT_EQ(text, std::string((const char*) dst));   // the TEXT is untouched
+
+        EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, target));
+        EXPECT_EQ(std::string(c.expected), f.read());
+    }
+}
+
+TEST(NotepadLineEndings, ConversionsAreNotConditionalOnTheCurrentStyle)
+{
+    // A deliberate difference from Windows, recorded so it is not "fixed" back.
+    // CTextView::OnConvertUnixtodos drops every CR and only inserts one before
+    // an LF, so on Windows applying it to a Mac (CR-only) buffer DELETES every
+    // line break in the file.  Here the op names its target, so a mismatched
+    // source is harmless.
+    ScratchFile f("mac2dos");
+    f.write("a\rb\rc\r");
+
+    std::string text;
+    int style = -1;
+    EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+    EXPECT_EQ(eLineEndingsCR, style);
+    EXPECT_EQ(std::string("a\nb\nc\n"), text);
+
+    int target = -1;
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertUnixToDos, &target));
+    EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, target));
+    // Three lines still, now DOS -- not one line with the breaks eaten.
+    EXPECT_EQ(std::string("a\r\nb\r\nc\r\n"), f.read());
+}
+
 // ── The boundary itself ─────────────────────────────────────────────────────
 
 TEST(NotepadConvert, ToCanonicalExpandsControlLineEndings)
@@ -362,7 +462,22 @@ TEST(NotepadConvert, RemoveEndOfLinesDoesNotDoubleSpaceAfterAParagraph)
               Convert(eNotepadConvertRemoveEol, "a\n\nb"));
 }
 
-TEST(NotepadConvert, DosToMacKeepsTheLineStructure)
+// The four line-ending ops, at the TEXT layer.
+//
+// These three fixtures assert only half the contract, and on their own they
+// could never fail: "the text is unchanged" is equally true of a working
+// conversion and of one that does nothing, which is exactly what these four
+// were until the document gained a line-ending tag.  What they are worth is
+// the other half — the text must survive the op INTACT, so a body that
+// collapsed the document into one line (which running the canonical CR-keyed
+// transform over LF-only text really did) still fails here.
+//
+// The half that discriminates is NotepadLineEndings.EachConversionChangesThe-
+// SavedBytes above, which reads the file back, and the menu-driven version in
+// platform/notepad_selftest.cpp.  Do not read these three as coverage of the
+// conversions themselves.
+
+TEST(NotepadConvert, DosToMacLeavesTheTEXTIntact)
 {
     // The canonical strips LF from a CRLF buffer, leaving CR-separated lines —
     // which is a line ending the control renders identically.  Run raw over
@@ -372,16 +487,17 @@ TEST(NotepadConvert, DosToMacKeepsTheLineStructure)
               Convert(eNotepadConvertDosToMac, "a\nb\nc"));
 }
 
-TEST(NotepadConvert, MacToDosKeepsTheLineStructure)
+TEST(NotepadConvert, MacToDosLeavesTheTEXTIntact)
 {
     EXPECT_EQ(std::string("a\nb\nc"),
               Convert(eNotepadConvertMacToDos, "a\nb\nc"));
 }
 
-TEST(NotepadConvert, UnixToDosAndDosToUnixKeepTheLineStructure)
+TEST(NotepadConvert, UnixToDosAndDosToUnixLeaveTheTEXTIntact)
 {
-    // The control cannot represent the difference, so both are no-ops here.
-    // Unix→DOS emitting CRLF into the control DOUBLE-SPACED the document.
+    // The control cannot represent the difference, so neither op touches the
+    // text; the document's tag is where the conversion lands.  Unix→DOS
+    // emitting CRLF into the control DOUBLE-SPACED the document.
     EXPECT_EQ(std::string("a\nb\nc"),
               Convert(eNotepadConvertUnixToDos, "a\nb\nc"));
     EXPECT_EQ(std::string("a\nb\nc"),

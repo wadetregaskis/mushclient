@@ -38,8 +38,10 @@
 #include "wx_world_child.h"
 #include "../pal/itransport.h"
 
+#include <algorithm>   // std::sort / std::unique (the Convert id-distinctness check)
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -532,6 +534,101 @@ int RunNotepadSelfTest()
             npCheck(frame->GetText() == "a\nb\nc",
                     "DOS to Mac keeps the line structure (it used to delete every break)");
         }
+    }
+
+    // ── 4a2. The four line-ending conversions actually convert (D-10) ──────
+    // They were provable no-ops: the control cannot hold a CR, so the
+    // canonical CR-keyed transforms had nothing to rewrite, and the only
+    // assertion on them ("the text came back unchanged") was equally true of a
+    // body that did nothing.  Now they change the DOCUMENT's line-ending tag,
+    // and the discriminator is what lands on disk.
+    //
+    // Driven through the real menu items, so the event table, the id mapping
+    // and OnConvert's new arm are all in the path.
+    {
+        // ASCII-only fragments of the menu labels, which carry "→" arrows.
+        // Each is unique across the four: "(LF" only appears in Unix→DOS,
+        // "Unix (CRLF" only in DOS→Unix, "(CR " only in Mac→DOS (DOS→Mac's
+        // "(CRLF" has an L where that space is), "Mac (CRLF" only in DOS→Mac.
+        struct ConvCase { const char* leaf; const char* label; const char* expected; };
+        const ConvCase kCases[] = {
+            { "u2d", "(LF",        "l1\r\nl2\r\n" },   // Unix → DOS
+            { "d2u", "Unix (CRLF", "l1\nl2\n"     },   // DOS  → Unix
+            { "m2d", "(CR ",       "l1\r\nl2\r\n" },   // Mac  → DOS
+            { "d2m", "Mac (CRLF",  "l1\rl2\r"     },   // DOS  → Mac
+        };
+        std::vector<int> firedIds;
+
+        for (const ConvCase& c : kCases)
+        {
+            // A distinct file per case: same starting state every time, and no
+            // frame has to be closed and reopened under a title the registry
+            // would still be holding.
+            char path[128], leafname[64];
+            snprintf(path, sizeof path,
+                     "/tmp/mushclient_np_selftest_conv_%s.txt", c.leaf);
+            snprintf(leafname, sizeof leafname,
+                     "mushclient_np_selftest_conv_%s.txt", c.leaf);
+
+            FILE* fp = fopen(path, "wb");
+            if (fp) { fputs("l1\nl2\n", fp); fclose(fp); }
+
+            CTextDocument* td = g_wxhook_open_text_file
+                ? static_cast<CTextDocument*>(g_wxhook_open_text_file(path))
+                : nullptr;
+            CWxNotepadFrame* cf = CWxNotepadFrame::Find(leafname);
+            if (cf) cf->Hide();
+            npCheck(td != nullptr && cf != nullptr,
+                    "the convert fixture opens into a notepad");
+            if (!td || !cf)
+            {
+                remove(path);
+                continue;
+            }
+
+            npCheck(td->m_iLineEndings == eLineEndingsLF,
+                    "...starting as a Unix file");
+            td->SetModifiedFlag(FALSE);
+
+            // Which item the label fragment actually resolves to.  Two of the
+            // four cases expect the SAME bytes (both DOS targets), so without
+            // this a fragment that matched the wrong item would still pass —
+            // the ids are collected and checked for distinctness below.
+            wxMenuItem* item = FindMenuItem(cf, "Convert", c.label);
+            npCheck(item != nullptr, "the Convert item is on the menu");
+            if (item)
+                firedIds.push_back(item->GetId());
+
+            const std::string before = cf->GetText();
+            npCheck(FireConvert(cf, c.label), "...and fires");
+
+            // A tag-only change raises no wxEVT_TEXT, so nothing sets the
+            // modified flag for it -- and SaveModified would then throw the
+            // user's conversion away on close without even asking.
+            npCheck(td->IsModified(),
+                    "...and it marks the document modified (no wxEVT_TEXT "
+                    "fires for a tag-only change)");
+            npCheck(cf->GetText() == before,
+                    "...without touching the text");
+
+            npCheck(td->DoSave((LPCTSTR) td->GetPathName()) != FALSE,
+                    "...the converted notepad saves");
+            npCheck(SlurpFile(path) == c.expected,
+                    "...and the SAVED BYTES carry the new line endings "
+                    "(all four used to be no-ops)");
+
+            td->SetModifiedFlag(FALSE);   // nothing to prompt about at quit
+            remove(path);
+        }
+
+        // Four labels, four DIFFERENT menu items.  Without this, "(LF" and
+        // "(CR " could both be resolving to Unix→DOS and the two DOS cases
+        // would still agree with their (identical) expected bytes.
+        std::vector<int> sorted = firedIds;
+        std::sort(sorted.begin(), sorted.end());
+        npCheck(sorted.size() == 4 &&
+                std::unique(sorted.begin(), sorted.end()) == sorted.end(),
+                "the four conversions are four distinct menu commands");
     }
 
     // ── 4b. File > New resets a Recall/search-results title (E19-F2) ───────

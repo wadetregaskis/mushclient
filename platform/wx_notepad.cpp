@@ -990,6 +990,23 @@ void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
         default: return;
     }
 
+    // The four line-ending conversions change the DOCUMENT, not the text.  The
+    // control holds LF and only LF, so there is nothing in the buffer for them
+    // to rewrite -- run over the text they are exact no-ops, which is what
+    // they were until now.  What they mean is "write this file out with those
+    // line endings", and that is the tag.
+    int iNewStyle = eLineEndingsDefault;
+    if (NotepadConvertLineEndingTarget(op, &iNewStyle)) {
+        if (!m_pDoc)
+            return;
+        m_pDoc->m_iLineEndings = iNewStyle;
+        // A tag-only change raises no wxEVT_TEXT, so the binding in the
+        // constructor never fires and the document would still look clean --
+        // SaveModified would then discard the user's change without asking.
+        m_pDoc->SetModifiedFlag(TRUE);
+        return;
+    }
+
     // A failure here is base64 decode on invalid input: leave the notepad
     // alone.  NotepadConvertText already reported the error (ReportError, the
     // same box CTextView::OnConvertBase64decode puts up) — no beep on top of

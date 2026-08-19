@@ -580,6 +580,12 @@ std::string NotepadControlTextToBytes (const std::string & strText, const int st
 // Read/write a notepad's file, converting line endings at the boundary.
 bool NotepadReadFile  (const char * path, std::string & strText, int & style);
 bool NotepadWriteFile (const char * path, const std::string & strText, const int style);
+
+// The style a Convert-menu command targets, for the four that convert line
+// endings; false for every other op.  With the buffer unable to hold the
+// difference, "convert the line endings" IS "retag the document", and that is
+// what these four now do.
+bool NotepadConvertLineEndingTarget (const int op, int * pStyle);
 #endif // !_WIN32
 
 // different ways of saving things — implementations in xml/xml_save_world.cpp

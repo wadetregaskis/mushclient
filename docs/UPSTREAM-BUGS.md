@@ -1381,3 +1381,55 @@ lower a number the user never chose.
 option table agree.  Covered by "Send/Paste delay validation range" in the
 `--gui-bridge-selftest` harness, which also asserts 100001 is still refused.
 Needs a Windows run — see `docs/WINDOWS-VALIDATION.md`.
+
+## 68 — MCCP `Z_NEED_DICT` from a crafted zlib header spins the decompressor forever (this commit)
+**Bug:** `OnBytesReceived`'s decompression loop (`doc_shared.cpp` ← `doc.cpp`)
+tests only `if (iCompressResult < 0)` for an inflate failure.  A server whose
+MCCP stream sets the zlib `FDICT` header bit makes `inflate` return
+`Z_NEED_DICT` (+2): it consumes no input, produces no output, is not negative
+and is not `Z_STREAM_END`, so the outer `while (true)` re-`inflate`s the same
+bytes with `avail_in` unchanged — an unbounded 100%-CPU loop that freezes the
+UI, escapable only by force-quit.  The `avail_in <= 0` guard is *before* the
+loop, so it never trips.  Entirely server-controlled: a remote denial of
+service.
+**Fix:** treat any result that is neither `Z_OK` nor `Z_STREAM_END` as a
+decompress failure (`Z_BUF_ERROR` is already handled by the inner
+grow-the-buffer loop), so `Z_NEED_DICT` and every other non-progress code
+disconnect through the existing error arm.  Covered by
+`MccpArms.DictionaryRequestDisconnectsInsteadOfSpinning` in
+`tests/test_connection.cpp`, which feeds an `FDICT` stream and asserts the world
+disconnects instead of hanging (reverting the fix makes that test time out).
+
+## 69 — MCCP stream-end residue can overflow the transport's receive buffer (this commit)
+**Bug:** at `Z_STREAM_END` the loop copies the unconsumed post-stream residue
+back into the caller's buffer with `memcpy (buff, m_zCompress.next_in,
+m_zCompress.avail_in)`.  The append-guard caps `avail_in` at
+`COMPRESS_BUFFER_LENGTH` (10000), but the receive buffer `buff` points at was
+`char buff[9000]` in both transports (`platform/posix_transport.cpp`,
+`pal/win_transport.cpp`) — whose own comment even claimed it "must be less than
+COMPRESS_BUFFER_LENGTH".  A crafted stream that reaches end-of-stream with
+`avail_in` between 9001 and 10000 (a small compressed prefix, then a large plain
+residue, accumulated across two short packets) overflows that stack buffer by
+hundreds of bytes.
+**Fix:** size both transport receive buffers at `COMPRESS_BUFFER_LENGTH` — the
+residue is real post-stream telnet data and must not be dropped, so clamping the
+`memcpy` would be wrong — and assert `avail_in <= COMPRESS_BUFFER_LENGTH` at the
+copy.  Covered by `MccpArms.LargeStreamEndResidueIsPreservedNotTruncated` in
+`tests/test_connection.cpp`, which drives `avail_in` past 9000 and asserts the
+whole residue (a marker at its tail) survives.  The `pal/win_transport.cpp`
+buffer change is by-reasoning and needs a Windows build run to confirm.
+
+## 70 — MCCP compression-start `memmove` into the input buffer has no size guard (this commit)
+**Bug:** when a world switches into compressed mode mid-packet
+(`Phase_COMPRESS_WILL` and `Phase_SUBNEGOTIATION_IAC` in `DisplayMsg`,
+`doc_shared.cpp` ← `doc.cpp`), each arm copies the post-`SE` remainder into
+`m_CompressInput` with `memmove (m_CompressInput, p, size)` and no bound — even
+though `m_CompressInput` is only `COMPRESS_BUFFER_LENGTH` bytes, and unlike the
+sibling append path in `OnBytesReceived`, which disconnects when the data would
+not fit.  A packet whose remainder exceeds the buffer (reachable when a plugin's
+`ON_PLUGIN_PACKET_RECEIVED` rewrite or `world.Simulate` produces more than
+`COMPRESS_BUFFER_LENGTH` bytes carrying an MCCP-start sequence) overflows the
+heap.  Local rather than remote, but a real overflow.
+**Fix:** guard both arms with the same `size > COMPRESS_BUFFER_LENGTH` →
+disconnect check the append path already uses.  Covered by
+`MccpArms.OversizeCompressionStartDisconnects` in `tests/test_connection.cpp`.

@@ -348,7 +348,13 @@ private:
 #else
         if (m_tlsHandshaking) return;
 #endif
-        char buff[9000];
+        // Sized at COMPRESS_BUFFER_LENGTH (doc.h == 10000): OnBytesReceived's
+        // MCCP Z_STREAM_END path copies the post-stream residue (up to
+        // avail_in, capped there at COMPRESS_BUFFER_LENGTH) back into this
+        // buffer, so anything smaller overflows the stack on a crafted stream.
+        char buff[10000];
+        static_assert (sizeof buff >= 10000,
+                       "receive buffer must hold the MCCP Z_STREAM_END residue");
         int count;
         std::shared_ptr<Gate> gate = m_gate;
 

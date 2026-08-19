@@ -823,6 +823,27 @@ static std::string deflate_bytes(const std::string& plain, bool finish)
     return out;
 }
 
+// Deflate `plain` after installing a preset dictionary, which sets the FDICT
+// bit in the zlib header.  A decoder that lacks the dictionary answers the
+// header with Z_NEED_DICT, consuming no input and producing no output.
+static std::string deflate_with_dictionary(const std::string& plain)
+{
+    z_stream z = {};
+    deflateInit(&z, Z_DEFAULT_COMPRESSION);
+    static const char dict[] = "a-preset-dictionary-the-decoder-does-not-have";
+    deflateSetDictionary(&z, (const Bytef*)dict, (uInt)(sizeof dict - 1));
+    std::string out;
+    out.resize(plain.size() + 512);
+    z.next_in = (Bytef*)plain.data();
+    z.avail_in = (uInt)plain.size();
+    z.next_out = (Bytef*)&out[0];
+    z.avail_out = (uInt)out.size();
+    deflate(&z, Z_FINISH);
+    out.resize(out.size() - z.avail_out);
+    deflateEnd(&z);
+    return out;
+}
+
 // Negotiate MCCP2 on `doc` and switch the stream to compressed mode.
 static void start_mccp2(CMUSHclientDoc* doc)
 {
@@ -1573,6 +1594,85 @@ TEST(MccpArms, PendingInputShuffledToBufferStart)
     // some input is still pending in the zlib buffer
     doc->OnBytesReceived(&rest[0], (int)rest.size());
     EXPECT_TRUE(saw(doc, "split delivery text"));
+    delete doc;
+}
+
+// A server-crafted zlib header with the FDICT bit set makes inflate() return
+// Z_NEED_DICT (+2): no input consumed, no output produced.  The old error test
+// (iCompressResult < 0) let it through, so the decompression loop re-inflated
+// the same bytes forever — a remote 100%-CPU denial of service.  The fix treats
+// any result that is neither Z_OK nor Z_STREAM_END as a decompress failure, so
+// this disconnects immediately instead of hanging.  (Reverting the fix makes
+// this test time out rather than pass.)
+TEST(MccpArms, DictionaryRequestDisconnectsInsteadOfSpinning)
+{
+    NotifyToOutput toOutput;
+    CMUSHclientDoc* doc = make_doc();
+    start_mccp2(doc);
+    ASSERT_TRUE(doc->m_bCompress);
+    std::string z = deflate_with_dictionary("secret payload that needs a dict\r\n");
+    doc->OnBytesReceived(&z[0], (int)z.size());
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);   // did not spin
+    delete doc;
+}
+
+// At Z_STREAM_END the loop copies the post-stream residue (real telnet data,
+// up to avail_in) back into the caller's receive buffer.  A crafted stream can
+// leave avail_in above 9000 — larger than the transports' old char buff[9000]
+// — so those buffers are now COMPRESS_BUFFER_LENGTH.  Drive avail_in past 9000
+// and confirm the whole residue survives (a fix that merely clamped the memcpy
+// to 9000 would drop the tail marker).
+TEST(MccpArms, LargeStreamEndResidueIsPreservedNotTruncated)
+{
+    CMUSHclientDoc* doc = make_doc();
+    unsigned char will[3] = { T_IAC, T_WILL, 86 /*COMPRESS2*/ };
+    doc->OnBytesReceived((char*)will, 3);
+
+    // one packet: SB IAC SE, a finished compressed stream, then a plain residue
+    // bigger than 9000 with a marker at its very end.
+    std::string compressed = deflate_bytes("start of stream\r\n", true);   // Z_FINISH
+    std::string residue(9600, 'X');
+    residue += "TAILMARK\r\n";
+    std::string packet;
+    unsigned char sb[5] = { T_IAC, T_SB, 86, T_IAC, T_SE };
+    packet.append((char*)sb, 5);
+    packet += compressed;
+    packet += residue;
+
+    doc->OnBytesReceived(&packet[0], (int)packet.size());
+
+    EXPECT_EQ((int)eConnectConnectedToMud, (int)doc->m_iConnectPhase);   // not disconnected
+    EXPECT_FALSE(doc->m_bCompress);                                      // stream ended
+    EXPECT_GT((long)doc->m_zCompress.avail_in, 9000L);                   // exercised the >9000 path
+    EXPECT_TRUE(saw(doc, "TAILMARK"));                                   // full residue preserved
+    delete doc;
+}
+
+// The two compression-start memmoves copy the post-SE remainder into
+// m_CompressInput (COMPRESS_BUFFER_LENGTH bytes) with no bound of their own; a
+// plugin or world.Simulate that grows the packet past that would overflow the
+// heap.  A packet whose post-SE remainder exceeds the buffer must disconnect,
+// exactly as the ReceiveMsg append path already does.  (Reverting the guard
+// heap-overflows m_CompressInput.)
+TEST(MccpArms, OversizeCompressionStartDisconnects)
+{
+    CMUSHclientDoc* doc = make_doc();
+    unsigned char will[3] = { T_IAC, T_WILL, 86 /*COMPRESS2*/ };
+    doc->OnBytesReceived((char*)will, 3);   // negotiate + allocate m_CompressInput
+
+    std::string packet;
+    unsigned char sb[5] = { T_IAC, T_SB, 86, T_IAC, T_SE };
+    packet.append((char*)sb, 5);
+    packet.append(COMPRESS_BUFFER_LENGTH + 1000, 'Z');   // remainder > input buffer
+
+    doc->OnBytesReceived(&packet[0], (int)packet.size());
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    // The guard returns before the memmove and its accounting, so no compressed
+    // bytes were ever taken.  Without the guard the remainder is memmove'd (the
+    // overflow) and counted here, and the disconnect above still happens on the
+    // following inflate error — so this counter, not the phase, is what proves
+    // the guard fired.
+    EXPECT_EQ(0L, (long)doc->m_nTotalCompressed);
     delete doc;
 }
 

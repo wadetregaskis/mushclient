@@ -1563,7 +1563,12 @@ void CMUSHclientDoc::OnBytesReceived (char * buff, int count)
       }
 
     // error?
-    if (iCompressResult < 0)
+    // A server-crafted zlib header with FDICT set makes inflate return
+    // Z_NEED_DICT (+2): it consumes no input and produces no output, so the
+    // outer while(true) would re-inflate the same bytes forever (100% CPU,
+    // frozen UI).  Z_BUF_ERROR was already handled by the inner loop, so treat
+    // anything that is neither Z_OK nor Z_STREAM_END as a decompress failure.
+    if (iCompressResult != Z_OK && iCompressResult != Z_STREAM_END)
       {
       char * pMsg = m_zCompress.msg;    // closing may clear the message
 
@@ -1600,7 +1605,12 @@ void CMUSHclientDoc::OnBytesReceived (char * buff, int count)
     if (iCompressResult == Z_STREAM_END)
       {    // we can stop decompressing
       m_bCompress = false;
-      // put remaining stuff back into buff
+      // put the post-stream residue (real telnet data) back into buff.  The
+      // caller's receive buffer is sized at COMPRESS_BUFFER_LENGTH, and every
+      // path that fills avail_in (the append-guard above and the two
+      // compression-start memmoves) caps it at the same bound, so the residue
+      // always fits.
+      ASSERT (m_zCompress.avail_in <= COMPRESS_BUFFER_LENGTH);
       memcpy (buff, m_zCompress.next_in, m_zCompress.avail_in);
       count = m_zCompress.avail_in;
       }   // end of Z_STREAM_END
@@ -3189,6 +3199,15 @@ CString strLine (lpszText, size);
               {
               p++;    // skip SE  (normally done at end of loop)
               size--; // one less of these
+              // m_CompressInput is COMPRESS_BUFFER_LENGTH bytes; a plugin or
+              // world.Simulate that grows the packet past that would overflow
+              // it (the append path at ReceiveMsg has the same guard).
+              if (size > COMPRESS_BUFFER_LENGTH)
+                {
+                OnConnectionDisconnect ();    // close the world
+                TMessageBox ("Insufficient memory in buffer to decompress text", MB_ICONEXCLAMATION);
+                return;
+                }
               if (size)  // copy compressed data to compression buffer
                 memmove (m_CompressInput, p, size);
               m_zCompress.next_in = m_CompressInput;
@@ -3211,6 +3230,15 @@ CString strLine (lpszText, size);
               {
               p++;    // skip SE  (normally done at end of loop)
               size--; // one less of these
+              // m_CompressInput is COMPRESS_BUFFER_LENGTH bytes; a plugin or
+              // world.Simulate that grows the packet past that would overflow
+              // it (the append path at ReceiveMsg has the same guard).
+              if (size > COMPRESS_BUFFER_LENGTH)
+                {
+                OnConnectionDisconnect ();    // close the world
+                TMessageBox ("Insufficient memory in buffer to decompress text", MB_ICONEXCLAMATION);
+                return;
+                }
               if (size)  // copy compressed data to compression buffer
                 memmove (m_CompressInput, p, size);
               m_zCompress.next_in = m_CompressInput;

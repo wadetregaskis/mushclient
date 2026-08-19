@@ -46,6 +46,7 @@
 #include "dialogs/world_prefs/aliasdlg.h"              // CAliasDlg — what it runs
 
 #include <cctype>                       // isxdigit/islower — the GUID shape check
+#include <cstring>                      // strcmp — the OptionsTable row lookup
 
 #include <vector>
 
@@ -62,6 +63,11 @@ void wx_toggle_full_screen(wxTopLevelWindow* target);
 // Defined in wx_mfc_impl.cpp: the pre-load defaults File ▸ New World and Open
 // World File both apply to a freshly constructed document.
 void wx_seed_new_world_defaults(CMUSHclientDoc* doc);
+
+// The world option table (scriptingoptions.cpp, rows in
+// scriptingoptions_numeric.inc) — the single source of truth for every
+// numeric/boolean world default, which the seed above must agree with.
+extern tConfigurationNumericOption OptionsTable [];
 
 namespace {
 
@@ -312,8 +318,37 @@ void TestNewWorldDefaults()
     check(doc->m_normalcolour[7] == RGB(192, 192, 192) &&
           doc->m_boldcolour[7]   == RGB(255, 255, 255),
           "the ANSI tables keep SetDefaultAnsiColours' values");
-    check(doc->m_nWrapColumn == 80 && doc->m_bUTF_8 == 1 && doc->m_maxlines == 5000,
+    check(doc->m_nWrapColumn == 80 && doc->m_maxlines == 5000,
           "the port-only display defaults are still seeded");
+
+    // ── the seed must not DISAGREE with the option table ──────────────────
+    // This hook runs before the load on the Open World File path as well as
+    // File ▸ New World, and the loader leaves a member alone when its
+    // attribute is absent and the <world> tag says defaults="y"
+    // (xml_load_world.cpp Load_World_Numeric_Options_XML, boolean arm).  So
+    // any value seeded here that differs from OptionsTable becomes the
+    // effective setting for every such world file — and gets written back
+    // into the user's file on save.  utf_8 was seeded to 1 against a table
+    // default of false, which opened hand-written defaults="y" worlds in
+    // UTF-8 here and in ANSI on Windows.
+    //
+    // Asserted against the live table rather than a literal, so the rule
+    // survives a future change to any of the three defaults.
+    {
+        auto tableDefault = [](const char* name) -> double {
+            for (int i = 0; OptionsTable[i].pName; i++)
+                if (strcmp(OptionsTable[i].pName, name) == 0)
+                    return OptionsTable[i].iDefault;
+            return -1;   // no such row → the check below fails loudly
+        };
+        check(doc->m_bUTF_8 == (unsigned short) tableDefault("utf_8") &&
+              tableDefault("utf_8") == 0,
+              "utf_8 is left at the OptionsTable default (ANSI), as on Windows");
+        check(doc->m_nWrapColumn == (unsigned int) tableDefault("wrap_column"),
+              "wrap_column agrees with the OptionsTable default");
+        check(doc->m_maxlines == (long) tableDefault("max_output_lines"),
+              "max_output_lines agrees with the OptionsTable default");
+    }
 }
 
 // ── 4. CProgressDlg drives the wx progress dialog ─────────────────────────

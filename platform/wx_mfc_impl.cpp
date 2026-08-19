@@ -2313,13 +2313,25 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 // The ANSI tables the two hooks also wrote by hand were byte-for-byte what
 // SetDefaultAnsiColours had already put there, so they are simply gone.
 //
-// What remains is genuinely port-only: on Windows these three come from the
-// "default world" settings MFC loads before the document is opened.
+// What remains must AGREE WITH OptionsTable (scriptingoptions_numeric.inc), and
+// this function is not the place to disagree with it.  It runs before the load
+// on the Open World File path too, and the loader leaves a member alone when
+// its attribute is absent and the <world> tag says defaults="y"
+// (xml_load_world.cpp Load_World_Numeric_Options_XML, boolean arm) — so a value
+// seeded here that differs from the table silently becomes the setting for
+// every such world file, and is then written back into the user's file on save.
+//
+// m_bUTF_8 used to be seeded to 1 against a table default of false
+// (scriptingoptions_numeric.inc:172, `{"utf_8", false, O(m_bUTF_8)}`), so a
+// hand-written defaults="y" world opened in UTF-8 here and in ANSI on Windows.
+// It is gone: the constructor's SetDefaults(false) (doc_construct.cpp:53) stands,
+// which is exactly what Windows does.  The two survivors are the table defaults
+// restated (wrap_column 80, max_output_lines 5000) for the two members the port
+// sizes buffers from before any load.
 void wx_seed_new_world_defaults(CMUSHclientDoc* doc)
 {
     if (!doc) return;
     doc->m_nWrapColumn = 80;    // CLine allocates m_nWrapColumn bytes for text
-    doc->m_bUTF_8      = 1;     // use UTF-8 throughout; 4x multiplier in CLine
     doc->m_maxlines    = 5000;  // SetUpOutputWindow sizes m_pLinePositions from this
 }
 

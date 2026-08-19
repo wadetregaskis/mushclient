@@ -653,6 +653,54 @@ TEST(NotingTest, NoteDeferredWhileNotesNotWantedThenDrained)
     EXPECT_EQ((COLORREF)0x654321, s->iBackColour);
 }
 
+// doc_construct.cpp: m_iNoteColourFore/Back are what a DEFERRED note carries.
+// Tell only overwrites them from the custom palette when NoteCustomColourIndex()
+// says there IS one, so with the "same colour" sentinel they are read exactly as
+// the constructor left them -- white on black, not whatever the stack held.
+TEST(NotingTest, DeferredSameColourNoteCarriesConstructedNoteColours)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bNotesInRGB = false;               // Windows ctor state: palette notes
+    doc.m_iNoteTextColour = SAMECOLOUR;      // NoteCustomColourIndex() < 0
+    feed(doc, "partial");
+    doc.m_bNotesNotWantedNow = true;
+    doc.Note("deferred");
+    ASSERT_EQ((size_t)1, doc.m_OutstandingLines.size());
+    EXPECT_EQ((COLORREF) RGB (255, 255, 255), doc.m_OutstandingLines.front().m_cText);
+    EXPECT_EQ((COLORREF) RGB (0, 0, 0), doc.m_OutstandingLines.front().m_cBack);
+
+    // and they reach the style the drained note is painted with
+    doc.m_bNotesNotWantedNow = false;
+    feed(doc, " done\n");
+    EXPECT_TRUE(doc.m_OutstandingLines.empty());
+    CLine* note_line = nth_line(doc, 1);
+    ASSERT_NE(nullptr, note_line);
+    EXPECT_TRUE(line_text(note_line) == "deferred");
+    CStyle* s = style_at(note_line, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF) RGB (255, 255, 255), s->iForeColour);
+    EXPECT_EQ((COLORREF) RGB (0, 0, 0), s->iBackColour);
+}
+
+// The control: with a usable custom colour the deferred note takes the PALETTE
+// entry, not the constructed default.  m_customback [4] is black by default, so
+// give it a distinct value -- otherwise the background could not tell the two
+// arms apart.
+TEST(NotingTest, DeferredCustomColourNoteCarriesPaletteEntry)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.SetNoteColour(5);                    // one-based -> palette index 4
+    doc.m_customback [4] = RGB (0, 0, 64);
+    feed(doc, "partial");
+    doc.m_bNotesNotWantedNow = true;
+    doc.Note("deferred");
+    ASSERT_EQ((size_t)1, doc.m_OutstandingLines.size());
+    EXPECT_EQ(doc.m_customtext [4], doc.m_OutstandingLines.front().m_cText);
+    EXPECT_EQ(doc.m_customback [4], doc.m_OutstandingLines.front().m_cBack);
+    EXPECT_NE((COLORREF) RGB (255, 255, 255), doc.m_customtext [4]);
+}
+
 TEST(NotingTest, NoteRgbStampsRgbStyle)
 {
     CMUSHclientDoc doc; make_doc(doc);

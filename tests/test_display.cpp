@@ -23,23 +23,13 @@
 
 #include "flags.h"   // eEnabled / eOmitFromOutput / ... (AddTriggerEx flags)
 #include "pal/itransport.h"
+#include "fake_transport.h"
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
 // A transport that just records the bytes the doc sends to the "MUD".  Used by
 // the send-side tests (speedwalk/execute/immediate arms, Pueblo negotiation).
-namespace {
-struct DispFakeTransport : pal::ITransport {
-    std::string sent;
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override {}
-    void close() override {}
-    std::string lastErrorString() const override { return "fake"; }
-};
-} // namespace
+using DispFakeTransport = RecordingTransport;
 
 static void make_doc(CMUSHclientDoc& doc)
 {

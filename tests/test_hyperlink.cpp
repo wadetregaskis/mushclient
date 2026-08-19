@@ -16,24 +16,14 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "pal/itransport.h"
+#include "fake_transport.h"
 
 #include <string>
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 // Enough of a transport that ConnectionOpen() is true and SendMsg records.
-struct LinkTransport : pal::ITransport {
-    std::string sent;
-    bool closed = false;
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short,
-                 const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override {}
-    void close() override { closed = true; }
-    std::string lastErrorString() const override { return "link"; }
-};
+using LinkTransport = RecordingTransport;
 
 struct LinkFixture
 {

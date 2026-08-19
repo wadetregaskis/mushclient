@@ -15,23 +15,12 @@
 #include "doc.h"
 #include "scripting/errors.h"
 #include "pal/itransport.h"
+#include "fake_transport.h"
 #include <cstring>
 #include <string>
 
 // A transport that records the raw negotiation bytes the doc puts on the wire,
 // so Send_IAC_* suppression is observable.
-namespace {
-struct RecordingTransport : pal::ITransport {
-    std::string sent;
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override {}
-    void close() override {}
-    std::string lastErrorString() const override { return "fake"; }
-};
-} // namespace
 
 // telopt_name — the telnet-option name table.  Was doc_portable.cpp (deleted
 // at the B-3 flip); production code uses telnet_phases.cpp's own no-op macro,
@@ -604,21 +593,11 @@ TEST(TelnetTest, Phase_DO_TerminalTypeResetsSequence)
 // ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
 
 #include "pal/itransport.h"
+#include "fake_transport.h"
 #include <string>
 
-namespace {
 // Captures everything SendPacket puts on the wire (the doc dtor frees it).
-struct TelnetFakeTransport : pal::ITransport {
-    std::string sent;
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override {}
-    void close() override {}
-    std::string lastErrorString() const override { return "fake"; }
-};
-} // namespace
+using TelnetFakeTransport = RecordingTransport;
 
 // forum ?id=10043: inside HAVE_SUBNEGOTIATION_IAC, any byte other than IAC is
 // treated as if it were SE (the spec is silent) — the subnegotiation still

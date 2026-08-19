@@ -14,6 +14,7 @@
 #include "doc.h"
 #include "scripting/errors.h"
 #include "pal/itransport.h"
+#include "fake_transport.h"
 #include "scripting/scripting.h"
 
 #include <cstdio>
@@ -1747,22 +1748,15 @@ TEST(PluginR5, TelnetRequestApprovalSendsDoAndWill)
 
 // OnPluginSend returning false vetoes the outgoing command entirely
 // (the DoSendMsg decline arm needs a live transport to get that far).
-namespace {
-struct NullTransport : pal::ITransport {
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char*, size_t) override {}
-    void startTls(const pal::TlsParams&) override {}
-    void close() override {}
-    std::string lastErrorString() const override { return "null"; }
-};
-} // namespace
+// A RecordingTransport with dropSends set — a live transport that goes
+// nowhere, so the test can tell "vetoed before it reached the wire" from
+// "reached the wire but wasn't asserted".
+using NullTransport = RecordingTransport;
 
 TEST(PluginR5, SendCallbackCanVetoOutgoingCommand)
 {
     CMUSHclientDoc doc; make_doc(doc);
-    doc.m_pTransport = new NullTransport();   // doc dtor tears it down
+    doc.m_pTransport = new NullTransport(/*dropSends=*/true);   // doc dtor tears it down
     ASSERT_TRUE(load_plugin(doc, write_plugin("send_no", IDA, "SendVeto",
         "function OnPluginSend(s) return false end\n")));
     long before = doc.m_nTotalLinesSent;

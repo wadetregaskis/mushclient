@@ -23,24 +23,16 @@
 #include "doc.h"
 #include "scripting/errors.h"
 #include "pal/itransport.h"
+#include "fake_transport.h"
 
 #include <cstring>
 #include <string>
 
 // ── contract compile-check ──────────────────────────────────────────────────
-struct FakeTransport : pal::ITransport {
-    std::string sent;
-    bool tlsStarted = false, closed = false;
-    pal::ResolveToken lastToken = -1;
-
-    void resolve(const char*, pal::ResolveToken token) override { lastToken = token; }
-    void cancelResolve() override { lastToken = -1; }
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override { tlsStarted = true; }
-    void close() override { closed = true; }
-    std::string lastErrorString() const override { return "fake"; }
-};
+// (pal/itransport.h itself is compile-checked by tests/fake_transport.h
+// implementing the full contract; every consumer of it re-includes that
+// header, so the check runs everywhere, not just here.)
+using FakeTransport = RecordingTransport;
 
 struct FakeTransportEvents : pal::ITransportEvents {
     int connects = 0, closes = 0;

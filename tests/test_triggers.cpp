@@ -946,6 +946,18 @@ TEST(TriggerR5, ColourAndStyleMatchConditions)
     }
 }
 
+// Saves a process-global g_wxhook_* pointer and restores it in the
+// destructor, so an ASSERT_* between the install and a manual reset (which
+// returns out of the whole TEST body, not just past the reset line) cannot
+// leave the hook installed for every later TEST() in this binary.
+template <typename T>
+struct HookGuard {
+    T& slot;
+    T  saved;
+    explicit HookGuard(T& s) : slot(s), saved(s) {}
+    ~HookGuard() { slot = saved; }
+};
+
 // clipboard_arg copies the selected wildcard to the clipboard on match.
 TEST(TriggerR5, ClipboardArgCopiesWildcard)
 {
@@ -954,7 +966,7 @@ TEST(TriggerR5, ClipboardArgCopiesWildcard)
     // the copy is actually observable.
     static std::string s_clip;
     s_clip = "<unset>";
-    auto* saved_set = g_wxhook_set_clipboard_text;
+    HookGuard<decltype(g_wxhook_set_clipboard_text)> clipGuard(g_wxhook_set_clipboard_text);
     g_wxhook_set_clipboard_text = [](const char* t){ s_clip = t ? t : ""; };
 
     CMUSHclientDoc doc; make_doc(doc);
@@ -966,8 +978,6 @@ TEST(TriggerR5, ClipboardArgCopiesWildcard)
     ASSERT_TRUE(t->wildcards.size() > 1);
     EXPECT_EQ(t->wildcards[1], s_clip);       // exactly the captured wildcard
     EXPECT_STREQ("50 ", s_clip.c_str());       // ... which is "50 "
-
-    g_wxhook_set_clipboard_text = saved_set;
 }
 
 // Foreground-only colour change forces the style to RGB and keeps the

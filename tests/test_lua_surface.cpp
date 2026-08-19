@@ -37,6 +37,7 @@ extern "C" {
 // test_lua_scripting.cpp (audit §2/§4).
 #include "lua_test_helpers.h"
 #include "notepad_fixture.h"
+#include "fake_worldview.h"
 
 // ── methods_utilities.cpp: pure string helpers ────────────────────────────
 
@@ -3379,6 +3380,20 @@ TEST(LuaSurface, EntityRoundTrip)
 TEST(LuaSurface, MiscInfoGetters)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    // The four output-selection getters used to be asserted only with
+    // `>= 0`, which is unfalsifiable headless: with no view attached all four
+    // return 0, so a getter returning any wrong non-negative constant still
+    // passed.  Attach a FakeWorldView seeded with four DISTINCT non-zero
+    // numbers (mirrors test_info.cpp's SelectionAndScrollThroughWorldView)
+    // and assert the exact values below instead.
+    FakeWorldView view;
+    view.sel.startLine = 11;
+    view.sel.startCol  = 22;
+    view.sel.endLine   = 33;
+    view.sel.endCol    = 44;
+    f.doc.m_pWorldView = &view;
+
     EXPECT_TRUE(run(f.L,
         "assert(#world.GetWorldID() == 24)\n"
         "local wl = world.GetWorldIdList()\n"
@@ -3399,10 +3414,10 @@ TEST(LuaSurface, MiscInfoGetters)
         "local wwp = world.GetWorldWindowPosition(1)\n"
         "assert(wwp == nil or type(wwp) == 'table')\n"
         "assert(world.GetNotepadWindowPosition('t') == nil)\n"   // no notepad headless
-        "assert(world.GetSelectionStartLine() >= 0)\n"
-        "assert(world.GetSelectionEndLine() >= 0)\n"
-        "assert(world.GetSelectionStartColumn() >= 0)\n"
-        "assert(world.GetSelectionEndColumn() >= 0)\n"
+        "assert(world.GetSelectionStartLine() == 11)\n"
+        "assert(world.GetSelectionEndLine() == 33)\n"
+        "assert(world.GetSelectionStartColumn() == 22)\n"
+        "assert(world.GetSelectionEndColumn() == 44)\n"
         "assert(type(world.GetSystemMetrics(0)) == 'number')\n"
         "assert(type(world.GetSysColor(1)) == 'number')\n"
         "assert(type(world.GetDeviceCaps(8)) == 'number')\n"
@@ -3412,6 +3427,8 @@ TEST(LuaSurface, MiscInfoGetters)
         "assert(world.ErrorDesc(0) == 'No error')\n"
         "assert(world.ErrorDesc(30073):find('window'))\n"
     ));
+
+    f.doc.m_pWorldView = nullptr;
 }
 
 // ── multi-out-param getters via the Lua wrappers ──────────────────────────

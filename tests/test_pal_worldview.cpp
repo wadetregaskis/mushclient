@@ -337,6 +337,31 @@ TEST(PalWorldView, CommandFamilyNullHostIsInert)
     doc.EmitInputFont("Menlo", 14, true, false);
 }
 
+// Both real IWorldView adapters (CWorldChildFrame::HistoryLimit and the
+// Windows pal::win_worldview equivalent) evict the OLDEST entry once history
+// exceeds the world's "Lines in command history" setting.  Before this test,
+// FakeWorldView's history grew unbounded, so that eviction had no
+// failing-capable test through the seam: a stub that forgot to trim would
+// still pass every existing assertion.
+TEST(PalWorldView, CommandHistoryEvictsOldestPastTheCap)
+{
+    FakeWorldView view;
+    view.historyCap = 3;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    doc.AddCommandToHistory("north");
+    doc.AddCommandToHistory("south");
+    doc.AddCommandToHistory("east");
+    doc.AddCommandToHistory("west");   // pushes the cap; "north" must go
+
+    auto hist = doc.GetCommandListEntries(0);   // newest first
+    ASSERT_EQ(3u, (unsigned)hist.size());
+    EXPECT_STREQ("west",  hist[0].c_str());
+    EXPECT_STREQ("east",  hist[1].c_str());
+    EXPECT_STREQ("south", hist[2].c_str());
+}
+
 // The output-pane family drives the view through its typed-only helpers.
 // Note() routes through the REAL Tell → DisplayMsg → m_LineList (display
 // steps 6+7).  The ctor seeds the in-list first line and the line-position

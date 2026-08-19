@@ -1444,6 +1444,124 @@ TEST(LuaSurface, WindowDrawingActuallyPaints)
     ));
 }
 
+// WindowFilter's separable 5-tap kernel (blur / sharpen / edge / emboss) must be
+// CENTRED on the pixel it writes, and must write every pixel of the region.
+//
+// GeneralFilter (miniwindow.cpp) slides a 5-slot window over each row, then over
+// each column.  Both passes preload slots 1..4 with offsets -2,-1,0,+1 and then,
+// per output pixel, shift left and load the +2 tap -- so the taps are -2..+2 and
+// the centre lands on the pixel being written.  Two upstream defects broke that:
+//
+//   * the VERTICAL pass loaded `row + 3` where the horizontal pass loads +2
+//     (col + rgb + 6 == two pixels).  After the shift the window then held
+//     -1..+3, so the kernel was centred one row off the row it wrote, and
+//     region row 2 was never sampled by ANY output row (the preload covers
+//     -2..+1, which clamps to rows 0,0,0,1, and the loop began at row 3).
+//   * the HORIZONTAL loop stopped at `iLastByte - 4`, i.e. the last multiple of
+//     3 below 3*width - 4, which is pixel width-2 -- the rightmost pixel column
+//     was read as a neighbour but never written.
+//
+// Both change the pixels a filter produces, so the assertions below are exact
+// values, not "something moved".  Every fixture is 11 wide by 7 or 9 high (never
+// square, so a row/column mix-up cannot pass) with off-centre, non-symmetric
+// content (so an off-by-one cannot pass either).  Each block also carries at
+// least one control whose value is the SAME before and after the fix, which
+// fails if the filter did nothing at all.
+//
+// Note the buffer GeneralFilter walks is bottom-up (pal::PixelBuffer::row(),
+// isurface.h:47) -- the never-sampled buffer row 2 is IMAGE row height-3.
+TEST(LuaSurface, WindowFilterKernelIsCentredAndCoversTheLastColumn)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    // ── vertical pass: centring, and that no row is skipped ──────────────────
+    EXPECT_TRUE(run(f.L,
+        "assert(world.WindowCreate('vf', 0, 0, 11, 9, 0, 0, 0x000000) == 0)\n"
+        "assert(world.WindowInfo('vf', 3) ~= world.WindowInfo('vf', 4),"
+        "       'degenerate fixture: a square region cannot tell a row from a column')\n"
+        // (1,6) is buffer row 2 -- the row the +3 look-ahead never sampled.
+        "assert(world.WindowSetPixel('vf', 1, 6, 0xFFFFFF) == 0)\n"
+        // (6,5) is the centring probe: off-centre in both axes.
+        "assert(world.WindowSetPixel('vf', 6, 5, 0xFFFFFF) == 0)\n"
+        // op 3 = blur (matrix {1,1,1,1,1} / 5), options 2 = vertical only.
+        "assert(world.WindowFilter('vf', 0, 0, 11, 9, 3, 2) == 0)\n"
+
+        // Column 1: a lone 255 spread over five rows is 255/5 = 51 each.  The
+        // whole column reads black if buffer row 2 is never sampled.
+        "assert(world.WindowGetPixel('vf', 1, 6) == 0x333333,"
+        "       'source row was not sampled by the vertical pass')\n"
+        "assert(world.WindowGetPixel('vf', 1, 4) == 0x333333, 'vertical spread too short (up)')\n"
+        "assert(world.WindowGetPixel('vf', 1, 8) == 0x333333, 'vertical spread too short (down)')\n"
+        "assert(world.WindowGetPixel('vf', 1, 3) == 0x000000, 'vertical spread too long')\n"
+
+        // Column 6: the blur must be symmetric about the source row 5.
+        "assert(world.WindowGetPixel('vf', 6, 5) == 0x333333, 'centre not attenuated')\n"
+        "assert(world.WindowGetPixel('vf', 6, 3) == 0x333333, 'kernel displaced downwards')\n"
+        "assert(world.WindowGetPixel('vf', 6, 8) == 0x000000, 'kernel displaced upwards')\n"
+        "assert(world.WindowGetPixel('vf', 6, 3) == world.WindowGetPixel('vf', 6, 7),"
+        "       'blur is not symmetric about its own row (+/-2)')\n"
+        "assert(world.WindowGetPixel('vf', 6, 4) == world.WindowGetPixel('vf', 6, 6),"
+        "       'blur is not symmetric about its own row (+/-1)')\n"
+        "assert(world.WindowGetPixel('vf', 6, 2) == world.WindowGetPixel('vf', 6, 8),"
+        "       'blur is not symmetric about its own row (outside)')\n"
+        // The untouched column must stay black: the pass must not smear sideways.
+        "assert(world.WindowGetPixel('vf', 3, 5) == 0x000000, 'vertical pass bled sideways')\n"
+    ));
+
+    // ── horizontal pass: the rightmost pixel column is filtered too ──────────
+    EXPECT_TRUE(run(f.L,
+        "assert(world.WindowCreate('hb', 0, 0, 11, 7, 0, 0, 0x000000) == 0)\n"
+        "assert(world.WindowSetPixel('hb', 10, 3, 0xFFFFFF) == 0)\n"   // last column
+        "assert(world.WindowSetPixel('hb',  0, 1, 0xFFFFFF) == 0)\n"   // first column
+        "assert(world.WindowFilter('hb', 0, 0, 11, 7, 3, 1) == 0)\n"   // blur, horizontal
+
+        // x=10: the +1/+2 taps clamp onto the last pixel, so (0+0+255+255+255)/5.
+        // Left unfiltered it would still read 0xFFFFFF.
+        "assert(world.WindowGetPixel('hb', 10, 3) == 0x999999,"
+        "       'rightmost pixel column was not filtered')\n"
+        // Controls -- identical with and without the fix, so 'the filter did
+        // nothing' fails here rather than passing quietly.
+        "assert(world.WindowGetPixel('hb',  9, 3) == 0x666666, 'horizontal pass did not run')\n"
+        "assert(world.WindowGetPixel('hb',  8, 3) == 0x333333, 'horizontal spread wrong')\n"
+        "assert(world.WindowGetPixel('hb',  7, 3) == 0x000000, 'horizontal spread too long')\n"
+        // ...and the LEFT edge is unchanged by widening the right-hand bound.
+        // These two values look odd on purpose.  Upstream clamps an off-region
+        // tap to byte index 0 rather than to the same channel of pixel 0, so the
+        // -2/-1 taps of every channel read pixel 0's BLUE byte; and since the
+        // rgb passes are in-place and run B, G, R in that order, the green and
+        // red passes re-read a blue byte the blue pass has already rewritten.
+        // White pixel 0 therefore filters to B=(255*3)/5=153, then
+        // G=R=(153+153+255)/5=112 -> 0x997070, and pixel 1 to B=(255+255)/5=102,
+        // G=R=(153+255)/5=81 -> 0x665151.  That asymmetry is upstream behaviour
+        // this fix deliberately leaves alone; pinning it here means a future
+        // change to the clamp cannot slip through unnoticed.
+        "assert(world.WindowGetPixel('hb',  0, 1) == 0x997070, 'left edge clamp changed')\n"
+        "assert(world.WindowGetPixel('hb',  1, 1) == 0x665151, 'left edge spread changed')\n"
+        // Rows with no content stay black: the horizontal pass must not smear down.
+        "assert(world.WindowGetPixel('hb', 10, 4) == 0x000000, 'horizontal pass bled vertically')\n"
+    ));
+
+    // ── the same for sharpen, whose kernel has negative lobes ────────────────
+    EXPECT_TRUE(run(f.L,
+        "assert(world.WindowCreate('hs', 0, 0, 11, 7, 0, 0, 0x000000) == 0)\n"
+        // 0x606060 == 96 per channel, chosen so the sharpened value (160) is
+        // still in range -- white would clamp to 255 and hide the difference.
+        "assert(world.WindowSetPixel('hs', 10, 3, 0x606060) == 0)\n"   // last column
+        "assert(world.WindowSetPixel('hs',  4, 3, 0x606060) == 0)\n"   // interior control
+        // op 4 = sharpen (matrix {-1,-1,7,-1,-1} / 3), options 1 = horizontal.
+        "assert(world.WindowFilter('hs', 0, 0, 11, 7, 4, 1) == 0)\n"
+
+        // x=10: (0 - 0 + 7*96 - 96 - 96)/3 == 160.  Unfiltered it stays 96.
+        "assert(world.WindowGetPixel('hs', 10, 3) == 0xA0A0A0,"
+        "       'rightmost pixel column was not sharpened')\n"
+        // Interior control: (7*96)/3 == 224, the same either way.
+        "assert(world.WindowGetPixel('hs',  4, 3) == 0xE0E0E0, 'sharpen did not run')\n"
+        // Negative lobes drive the neighbours below zero, so they clamp to black.
+        "assert(world.WindowGetPixel('hs',  9, 3) == 0x000000, 'sharpen lobe wrong')\n"
+        "assert(world.WindowGetPixel('hs',  3, 3) == 0x000000, 'sharpen lobe wrong')\n"
+    ));
+}
+
 // WindowDelete must release the surface, not just forget the window.
 //
 // The lifetime here is not obvious: the CBitmap owns the surface, and
@@ -3784,9 +3902,13 @@ TEST(LuaSurface, NotepadFamilyWithNoNotepadOpen)
     LuaDoc f; ASSERT_NE(nullptr, f.L);
     EXPECT_TRUE(run(f.L,
         "assert(world.AppendToNotepad('t', 'text') == false)\n"
-        // L_ReplaceNotepad pushes its boolean but returns 0 results (canonical
-        // lua_methods.cpp quirk) — Lua callers always see nil.
-        "assert(world.ReplaceNotepad('t', 'text') == nil)\n"
+        // L_ReplaceNotepad used to push its boolean and then `return 0`, so Lua
+        // callers saw nil while the dispatch map hands Python/Perl/JS/Tcl/Ruby
+        // the VT_BOOL mushclient.odl declares.  It returns the boolean now, and
+        // false is the right value here: with no notepad by this name the body
+        // falls through to CreateTextWindow, which fails headless — exactly as
+        // its two siblings above and below report.
+        "assert(world.ReplaceNotepad('t', 'text') == false)\n"
         "assert(world.SendToNotepad('t', 'text') == false)\n"
         "assert(world.CloseNotepad('t', false) == 0)\n"
         "assert(world.GetNotepadLength('t') == 0)\n"
@@ -3830,6 +3952,16 @@ TEST(LuaSurface, NotepadFamilyWithANotepadOpen)
         "assert(world.NotepadReadOnly('t', true) == 1)\n"
         "assert(world.MoveNotepadWindow('t', 1, 2, 3, 4) == true)\n"
         "assert(world.GetNotepadWindowPosition('t') ~= '')\n"
+
+        // ReplaceNotepad reaches Lua as the boolean mushclient.odl declares and
+        // the dispatch map registers (VT_BOOL) — it used to push the value and
+        // then `return 0`, so Lua alone saw nil while the other five engines got
+        // the boolean.  Assert the VALUE, not merely that it is non-nil, and
+        // check the replace really happened: `true` from a body that did nothing
+        // would be no better than the nil.
+        "assert(world.ReplaceNotepad('t', 'fresh') == true,"
+        "       'ReplaceNotepad did not return true on success')\n"
+        "assert(world.GetNotepadText('t') == 'fresh', 'replace did not replace')\n"
     ));
     EXPECT_TRUE(pad.readOnly);
     EXPECT_EQ(1, pad.moveCalls);

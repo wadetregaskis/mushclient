@@ -904,4 +904,49 @@ TEST(InfoTest, FormatTimeTranslatesTheWindowsNoLeadingZeroFlag)
     EXPECT_STREQ("05:04", (LPCTSTR) doc.FormatTime(t, "%I:%M"));
 }
 
+// headless_app.cpp's App ctor comment claims its printer margin defaults are
+// "the Windows table defaults" (globalregistryoptions.cpp: PrinterLeftMargin /
+// PrinterTopMargin both 15) -- it used to seed them to 1 instead.  Checked on
+// a throwaway `scratch` object, not the live App: an EARLIER TEST() in this
+// binary (GlobalOptions.HeadlessDatabaseRoundTripRestoresDefaults) already
+// calls App.LoadGlobalsFromDatabase(), which independently resets every App
+// global -- including these two -- to the same table default, so reading
+// them off the live App here would pass regardless of what the ctor itself
+// seeds.  See the comment above FreshDatabaseSeedAndReadShareDirectoryDefaults
+// for the g_pWinApp save/restore this pattern requires.
+TEST(AppDefaults, PrinterMarginsMatchTheGlobalOptionsTable)
+{
+    CWinApp* savedWinApp = g_pWinApp;
+    CMUSHclientApp scratch;
+    g_pWinApp = savedWinApp;
+
+    EXPECT_EQ(15, scratch.m_nPrinterLeftMargin);
+    EXPECT_EQ(15, scratch.m_nPrinterTopMargin);
+}
+
+// GetUniqueString is supposed to share ONE uniqueness sequence with
+// GetUniqueNumber()/m_nUniqueNumber (world.GetUniqueNumber, trigger/alias/timer
+// nUpdateNumber stamping, ...), same as MUSHclient.cpp:1608-1613 -- it used to
+// keep a private static counter instead, so calling it never advanced
+// m_nUniqueNumber and its own output never matched what GetUniqueNumber()
+// would return.  Three consecutive calls must land on n, n+1, n+2.  Uses a
+// throwaway `scratch` object (see the test above) so the sequence starts
+// from the ctor's own m_nUniqueNumber = 0 instead of whatever the live App's
+// counter happens to be after earlier tests.
+TEST(AppDefaults, GetUniqueStringSharesTheGetUniqueNumberSequence)
+{
+    CWinApp* savedWinApp = g_pWinApp;
+    CMUSHclientApp scratch;
+    g_pWinApp = savedWinApp;
+
+    __int64 n = scratch.GetUniqueNumber();
+    CString s = scratch.GetUniqueString();
+    __int64 n2 = scratch.GetUniqueNumber();
+
+    char expected[32];
+    snprintf(expected, sizeof expected, "%lld", (long long) (n + 1));
+    EXPECT_STREQ(expected, (LPCTSTR) s);
+    EXPECT_EQ(n + 2, n2);
+}
+
 MC_TEST_MAIN()

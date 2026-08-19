@@ -125,8 +125,8 @@ CMUSHclientApp::CMUSHclientApp()
     m_nParenMatchFlags             = 0x0001 | 0x0020 | 0x0040;   // NEST|BACKSLASH|PERCENT
     m_iNotepadFontSize             = 9;
     m_nPrinterLinesPerPage         = 60;
-    m_nPrinterLeftMargin           = 1;
-    m_nPrinterTopMargin            = 1;
+    m_nPrinterLeftMargin           = 15;
+    m_nPrinterTopMargin            = 15;
     m_nPrinterFontSize             = 10;
     m_strNotepadQuoteString        = "> ";
     m_strWordDelimiters            = ".,()[]\"'";
@@ -156,12 +156,14 @@ BOOL CMUSHclientApp::OnIdle (LONG /*lCount*/)     { return FALSE; }
 int  CMUSHclientApp::ExitInstance   ()            { return 0; }
 
 // ── App members the stub had inline; real bodies are MUSHclient.cpp-only ─────
-// GetUniqueString — used to make trigger/alias/timer names unique.
+// GetUniqueString — used to make trigger/alias/timer names unique.  Routes
+// through GetUniqueNumber()/m_nUniqueNumber, same as MUSHclient.cpp:1608-1613,
+// so the headless build's internal-name generator shares one uniqueness
+// sequence with world.GetUniqueNumber() instead of keeping a private counter.
 CString CMUSHclientApp::GetUniqueString ()
 {
-    static long s_n = 0;
     CString s;
-    s.Format ("%ld", ++s_n);
+    s.Format ("%I64d", GetUniqueNumber ());
     return s;
 }
 

@@ -3565,6 +3565,35 @@ TEST(SweepR4, DebugListingsCoverEachAction)
     lua_close(L);
 }
 
+// Truncate() in scripting/world_debug_portable.cpp computed its width as
+// (m_nWrapColumn - N) with no floor; at a narrow enough wrap column that
+// went negative, and CString::Left clamps n<=0 to empty, so /triggerlist
+// printed a bare "..." for every entry instead of any of the match text.
+// (The above test runs at the default wrap column and only checks the
+// label, so it never saw this.)
+TEST(SweepR4, DebugListingsTruncateAtNarrowWrapColumn)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_nWrapColumn = 20;                // legal down to 20 (ClampWrapColumn)
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "world.AddTriggerEx('dt', 'zzmatchzz', 'resp', 1, -1, 0, '', '', 0, 100)\n"
+        "world.Debug('triggerlist')\n"));
+
+    bool sawMatch = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("zzmatchzz") != std::string::npos)
+            sawMatch = true;
+    }
+    EXPECT_TRUE(sawMatch);
+
+    lua_close(L);
+}
+
 TEST(SweepR4, UtilityMethodArms)
 {
     CMUSHclientDoc doc;

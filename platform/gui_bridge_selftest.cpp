@@ -1666,6 +1666,25 @@ void TestDebugHelperPluginContext()
             remove(pluginPath.c_str());
         }
     }
+
+    // ── triggerlist truncation width goes negative at a narrow wrap column ─
+    // world_debug.cpp computed the truncation width as (m_nWrapColumn - N)
+    // with no floor; at a narrow enough column that goes zero or negative,
+    // and CString::Left clamps n<=0 to empty, so every entry printed a bare
+    // "..." with none of the actual pattern text.
+    {
+        CTrigger * pTrigger = new CTrigger;
+        pTrigger->trigger  = "zzmatchzz";
+        pTrigger->strLabel = "zztriggerzz";
+        doc.GetTriggerArray().Add(pTrigger);
+
+        doc.m_nWrapColumn = 20;
+        doc.HyperlinkClicked("!!" DEBUG_PLUGIN_ID ":triggerlist()",
+                             ACTION_SEND, true);
+        check(sawLine("zzmatchzz"),
+              "triggerlist shows the match text at a narrow wrap column "
+              "(was: a bare \"...\")");
+    }
 }
 
 // CPluginsDlg::OnUpdateNeedDescription read `p->m_strDescription` straight off

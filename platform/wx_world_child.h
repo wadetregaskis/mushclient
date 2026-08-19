@@ -484,6 +484,28 @@ public:
     // CMainFrame::CollectWorldMenuItems instead.
     void ShowWorldSwitcher();
 
+    // ── The connected-time pane's text ────────────────────────────────────
+    // A deliberate divergence from Windows; the whole rule is in the comment
+    // on the definition (wx_world_child.cpp).  Static and pure so the in-app
+    // selftest can drive every case from chosen clock values rather than
+    // having to wait real seconds out.
+    //   connected, first connection      "0:01:30"
+    //   connected, earlier ones too      "0:01:30 (2:15:00)"
+    //   disconnected, history to report  "past 2:15:00"
+    //   disconnected, nothing to report  ""
+    // `completedSecs` is m_tsConnectDuration (connections already finished);
+    // `resetEpoch` is m_tStatusTime, which acts as a display epoch so that
+    // Game > Reset Connected Time and world.ResetStatusTime() stay visible.
+    static std::string FormatTimePane(bool   connected,
+                                      time_t now,
+                                      time_t connectStart,
+                                      long   completedSecs,
+                                      time_t resetEpoch);
+    // Rewrite ONLY kStatusPaneTime from the doc.  The world timer calls this
+    // once a second; going through UpdateStatusBar() instead would rewrite
+    // pane 0 and wipe SetTransientStatus's message within the second.
+    void RefreshTimePane();
+
     // Selftest probe: pane 0's current text (the transient/status line).
     wxString StatusPane0() const { return StatusPane(kStatusPaneMessage); }
     // Selftest probe: any pane's current text (kStatusPane* below).
@@ -551,6 +573,9 @@ private:
     // Last wall-clock second the output-buffer fade was repainted, so the
     // world timer redraws at most once a second while text is fading.
     time_t      m_lastFadeRepaint = 0;
+    // Same idea for the connected-time pane: its text changes by the second,
+    // so the 100 ms world timer refreshes it on the tick that crosses one.
+    time_t      m_lastStatusTick = 0;
     int                   m_histIdx = -1;       // -1 = not browsing; ≥0 = index into m_history
     wxString              m_histSaved;          // text in input when user started browsing
     bool                  m_histRSearch = false; // true = Ctrl+R substring mode (vs prefix)

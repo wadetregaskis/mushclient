@@ -3129,59 +3129,209 @@ int RunWorldFrameSelfTest()
               "log filename: an empty world name falls back to \"world_\"");
     }
 
-    // ── the duration pane counts from m_tStatusTime, so the resets work ────
-    // ID_STATUSLINE_TIME's canonical text comes from
-    // CMUSHclientDoc::OnUpdateStatuslineTime (doc.cpp:1069), which reads
-    // m_tStatusTime.  The port's pane read m_tConnectTime instead, which made
-    // BOTH resets that write m_tStatusTime -- Game > Reset Connected Time and
-    // world.ResetStatusTime -- silently do nothing to the only thing they
-    // claim to change.
+    // ── the connected-time pane: current connection, cumulative in parens ──
+    // A deliberate divergence from Windows, whose ID_STATUSLINE_TIME shows
+    // `now - m_tStatusTime` (CMUSHclientDoc::OnUpdateStatuslineTime,
+    // doc.cpp:1069).  Nothing on connect or disconnect writes that member, so
+    // it measures how long the WINDOW has been open and keeps counting after
+    // the connection drops.  CWorldChildFrame::FormatTimePane replaces it
+    // with the CURRENT connection's duration, the cumulative total in
+    // parentheses when that differs, and "past H:MM:SS" once disconnected.
     //
-    // The fixture keeps the two clocks an hour apart on purpose: if they held
-    // the same instant, "which member does the pane read" would be an identity
-    // and none of this would discriminate.
+    // Split in two on purpose.  The matrix below drives the pure formatter, so
+    // every case is exact and no wall-clock second can tick underneath it; the
+    // block after it drives the same cases through the doc's real members and
+    // the real pane, so the wiring is pinned as well as the arithmetic.
     {
-        doc->m_iConnectPhase = eConnectConnectedToMud;
-        const CTime t0 = CTime::GetCurrentTime();
-        doc->m_tStatusTime  = t0 - 90L;     // 90 seconds ago
-        doc->m_tConnectTime = t0 - 3600L;   // an hour ago
-        child->UpdateStatusBar();
+        typedef CWorldChildFrame F;
 
-        const wxString shown =
-            child->StatusPane(CWorldChildFrame::kStatusPaneTime);
-        check(shown == wxT("0:01:30"),
-              "status time pane counts from m_tStatusTime (90s -> 0:01:30)");
-        check(shown != wxT("1:00:00"),
-              "...and NOT from m_tConnectTime (which is an hour back here)");
+        // Three DIFFERENT numbers -- 90 s running in this connection, 7200 s
+        // already banked from earlier ones, 7290 s together.  A formatter that
+        // reached for the wrong one of the three cannot pass by coincidence,
+        // which a fixture where any two coincided would let it do.
+        const time_t kNow   = 1000000;
+        const time_t kStart = kNow - 90L;    // current   -> "0:01:30"
+        const long   kDone  = 7200L;         // completed -> "2:00:00"
+                                             // together  -> "2:01:30"
+        // A reset far enough back that the display epoch clamps nothing.
+        const time_t kOld   = kNow - 100000L;
 
-        // Game > Reset Connected Time, through the canonical doc command map
-        // -- the same route the menu item takes (wx_mfc_impl.cpp's table
-        // dispatches 33032 to the active doc via AfxDispatchCommand).
-        check(AfxDispatchCommand(doc, 0, ID_GAME_RESETCONNECTEDTIME),
-              "ID_GAME_RESETCONNECTEDTIME has a canonical handler to dispatch to");
-        child->UpdateStatusBar();
-        check(child->StatusPane(CWorldChildFrame::kStatusPaneTime) ==
-                  wxT("0:00:00"),
-              "Game > Reset Connected Time zeroes the pane (was: dead)");
+        // (1) connected, first connection: one number, no parentheses.
+        check(F::FormatTimePane(true, kNow, kStart, 0L, kOld) == "0:01:30",
+              "time pane: connected with no history is the current connection alone");
 
-        // world.ResetStatusTime() is the scripting half of the same reset.
-        doc->m_tStatusTime = t0 - 90L;
-        child->UpdateStatusBar();
-        check(child->StatusPane(CWorldChildFrame::kStatusPaneTime) ==
-                  wxT("0:01:30"),
-              "...control: the pane is back to 90 seconds before the script call");
-        doc->ResetStatusTime();
-        child->UpdateStatusBar();
-        check(child->StatusPane(CWorldChildFrame::kStatusPaneTime) ==
-                  wxT("0:00:00"),
-              "world.ResetStatusTime() zeroes the pane too (was: dead)");
+        // (2) connected, earlier connections too: current, then the total.
+        const std::string both = F::FormatTimePane(true, kNow, kStart, kDone, kOld);
+        check(both == "0:01:30 (2:01:30)",
+              "time pane: connected with history appends the cumulative total");
+        check(both.compare(0, 7, "0:01:30") == 0,
+              "...with the CURRENT connection first, not the cumulative one");
+        check(both.find("(2:00:00)") == std::string::npos,
+              "...and the parenthetical counts the running session in (7290, not 7200)");
 
-        // Disconnected the pane is blank on both platforms, so the checks
-        // above cannot be passing because everything is blank.
-        doc->m_iConnectPhase = eConnectNotConnected;
-        child->UpdateStatusBar();
-        check(child->StatusPane(CWorldChildFrame::kStatusPaneTime).empty(),
-              "...and the pane is blank while not connected");
+        // (3) disconnected with history: the banked total, worded as past.
+        const std::string past = F::FormatTimePane(false, kNow, kStart, kDone, kOld);
+        check(past == "past 2:00:00",
+              "time pane: disconnected shows the past total, marked as past");
+        check(past.find("0:01:30") == std::string::npos,
+              "...and drops the connection that is no longer running");
+        check(past.compare(0, 1, "0") != 0 && past.compare(0, 1, "1") != 0 &&
+              past.compare(0, 1, "2") != 0,
+              "...and cannot be mistaken for a live clock: it does not start with a digit");
+
+        // (4) disconnected with nothing to report: silence, not a zeroed clock.
+        check(F::FormatTimePane(false, kNow, kStart, 0L, kOld).empty(),
+              "time pane: disconnected with no history shows nothing at all");
+
+        // (5) the display epoch -- how the two resets stay visible.  They
+        // write m_tStatusTime and nothing else (doc.cpp:3607,
+        // methods_output.cpp:87, both canonical Windows source and both left
+        // alone), so the pane reads it as a ceiling on everything it reports.
+        check(F::FormatTimePane(true, kNow, kStart, kDone, kNow) == "0:00:00",
+              "time pane: a reset just now zeroes BOTH numbers while connected");
+        check(F::FormatTimePane(true, kNow, kStart, kDone, kNow - 30L) == "0:00:30",
+              "...and reads 0:00:30 thirty seconds on, with no stale total beside it");
+        check(F::FormatTimePane(false, kNow, kStart, kDone, kNow).empty(),
+              "time pane: a reset while disconnected empties the pane too");
+        // Control: the clamp is inert in ordinary use -- otherwise (1)-(4)
+        // would be measuring the epoch rather than the durations.
+        check(F::FormatTimePane(true, kNow, kStart, kDone, kOld) != "0:00:00",
+              "control: an old reset epoch clamps nothing");
+    }
+
+    // The same four cases through the doc's real members and the real pane,
+    // then the two real resets, then whatever it is that makes the pane tick.
+    {
+        typedef CWorldChildFrame F;
+        // Seed the doc's three clocks against a freshly sampled now and
+        // repaint, so a second turning over mid-block cannot flake an exact
+        // compare.  resetAgo is how long ago m_tStatusTime was written.
+        auto shown = [&](bool conn, long curSecs, long doneSecs, long resetAgo) {
+            const CTime t = CTime::GetCurrentTime();
+            doc->m_iConnectPhase     = conn ? eConnectConnectedToMud
+                                            : eConnectNotConnected;
+            doc->m_tConnectTime      = t - curSecs;
+            doc->m_tsConnectDuration = CTimeSpan(doneSecs);
+            doc->m_tStatusTime       = t - resetAgo;
+            child->UpdateStatusBar();
+            return child->StatusPane(F::kStatusPaneTime);
+        };
+        const long kInert = 100000L;   // a reset epoch old enough to clamp nothing
+
+        check(shown(true,  90L, 0L,    kInert) == wxT("0:01:30"),
+              "pane: connected, no history -> the current connection alone");
+        check(shown(true,  90L, 7200L, kInert) == wxT("0:01:30 (2:01:30)"),
+              "pane: connected, with history -> current, then the cumulative total");
+        check(shown(false, 90L, 7200L, kInert) == wxT("past 2:00:00"),
+              "pane: disconnected, with history -> the past total, marked as past");
+        check(shown(false, 90L, 0L,    kInert).empty(),
+              "pane: disconnected, no history -> nothing");
+
+        // ── the two resets must still visibly do something ─────────────
+        // This is the trap in moving the pane off m_tStatusTime: both resets
+        // write that member and nothing else, so a pane that simply stopped
+        // reading it would re-open the exact bug that reading m_tConnectTime
+        // alone used to cause, in the other direction.  Assert the CHANGE,
+        // not only the destination -- "it says 0:00:00 afterwards" also holds
+        // for a pane that said 0:00:00 all along.
+        {
+            const wxString before = shown(true, 90L, 7200L, kInert);
+            check(before == wxT("0:01:30 (2:01:30)"),
+                  "reset control: two live numbers on the pane beforehand");
+            // Game > Reset Connected Time, through the canonical doc command
+            // map -- the same route the menu item takes (wx_mfc_impl.cpp's
+            // table dispatches 33032 to the active doc via AfxDispatchCommand).
+            check(AfxDispatchCommand(doc, 0, ID_GAME_RESETCONNECTEDTIME),
+                  "ID_GAME_RESETCONNECTEDTIME has a canonical handler to dispatch to");
+            child->UpdateStatusBar();
+            const wxString after = child->StatusPane(F::kStatusPaneTime);
+            check(after != before,
+                  "Game > Reset Connected Time CHANGES the pane");
+            check(after == wxT("0:00:00"),
+                  "...collapsing both numbers to one zeroed clock");
+        }
+        {
+            const wxString before = shown(true, 90L, 7200L, kInert);
+            doc->ResetStatusTime();      // the scripting half of the same reset
+            child->UpdateStatusBar();
+            const wxString after = child->StatusPane(F::kStatusPaneTime);
+            check(after != before, "world.ResetStatusTime() CHANGES the pane");
+            check(after == wxT("0:00:00"), "...to the same single zeroed clock");
+        }
+        {
+            // ...and while disconnected, where the pane's entire content is
+            // the history the reset is discarding.
+            const wxString before = shown(false, 90L, 7200L, kInert);
+            check(before == wxT("past 2:00:00"),
+                  "reset control: a past total on the pane to discard");
+            doc->ResetStatusTime();
+            child->UpdateStatusBar();
+            const wxString after = child->StatusPane(F::kStatusPaneTime);
+            check(after != before && after.empty(),
+                  "a reset while disconnected empties the pane (no past is left to report)");
+        }
+
+        // ── what makes the pane tick ─────────────────────────────
+        // Nothing did, before this: UpdateStatusBar's callers are the
+        // connection-phase edge, activation, world.SetStatus and the pane
+        // clicks, so a duration meant to count seconds sat at whatever second
+        // the world connected on.  OnWorldTimer now refreshes THIS PANE ONLY,
+        // once a second.  Only, because the full repaint would rewrite pane 0
+        // and eat SetTransientStatus's message -- CMainFrame::SetStatusMessage
+        // funnels "Reconnecting", find results and the mapper's speedwalk line
+        // through there -- within a second of its arriving.
+        pane->SetPaused(false);
+        {
+            // (a) the narrow refresh, driven straight so no timer is involved:
+            // it moves the duration and leaves pane 0 exactly as it was.
+            doc->m_iConnectPhase     = eConnectConnectedToMud;
+            doc->m_tsConnectDuration = CTimeSpan(0L);
+            doc->m_tStatusTime       = CTime::GetCurrentTime() - kInert;
+            child->UpdateStatusBar();
+            child->SetTransientStatus(wxT("find: 2 matches"));
+            doc->m_tConnectTime = CTime::GetCurrentTime() - 7200L;
+            child->RefreshTimePane();
+            check(child->StatusPane(F::kStatusPaneTime) == wxT("2:00:00"),
+                  "RefreshTimePane rewrites the duration from the doc...");
+            check(child->StatusPane0() == wxT("find: 2 matches"),
+                  "...and nothing else -- pane 0's transient message is why it exists");
+        }
+        {
+            // (b) ...and the world timer really does drive it.  Two waits,
+            // and only the SECOND one is the claim.
+            //
+            // The first is the fixture: with the once-a-second refresh deleted
+            // it still passes, because OnWorldTimer's connection-phase edge
+            // repaints the whole bar on its way past and gets the pane there
+            // anyway (measured -- that mutation failed only the second wait).
+            // What it buys is a full second of unchanged phase, after which
+            // the edge is consumed and the narrow refresh is the only thing
+            // left that can touch the bar.
+            //
+            // Waiting on the freeze pane to settle the edge does NOT work, for
+            // the same reason: the output pane's autoscroll callback repaints
+            // the whole bar too, so that pane can go empty a tick before the
+            // edge has run.  Also measured -- it made the last check here fail.
+            doc->m_iConnectPhase     = eConnectConnectedToMud;
+            doc->m_tsConnectDuration = CTimeSpan(0L);
+            doc->m_tStatusTime       = CTime::GetCurrentTime() - kInert;
+            doc->m_tConnectTime      = CTime::GetCurrentTime() - 3600L;
+            const bool armed = pumpUntil([&] {
+                return child->StatusPane(F::kStatusPaneTime)
+                            .StartsWith(wxT("1:00:0")); });
+            check(armed,
+                  "tick fixture: the pane reaches the current connection's length");
+
+            child->SetTransientStatus(wxT("mapper: 3 rooms"));
+            doc->m_tConnectTime = CTime::GetCurrentTime() - 7260L;
+            const bool ticked = pumpUntil([&] {
+                return child->StatusPane(F::kStatusPaneTime)
+                            .StartsWith(wxT("2:01:0")); });
+            check(ticked,
+                  "the world timer moves the connected-time pane on its own, no other event");
+            check(child->StatusPane0() == wxT("mapper: 3 rooms"),
+                  "...touching only that pane, so pane 0's transient message survives");
+        }
         doc->m_iConnectPhase = eConnectConnectedToMud;
     }
 

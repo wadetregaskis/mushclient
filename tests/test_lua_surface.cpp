@@ -1848,12 +1848,28 @@ TEST(LuaSurface, MouseOverCallbackSurvivingANestedDispatchStillFinishes)
 // what this test drives, and it shows the self-delete guard evaporating: the
 // wheel callback deletes its OWN window and is not refused.
 //
-// Honest limitation: unlike the four tests above, this one cannot fail against
-// the unfixed code.  Everything MouseWheelMiniWindow does after the dispatch is
-// the single store `mw->m_bExecutingScript = false`, so the bug is a write into
-// freed memory with no observable consequence — only a sanitizer sees it.  What
-// this pins is that the hazard is REACHABLE (so the guard is not dead code) and
-// that adding the guard did not change the routine's answer.
+// This test cannot fail against the unfixed code on its own.  Everything
+// MouseWheelMiniWindow does after the dispatch is the single store
+// `mw->m_bExecutingScript = false`, so the bug is a write into freed memory with
+// no observable consequence.  What the test pins by itself is that the hazard is
+// REACHABLE (so the guard is not dead code) and that adding the guard did not
+// change the routine's answer.
+//
+// The store itself is verified by AddressSanitizer, which this tree can now be
+// built with -- so the guard is no longer unverifiable, it just needs the other
+// instrument:
+//
+//   cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DMUSHCLIENT_SANITIZE=address
+//   cmake --build build-asan -j4 --target test_lua_surface
+//   ./build-asan/tests/test_lua_surface
+//
+// With the guard removed that reports, from this test and no other:
+//   heap-use-after-free ... WRITE of size 1
+//     #0 MouseWheelMiniWindow(...) miniwindow_compose.cpp:1180
+//     freed by ... CMUSHclientDoc::WindowDelete(char const*) methods_miniwindows.cpp:835
+//                  L_WindowDelete(lua_State*) lua_methods.cpp:6175
+// and with the guard in place the whole executable is clean.  See
+// docs/SANITIZERS.md.
 // The observable half of this same hazard is covered by
 // MouseOverCallbackMayLoseItsOwnWindowToANestedDispatch above.
 TEST(LuaSurface, MouseWheelCallbackCanLoseItsOwnWindowToANestedDispatch)

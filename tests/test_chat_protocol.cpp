@@ -1,10 +1,12 @@
 // tests/test_chat_protocol.cpp — the MudMaster / zChat handshake.
 //
 // pal/chat_protocol.h holds the decisions CChatSocket::OnReceive makes about a
-// peer's very first packet.  None of them could be executed here before: the
-// socket classes are in MUSHGUI_ADAPTERS_SOURCES, and the headless build's
-// OnReceive is an EMPTY stub in platform/windows_stubs.cpp, so a test that
-// called it would have been testing the stub.
+// peer's very first packet, restated here so they can be driven without a
+// socket.  The chat family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 2)
+// put chatsock.cpp itself in mushcore, so OnReceive is the real state machine
+// in this build too -- pal/chat_protocol.h exists to isolate the pure
+// wire-format decisions for direct unit testing, not because the socket code
+// is otherwise unreachable.
 //
 // The last group is the one with teeth.  ON_PLUGIN_CHAT_ACCEPT is the only
 // programmatic bar on an incoming chat connection, and a connection that gets

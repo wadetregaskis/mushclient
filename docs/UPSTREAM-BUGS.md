@@ -59,6 +59,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 48 | `InfoTypes[]` reuses codes 31/32 for "world get focus"/"world lose focus", clobbering the "world connect"/"world disconnect" rows and omitting 33/34 | this commit | methods_info.cpp `InfoTypes[]` |
 | 49 | Plugins dialog reads a stale `CPlugin*` once it leaves `m_PluginList` | this commit | dialogs/plugins/PluginsDlg.cpp `CPluginsDlg::OnUpdateNeedDescription` |
 | 50 | Seven file dialogs `strcpy` an unbounded suggested name into a `_MAX_PATH` buffer | this commit | doc.cpp / dialogs (log-session, save-notes, select-sound et al) — bounded with `lstrcpyn` |
+| 51 | A duplicate trigger/alias label whose replacement fails validation leaves the freed original in the map | this commit | xml_load_world.cpp `CMUSHclientDoc::Load_One_Trigger_XML` / `Load_One_Alias_XML` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1048,3 +1049,31 @@ always NUL-terminates and matches the `nMaxFile` that MFC's own `CFileDialog`
 gives the common dialog.  Covered headless by
 `LogSession.AnOverlongSuggestedNameIsTruncatedRatherThanOverrunning` in
 `tests/test_mfc_ui.cpp`.
+
+## 51 — A duplicate trigger/alias label whose replacement fails validation leaves the freed original in the map (this commit)
+**Bug:** loading a trigger whose label is already taken takes the
+`XML_OVERWRITE` arm (`xml_load_world.cpp:1371`), which `delete`s the existing
+`CTrigger` but leaves `GetTriggerMap ()` keyed to it — the replacement is
+expected to overwrite the key at the `SetAt` further down.  Between the two
+sits the regular-expression compile (`:1394`), and a match text that does not
+compile throws from there.  `Load_Triggers_XML` catches that with
+`HandleLoadException`, which *reports and carries on*, so the `SetAt` never
+runs and the map is left holding a freed pointer.  `SortTriggers ()` at the end
+of the load then copies it into `m_TriggerArray`/`m_TriggerRevMap` and
+`CompareTrigger` reads its `iSequence` (`doc.cpp:3325`, reached whenever there
+are two or more entries), every later trigger evaluation walks the same array,
+and `DELETE_MAP` in `~CMUSHclientDoc` frees it a second time.  `XML_OVERWRITE`
+is set by an ordinary world open (`xml_serialize.cpp:50`) and by
+`world.ImportXML` (`methods_xml.cpp:59-60`), so a world file or an imported
+payload holding two same-labelled triggers, the second with a bad pattern, is
+enough.  `Load_One_Alias_XML` (`:1602`) is the identical shape.  The timer arm
+(`:1842`) has the same code but nothing between the delete and its `SetAt` can
+throw, so it is not affected.
+**Fix:** `RemoveKey` the label immediately before deleting the old object, so
+the map never holds a freed pointer — exactly what bug 1 above did for the MXP
+custom-element map (`mxpDefs.cpp:153`).  A refused replacement now takes the
+original with it rather than leaving a corpse behind.  Covered by
+`WorldLoadR5.DuplicateLabelWhoseReplacementFailsLeavesNoFreedEntry` in
+`tests/test_world_load.cpp`, which loads a second valid trigger so that
+`SortTriggers` really does compare two entries; without the fix it fails both
+assertions and then crashes in the destructor.

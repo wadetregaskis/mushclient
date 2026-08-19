@@ -3075,4 +3075,50 @@ TEST(WorldLoadR5, DuplicateExplicitLabelReplacedOnLoad)
     }
 }
 
+// A duplicate label whose second definition then FAILS validation must not
+// leave the freed original in the map.  The overwrite arm deletes the old
+// object, and the regexp compile a few lines later throws for a bad pattern;
+// Load_Triggers_XML reports that and carries on, so anything still keyed to
+// the deleted object (SortTriggers, the destructor's DELETE_MAP) would be
+// working on freed memory.  "keep" is there to give SortTriggers two entries,
+// which is what makes it compare sequences and dereference them.
+TEST(WorldLoadR5, DuplicateLabelWhoseReplacementFailsLeavesNoFreedEntry)
+{
+    {   // triggers
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><triggers>
+  <trigger match="a" name="keep" sequence="100"><send>y</send></trigger>
+  <trigger match="b" name="dup"  sequence="100"><send>y</send></trigger>
+  <trigger match="(unclosed" regexp="y" name="dup" sequence="100"><send>y</send></trigger>
+</triggers></muclient>)";
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+        // the replacement was refused, and the original went with it
+        EXPECT_EQ(1, (int)doc.GetTriggerMap().GetCount());
+        CTrigger* t = nullptr;
+        EXPECT_FALSE(doc.GetTriggerMap().Lookup("dup", t));
+        ASSERT_TRUE(doc.GetTriggerMap().Lookup("keep", t));
+        EXPECT_STREQ("a", (const char*)t->trigger);
+        doc.SortTriggers();   // must not walk a freed entry
+    }
+    {   // aliases - identical shape
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><aliases>
+  <alias match="a" name="keep" sequence="100"><send>y</send></alias>
+  <alias match="b" name="dup"  sequence="100"><send>y</send></alias>
+  <alias match="(unclosed" regexp="y" name="dup" sequence="100"><send>y</send></alias>
+</aliases></muclient>)";
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+        EXPECT_EQ(1, (int)doc.GetAliasMap().GetCount());
+        CAlias* a = nullptr;
+        EXPECT_FALSE(doc.GetAliasMap().Lookup("dup", a));
+        ASSERT_TRUE(doc.GetAliasMap().Lookup("keep", a));
+        EXPECT_STREQ("a", (const char*)a->name);
+        doc.SortAliases();    // must not walk a freed entry
+    }
+}
+
 MC_TEST_MAIN()

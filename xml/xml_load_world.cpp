@@ -1368,7 +1368,13 @@ CString strVariable;
     if (GetTriggerMap ().Lookup (strTriggerName, trigger_check))
       {
       if (iMask & XML_OVERWRITE)
+        {
+        // drop the map entry first - the regexp compile below can throw,
+        // and the caller reports and carries on, so leaving the old key in
+        // place would leave the map holding this freed trigger
+        GetTriggerMap ().RemoveKey (strTriggerName);
         delete trigger_check;
+        }
       else
         ThrowErrorException ("Duplicate trigger label \"%s\" ", 
                              (LPCTSTR) strTriggerName);
@@ -1599,7 +1605,13 @@ CString strVariable;
     if (GetAliasMap ().Lookup (strAliasName, alias_check))
       {
       if (iMask & XML_OVERWRITE)
+        {
+        // drop the map entry first - the regexp compile below can throw,
+        // and the caller reports and carries on, so leaving the old key in
+        // place would leave the map holding this freed alias
+        GetAliasMap ().RemoveKey (strAliasName);
         delete alias_check;
+        }
       else
         ThrowErrorException ("Duplicate alias label \"%s\" ", 
                              (LPCTSTR) strAliasName);

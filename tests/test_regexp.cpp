@@ -365,6 +365,7 @@ TEST(RegexpWildcardsTest, ErroredProgramDegradesToASingleEmptyEntry) {
 // LuaScripting.StringReturningMethodsDoNotLeakTheirVariant: a large loop with
 // a generous threshold well clear of allocator noise.
 TEST(RegexpTest, RecallTextDoesNotLeakItsCompiledRegexp) {
+    MC_SKIP_UNDER_SANITIZER("measures RSS growth; a sanitizer's redzones blow any budget");
     CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
 

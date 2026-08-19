@@ -1174,6 +1174,7 @@ TEST(MXPDefs, CannotRedefineBuiltinElement)
 // an earlier test left behind.
 TEST(MXPDefs, RedefinitionEarlyReturnsDoNotLeakTheArgumentList)
 {
+    MC_SKIP_UNDER_SANITIZER("counts live heap blocks; a sanitizer quarantines freed ones");
     CMUSHclientDoc doc; make_stream_doc(doc);
     doc.m_iMXPdebugLevel = DBG_NONE;   // keep MXP_error's notepad append out
                                        // of the way -- this test is about
@@ -1926,6 +1927,7 @@ TEST(MxpR4, OpenTagCallbackReceivesFormattedArguments)
 // never broken.
 TEST(MxpR4, OpenTagVetoDoesNotLeakTheArgumentList)
 {
+    MC_SKIP_UNDER_SANITIZER("counts live heap blocks; a sanitizer quarantines freed ones");
     CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     stream(doc, "<!ELEMENT mytag '<B>'>");   // custom -> pAtomicElement stays NULL
@@ -1985,6 +1987,7 @@ TEST(MxpR4, OpenTagVetoDoesNotLeakTheArgumentList)
 // note on the helper.)
 TEST(MxpR4, CustomElementArgumentAbortDoesNotLeakTheBuiltList)
 {
+    MC_SKIP_UNDER_SANITIZER("counts live heap blocks; a sanitizer quarantines freed ones");
     CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     doc.m_iMXPdebugLevel = DBG_NONE;   // keep MXP_error's notepad append out

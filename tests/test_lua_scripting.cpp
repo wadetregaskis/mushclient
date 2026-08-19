@@ -4840,6 +4840,7 @@ TEST(LuaScripting, TraceOutTreatsPercentAsLiteralText)
 // 3 MB bar, comfortably clear of allocator noise.
 TEST(LuaScripting, StringReturningMethodsDoNotLeakTheirVariant)
 {
+    MC_SKIP_UNDER_SANITIZER("measures RSS growth; a sanitizer's redzones blow any budget");
     LuaDoc f; ASSERT_NE(nullptr, f.L);
     ASSERT_TRUE(run(f.L, "world.SetVariable('leaky', string.rep('x', 40))\n"));
 

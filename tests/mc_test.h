@@ -28,7 +28,9 @@ namespace mc_test {
 struct Result {
     int passed = 0;
     int failed = 0;
+    int skipped = 0;
     bool current_failed = false;
+    const char* current_skip = nullptr;   // reason, or null if not skipped
     const char* current_suite = "";
     const char* current_name  = "";
 };
@@ -58,18 +60,62 @@ inline int run_all() {
         g().current_suite  = tc.suite;
         g().current_name   = tc.name;
         g().current_failed = false;
+        g().current_skip   = nullptr;
         tc.fn();
         if (g().current_failed) {
             ++g().failed;
             fprintf(stderr, "[FAIL] %s.%s\n", tc.suite, tc.name);
+        } else if (g().current_skip) {
+            ++g().skipped;
+            fprintf(stdout, "[SKIP] %s.%s (%s)\n", tc.suite, tc.name, g().current_skip);
         } else {
             ++g().passed;
             fprintf(stdout, "[PASS] %s.%s\n", tc.suite, tc.name);
         }
     }
-    fprintf(stdout, "\n%d passed, %d failed\n", g().passed, g().failed);
+    if (g().skipped)
+        fprintf(stdout, "\n%d passed, %d failed, %d skipped\n",
+                g().passed, g().failed, g().skipped);
+    else
+        fprintf(stdout, "\n%d passed, %d failed\n", g().passed, g().failed);
     return g().failed ? 1 : 0;
 }
+
+// ── Running under a sanitizer? ────────────────────────────────────────────
+//
+// A few tests in this suite measure the ALLOCATOR rather than the code: live
+// block counts (malloc_zone_statistics / mallinfo2), RSS growth budgets, or
+// whether a just-freed address is handed straight back by the next allocation.
+// A sanitizer replaces the allocator wholesale -- redzones around every block,
+// and a quarantine that deliberately does NOT reuse freed addresses -- so those
+// measurements stop meaning what the test needs them to mean.  The code under
+// test is fine; the instrument is gone.
+//
+// Such a test says so with MC_SKIP_UNDER_SANITIZER, which prints a visible
+// [SKIP] line and counts it, rather than passing vacuously.  Nothing else is
+// skipped: finding the memory errors those tests could only approximate is the
+// whole reason to run a sanitizer.  See docs/SANITIZERS.md.
+#if defined(__has_feature)
+# if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) \
+  || __has_feature(memory_sanitizer)
+#  define MC_TEST_SANITIZED 1
+# endif
+#endif
+#if !defined(MC_TEST_SANITIZED) \
+ && (defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__))
+# define MC_TEST_SANITIZED 1
+#endif
+#ifndef MC_TEST_SANITIZED
+# define MC_TEST_SANITIZED 0
+#endif
+
+inline void skip_current(const char* reason) { g().current_skip = reason; }
+
+// Skip the enclosing test when a sanitizer owns the allocator.  `reason` must
+// say what the test measures, not merely that it is skipped.
+#define MC_SKIP_UNDER_SANITIZER(reason)                                       \
+    do { if (MC_TEST_SANITIZED) { mc_test::skip_current(reason); return; } }  \
+    while (0)
 
 // ── Assertion helpers ─────────────────────────────────────────────────────
 

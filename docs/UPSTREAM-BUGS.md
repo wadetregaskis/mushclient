@@ -1003,7 +1003,6 @@ builds a lookup keyed by `iInfoType`, and codes 33/34 are missing from the
 table entirely.
 **Fix:** renumber the two rows to 33 and 34, matching `GetInfo`'s switch.
 Covered by `Info.InfoTypesTableHasNoDuplicateCodesAndCovers33And34`.
-=======
 ## 49 — `CPluginsDlg::OnUpdateNeedDescription` reads a stale `CPlugin*` (this commit)
 **Bug:** every other selected-item handler in the Plugins dialog —
 `OnShowDescription`, `OnEdit`, `OnEnable`, `OnDisable`, `OnRdblclkPluginsList` —
@@ -1027,7 +1026,6 @@ which keeps the "erased" plugin object alive and only removes it from the
 list, so the assertion exercises the liveness check itself rather than the
 underlying use-after-free.
 
-<<<<<<< HEAD
 ## 50 — Seven file dialogs `strcpy` an unbounded name into a `_MAX_PATH` buffer (this commit)
 **Bug:** every "browse for a file" site in the app follows the same recipe —
 `filedlg.m_ofn.lpstrFile = filename.GetBuffer (_MAX_PATH);` and then
@@ -1050,4 +1048,3 @@ always NUL-terminates and matches the `nMaxFile` that MFC's own `CFileDialog`
 gives the common dialog.  Covered headless by
 `LogSession.AnOverlongSuggestedNameIsTruncatedRatherThanOverrunning` in
 `tests/test_mfc_ui.cpp`.
->>>>>>> fix/f24

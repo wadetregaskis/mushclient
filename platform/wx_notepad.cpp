@@ -277,7 +277,13 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
         // wx text-control positions are character offsets, so translate
         // through the same byte->char helper the output pane uses for the
         // same split.
-        const wxScopedCharBuffer utf8 = m_ctrl->GetValue().utf8_str();
+        //
+        // The wxString must outlive the buffer: utf8_str() on a TEMPORARY
+        // returns a view whose bytes die at the semicolon (the dangling-
+        // buffer class that corrupted the heap and aborted the notepad
+        // selftest at exit, intermittently, ~1 run in 2).
+        const wxString value = m_ctrl->GetValue();
+        const wxScopedCharBuffer utf8 = value.utf8_str();
         const size_t nbytes = utf8.length();
         long last = static_cast<long>(m_ctrl->GetLastPosition());
         long f = (from < 0) ? last

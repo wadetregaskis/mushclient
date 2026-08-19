@@ -679,6 +679,19 @@ enum eDoubleClickOutcome
   eDblClickSend,      // caller records in history, THEN SendDoubleClickedWord
   };
 
+// What CMUSHclientDoc::ApplyAutoSay (doc_shared.cpp) did with the command.
+// Windows' copy of this logic is inline in CSendView::SendCommand, where the
+// "not connected" arm is a bare `return` that leaves SendCommand *before* its
+// command-history tail (sendvw.cpp:670-671) — so "consumed" and "refused"
+// must not answer the same thing here, or a command the world refused to send
+// still lands in the up-arrow history.
+enum eAutoSayResult
+  {
+  eAutoSayNotApplied,           // auto-say does not apply: caller sends normally
+  eAutoSaySent,                 // consumed: prepended and sent (or executed)
+  eAutoSayRefusedNotConnected,  // consumed by being DROPPED: not connected
+  };
+
 // Which selection Edit ▸ Copy (and Copy as HTML) should act on — the answer to
 // both "is the menu item enabled?" and "what does it copy?", which on Windows
 // were two separate hand-written tests (CMUSHView::OnUpdateNeedSelectionForCopy
@@ -2105,11 +2118,11 @@ public:
 
   // Auto-say pre-processing for a hand-typed command (World Properties > Input
   // > Auto Say): override prefix, the exclusions, and the prepend+send itself.
-  // Returns true when auto-say consumed the command (already sent/executed, or
-  // deliberately dropped because the world is not connected); false means the
-  // caller should send strFullCommand normally.  strFullCommand is modified in
-  // place when the override prefix is stripped.  Body in doc_shared.cpp.
-  bool ApplyAutoSay (CString & strFullCommand);
+  // eAutoSayNotApplied means the caller should send strFullCommand normally;
+  // the other two both mean auto-say consumed it, and differ over whether
+  // anything actually went out.  strFullCommand is modified in place when the
+  // override prefix is stripped.  Body in doc_shared.cpp.
+  eAutoSayResult ApplyAutoSay (CString & strFullCommand);
 
   void ChangeFont ( const int nHeight,
                     const char * lpszFacename,

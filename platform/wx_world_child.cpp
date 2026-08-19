@@ -111,24 +111,22 @@ void wx_save_child_geometry(wxConfigBase& cfg, const wxRect& rect)
 }
 
 // ── History file path ─────────────────────────────────────────────────────────
-// Returns the path to the per-world persistent command-history file, creating
-// ~/.mushclient/ if needed.  Uses the world name to distinguish files so that
-// different worlds maintain separate histories.  Returns "" on failure.
-//
-// The world name is sanitised: only [A-Za-z0-9._-] are kept; runs of other
-// characters are collapsed to a single underscore.  E.g. "Broken Lands"
-// → "history_Broken_Lands.txt".  Falls back to "history.txt" if empty.
-static std::string GetHistoryFilePath(const std::string& worldName)
+// The directory the per-world persistent command-history files live in,
+// created if needed.  Returns "" on failure.
+static std::string GetHistoryDir()
 {
     const char* home = getenv("HOME");
     if (!home || !*home) return {};
     std::string dir = std::string(home) + "/.mushclient";
     ::mkdir(dir.c_str(), 0700);   // safe no-op if already exists
+    return dir;
+}
 
-    if (worldName.empty()) return dir + "/history.txt";
-
-    // Sanitise: keep alphanumeric + a handful of safe punctuation chars;
-    // collapse anything else to a single underscore.
+// The world name, reduced to characters that are safe in a filename: only
+// [A-Za-z0-9._-] are kept; runs of anything else collapse to a single
+// underscore.  E.g. "Broken Lands" → "Broken_Lands".
+static std::string SanitiseWorldNameForFile(const std::string& worldName)
+{
     std::string safe;
     for (unsigned char c : worldName) {
         if (std::isalnum(c) || c == '-' || c == '_' || c == '.') {
@@ -141,8 +139,92 @@ static std::string GetHistoryFilePath(const std::string& worldName)
     // Trim trailing underscores left by a name ending in punctuation.
     while (!safe.empty() && safe.back() == '_') safe.pop_back();
     if (safe.empty()) safe = "default";
+    return safe;
+}
 
-    return dir + "/history_" + safe + ".txt";
+// FNV-1a over the raw name.  It only has to be stable across launches and
+// well spread — this disambiguates a filename, it is not a security property.
+static unsigned long HistoryNameHash(const std::string& worldName)
+{
+    unsigned long h = 2166136261UL;
+    for (unsigned char c : worldName) {
+        h ^= (unsigned long) c;
+        h = (h * 16777619UL) & 0xFFFFFFFFUL;
+    }
+    return h;
+}
+
+// Returns the path to the per-world persistent command-history file, creating
+// ~/.mushclient/ if needed.  Uses the world name to distinguish files so that
+// different worlds maintain separate histories.  Returns "" on failure.
+//
+// The sanitised stem alone is LOSSY, which made worlds share a file: "Broken
+// Lands" and "Broken/Lands" both reduce to "Broken_Lands", as do "Café" and
+// "Caf", so each world loaded the other's commands and whichever closed last
+// overwrote the file.  A short hash of the FULL name is appended, which keeps
+// the name recognisable while making the path unique:
+// "Broken Lands" → "history_Broken_Lands_a1b2c3d4.txt".  ('-' is preserved, so
+// "Broken - Lands" was never one of the colliding cases.)  Falls back to
+// "history.txt" if the name is empty.
+static std::string GetHistoryFilePath(const std::string& worldName)
+{
+    const std::string dir = GetHistoryDir();
+    if (dir.empty()) return {};
+    if (worldName.empty()) return dir + "/history.txt";
+
+    char hash[16];
+    snprintf(hash, sizeof(hash), "%08lx", HistoryNameHash(worldName));
+    return dir + "/history_" + SanitiseWorldNameForFile(worldName) + "_"
+               + hash + ".txt";
+}
+
+// The filename this built before the hash was added.  Read on load only, and
+// only when the hashed file does not exist yet, so nobody's existing history
+// is orphaned by the rename; saving always writes the hashed path.
+static std::string GetLegacyHistoryFilePath(const std::string& worldName)
+{
+    const std::string dir = GetHistoryDir();
+    if (dir.empty()) return {};
+    if (worldName.empty()) return dir + "/history.txt";
+    return dir + "/history_" + SanitiseWorldNameForFile(worldName) + ".txt";
+}
+
+// ── History file line encoding ────────────────────────────────────────────
+// The file is one command per line, so a command that CONTAINS a newline —
+// composed with Shift+Return, or pasted — was written as several lines and came
+// back as several separate history entries on the next launch.  Escape on the
+// way out and undo it on the way in: backslash becomes "\\", newline becomes
+// "\n", nothing else changes.
+static std::string EncodeHistoryLine(const std::string& text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (char c : text) {
+        if (c == '\\')      out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else                out += c;
+    }
+    return out;
+}
+
+// Deliberately forgiving: an escape this does not know is passed through
+// verbatim, so a history file written before the encoding existed — one that
+// may hold literal backslashes — still loads.
+static std::string DecodeHistoryLine(const std::string& text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '\\' || i + 1 >= text.size()) {
+            out += text[i];
+            continue;
+        }
+        const char next = text[i + 1];
+        if (next == '\\')      { out += '\\'; ++i; }
+        else if (next == 'n')  { out += '\n'; ++i; }
+        else                     out += text[i];   // unknown escape: verbatim
+    }
+    return out;
 }
 
 // The MUD should wrap to the VISIBLE text width: the full output width minus any
@@ -756,13 +838,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         }
     };
 
-    // "Send to MUD" context-menu action: evaluate the selected text as a command
-    // through the normal alias/trigger pipeline, exactly as if typed and Enter pressed.
+    // "Send to MUD" context-menu action: send the selected text as a command,
+    // exactly as if typed and Enter pressed.  Execute(), not EvaluateCommand():
+    // the same bypass the Enter handler, the macro path, the keypad path and
+    // Repeat Last Command were all converted away from, because EvaluateCommand
+    // skips the script prefix, command stacking, the MAX_EXECUTION_DEPTH reset
+    // and the per-sub-command ON_PLUGIN_COMMAND callback.
     m_output->m_fn_send_to_mud = [this](const wxString& text) {
         if (!m_doc || text.IsEmpty()) return;
         CString cmd(text.ToUTF8().data());
-        bool bOmit = false;
-        m_doc->EvaluateCommand(cmd, /*countThem=*/true, bOmit);
+        m_doc->m_iCurrentActionSource = eUserTyping;  // GetInfo(239) == 1
+        m_doc->m_iExecutionDepth = 0;                 // hand-driven, depth zero
+        m_doc->Execute(cmd);
+        m_doc->m_iCurrentActionSource = eUnknownActionSource;
         m_doc->UpdateAllViews(nullptr);
     };
 
@@ -1660,9 +1748,20 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             ? static_cast<const char*>(m_doc->m_mush_name) : "";
         m_historyFilePath = GetHistoryFilePath(worldName);
 
-        std::string histPath = m_historyFilePath;
+        const std::string histPath = m_historyFilePath;
         if (!histPath.empty()) {
-            if (FILE* f = fopen(histPath.c_str(), "r")) {
+            FILE* f = fopen(histPath.c_str(), "r");
+            if (!f) {
+                // Nothing under the hashed name yet: an older build may have
+                // written this world's history under the un-hashed one, and
+                // that is not to be thrown away.  Load only — the save side
+                // always writes m_historyFilePath, so the legacy file is read
+                // once and then superseded.
+                const std::string legacy = GetLegacyHistoryFilePath(worldName);
+                if (!legacy.empty() && legacy != histPath)
+                    f = fopen(legacy.c_str(), "r");
+            }
+            if (f) {
                 char buf[8192];
                 while (fgets(buf, (int)sizeof(buf), f)) {
                     std::string line = buf;
@@ -1670,6 +1769,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                     while (!line.empty() &&
                            (line.back() == '\n' || line.back() == '\r'))
                         line.pop_back();
+                    // Put back any newline the command itself contained.
+                    line = DecodeHistoryLine(line);
                     if (!line.empty())
                         m_history.push_back(wxString::FromUTF8(line.c_str()));
                 }
@@ -2469,8 +2570,13 @@ void CWorldChildFrame::RepeatLastCommand()
     // sendvw.cpp:736 records the command before auto-say strips its prefix.
     const CString strForHistory = cmd;
 
-    if (m_doc->ApplyAutoSay(cmd)) {
-        if (!m_doc->m_bOmitFromCommandHistory)
+    const eAutoSayResult autoSay = m_doc->ApplyAutoSay(cmd);
+    if (autoSay != eAutoSayNotApplied) {
+        // Only the arm that actually SENT something records.  Windows' refused
+        // arm is a bare `return` that leaves SendCommand before its history
+        // tail (sendvw.cpp:670-671), so a command the world would not take does
+        // not join the up-arrow list.
+        if (autoSay == eAutoSaySent && !m_doc->m_bOmitFromCommandHistory)
             addToCommandHistory(strForHistory);
         m_doc->UpdateAllViews(nullptr);
         return;
@@ -3464,8 +3570,11 @@ void CWorldChildFrame::SaveCommandHistoryFile()
 {
     if (m_history.empty() || m_historyFilePath.empty()) return;
     if (FILE* f = fopen(m_historyFilePath.c_str(), "w")) {
-        for (const wxString& cmd : m_history)
-            fprintf(f, "%s\n", cmd.ToUTF8().data());
+        for (const wxString& cmd : m_history) {
+            // Escaped, so a multi-line command stays ONE entry on reload.
+            const std::string line = EncodeHistoryLine(cmd.ToUTF8().data());
+            fprintf(f, "%s\n", line.c_str());
+        }
         fclose(f);
     }
 }
@@ -3592,8 +3701,16 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                     !m_doc->m_bNoEcho) {
                     if (m_history.empty() || m_history.back() != discarded)
                         m_history.push_back(discarded);
-                    if ((int) m_history.size() > HistoryLimit())
+                    if ((int) m_history.size() > HistoryLimit()) {
                         m_history.erase(m_history.begin());
+                        // Keeping the browse position across Escape is correct
+                        // -- OnProcessEscape does the same on Windows -- but it
+                        // holds a POSITION, which survives RemoveHead, while
+                        // this holds an INDEX, and every index just shifted
+                        // down by one.  Without this the next Up re-shows the
+                        // entry already on screen.
+                        if (m_histIdx >= 0) --m_histIdx;
+                    }
                 }
                 inp->Clear();
             }
@@ -4306,9 +4423,19 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // equivalent hazard — it refreshes its partial only on a real text change
     // (m_bChanged, sendvw.cpp:1178) — so excluding the modifiers here is what
     // makes a multi-press Alt+Arrow walk continue instead of restarting.
+    // Pure CARET MOVEMENT is not "the user typed something" either: Windows
+    // keeps its history position until the command is sent, so Left/Right to
+    // fix one character of a recalled line, or Home/End to get to an end of it,
+    // must not throw the browse away and send the next Up back to the newest
+    // entry.  Text-CHANGING keys still reset, deliberately: the port has no
+    // CheckTyping / "confirm before replacing typing" equivalent, so that reset
+    // is the only thing stopping an edit being silently discarded by the next
+    // arrow press.
     const bool bBareModifier = (code == WXK_ALT     || code == WXK_SHIFT ||
                                 code == WXK_CONTROL || code == WXK_RAW_CONTROL);
-    if (code != WXK_UP && code != WXK_DOWN && !bBareModifier) {
+    const bool bCaretMove    = (code == WXK_LEFT || code == WXK_RIGHT ||
+                                code == WXK_HOME || code == WXK_END);
+    if (code != WXK_UP && code != WXK_DOWN && !bBareModifier && !bCaretMove) {
         m_histIdx    = -1;
         ApplyHistRSearch(false);
     }
@@ -4647,10 +4774,20 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // the busiest control in the app, and not what this fixes.)
     inp->Clear();
 
-    // "Auto repeat last command" (m_bAutoRepeat): a blank Enter re-sends the
-    // previous command instead of sending a bare newline.  Mirrors sendvw.cpp:725.
-    if (cmd.IsEmpty() && m_doc->m_bAutoRepeat && !isPassword && !m_history.empty())
-        cmd = CString(m_history.back().ToUTF8().data());
+    // "Auto repeat last command" (m_bAutoRepeat, sendvw.cpp:741-748): once the
+    // command has gone, Windows puts it BACK in the bar SELECTED, so pressing
+    // Enter again repeats it and typing anything at all replaces it.  The port
+    // left the bar empty and re-derived the repeat from m_history.back() on the
+    // next blank Enter, which is a DIFFERENT command whenever the one just sent
+    // never reached the history -- an alias with "omit from command history",
+    // or a command sent while the history was full of something else.  Called
+    // at both successful exits below; never for a masked password prompt.
+    auto reenterForAutoRepeat = [&](const CString & strSent) {
+        if (!m_doc->m_bAutoRepeat || isPassword)
+            return;
+        inp->SetValue(wxString::FromUTF8((const char *) strSent));
+        inp->SetSelection(-1, -1);      // select all, as GetEditCtrl().SetSel (0, -1)
+    };
 
     // Auto-say (World Properties > Input > Auto Say).  Handles the override
     // prefix, the three exclusions and the prepend+send itself — including its
@@ -4664,11 +4801,20 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // auto-say prefix".
     const CString strForHistory = cmd;
 
-    if (!cmd.IsEmpty() && m_doc->ApplyAutoSay(cmd)) {
+    const eAutoSayResult autoSay =
+        cmd.IsEmpty() ? eAutoSayNotApplied : m_doc->ApplyAutoSay(cmd);
+    if (autoSay != eAutoSayNotApplied) {
         // Auto-say still records: on Windows the history add sits after BOTH
-        // arms of the auto-say if/else, not inside the plain-send one.
-        if (!isPassword && !m_doc->m_bOmitFromCommandHistory)
-            addToCommandHistory(strForHistory);
+        // arms of the auto-say if/else, not inside the plain-send one.  But
+        // only when something actually went out -- auto-say's "you are not
+        // connected" arm is a bare `return` on Windows too (sendvw.cpp:670-671),
+        // taken BEFORE the history add, so a command the world refused does not
+        // join the up-arrow list.
+        if (autoSay == eAutoSaySent) {
+            if (!isPassword && !m_doc->m_bOmitFromCommandHistory)
+                addToCommandHistory(strForHistory);
+            reenterForAutoRepeat(strForHistory);
+        }
         m_doc->UpdateAllViews(nullptr);
         return;
     }
@@ -4719,6 +4865,8 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // is why this has to come after Execute rather than before it.
     if (!isPassword && !m_doc->m_bOmitFromCommandHistory)
         addToCommandHistory(strForHistory);
+
+    reenterForAutoRepeat(strForHistory);
 
     // Flush any output produced by alias scripts / triggers to the pane.
     m_doc->UpdateAllViews(nullptr);

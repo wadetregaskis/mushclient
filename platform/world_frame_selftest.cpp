@@ -30,6 +30,7 @@
 #include "mainfrm.h"      // Frame — doc-attributed status overloads
 #include "platform/wx_world_child.h"
 #include "platform/wx_outputpane.h"
+#include "pal/itransport.h"          // the recording transport below
 #include "platform/selftest_support.h"   // plugin-loading fixture
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box — answer the
                                      // clear-buffer confirmation prompt
@@ -55,6 +56,26 @@ void check(bool ok, const char* what)
     printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
     (ok ? g_pass : g_fail)++;
 }
+
+// A transport that records what the doc sends and does nothing else.  Needed
+// because ConnectionOpen() is "m_pTransport != NULL": without one, CheckConnected
+// puts up a modal "attempt to reconnect?" box that nothing can answer under
+// ctest, AND EvaluateCommand returns an error that makes Execute abandon the
+// rest of a stacked command -- so a disconnected world cannot exercise a send
+// path at all.  The doc owns it (TeardownTransport deletes it).
+struct RecordingTransport : pal::ITransport
+{
+    std::string sent;
+
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short,
+                 const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "selftest"; }
+};
 
 // Let the frame's 100 ms world timer run: the connection-phase block that
 // maintains the title lives there.  Pump the event loop until `done` is true,
@@ -1629,37 +1650,133 @@ int RunWorldFrameSelfTest()
             const std::string worldName = "zz_selftest_history";
             std::string path;
             {
+                // The filename now carries a hash of the FULL world name, so it
+                // is no longer derivable here — ask a frame for it, then throw
+                // that frame away so the real one below starts from a clean
+                // file whatever an earlier run left behind.
+                CWorldChildFrame* probe = makeWorld(worldName.c_str());
+                path = probe->HistoryFilePath();
+                probe->Close(true);
+                wxYield();
+            }
+            // The pre-hash filename, which the loader deliberately falls back
+            // to (see the legacy check further down).  Anything an older build
+            // -- or an earlier run of this selftest -- left there would be
+            // loaded on top of the fixture, so it is cleared first.
+            std::string legacyPath;
+            {
                 const char* home = getenv("HOME");
                 if (home && *home)
-                    path = std::string(home) + "/.mushclient/history_"
-                         + worldName + ".txt";
+                    legacyPath = std::string(home) + "/.mushclient/history_"
+                               + worldName + ".txt";
             }
+
+            // Reads a whole file, "" if it is not there.  Used rather than a
+            // bare fopen so nothing is left open behind a check.
+            auto slurp = [](const std::string& f) {
+                std::string out;
+                if (FILE* rf = fopen(f.c_str(), "rb")) {
+                    int ch; while ((ch = fgetc(rf)) != EOF) out += (char) ch;
+                    fclose(rf);
+                }
+                return out;
+            };
+            auto exists = [](const std::string& f) {
+                FILE* rf = fopen(f.c_str(), "rb");
+                if (!rf) return false;
+                fclose(rf);
+                return true;
+            };
+
             check(!path.empty(), "history: a per-world history path exists");
             if (!path.empty()) {
                 remove(path.c_str());
+                if (!legacyPath.empty()) remove(legacyPath.c_str());
 
                 CWorldChildFrame* hf = makeWorld(worldName.c_str());
                 hf->addToCommandHistory("north");
                 hf->addToCommandHistory("look at the dragon");
+                // A command composed with Shift+Return — or pasted — carries a
+                // real newline.  The file is line-delimited, so writing it raw
+                // split it into two entries on the next launch.
+                hf->addToCommandHistory("say hello\nworld");
 
                 // Nothing on disk until a close path runs.
-                check(fopen(path.c_str(), "rb") == NULL,
+                check(!exists(path),
                       "history: nothing is written while the world is open");
 
                 hf->PersistBeforeTeardown();
 
-                std::string got;
-                if (FILE* rf = fopen(path.c_str(), "rb")) {
-                    int ch; while ((ch = fgetc(rf)) != EOF) got += (char) ch;
-                    fclose(rf);
-                }
-                check(got == "north\nlook at the dragon\n",
-                      "history: the quit path writes every command, in order");
+                check(slurp(path) == "north\nlook at the dragon\nsay hello\\nworld\n",
+                      "history: the quit path writes every command, escaped, in order");
 
-                remove(path.c_str());
                 hf->Close(true);
                 wxYield();
+
+                // ...and reopening the same world gets THREE entries back, not
+                // four.  commandList() is newest-first, so [0] is the one that
+                // used to arrive as two.
+                CWorldChildFrame* hf2 = makeWorld(worldName.c_str());
+                const std::vector<std::string> back = hf2->commandList(0);
+                check(back.size() == 3,
+                      "history: a multi-line command reloads as ONE entry");
+                check(back.size() == 3 && back[0] == "say hello\nworld",
+                      "...with its newline intact");
+                hf2->Close(true);
+                wxYield();
+
+                // ── the pre-hash filename is still read ────────────────────
+                // Adding the hash renames every existing history file, so the
+                // loader falls back to the old name when the new one is not
+                // there yet.  Without that, everybody's up-arrow list would
+                // silently empty itself on the first launch after the change.
+                if (!legacyPath.empty()) {
+                    remove(path.c_str());          // nothing under the new name
+                    if (FILE* wf = fopen(legacyPath.c_str(), "wb")) {
+                        fputs("legacy one\nlegacy two\n", wf);
+                        fclose(wf);
+                    }
+
+                    CWorldChildFrame* lf = makeWorld(worldName.c_str());
+                    const std::vector<std::string> old = lf->commandList(0);
+                    check(old.size() == 2 && old[0] == "legacy two",
+                          "history: a pre-hash history file is still loaded");
+                    lf->Close(true);
+                    wxYield();
+                    check(exists(path),
+                          "...and is carried forward under the hashed name");
+
+                    remove(legacyPath.c_str());
+                }
+
+                remove(path.c_str());
             }
+        }
+
+        // ── the history filename separates worlds the sanitiser cannot ──────
+        // The name was reduced to [A-Za-z0-9._-], runs of anything else
+        // collapsing to one underscore, so "Broken Lands" and "Broken/Lands"
+        // named the SAME file: each world loaded the other's commands and
+        // whichever closed last overwrote it.  A hash of the full name now
+        // disambiguates.  The stability half of this matters as much as the
+        // difference half — a "fix" that simply randomised the filename would
+        // separate the two worlds and lose everyone's history on every launch.
+        {
+            CWorldChildFrame* a1 = makeWorld("zz_selftest Broken Lands");
+            CWorldChildFrame* b1 = makeWorld("zz_selftest Broken/Lands");
+            const std::string pa = a1->HistoryFilePath();
+            const std::string pb = b1->HistoryFilePath();
+            check(!pa.empty() && !pb.empty() && pa != pb,
+                  "history: names that sanitise alike still get different files");
+            a1->Close(true);
+            b1->Close(true);
+            wxYield();
+
+            CWorldChildFrame* a2 = makeWorld("zz_selftest Broken Lands");
+            check(a2->HistoryFilePath() == pa,
+                  "...and one world name maps to the same file every time");
+            a2->Close(true);
+            wxYield();
         }
 
         g_wxhook_message_box = savedMB;
@@ -2308,6 +2425,94 @@ int RunWorldFrameSelfTest()
             check(fires == 1,
                   "close-count: OnPluginClose fires exactly ONCE per world close");
 
+            remove(logPath);
+            remove(pluginPath.c_str());
+        }
+    }
+
+    // ── output pane ▸ "Send to MUD" goes through Execute ────────────────────
+    // The context-menu item called EvaluateCommand directly, which is the exact
+    // bypass the Enter handler, the macro path, the keypad path and Repeat Last
+    // Command were all converted away from: it skips the script prefix, COMMAND
+    // STACKING and its ";;" escape, the MAX_EXECUTION_DEPTH reset, and the
+    // per-sub-command ON_PLUGIN_COMMAND callback -- and it left GetInfo(239)
+    // reading eUnknownActionSource inside anything the line fired.
+    //
+    // ON_PLUGIN_COMMAND is reachable only from INSIDE Execute, so one probe
+    // plugin answers every half at once: an EMPTY log means EvaluateCommand was
+    // called, ONE entry means stacking never happened, and the action source
+    // rides along inside each entry.
+    {
+        SelfTestEnablePluginLoading();
+
+        char logPath[512];
+        snprintf(logPath, sizeof(logPath), "/tmp/mc_selftest_sendmud_%d.log",
+                 (int) getpid());
+        remove(logPath);
+
+        char body[1024];
+        snprintf(body, sizeof(body),
+                 "function OnPluginCommand(s)\n"
+                 "  local h = io.open(\"%s\", \"a\")\n"
+                 "  if h then\n"
+                 "    h:write(\"[\" .. s .. \":\" ..\n"
+                 "            (world.GetInfo(239) == 1 and \"typed\" or \"other\")\n"
+                 "            .. \"]\\n\")\n"
+                 "    h:close()\n"
+                 "  end\n"
+                 "  return true\n"
+                 "end", logPath);
+
+        const std::string pluginPath = SelfTestWritePlugin(
+            "sendmud", "abcdefabcdefabcdef990022", "SendToMudProbe", body);
+        check(!pluginPath.empty(), "send-to-mud: wrote a plugin file");
+
+        if (!pluginPath.empty()) {
+            CMUSHclientDoc* sd = new CMUSHclientDoc();
+            sd->m_mush_name   = "zz_selftest_send_to_mud";
+            sd->m_nWrapColumn = 80;
+            sd->m_maxlines    = 5000;
+            sd->m_enable_command_stack     = TRUE;
+            sd->m_strCommandStackCharacter = ";";
+            sd->m_display_my_input         = FALSE;   // keep the pane quiet
+            // Connected, so the send really reaches a wire and Execute is not
+            // cut short after the first sub-command by a not-connected error.
+            sd->m_iConnectPhase = eConnectConnectedToMud;
+            RecordingTransport* wire = new RecordingTransport();
+            sd->m_pTransport    = wire;
+            sd->SetUpOutputWindow();
+            // (doc ctor already ran AddDocument -- doc_construct.cpp:521;
+            //  a second add left a DANGLING duplicate entry after close)
+            CWorldChildFrame* sf =
+                new CWorldChildFrame(parent, sd, wxT("zz_selftest_send_to_mud"));
+
+            const long rc = sd->LoadPlugin(CString(pluginPath.c_str()));
+            check(rc == 0, "send-to-mud: the probe plugin loaded");
+
+            COutputPane* sp = sf->OutputPane();
+            check(sp != NULL && sp->m_fn_send_to_mud != nullptr,
+                  "send-to-mud: the pane's context-menu action is wired");
+            if (sp && sp->m_fn_send_to_mud)
+                sp->m_fn_send_to_mud(wxT("north;south"));
+            wxYield();
+
+            std::string got;
+            if (FILE* lf = fopen(logPath, "rb")) {
+                int ch; while ((ch = fgetc(lf)) != EOF) got += (char) ch;
+                fclose(lf);
+            }
+            check(got == "[north:typed]\n[south:typed]\n",
+                  "send-to-mud: two stacked commands, each reporting eUserTyping");
+            check(wire->sent == "north\r\nsouth\r\n",
+                  "...and both halves reached the wire, split");
+
+            // ...and the action source is handed back afterwards, or every
+            // trigger and timer that followed would claim to be typed input.
+            check(sd->m_iCurrentActionSource == eUnknownActionSource,
+                  "...with the action source restored when it is done");
+
+            sf->Close(true);
+            wxYield();
             remove(logPath);
             remove(pluginPath.c_str());
         }

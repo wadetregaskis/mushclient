@@ -142,6 +142,12 @@ public:
     // [NSApp terminate:] skips OnClose entirely, so the quit hook calls it too.
     void        PersistBeforeTeardown();
 
+    // The per-world command-history file this frame loaded from and will save
+    // to, fixed at construction.  Public for the in-app selftest, which has to
+    // look at what reached disk — and the name is no longer derivable from the
+    // world name alone, since a hash of the full name disambiguates it.
+    const std::string& HistoryFilePath() const { return m_historyFilePath; }
+
     // Both command bars, for the in-app selftest.  The password swap is the one
     // place where BOTH have to be inspected at once — shown/hidden, and empty or
     // not — and ActiveInputPublic() by construction can only ever see one.

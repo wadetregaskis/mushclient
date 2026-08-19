@@ -3238,6 +3238,14 @@ public:
             ok = FALSE;
         }
         delete f;
+        // Real MFC's CDocument::OnSaveDocument clears the modified flag on a
+        // successful save.  Without this, a save that reaches here directly
+        // (the m_bSaveWorldAutomatically auto-save at doc.cpp:2121, and
+        // world.Save() via wx_world_child.cpp) leaves the doc marked modified
+        // even though the file was written — so quitting still prompts "Save
+        // changes to X?" and world.GetInfo(111) keeps reporting it dirty.
+        if (ok)
+            SetModifiedFlag(FALSE);
         return ok;
     }
     virtual void OnCloseDocument()          {}

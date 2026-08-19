@@ -187,25 +187,17 @@ CAliasDlg dlg;
   dlg.m_bTemporary = FALSE;
   dlg.m_pDoc = m_pDoc;
 
+  // the dialog's constructor zeroes this one, but a sequence of zero is not
+  //  what a new alias should get - start it where CAlias itself would
+
+  dlg.m_iSequence = DEFAULT_ALIAS_SEQUENCE;
+
 	if (dlg.DoModal () != IDOK)
     return;
 
   CAlias * alias_item = new CAlias;
 
-  alias_item->name            = dlg.m_name;
-  alias_item->contents        = dlg.m_contents;
-  alias_item->bIgnoreCase     = dlg.m_bIgnoreCase;
-//  alias_item->bDelayed        = dlg.m_bDelayed;
-  alias_item->strLabel        = dlg.m_strLabel;
-  alias_item->strProcedure    = dlg.m_strProcedure;
-  alias_item->bEnabled        = dlg.m_bEnabled;
-  alias_item->bExpandVariables = dlg.m_bExpandVariables;
-  alias_item->bOmitFromLog    = dlg.m_bOmitFromLogFile;
-  alias_item->bRegexp         = dlg.m_bRegexp;
-  alias_item->bOmitFromOutput = dlg.m_bOmitFromOutput;
-  alias_item->iSendTo         = dlg.m_iSendTo;
-  alias_item->bMenu           = dlg.m_bMenu;
-  alias_item->strGroup        = dlg.m_strGroup;
+  CopyAliasFromDialog (alias_item, &dlg);
 
   delete alias_item->regexp;    // get rid of earlier regular expression
   alias_item->regexp = NULL;

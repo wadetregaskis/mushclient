@@ -2550,3 +2550,59 @@ against the real view, the real timer wheel and a real MUD.
   byte-identical (the helper returns the byte length when `m_bUTF_8` is off),
   and the `<P>` period-space rule, which shared the same confusion, should
   still give two spaces after a full stop well inside the wrap column.
+
+### World-prefs dialog bugs in canonical source (2026-08-19)
+
+Five upstream defects in `dialogs/world_prefs/configuration.cpp`,
+`dialogs/world_prefs/prefspropertypages.cpp`, `dialogs/MapDlg.cpp` and
+`dialogs/TipDlg.cpp` — all four in `MUSHclient.vcxproj`, none behind a platform
+ifdef, so Windows carries every one.  All five are covered by the
+`--gui-bridge-selftest` harness or `tests/test_utilities.cpp`, and every new
+assertion was confirmed to fail with its fix reverted; what a Windows run adds
+is the real property sheet and the real common dialogs.
+
+- **"Use SSL" now dirties the world** (`docs/UPSTREAM-BUGS.md` #63).
+  **To check:** open a saved world, tick *Use SSL* on World Properties ▸
+  Connecting, change nothing else, press OK, then close the world.  It must
+  prompt to save (or auto-save); reopening it must still have the box ticked.
+  Stock 5.06 closes without a prompt and the box is clear again.  Confirm the
+  nine fields that were already compared still behave — change only the port,
+  and only the proxy password, and check each still marks the world modified.
+
+- **Regexp recompile keeps each trigger's own pattern**
+  (`docs/UPSTREAM-BUGS.md` #64).  **To check:** a world with several triggers,
+  one of them deliberately broken so its compile fails at load (an unmatched
+  `(` in a regular-expression trigger, which reports an error and leaves the
+  entry with no compiled expression).  Then toggle *Use UTF-8* on the world's
+  output page, which is what calls `RecompileRegularExpressions`.  Afterwards
+  every working trigger must still match only its own text; on stock 5.06 the
+  broken one starts matching whatever the previous trigger matches, or — if it
+  is first in the map — every line that arrives.
+
+- **The beep-sound browser bounds its path** (`docs/UPSTREAM-BUGS.md` #50, now
+  eight sites).  **To check:** `world.SetOption ("beep_sound", <a path of 300+
+  characters>)`, then World Properties ▸ Output ▸ the sound *Browse* button.
+  It must open the file dialog normally; stock 5.06 overruns a 261-byte buffer
+  there.  A normal path must still pre-fill the dialog with that name.
+
+- **Tip of the Day from a long install path** (`docs/UPSTREAM-BUGS.md` #65).
+  **To check:** install into a directory whose full path is 240+ characters and
+  open Help ▸ Tip of the Day (and let the startup tip run).  It must show a tip
+  or the "file absent" message; stock 5.06 smashes the stack.  Confirm the
+  ordinary install still finds `tips.txt` beside the executable — that is the
+  `"\\tips.txt"` arm, which moved with the rest.
+
+- **The mapper's "make alias" keeps every field**
+  (`docs/UPSTREAM-BUGS.md` #66).  **To check:** Game ▸ Mapper, then *Make
+  alias*; in the alias dialog set *one shot*, *echo alias*, *temporary*, a
+  variable name, *keep evaluating*, *omit from command history* and a sequence
+  other than 100.  After OK, open the new alias from World Properties ▸ Aliases
+  and confirm all seven came through; stock 5.06 shows the defaults.  Also
+  confirm the sequence the dialog OPENS on is 100, not 0.
+
+- **Paste/send delays accept the option-table range**
+  (`docs/UPSTREAM-BUGS.md` #67).  **To check:** `world.SetOption
+  ("paste_delay", 50000)` (and `send_file_delay`), then open World Properties ▸
+  Paste and press OK.  The sheet must close; stock 5.06 puts up "Please enter an
+  integer between 0 and 10000." and refuses.  Confirm 100001 is still refused
+  and that the neighbouring *delay per lines* field (1..100000) is unchanged.

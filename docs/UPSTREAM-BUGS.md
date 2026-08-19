@@ -1049,7 +1049,7 @@ which keeps the "erased" plugin object alive and only removes it from the
 list, so the assertion exercises the liveness check itself rather than the
 underlying use-after-free.
 
-## 50 — Seven file dialogs `strcpy` an unbounded name into a `_MAX_PATH` buffer (this commit)
+## 50 — Eight file dialogs `strcpy` an unbounded name into a `_MAX_PATH` buffer (this commit)
 **Bug:** every "browse for a file" site in the app follows the same recipe —
 `filedlg.m_ofn.lpstrFile = filename.GetBuffer (_MAX_PATH);` and then
 `strcpy (filedlg.m_ofn.lpstrFile, suggested_name);`.  `GetBuffer (_MAX_PATH)`
@@ -1059,7 +1059,9 @@ world's *Auto log file name* setting (`doc.cpp:754`), the trigger/alias/timer
 set names are the world name plus a directory (`evaluate.cpp:617` and `:790`,
 `GlobalPrefs.cpp:952`, `prefspropertypages.cpp:5299`), and the two sound
 browsers copy in a whole saved path (`triggdlg.cpp:421`,
-`prefspropertypages.cpp:9126`).  All seven are user-settable and none is
+`prefspropertypages.cpp:9126`), and the world's beep sound copies in the
+`beep_sound` option, which any script can set to any length
+(`prefspropertypages.cpp:6136`).  All eight are user-settable and none is
 validated for length, so a long enough one overruns the buffer.  There is no
 platform ifdef involved; Windows overruns identically.  It has stayed quiet
 because the `else` these copies live in is only taken when
@@ -1070,7 +1072,14 @@ arm everybody is on.
 always NUL-terminates and matches the `nMaxFile` that MFC's own `CFileDialog`
 gives the common dialog.  Covered headless by
 `LogSession.AnOverlongSuggestedNameIsTruncatedRatherThanOverrunning` in
-`tests/test_mfc_ui.cpp`.
+`tests/test_mfc_ui.cpp`, and in the app by "Beep sound browse (unbounded
+initial path)" in the `--gui-bridge-selftest` harness.
+
+**Addendum (2026-08-19):** the original sweep found seven, not eight.  The
+eighth, `CPrefsP14::OnBrowseSounds`, was missed because the grep that found the
+others keyed on the `App.platform == VER_PLATFORM_WIN32s` ternary they all sit
+under — and this one has no such ternary, just a bare `strcpy`.  The lesson is
+the usual one: a sweep is only as complete as the shape it greps for.
 
 ## 51 — A duplicate trigger/alias label whose replacement fails validation leaves the freed original in the map (this commit)
 **Bug:** loading a trigger whose label is already taken takes the
@@ -1290,3 +1299,84 @@ three measurements can no longer disagree.  ASCII worlds are unaffected: with
 `WrapTest.Utf8TabStopCountsCharactersNotBytes` in `tests/test_display.cpp`,
 which tabs an ASCII line and a multi-byte line to the same character column and
 asserts the fixture's bytes and characters actually differ.
+
+## 63 — "Use SSL" is not compared, so ticking it is discarded (this commit)
+**Bug:** `CMUSHclientDoc::ChangedPrefsP1` decides whether pressing OK on World
+Properties ▸ Connecting dirties the world.  It compares nine members — port,
+name, server, auto-save and the five proxy fields — and omits `m_bUseSSL`, which
+`SavePrefsP1` (`configuration.cpp:1395`) writes back and `LoadPrefsP1` (`:124`)
+loads.  `SetModifiedFlag (TRUE)` fires only if some `ChangedPrefsP*` answers
+true, and the `SavePrefs*` calls run unconditionally afterwards, so a user who
+ticks "Use SSL" and changes nothing else gets it applied to the live document
+and never written to the world file.  The reloaded world connects in the clear.
+The omission dates from the TLS commit itself, which added only the Load/Save
+lines, so Windows has it too.
+**Fix:** add a `m_bUseSSL` term, normalising both sides to `bool` (the member is
+an `unsigned short`, the dialog field a `BOOL`) — the same shape as the
+`bMultiLine` term in bug 22 above.  Covered by "World-properties change
+detection (Use SSL)" in the `--gui-bridge-selftest` harness.
+
+## 64 — `RecompileRegularExpressions` recompiles from the PREVIOUS trigger's pattern (this commit)
+**Bug:** the loop declares `CString strRegexp;` outside itself
+(`configuration.cpp:2498`), then refreshes it only inside
+`if (pTrigger->regexp)` while calling `regcomp` outside that guard.  A trigger
+whose compiled expression is currently NULL is therefore recompiled from
+whatever the previous iteration left in `strRegexp` — or from an *empty*
+pattern if it is the first such entry, and an empty pattern matches every line
+(`RegexpMatchEmpty` defaults to 1, so `regexec` drops `PCRE_NOTEMPTY`).
+NULL-expression triggers are genuinely produced and kept in the map: by this
+function's own `catch` (`:2524`) and by `CMUSHclientDoc::EvaluateTrigger`'s
+variable-expansion recompile (`evaluate.cpp:431`).  Changing the world's UTF-8
+setting is enough to run it.
+**Fix:** compute `strRegexp` unconditionally, keeping only the `delete` inside
+the guard.  The alias loop below repeats the defect verbatim and is fixed the
+same way, though it is compiled out today (`ALIASES_USE_UTF8` is 0).  Covered by
+"Trigger regexp recompile (stale pattern)" in the `--gui-bridge-selftest`
+harness, which asserts each trigger matches its OWN text and not its
+neighbour's — an assertion that fails in either map iteration order.
+
+## 65 — `CTipDlg` `strcat`s the tips-file suffix past the end of a `MAX_PATH` array (this commit)
+**Bug:** the constructor copies the module pathname into `char filename
+[MAX_PATH]`, truncates it at the last separator, and then `strcat`s the suffix
+on — `"\\tips.txt"` on Windows, `"/../Resources/tips.txt"` in a Mac bundle —
+with nothing bounding the result.  `GetModuleFileName` hands back up to
+`MAX_PATH - 1` characters, so an install path whose directory part reaches 238
+(249 on the Mac, where the suffix is longest) smashes the stack the moment
+Help ▸ Tip of the Day, or the tip shown at startup, runs.
+**Fix:** hoist the join into `TipsFileName` in `utilities_shared.cpp`, which
+builds it as a `CString` and so has no fixed length at all; all three platform
+arms move with it.  Covered by
+`Utilities.TipsFileNameSurvivesADirectoryLongerThanMAX_PATH` and
+`Utilities.TipsFileNameDropsTheExecutableName` in `tests/test_utilities.cpp`.
+
+## 66 — The mapper's "make alias" throws away seven of the dialog's fields (this commit)
+**Bug:** `CMapDlg::AddAlias` (`MapDlg.cpp:193`) runs the same `CAliasDlg` as the
+world-properties Aliases page, but keeps its own copy of the dialog-to-`CAlias`
+field list — and that copy had fallen behind `CPrefsP7::UnloadDialog`
+(`prefspropertypages.cpp:2703`) by seven fields: `bTemporary`, `strVariable`,
+`iSequence`, `bKeepEvaluating`, `bOneShot`, `bEchoAlias` and
+`bOmitFromCommandHistory`.  All seven are live controls in `CAliasDlg`'s DDX
+map, so everything the user sets in them is silently discarded and the alias
+keeps the `CAlias` constructor's defaults.  `UnloadDialog` even ends with the
+comment "NB - also see MapDlg.cpp for alias processing", which is exactly the
+kind of note that does not survive a decade.
+**Fix:** one `CopyAliasFromDialog` helper, called by both.  `AddAlias`
+additionally seeds `dlg.m_iSequence = DEFAULT_ALIAS_SEQUENCE` before `DoModal`,
+because `CAliasDlg`'s constructor zeroes that field while `CAlias`'s uses the
+default — copying it without seeding would give every mapper alias a sequence of
+0.  Covered by "Mapper 'make alias' (dropped dialog fields)" in the
+`--gui-bridge-selftest` harness.
+
+## 67 — World Properties rejects a paste/send delay the option table allows (this commit)
+**Bug:** `paste_delay` and `send_file_delay` are bounded 0..100000 in
+`scriptingoptions_numeric.inc` (118 and 133), and `SetOptionItem` validates
+against that table — so a script, an MXP payload or a world file can
+legitimately set 50000.  But `CPrefsP10::DoDataExchange` and
+`CPrefsP13::DoDataExchange` both run `DDV_MinMaxLong (pDX, m_iLineDelay, 0,
+10000)` over the same two members.  Any value above 10000 therefore makes the
+World Properties sheet refuse to close, with no way out of the dialog but to
+lower a number the user never chose.
+**Fix:** widen both `DDV_MinMaxLong` ceilings to 100000 so the dialog and the
+option table agree.  Covered by "Send/Paste delay validation range" in the
+`--gui-bridge-selftest` harness, which also asserts 100001 is still refused.
+Needs a Windows run — see `docs/WINDOWS-VALIDATION.md`.

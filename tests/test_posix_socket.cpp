@@ -11,6 +11,7 @@
 #include "platform/posix_socket.h"
 
 #include <string>
+#include <sys/resource.h>
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -420,6 +421,75 @@ TEST(PosixSocket, UrgentDataGoesToOnOutOfBandDataNotOnReceive)
     EXPECT_TRUE(poll_until([&] { return server.receives > before; }));
     EXPECT_EQ(0, server.closes);
 
+    client.Close();
+    lis.Close();
+}
+
+// ── descriptors above FD_SETSIZE ─────────────────────────────────────────
+//
+// posix_socket.h Poll: the old select(2)-based fd_set loop skipped any
+// socket whose descriptor was >= FD_SETSIZE (1024) outright -- FD_SET on
+// such an fd writes past the fixed-size fd_set, so the guard traded a
+// silent drop for the alternative of stack corruption.  In a long,
+// many-world+plugin+db+log session the process fd count can climb past
+// 1024, at which point that world's connection went silently dead.  Poll()
+// now uses poll(2) (no such ceiling) for the read/write/accept/connect path,
+// which is what this exercises.
+//
+// Needs a raised RLIMIT_NOFILE: the default macOS launchd soft limit (256)
+// makes an fd number >= 1024 unreachable -- socket()/dup2() would fail with
+// EMFILE/EBADF long before any fd got that high -- so the test raises its
+// own soft limit first, exactly like the scenario that made this reachable
+// in practice (a shell with ulimit -n raised before launching the app).
+TEST(PosixSocket, HighNumberedDescriptorStillDeliversOnReceive)
+{
+    struct rlimit rl;
+    ASSERT_EQ(0, getrlimit(RLIMIT_NOFILE, &rl));
+    const rlim_t want = FD_SETSIZE + 16;
+    if (rl.rlim_cur < want) {
+        struct rlimit raised = rl;
+        raised.rlim_cur = (rl.rlim_max == RLIM_INFINITY || rl.rlim_max >= want)
+                           ? want : rl.rlim_max;
+        if (raised.rlim_cur < want) {
+            // This environment's hard limit won't allow it -- not something
+            // the test can force, so skip rather than fail.
+            fprintf(stderr, "  (RLIMIT_NOFILE max is only %llu; skipping)\n",
+                    (unsigned long long)raised.rlim_cur);
+            return;
+        }
+        ASSERT_EQ(0, setrlimit(RLIMIT_NOFILE, &raised));
+    }
+
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    client.Connect("127.0.0.1", lis.port_);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+    Recorder server;
+    ASSERT_TRUE(lis.Accept(server));   // registers &server at its normal (low) fd
+
+    // Move the accepted socket onto a descriptor >= FD_SETSIZE.  Register()
+    // already tracks &server by pointer, so only the fd number needs to
+    // change to reach exactly the scenario the fd_set loop could not see.
+    const int highfd = FD_SETSIZE + 8;
+    ASSERT_EQ(highfd, ::dup2(server.m_hSocket, highfd));
+    ::close(server.m_hSocket);
+    server.m_hSocket = highfd;
+
+    ASSERT_TRUE(poll_until([&] { return client.connects > 0 ||
+                                        client.m_hSocket != INVALID_SOCKET; }));
+    EXPECT_EQ(4, client.Send("ping", 4));
+    // The old code silently skipped this fd in the FD_SET loop, so receives
+    // would stay 0 forever and this poll_until would time out -- "the code
+    // did nothing" fails the assertion below, exactly as intended.
+    ASSERT_TRUE(poll_until([&] { return server.receives > 0; }));
+    EXPECT_EQ(1, server.receives);
+    char buf[8] = {};
+    EXPECT_EQ(4, server.Receive(buf, sizeof buf));
+    EXPECT_STREQ("ping", buf);
+
+    server.Close();
     client.Close();
     lis.Close();
 }

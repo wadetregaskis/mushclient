@@ -5010,6 +5010,30 @@ TEST(LuaScripting, GetLineInfoTimeSurvives2038)
     lua_close(L);
 }
 
+// D-25: utils.menufontsize() reports nil when the system metrics cannot be read,
+// rather than a fabricated 0.  0 is indistinguishable from a real font size, so
+// the read-modify-restore idiom every plugin uses would pass 0 back as "the old
+// size" and silently fail to restore.
+TEST(LuaScripting, MenuFontSizeIsNilWhenItCannotBeDetermined)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    int n = run_ret(f.L, "return utils.menufontsize()");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_isnil(f.L, -1));
+    EXPECT_FALSE(lua_isnumber(f.L, -1));    // specifically NOT 0
+    lua_settop(f.L, 0);
+
+    // The plugin idiom must be able to DETECT that it cannot restore.  A 0 would
+    // sail past the nil check and fall through to the `return false` below.
+    EXPECT_LUA_OK(f.L,
+        "local old = utils.menufontsize()\n"
+        "if old == nil then return true end\n"   // detected: nothing to restore
+        "utils.menufontsize(12)\n"
+        "utils.menufontsize(old)\n"
+        "return false\n");
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

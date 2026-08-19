@@ -789,7 +789,10 @@ static int utils_shellexecute(lua_State* L)
 static int utils_fontpicker(lua_State* L)    { lua_pushnil(L); return 1; }
 static int utils_filterpicker(lua_State* L)  { lua_pushnil(L); return 1; }
 static int utils_spellcheckdialog(lua_State* L){ lua_pushnil(L); return 1; }
-static int utils_menufontsize(lua_State* L)  { lua_pushnumber(L, 0); return 1; }
+// nil, not 0: there is no system menu font to query headless, and a fabricated
+// 0 breaks the read-modify-restore idiom (kept in step with the real twin in
+// scripting/lua_utils.cpp, which returns nil when SystemParametersInfo fails).
+static int utils_menufontsize(lua_State* L)  { lua_pushnil(L); return 1; }
 static int utils_setbgcolour(lua_State* L)   { return 0; }
 static int utils_reload_global_prefs(lua_State* L) { return 0; }
 

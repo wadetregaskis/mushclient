@@ -2274,6 +2274,64 @@ TEST(Menu, AppendAndTrackPopup) {
     EXPECT_TRUE(m.CreateMenu());
 }
 
+// GetCursorPos: headless has no hook (g_wxhook_get_cursor_pos is null, same as
+// every other g_wxhook_* in this library), so it must report failure and leave
+// its out-param alone -- and, per the null-pointer contract every other
+// GetXxx-style stub in this header follows, a null POINT*/CPoint* must not be
+// dereferenced.  Then with a hook installed (standing in for wxGetMousePosition,
+// which mushcore cannot call -- wx is not linked here), it must report SUCCESS
+// and hand back exactly what the hook supplied: not merely "not (0,0)", which
+// is a legitimate on-screen position and would not catch e.g. a swapped x/y or
+// a hook whose return value is ignored.
+TEST(MfcUi, GetCursorPosNullHookFails) {
+    EXPECT_EQ(nullptr, (void*)g_wxhook_get_cursor_pos);
+    POINT p{111, 222};
+    EXPECT_FALSE(GetCursorPos(&p));
+    // Untouched -- a stub that fails must not have written through the pointer.
+    EXPECT_EQ(111, p.x);
+    EXPECT_EQ(222, p.y);
+    EXPECT_FALSE(GetCursorPos((POINT*)nullptr));
+
+    CPoint cp(111, 222);
+    EXPECT_FALSE(GetCursorPos(&cp));
+    EXPECT_EQ(111, cp.x);
+    EXPECT_EQ(222, cp.y);
+    EXPECT_FALSE(GetCursorPos((CPoint*)nullptr));
+}
+
+TEST(MfcUi, GetCursorPosWithHookSucceedsAndMatches) {
+    static int s_x, s_y;
+    s_x = 317; s_y = -42;   // negative is a legitimate secondary-monitor coord
+    g_wxhook_get_cursor_pos = [](int* x, int* y) -> int {
+        *x = s_x; *y = s_y;
+        return 1;
+    };
+
+    POINT p{0, 0};
+    ASSERT_TRUE(GetCursorPos(&p));
+    EXPECT_EQ(s_x, p.x);
+    EXPECT_EQ(s_y, p.y);
+
+    CPoint cp;
+    ASSERT_TRUE(GetCursorPos(&cp));
+    EXPECT_EQ(s_x, cp.x);
+    EXPECT_EQ(s_y, cp.y);
+
+    // The pointer really did move: a second "sample" taken after it disagrees
+    // with the first, and GetCursorPos tracks it -- proving this is reading
+    // the hook's current answer each call, not a value cached at install time.
+    s_x = -8; s_y = 900;
+    ASSERT_TRUE(GetCursorPos(&p));
+    EXPECT_EQ(-8, p.x);
+    EXPECT_EQ(900, p.y);
+
+    // A null out-param must still fail even with a working hook installed.
+    EXPECT_FALSE(GetCursorPos((POINT*)nullptr));
+    EXPECT_FALSE(GetCursorPos((CPoint*)nullptr));
+
+    g_wxhook_get_cursor_pos = nullptr;
+}
+
 // TpmAlignAnchor: the port's stand-in for what Win32 does with the TPM_*ALIGN
 // bits.  wx can only place a popup by its top-left corner, so the anchor moves
 // by the menu's size instead.

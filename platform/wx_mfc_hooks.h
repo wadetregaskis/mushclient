@@ -680,6 +680,14 @@ extern void (*g_wxhook_get_placement_rect)(const void* hwnd, RECT* r);
 extern void (*g_wxhook_client_to_screen)(const void* hwnd, int* x, int* y);
 extern void (*g_wxhook_screen_to_client)(const void* hwnd, int* x, int* y);
 
+// Win32 GetCursorPos: the mouse pointer's position in SCREEN coordinates, at
+// the moment of the call (no window involved, unlike the pair above).  Null in
+// the headless library, where GetCursorPos(POINT*) then simply returns FALSE
+// and writes nothing — same shape as every other g_wxhook_* stub.  Returns
+// nonzero on success; int rather than BOOL, per this header's own rule above
+// not to assume its includer has defined Windows types yet.
+extern int (*g_wxhook_get_cursor_pos)(int* x, int* y);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 // View > Status Bar, app-wide (Windows has one bar on the frame; the port

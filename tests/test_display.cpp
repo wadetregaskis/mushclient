@@ -2129,6 +2129,63 @@ TEST(PrevLineArms, NoteLogPreambleFormatsTimeCodes)
     EXPECT_TRUE(log_contains(log, "{N2"));
 }
 
+// Audit E10-F1: ProcessPreviousLine's note-logging and output-logging blocks
+// were ~35-line near-clones (preamble/postamble fetch, %n substitution,
+// FormatTime, HTML-colour-vs-plain WriteToLog dispatch) kept in sync by hand.
+// Log one world.Note and one ordinary output line to the same HTML+colour
+// log file: both must get their own preamble/postamble AND the same
+// <font>/<span>/<u> treatment. A hand-edit that only touched one branch's
+// HTML-colour dispatch (the drift this finding warns about) would make the
+// two entries diverge.
+TEST(PrevLineArms, NoteAndOutputLoggingGetIdenticalHtmlColourTreatment)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bLogNotes    = TRUE;
+    doc.m_bLogOutput   = TRUE;
+    doc.m_bLogHTML     = TRUE;
+    doc.m_bLogInColour = TRUE;
+    doc.m_strLogLinePreambleNotes   = "[N] ";
+    doc.m_strLogLinePostambleNotes  = " [/N]";
+    doc.m_strLogLinePreambleOutput  = "[O] ";
+    doc.m_strLogLinePostambleOutput = " [/O]";
+
+    std::string path = fresh_log_path();
+    ASSERT_EQ((long)eOK, doc.OpenLog(path.c_str(), FALSE));
+
+    // world.note, coloured + underlined
+    doc.NoteColourRGB(RGB(0xAB, 0xCD, 0xEF), RGB(0x11, 0x22, 0x33));
+    doc.NoteStyle(UNDERLINE);
+    doc.Note("shiny note");
+
+    // ordinary MUD output line, coloured + underlined for its whole extent
+    // (a single style run, same shape as the note above, so it contributes
+    // exactly one <font>/<u> pair like the note does)
+    feed(doc, "\x1B[31;44;4mred-on-blue\r\n");
+
+    doc.CloseLog();
+    std::string log = slurp(path);
+    remove(path.c_str());
+
+    // each entry got its own preamble/postamble
+    EXPECT_TRUE(log_contains(log, "[N] "));
+    EXPECT_TRUE(log_contains(log, " [/N]"));
+    EXPECT_TRUE(log_contains(log, "[O] "));
+    EXPECT_TRUE(log_contains(log, " [/O]"));
+
+    // both entries went through the same HTML-colour emitter: one <font> and
+    // one <u> run each, ie. two of each in the combined log.
+    size_t font_count = 0, u_count = 0;
+    for (size_t p = 0; (p = log.find("<font color=", p)) != std::string::npos; ++p)
+        ++font_count;
+    for (size_t p = 0; (p = log.find("<u>", p)) != std::string::npos; ++p)
+        ++u_count;
+    EXPECT_EQ(2u, font_count);
+    EXPECT_EQ(2u, u_count);
+    EXPECT_TRUE(log_contains(log, "<font color=\"#ABCDEF\">"));
+    EXPECT_TRUE(log_contains(log, "<u>shiny note</u>"));
+    EXPECT_TRUE(log_contains(log, "<u>red-on-blue</u>"));
+}
+
 // Pueblo announce variants: detection off via "no MXP", and level 2.50.
 TEST(PuebloTest, NoMxpSettingAndLevel250)
 {

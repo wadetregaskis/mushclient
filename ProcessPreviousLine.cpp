@@ -134,6 +134,53 @@ void CMUSHclientDoc::LogLineInHTMLcolour (POSITION startpos)
   } // end of  CMUSHclientDoc::LogLineInHTMLcolour
 
 
+// shared body of the note-logging and output-logging blocks in
+// ProcessPreviousLine: preamble/postamble fetch, %n substitution, FormatTime,
+// and the HTML-colour-vs-plain WriteToLog dispatch.  Caller is responsible for
+// checking m_logfile && !m_bLogRaw first.  A file-local helper (rather than a
+// CMUSHclientDoc member) so this is a pure refactor confined to this TU.
+
+static void LogFormattedLine (CMUSHclientDoc * pDoc,
+                               CString strPreamble,
+                               CString strPostamble,
+                               const CTime theTime,
+                               const POSITION prevpos,
+                               const CString & strMessage)
+  {
+
+  // allow %n for newline
+  strPreamble.Replace ("%n", "\n");
+
+  if (strPreamble.Find ('%') != -1)
+    strPreamble = pDoc->FormatTime (theTime, strPreamble, pDoc->m_bLogHTML);
+
+  // allow %n for newline
+  strPostamble.Replace ("%n", "\n");
+
+  if (strPostamble.Find ('%') != -1)
+    strPostamble = pDoc->FormatTime (theTime, strPostamble, pDoc->m_bLogHTML);
+
+  // line preamble
+  pDoc->WriteToLog (strPreamble);
+
+  // line itself, output as HTML if required
+  if (pDoc->m_bLogHTML && pDoc->m_bLogInColour)
+    pDoc->LogLineInHTMLcolour (prevpos);
+  // not colour - just straight HTML?
+  else if (pDoc->m_bLogHTML)
+    pDoc->WriteToLog (FixHTMLString (strMessage));
+  else
+    // just straight text
+    pDoc->WriteToLog (strMessage);
+
+  // line Postamble
+  pDoc->WriteToLog (strPostamble);
+  if (!(pDoc->m_bLogHTML && pDoc->m_bLogInColour))  // colour logging has already got a newline
+    pDoc->WriteToLog ("\n", 1);
+
+  } // end of LogFormattedLine
+
+
 // here when a newline is reached - process triggers etc. for the previous line
 // (ie. the current one, the one just ended)
 // returns true if omitting from output
@@ -263,45 +310,8 @@ assemble the full text of the original line.
 
     // log it now?
     if (m_logfile && !m_bLogRaw)
-      {
-      // get appropriate preamble
-      CString strPreamble = m_strLogLinePreambleNotes;
-
-      // allow %n for newline
-      strPreamble.Replace ("%n", "\n");
-
-      if (strPreamble.Find ('%') != -1)
-        strPreamble = FormatTime (CTime::GetCurrentTime(), strPreamble, m_bLogHTML);
-
-      // get appropriate Postamble
-      CString strPostamble = m_strLogLinePostambleNotes;
-
-      // allow %n for newline
-      strPostamble.Replace ("%n", "\n");
-
-      if (strPostamble.Find ('%') != -1)
-        strPostamble = FormatTime (CTime::GetCurrentTime(), strPostamble, m_bLogHTML);
-
-      // line preamble
-      WriteToLog (strPreamble); 
-      // line itself
-      CString strMessage = strCurrentLine;
-
-      // output as HTML if required
-      if (m_bLogHTML && m_bLogInColour)
-        LogLineInHTMLcolour (prevpos);
-      // not colour - just straight HTML?
-      else if (m_bLogHTML)
-          WriteToLog (FixHTMLString (strMessage));
-      else
-        // just straight text
-        WriteToLog (strMessage);
-
-      // line Postamble
-      WriteToLog (strPostamble); 
-      if (!(m_bLogHTML && m_bLogInColour))  // colour logging has already got a newline
-        WriteToLog ("\n", 1);
-      } // end of having a log file and logging a comment
+      LogFormattedLine (this, m_strLogLinePreambleNotes, m_strLogLinePostambleNotes,
+                         CTime::GetCurrentTime(), prevpos, strCurrentLine);
     }   // end of logging wanted
 
 
@@ -697,44 +707,9 @@ assemble the full text of the original line.
       (m_LineList.GetNext (pos))->flags |= LOG_LINE;
 
     // log it now?
-    if (m_logfile && !m_bLogRaw) 
-      {
-      // get appropriate preamble
-      CString strPreamble = m_strLogLinePreambleOutput;
-
-      // allow %n for newline
-      strPreamble.Replace ("%n", "\n");
-
-      if (strPreamble.Find ('%') != -1)
-        strPreamble = FormatTime (m_pCurrentLine->m_theTime, strPreamble, m_bLogHTML);
-
-      // get appropriate Postamble
-      CString strPostamble = m_strLogLinePostambleOutput;
-
-      // allow %n for newline
-      strPostamble.Replace ("%n", "\n");
-
-      if (strPostamble.Find ('%') != -1)
-        strPostamble = FormatTime (m_pCurrentLine->m_theTime, strPostamble, m_bLogHTML);
-
-      // line preamble
-      WriteToLog (strPreamble); 
-      // line itself
-      CString strMessage = strCurrentLine;
-      // fix up HTML sequences
-      if (m_bLogHTML && m_bLogInColour)
-        LogLineInHTMLcolour (prevpos);
-      // not colour - just straight HTML?
-      else if (m_bLogHTML)
-        WriteToLog (FixHTMLString (strMessage));
-      else
-        // straight text
-        WriteToLog (strMessage);
-      // line Postamble
-      WriteToLog (strPostamble); 
-      if (!(m_bLogHTML && m_bLogInColour))  // colour logging has already got a newline
-        WriteToLog ("\n", 1);
-      } // end of having a log file
+    if (m_logfile && !m_bLogRaw)
+      LogFormattedLine (this, m_strLogLinePreambleOutput, m_strLogLinePostambleOutput,
+                         m_pCurrentLine->m_theTime, prevpos, strCurrentLine);
     }
 
 

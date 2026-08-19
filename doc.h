@@ -1543,6 +1543,13 @@ public:
   // one world could not add a hotspot to another.
   bool m_bInWindowAddHotspot;
 
+  // The same guard for the same reason, on the two plugin notifications that
+  // were function-local statics too: a Screendraw callback that writes to
+  // another world, or a PluginListChanged one that loads a plugin into it,
+  // must not silence that world's own callback.
+  bool m_bInScreendraw;
+  bool m_bInPluginListChanged;
+
   // sort miniwindows into Z-order
   void SortWindows (void);
 

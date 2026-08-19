@@ -108,6 +108,8 @@ int i;
   m_bInPlaySoundFilePlugin = false;
   m_bInCancelSoundFilePlugin = false;
   m_bInWindowAddHotspot = false;
+  m_bInScreendraw = false;
+  m_bInPluginListChanged = false;
 
   m_strStatusMessage = Translate ("Ready");
   m_bShowingMapperStatus = false;

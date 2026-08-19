@@ -1469,6 +1469,12 @@ void CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName)   // no arg
   {
   CPlugin * pSavedPlugin = m_CurrentPlugin;
 
+  // Saved and put back rather than simply cleared on the way out - like
+  // pSavedPlugin above.  A callback can dispatch again (world.Send from an
+  // OnPluginLineReceived, say), and clearing on the inner exit would turn
+  // note batching off for the rest of the outer walk, letting the plugins
+  // after it write straight into the middle of the line being processed.
+  const bool bSavedNotesNotWanted = m_bNotesNotWantedNow;
   m_bNotesNotWantedNow = true;  // batch up Note/Tell calls
 
   // tell a plugin the message
@@ -1489,7 +1495,7 @@ void CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName)   // no arg
 
     }   // end of doing each plugin
 
-  m_bNotesNotWantedNow = false;
+  m_bNotesNotWantedNow = bSavedNotesNotWanted;
 
   } // end of CMUSHclientDoc::SendToAllPluginCallbacks
 
@@ -1498,6 +1504,7 @@ bool CMUSHclientDoc::SendToFirstPluginCallbacks (const string & sName, const cha
   {
   CPlugin * pSavedPlugin = m_CurrentPlugin;
 
+  const bool bSavedNotesNotWanted = m_bNotesNotWantedNow;
   m_bNotesNotWantedNow = true;  // batch up Note/Tell calls
 
   // tell a plugin the message
@@ -1519,13 +1526,13 @@ bool CMUSHclientDoc::SendToFirstPluginCallbacks (const string & sName, const cha
     if (callinfo._dispid_info.isvalid ())
       {
       m_CurrentPlugin = pSavedPlugin;
-      m_bNotesNotWantedNow = false;
+      m_bNotesNotWantedNow = bSavedNotesNotWanted;
       return true;   // indicate we found it
       }
 
     }   // end of doing each plugin
 
-  m_bNotesNotWantedNow = false;
+  m_bNotesNotWantedNow = bSavedNotesNotWanted;
   return false;  // didn't find one
   } // end of CMUSHclientDoc::SendToFirstPluginCallbacks
 
@@ -1538,6 +1545,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
   {
   CPlugin * pSavedPlugin = m_CurrentPlugin;
   bool bResult = true;    // assume they OK'd something
+  const bool bSavedNotesNotWanted = m_bNotesNotWantedNow;
   m_bNotesNotWantedNow = true;  // batch up Note/Tell calls
 
   // tell a plugin the message
@@ -1559,13 +1567,13 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
 
     if (bStopOnFalse && !bResult && callinfo._dispid_info.isvalid ())
       {
-      m_bNotesNotWantedNow = false;
+      m_bNotesNotWantedNow = bSavedNotesNotWanted;
       return false;
       }
 
     }   // end of doing each plugin
 
-  m_bNotesNotWantedNow = false;
+  m_bNotesNotWantedNow = bSavedNotesNotWanted;
   return bResult;
   } // end of CMUSHclientDoc::SendToAllPluginCallbacks
 
@@ -1598,6 +1606,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
 void CMUSHclientDoc::SendToAllPluginCallbacksRtn (const string & sName, CString & strResult)  // taking and returning a string
   {
   CPlugin * pSavedPlugin = m_CurrentPlugin;
+  const bool bSavedNotesNotWanted = m_bNotesNotWantedNow;
   m_bNotesNotWantedNow = true;  // batch up Note/Tell calls
 
   // tell a plugin the message
@@ -1618,7 +1627,7 @@ void CMUSHclientDoc::SendToAllPluginCallbacksRtn (const string & sName, CString 
 
     }   // end of doing each plugin
 
-  m_bNotesNotWantedNow = false;
+  m_bNotesNotWantedNow = bSavedNotesNotWanted;
   } // end of CMUSHclientDoc::SendToAllPluginCallbacks
 
 
@@ -1630,6 +1639,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
                                                const bool bStopOnFalse)
   {
   CPlugin * pSavedPlugin = m_CurrentPlugin;
+  const bool bSavedNotesNotWanted = m_bNotesNotWantedNow;
   m_bNotesNotWantedNow = true;  // batch up Note/Tell calls
 
   // tell a plugin the message
@@ -1650,20 +1660,20 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
 
     if (bStopOnTrue && bResult && callinfo._dispid_info.isvalid ())
       {
-      m_bNotesNotWantedNow = false;
+      m_bNotesNotWantedNow = bSavedNotesNotWanted;
       return true;
       }
 
     if (bStopOnFalse && !bResult && callinfo._dispid_info.isvalid ())
       {
-      m_bNotesNotWantedNow = false;
+      m_bNotesNotWantedNow = bSavedNotesNotWanted;
       return false;
       }
 
     }   // end of doing each plugin
 
 
-  m_bNotesNotWantedNow = false;
+  m_bNotesNotWantedNow = bSavedNotesNotWanted;
   if (bStopOnTrue)
     return false;
   else 
@@ -1680,6 +1690,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
                                                const bool bStopOnFalse)
   {
   CPlugin * pSavedPlugin = m_CurrentPlugin;
+  const bool bSavedNotesNotWanted = m_bNotesNotWantedNow;
   m_bNotesNotWantedNow = true;  // batch up Note/Tell calls
 
   // tell a plugin the message
@@ -1700,19 +1711,19 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
 
     if (bStopOnTrue && bResult && callinfo._dispid_info.isvalid ())
       {
-      m_bNotesNotWantedNow = false;
+      m_bNotesNotWantedNow = bSavedNotesNotWanted;
       return true;
       }
 
     if (bStopOnFalse && !bResult && callinfo._dispid_info.isvalid ())
       {
-      m_bNotesNotWantedNow = false;
+      m_bNotesNotWantedNow = bSavedNotesNotWanted;
       return false;
       }
 
     }   // end of doing each plugin
 
-  m_bNotesNotWantedNow = false;
+  m_bNotesNotWantedNow = bSavedNotesNotWanted;
   if (bStopOnTrue)
     return false;
   else 

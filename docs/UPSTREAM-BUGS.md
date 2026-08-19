@@ -813,16 +813,33 @@ corrupts modes 7 (ColorBurn), 9 (InverseColorBurn) and 20 (VividLight) of both
 **Fix:** cast the division result to `long` so the subtraction is signed, in the
 test and in the value — the shape `Blend_Freeze` already uses two lines below.
 
-## 35 — `WindowAddHotspot`'s re-entrancy guard is shared by every open world (this commit)
+## 35 — Three re-entrancy guards are shared by every open world (this commit)
 **Bug:** the guard that stops a MouseOver callback recursing back into
 `WindowAddHotspot` for ever is a function-local `static bool`, so it is one flag
 for the whole process rather than one per document.  While world A is inside
 `WindowAddHotspot`, a MouseOver script that adds a hotspot to an unrelated,
 simultaneously-open world B is refused with `eItemInUse` — a world's hotspots
 depending on what another world happens to be doing.
-**Fix:** make it the `CMUSHclientDoc` member `m_bInWindowAddHotspot`, cleared in
-the constructor.  Per-document scope still terminates any A→B→A recursion,
-because the document's own flag is set on the way in.
+`CMUSHclientDoc::Screendraw` (`doc.cpp`) and `CMUSHclientDoc::PluginListChanged`
+(`doc_shared.cpp`) are the same shape, and neither was covered by the original
+fix.  Screendraw is the one that bites: it runs for every completed line, note
+and command, so an `OnPluginScreendraw` handler that writes to another world
+— `world.GetWorld ("Other"):Note (…)`, which reaches that document's
+`Screendraw` synchronously through `DisplayMsg` → `ProcessPreviousLine` —
+silently skips world B's own `OnPluginScreendraw` for that line, so a plugin
+that captures all output loses it.  `PluginListChanged` costs the same way when
+an `OnPluginListChanged` handler loads or reloads a plugin in another world.
+The two sibling guards ten lines below Screendraw
+(`m_bInPlaySoundFilePlugin`, `m_bInCancelSoundFilePlugin`) are already
+per-document members doing exactly this job, so the statics are an oversight
+rather than a design.
+**Fix:** make all three `CMUSHclientDoc` members — `m_bInWindowAddHotspot`,
+`m_bInScreendraw`, `m_bInPluginListChanged` — cleared in the constructor.
+Per-document scope still terminates any A→B→A recursion, because the
+document's own flag is set on the way in.  Covered by
+`PluginGuards.ScreendrawGuardIsPerDocument` and
+`PluginGuards.PluginListChangedGuardIsPerDocument` in `tests/test_plugins.cpp`,
+each paired with a same-document control so deleting the guard fails too.
 
 ## 36 — `world.ArrayImport`'s table form crashes on any non-string value (this commit)
 **Bug:** the table extension checks the *key* (`lua_type (L, -2) != LUA_TSTRING`
@@ -1048,3 +1065,21 @@ always NUL-terminates and matches the `nMaxFile` that MFC's own `CFileDialog`
 gives the common dialog.  Covered headless by
 `LogSession.AnOverlongSuggestedNameIsTruncatedRatherThanOverrunning` in
 `tests/test_mfc_ui.cpp`.
+
+## 51 — A nested plugin dispatch turns note batching off for the outer one (this commit)
+**Bug:** every `SendToAllPluginCallbacks*` sets `m_bNotesNotWantedNow` true on
+entry so that a plugin's `world.Note`/`Tell` is queued into
+`m_OutstandingLines` and emitted after the walk, instead of landing in the
+middle of the line being processed.  All six of them assign `false` on the way
+out rather than putting back what they found, and the flag is a plain `bool`,
+so the first callback that dispatches again unbatches the notes of every plugin
+after it.  The path is ordinary: `ProcessPreviousLine` dispatches
+`ON_PLUGIN_LINE_RECEIVED`, a handler calls `world.Send`, `DoSendMsg` dispatches
+`ON_PLUGIN_SEND`, and *that* call's exit clears the flag for the rest of the
+outer walk.  The plugin sitting after the sender then writes its note inline
+and out of order.  `pSavedPlugin`, three lines above in the same functions,
+already shows the shape the flag should have had.
+**Fix:** save the incoming value alongside `pSavedPlugin` and restore it on
+every exit path in all six dispatchers.  Covered by
+`PluginGuards.NestedDispatchKeepsNoteBatchingOn` in `tests/test_plugins.cpp`.
+

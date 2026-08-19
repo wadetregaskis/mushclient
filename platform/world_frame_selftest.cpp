@@ -3297,33 +3297,38 @@ int RunWorldFrameSelfTest()
                   "...and nothing else -- pane 0's transient message is why it exists");
         }
         {
-            // (b) ...and the world timer really does drive it.  Two waits.
-            // The first proves the pane moves with no other event touching it,
-            // and doubles as the settle: it cannot succeed in under a second,
-            // and the phase does not change across it, so OnWorldTimer's
-            // connection-phase edge -- which calls the FULL repaint -- is long
-            // consumed before the second wait begins and cannot be what clears
-            // pane 0 underneath it.  (Waiting on the freeze pane instead does
-            // NOT settle it: the output pane's autoscroll callback repaints the
-            // whole bar too, so that pane can go empty a tick before the edge
-            // has run.  Measured, not assumed -- it made this very assertion
-            // fail.)
+            // (b) ...and the world timer really does drive it.  Two waits,
+            // and only the SECOND one is the claim.
+            //
+            // The first is the fixture: with the once-a-second refresh deleted
+            // it still passes, because OnWorldTimer's connection-phase edge
+            // repaints the whole bar on its way past and gets the pane there
+            // anyway (measured -- that mutation failed only the second wait).
+            // What it buys is a full second of unchanged phase, after which
+            // the edge is consumed and the narrow refresh is the only thing
+            // left that can touch the bar.
+            //
+            // Waiting on the freeze pane to settle the edge does NOT work, for
+            // the same reason: the output pane's autoscroll callback repaints
+            // the whole bar too, so that pane can go empty a tick before the
+            // edge has run.  Also measured -- it made the last check here fail.
             doc->m_iConnectPhase     = eConnectConnectedToMud;
             doc->m_tsConnectDuration = CTimeSpan(0L);
             doc->m_tStatusTime       = CTime::GetCurrentTime() - kInert;
             doc->m_tConnectTime      = CTime::GetCurrentTime() - 3600L;
-            const bool ticked = pumpUntil([&] {
+            const bool armed = pumpUntil([&] {
                 return child->StatusPane(F::kStatusPaneTime)
                             .StartsWith(wxT("1:00:0")); });
-            check(ticked,
-                  "the world timer moves the connected-time pane with nothing else happening");
+            check(armed,
+                  "tick fixture: the pane reaches the current connection's length");
 
             child->SetTransientStatus(wxT("mapper: 3 rooms"));
             doc->m_tConnectTime = CTime::GetCurrentTime() - 7260L;
-            const bool ticked2 = pumpUntil([&] {
+            const bool ticked = pumpUntil([&] {
                 return child->StatusPane(F::kStatusPaneTime)
                             .StartsWith(wxT("2:01:0")); });
-            check(ticked2, "...and goes on moving it a second later");
+            check(ticked,
+                  "the world timer moves the connected-time pane on its own, no other event");
             check(child->StatusPane0() == wxT("mapper: 3 rooms"),
                   "...touching only that pane, so pane 0's transient message survives");
         }

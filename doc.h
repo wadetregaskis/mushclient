@@ -1775,6 +1775,11 @@ public:
   void EmitInputFont(const std::string& face, int pts, bool bold, bool italic) {
       if (m_pWorldView) m_pWorldView->setInputFont(face.c_str(), pts, bold, italic);
   }
+  // world.SetCommandWindowHeight — false = no view, or the frontend refused
+  // (too short to type in, or it would leave the output pane unusable).
+  bool EmitCommandWindowHeight(int px) {
+      return m_pWorldView && m_pWorldView->setCommandWindowHeight(px);
+  }
 
   // ── PAL: output-pane management (typed-only — P2 output family) ──────────
   void EmitNote(const std::string& text) {

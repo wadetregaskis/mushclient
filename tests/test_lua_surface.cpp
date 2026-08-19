@@ -4781,7 +4781,17 @@ TEST(LuaSurface, CommandWindowHeadless)
         "world.DeleteCommandHistory()\n"
         "local cl = world.GetCommandList(10)\n"
         "assert(cl == nil or type(cl) == 'table')\n"
-        "assert(world.SetCommandWindowHeight(60) == 0 or true)\n"
+        // `== 0 or true` was vacuous -- `X or true` is truthy for every X in
+        // Lua, so this line asserted nothing whatsoever about a method that
+        // was, at the time, a guaranteed failure.  With no view attached the
+        // seam has no frontend to reach, and the contract is that it SAYS so:
+        // eBadParameter, the same code the canonical body returns when it
+        // cannot find a frame.  Both arms are pinned so that neither "always
+        // succeeds" nor "always fails for the wrong reason" survives: a
+        // negative height is refused by the engine's own parameter check,
+        // which runs before any frontend is consulted.
+        "assert(world.SetCommandWindowHeight(60) == error_code.eBadParameter)\n"
+        "assert(world.SetCommandWindowHeight(-1) == error_code.eBadParameter)\n"
         "local icl = world.GetInternalCommandsList()\n"
         "assert(type(icl) == 'table' and #icl > 50)\n"
         "assert(world.DoCommand('nosuchcommandzz') == error_code.eNoSuchCommand)\n"

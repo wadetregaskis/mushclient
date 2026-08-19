@@ -3543,6 +3543,120 @@ int RunWorldFrameSelfTest()
               "adjust-size-to-width: ...where it works again");
     }
 
+    // ── world.SetCommandWindowHeight ───────────────────────────────────────
+    // The canonical body drove the world window's CSplitterWnd through a
+    // CSendView; the port constructs none, so GetChildFrame() returned NULL and
+    // every call was a guaranteed eBadParameter that moved nothing.  What is
+    // asserted here is the command bar's REAL height, not that a seam fired.
+    {
+        child->SetSize(150, 170, 700, 520);
+        wxYield();
+
+        wxTextCtrl * bar = child->NormalInputPublic();
+        COutputPane * op = child->OutputPane();
+        check(bar != NULL && op != NULL,
+              "command-window-height: fixture -- the bar and pane exist");
+
+        // The floor is one whole line plus the control's own chrome: the
+        // height the bar already has by default.  Asserted against the frame's
+        // own measurements rather than a number copied into this test.
+        const int lineH  = child->InputBarLineHeight();
+        const int chrome = child->InputBarChromeHeight();
+        const int floorH = lineH + chrome;
+        check(lineH > 1 && floorH > lineH,
+              "command-window-height: fixture -- a real line height and chrome");
+
+        const int heightBefore = bar ? bar->GetSize().y : 0;
+
+        // A height well clear of both floors really is applied.
+        const int wanted = floorH + 3 * lineH;
+        check(doc->SetCommandWindowHeight((short) wanted) == eOK,
+              "command-window-height: a roomy height is accepted");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == wanted,
+              "command-window-height: the command bar is EXACTLY that tall");
+        check(bar != NULL && bar->GetSize().y != heightBefore,
+              "command-window-height: ...and it really moved (control)");
+        check(op != NULL && op->GetClientSize().y >= 20,
+              "command-window-height: ...and the output pane was not squeezed "
+              "to nothing");
+
+        // The pin survives a text change.  Without it the very next keystroke
+        // would drop the bar straight back to its content height, which is what
+        // makes a scripted height worth having at all.
+        const int pinned = bar ? bar->GetSize().y : 0;
+        if (bar) bar->SetValue(wxT("typed after the height was set"));
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == pinned,
+              "command-window-height: the height survives typing "
+              "(auto_resize_command_window off)");
+        if (bar) bar->SetValue(wxEmptyString);
+        wxYield();
+
+        // ...but a world that asks for auto-resizing still wins, exactly as
+        // CSendView::AdjustCommandWindowSize does on Windows.  Without this
+        // arm the check above could pass by the bar simply being frozen.
+        doc->m_bAutoResizeCommandWindow  = TRUE;
+        doc->m_iAutoResizeMinimumLines   = 1;
+        doc->m_iAutoResizeMaximumLines   = 4;
+        if (bar) bar->SetValue(wxT("one line"));
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == floorH,
+              "command-window-height: auto_resize_command_window takes the bar "
+              "back to its content height");
+        doc->m_bAutoResizeCommandWindow = FALSE;
+        if (bar) bar->SetValue(wxEmptyString);
+        wxYield();
+
+        // REFUSAL 1 -- shorter than one line.  Windows can hand the splitter a
+        // 9-pixel row because the user can drag the sash back; there is no sash
+        // here, so a bar that cannot show the line being typed is unrecoverable.
+        check(doc->SetCommandWindowHeight((short) floorH) == eOK,
+              "command-window-height: exactly the one-line floor is accepted");
+        wxYield();
+        const int atFloor = bar ? bar->GetSize().y : 0;
+        check(atFloor == floorH,
+              "command-window-height: ...and lands there");
+
+        check(doc->SetCommandWindowHeight((short) (floorH - 1)) == eBadParameter,
+              "command-window-height: one pixel under the floor is refused");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == atFloor,
+              "command-window-height: ...and the refusal moved nothing");
+
+        check(doc->SetCommandWindowHeight(1) == eBadParameter,
+              "command-window-height: a 1-pixel command bar is refused");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == atFloor,
+              "command-window-height: ...and that refusal moved nothing either");
+
+        // REFUSAL 2 -- the output pane must keep 20 pixels, which is the
+        // canonical body's own "too small, want to see a line at least" rule.
+        // Sizer failure here is SILENT: without the check the pane is squeezed
+        // to zero and nothing says so.
+        int frameClientH = 0;
+        child->GetClientSize(NULL, &frameClientH);
+        check(frameClientH > 0,
+              "command-window-height: fixture -- the frame has a client height");
+
+        check(doc->SetCommandWindowHeight((short) frameClientH) == eBadParameter,
+              "command-window-height: a bar as tall as the whole window is "
+              "refused rather than collapsing the output pane");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == atFloor,
+              "command-window-height: ...and that refusal moved nothing either");
+        check(op != NULL && op->GetClientSize().y >= 20,
+              "command-window-height: ...so the output pane still has room");
+
+        // A negative height never reaches the frontend at all -- the engine's
+        // own parameter check, where the canonical body had it.
+        check(doc->SetCommandWindowHeight(-1) == eBadParameter,
+              "command-window-height: a negative height is refused");
+        wxYield();
+        check(bar != NULL && bar->GetSize().y == atFloor,
+              "command-window-height: ...and moved nothing");
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

@@ -128,6 +128,19 @@ struct FakeWorldView : pal::IWorldView {
     void setOutputSelection(int sl, int el, int sc, int ec) override {
         selSL = sl; selEL = el; selSC = sc; selEC = ec;
     }
+    // world.SetCommandWindowHeight.  `commandHeightFloor` makes the fake
+    // decline anything shorter, the way both real adapters decline a height
+    // that would leave a pane unusable, so the caller's error arm is reachable.
+    int commandHeight      = 0;
+    int commandHeightCalls = 0;
+    int commandHeightFloor = 0;
+    bool setCommandWindowHeight(int px) override {
+        ++commandHeightCalls;
+        if (px < commandHeightFloor) return false;
+        commandHeight = px;
+        return true;
+    }
+
     void setOutputFont(const char* face, int pointSize,
                        bool bold, bool italic) override {
         outFontFace.assign(face); outFontPts = pointSize;

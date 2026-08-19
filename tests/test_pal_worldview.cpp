@@ -488,6 +488,58 @@ TEST(PalWorldView, WindowFamilyDrivesTheView)
     EXPECT_TRUE(cx == 7 && cy == 7 && cw == 7 && ch == 7);
 }
 
+// world.SetCommandWindowHeight.  The canonical body drove the world window's
+// CSplitterWnd through a CSendView, so on the port GetChildFrame() returned
+// NULL and every call was a guaranteed eBadParameter that moved nothing.
+TEST(PalWorldView, SetCommandWindowHeightReachesTheFrontend)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    EXPECT_EQ(eOK, doc.SetCommandWindowHeight(60));
+    EXPECT_EQ(1, view.commandHeightCalls);
+    EXPECT_EQ(60, view.commandHeight);
+
+    // A second, different height: the number tracks the request rather than
+    // landing on one lucky value.
+    EXPECT_EQ(eOK, doc.SetCommandWindowHeight(90));
+    EXPECT_EQ(90, view.commandHeight);
+
+    // A negative height is refused engine-side, WITHOUT asking the frontend --
+    // that check is parameter validation, not platform work, so it stays where
+    // the canonical body had it.
+    const int callsBefore = view.commandHeightCalls;
+    EXPECT_EQ(eBadParameter, doc.SetCommandWindowHeight(-1));
+    EXPECT_EQ(callsBefore, view.commandHeightCalls);
+    EXPECT_EQ(90, view.commandHeight);
+
+    // A frontend that declines is reported, not swallowed, and nothing moved.
+    // Both real adapters decline: Windows when the top view would drop under
+    // 20 pixels, wx also when the bar could not show one whole line.
+    view.commandHeightFloor = 50;
+    EXPECT_EQ(eBadParameter, doc.SetCommandWindowHeight(20));
+    EXPECT_EQ(callsBefore + 1, view.commandHeightCalls);
+    EXPECT_EQ(90, view.commandHeight);
+
+    // ...and a height at the floor is accepted, so the refusal above is the
+    // floor biting and not a blanket "always says no".
+    EXPECT_EQ(eOK, doc.SetCommandWindowHeight(50));
+    EXPECT_EQ(50, view.commandHeight);
+
+    doc.m_pWorldView = NULL;
+}
+
+// With no view attached the call is refused, which is what the port has always
+// reported -- but now because there is genuinely no frontend, not because a
+// view walk could never find one.
+TEST(PalWorldView, SetCommandWindowHeightWithNoViewIsRefused)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    EXPECT_EQ(eBadParameter, doc.SetCommandWindowHeight(60));
+    EXPECT_EQ(eBadParameter, doc.SetCommandWindowHeight(-1));
+}
+
 // World Properties ▸ Output ▸ "Adjust size to width".  The button used to sit
 // behind `m_pActiveCommandView || m_pActiveOutputView`, which nothing off the
 // MFC view family ever sets, so it was visible and inert on the port.

@@ -279,6 +279,7 @@ public:
     void        deleteCommandHistory() override;
     void        setInputFont(const char* face, int pointSize,
                              bool bold, bool italic) override;
+    bool        setCommandWindowHeight(int px) override;
     void        beginBatch() override;
     void        endBatch() override;
     void        deleteLines(long n) override;
@@ -538,6 +539,13 @@ private:
     enum { kMaxInputBarLines = 8 };
     int                   m_inputBarLines = 0;  // 0 = height not yet applied
 
+    // world.SetCommandWindowHeight's pinned pixel height, 0 = follow content.
+    // Windows pins the bar by dragging the splitter's row; there is no splitter
+    // here, so the pin is a member that UpdateInputBarHeight honours.  A world
+    // with auto_resize_command_window on releases it on the next text change,
+    // which is what CSendView::AdjustCommandWindowSize does there.
+    int                   m_inputBarPinnedHeight = 0;
+
     // ── Command history ────────────────────────────────────────────────────
     std::vector<wxString> m_history;           // sent commands, oldest first
     // Last wall-clock second the output-buffer fade was repainted, so the
@@ -643,7 +651,18 @@ private:
     bool FireAcceleratorIfMatch(wxKeyEvent& evt);
     void FireAcceleratorCommand(WORD nID);
     // Grow/shrink the multi-line command bar to fit its content (1..8 lines).
+    // A world.SetCommandWindowHeight pin suspends this (see the definition).
     void UpdateInputBarHeight();
+
+public:
+    // The two measurements the bar's height is built from: one text line, and
+    // the control's own border + internal margins.  Public because the in-app
+    // selftest asserts setCommandWindowHeight's one-line floor against them
+    // rather than against a number copied into the test.
+    int InputBarLineHeight() const;
+    int InputBarChromeHeight() const;
+
+private:
     // Create (or re-create) the command input bar — ONE body for the
     // constructor and the wrap_input toggle, so a rebuild can never silently
     // drop a binding (the smart-quote disable is exactly the wiring a second

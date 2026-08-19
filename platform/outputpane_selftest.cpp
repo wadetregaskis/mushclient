@@ -2513,6 +2513,29 @@ void TestContextMenuShape()
             opCheck(spy.dispatched.size() == 2 && spy.dispatched[1] == 32248,
                     "control: Find\xE2\x80\xA6 dispatches its own id");
         }
+
+        // ── no accelerator text lies about what actually runs the command ──
+        // FlattenMenu above strips accelerator text (GetItemLabelText), so it
+        // cannot see this: on macOS wx renders a label's "\tCtrl+X" suffix as
+        // Cmd+X, and this item's only working keyboard binding is the PHYSICAL
+        // Control key (RawControlDown, wired in COutputPane::OnKeyDown /
+        // CWorldChildFrame::OnInputKeyDown) -- so a "\tCtrl+L" suffix here
+        // would promise a shortcut the item does not answer to. Worse: Cmd+L
+        // is not even free -- it is the real, natively-bound accelerator for
+        // the View menu's "Clear To Mark" (kAccelClearToMark), a much less
+        // destructive command. Read the RAW label (GetItemLabel, accelerator
+        // intact) rather than the stripped one FlattenMenu uses above.
+        {
+            const wxMenuItem* clr =
+                ItemNamed(menu, "Clear Output Buffer\xE2\x80\xA6");
+            opCheck(clr != nullptr, "Clear Output Buffer is in the menu");
+            if (clr) {
+                const wxString raw = clr->GetItemLabel();
+                opCheck(raw.Find('\t') == wxNOT_FOUND,
+                        "...and its label carries no accelerator suffix "
+                        "(nothing here can make good on one)");
+            }
+        }
     }
 
     // ── (a-bis) the link cluster still leads the menu ────────────────────

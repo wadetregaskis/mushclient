@@ -877,7 +877,7 @@ BEGIN
     CONTROL "Sound pathname", IDC_ALL_LIGHTER, "Static", 0x50020000, 19, 255, 266, 10
     CONTROL "&Number of lines in output buffer:", IDC_STATIC, "Static", 0x50020002, 33, 291, 101, 8
     CONTROL "", IDC_LINES, "Edit", 0x50812080, 147, 289, 55, 12
-    CONTROL "(200 to 500,000)", IDC_STATIC, "Static", 0x50020000, 212, 291, 55, 8
+    CONTROL "(0=unlimited, else 200 to 100,000,000)", IDC_STATIC, "Static", 0x50020000, 208, 287, 87, 17
     CONTROL "&Wrap output at column number:", IDC_WRAP_OUTPUT, "Button", 0x50010003, 19, 308, 115, 10
     CONTROL "", IDC_WRAP_COLUMN, "Edit", 0x50812080, 147, 307, 55, 12
     CONTROL "Spin1", IDC_SPIN_WRAP_COLUMN, "msctls_updown32", 0x500000B6, 192, 307, 11, 14

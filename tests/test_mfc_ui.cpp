@@ -28,6 +28,8 @@
 #include "platform/world_close_decision.h"  // DecideWorldClose — the Cmd+W prompt chain
 #include "dialogs/ProgDlg.h"   // CProgressDlg — adopted into mushcore 2026-08-07
 #include "dialogs/plugins/PluginWizard.h"  // CPluginWizardPage7 — language gates
+#include "dialogs/world_prefs/prefspropertypages.h"  // FittedLastColumnWidth,
+                                                     // OutputBufferBytesNeeded
 
 #include <algorithm>
 #include <cerrno>     // ENOENT — CFile open-failure cause checks
@@ -4935,6 +4937,93 @@ TEST(MfcUi, PluginWizardLanguagePageSpeaksAllPortLanguages)
     fakewx::widget(IDC_LANGUAGE).cursel = 6;
     page.OnOK();
     EXPECT_STREQ("", (LPCTSTR) page.m_strLanguage);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// World-properties Output page: the three sums that used to be buried in
+// dialogs nothing tests (2026-08-18)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// "Adjust width to size" (World Properties ▸ Appearance ▸ Output).  Its whole
+// body used to sit inside a walk looking for a CMUSHView, which the port never
+// constructs — so the button did nothing at all here.  The document answers for
+// both frontends now, from whatever last measured the pane.
+TEST(AdjustWidth, TheWrapColumnComesFromTheMeasuredOutputWindow)
+{
+    CMUSHclientDoc doc;
+    doc.m_gui_cols       = 100;    // what the wx pane last measured...
+    doc.m_gui_font_width = 8;      // ...i.e. 800 pixels of text
+    doc.m_iPixelOffset   = 0;
+
+    EXPECT_EQ(800, doc.OutputWindowWidthPixels());
+    EXPECT_EQ(100, doc.WrapColumnForCharWidth(8));
+
+    // A wider font fits fewer columns: the division is real, not a pass-through
+    // of the column count the pane happened to report.
+    EXPECT_EQ(50, doc.WrapColumnForCharWidth(16));
+
+    // ...and the world's pixel offset insets the text before the division, as
+    // Windows' one wrap formula does (mushview.cpp:3132).
+    doc.m_iPixelOffset = 80;
+    EXPECT_EQ(90, doc.WrapColumnForCharWidth(8));
+}
+
+TEST(AdjustWidth, TheAnswerStaysInsideTheWrapColumnOptionsRange)
+{
+    CMUSHclientDoc doc;
+    doc.m_iPixelOffset   = 0;
+    doc.m_gui_font_width = 8;
+
+    doc.m_gui_cols = 4000;                                   // 32,000 pixels
+    EXPECT_EQ(MAX_LINE_WIDTH, doc.WrapColumnForCharWidth(8));
+    doc.m_gui_cols = 10;                                     // 80 pixels
+    EXPECT_EQ(20, doc.WrapColumnForCharWidth(8));            // the floor
+
+    // 0 = "cannot tell, keep the figure you have" — the button's old behaviour
+    // when the view walk found nothing, and the only safe answer.
+    EXPECT_EQ(0, doc.WrapColumnForCharWidth(0));             // no font metric
+    doc.m_gui_cols = 0;
+    EXPECT_EQ(0, doc.WrapColumnForCharWidth(8));             // nothing measured
+}
+
+// The physical-RAM warning on the output-buffer size.  The port raised the
+// ceiling from Windows' 500,000 lines to 100,000,000, at which point the DWORD
+// the byte count accumulated into wrapped — so the largest, and only genuinely
+// dangerous, settings were the ones that warned least.
+TEST(OutputBufferSize, TheMemoryWarningSurvivesTheRaisedLineCeiling)
+{
+    // Windows' old ceiling: comfortably inside 32 bits either way.
+    EXPECT_EQ(16ULL * 1024 * 1024 + 500000ULL * 60,
+              OutputBufferBytesNeeded(500000L));
+
+    // The port's ceiling is ~6.02 Gb.  The wrapped figure was ~1.72 Gb, so a
+    // 4 Gb machine was told the biggest possible buffer would fit.
+    const unsigned long long need = OutputBufferBytesNeeded(100000000L);
+    EXPECT_EQ(16ULL * 1024 * 1024 + 100000000ULL * 60, need);
+    EXPECT_TRUE(need > 4ULL * 1024 * 1024 * 1024);
+    EXPECT_TRUE(need > 6000000000ULL);
+
+    // 0 lines is "unlimited" and has its own warning; it costs no per-line
+    // bytes here.
+    EXPECT_EQ(16ULL * 1024 * 1024, OutputBufferBytesNeeded(0L));
+}
+
+// The alias / timer / variable pages' "fix up last column to exactly fit the
+// list view" figure.  It used to be stored in m_iColWidth after the base class
+// had already inserted the columns from it, so it reached nothing.
+TEST(PrefsListColumns, TheLastColumnIsFittedOnlyWhenTheUserHasNoWidthOfTheirOwn)
+{
+    // Seed still in place = the user has never resized this column, so fit it:
+    // 600 wide, less a 15-pixel scrollbar, less 160 of other columns.
+    EXPECT_EQ(425, FittedLastColumnWidth(150, 150, 600, 15, 160));
+
+    // A restored width that differs is the user's own: leave it alone.
+    EXPECT_EQ(0, FittedLastColumnWidth(150, 320, 600, 15, 160));
+
+    // A list too narrow for the other columns is not a reason to set a silly
+    // width — 0 means "leave the column alone" here too.
+    EXPECT_EQ(0, FittedLastColumnWidth(150, 150, 100, 15, 160));
+    EXPECT_EQ(0, FittedLastColumnWidth(150, 150, 175, 15, 160));
 }
 
 MC_TEST_MAIN()

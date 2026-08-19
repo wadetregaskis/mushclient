@@ -566,6 +566,8 @@ BOOL CGlobalPrefsP4::OnInitDialog()
 
 void CGlobalPrefsP4::OnFont() 
 {
+UpdateData (TRUE);   // pull the current field text into m_strPrinterFont
+
 CDC dc;
 
 dc.CreateCompatibleDC (NULL);
@@ -575,7 +577,10 @@ LOGFONT lf;
 ZeroMemory (&lf, sizeof lf);
 
 lf.lfHeight = -MulDiv(m_nPrinterFontSize, dc.GetDeviceCaps(LOGPIXELSY), 72);
-strncpy (lf.lfFaceName, App.m_strPrinterFont, sizeof (lf.lfFaceName) - 1);
+// the page's own value, not App's: App.m_strPrinterFont is what the font was
+// when the sheet opened, so a second visit to the picker inside one session
+// opened on the pre-dialog face and confirming it reverted the earlier pick
+strncpy (lf.lfFaceName, m_strPrinterFont, sizeof (lf.lfFaceName) - 1);
 lf.lfFaceName [sizeof (lf.lfFaceName) - 1] = 0;
 
 CFontDialog dlg (&lf,

@@ -4951,6 +4951,23 @@ TEST(FramePostMessage, HeadlessStillFailsClosedWhenNoPumpIsInstalled)
     g_wxhook_post_message = saved;
 }
 
+// ── CMyToolBar::GetButtonInfo must assign its outputs ────────────────
+//
+// mainfrm.cpp's OnUpdateBtnWorlds declares nID/nStyle/iImage, hands them to
+// GetButtonInfo and then compares iImage against a freshly computed image
+// index -- so the stub returning FALSE without touching them left a live path
+// reading uninitialised locals (and handing them straight back to SetButtonInfo).
+TEST(MainFrameStub, GetButtonInfoAssignsOutputsEvenWithNoToolbar)
+{
+    UINT nID = 0xDEAD, nStyle = 0xDEAD;
+    int  iImage = -12345;
+    // the very toolbar OnUpdateBtnWorlds asks
+    EXPECT_FALSE(Frame.m_wndActivityToolBar.GetButtonInfo(0, nID, nStyle, iImage));
+    EXPECT_EQ((UINT) 0, nID);
+    EXPECT_EQ((UINT) 0, nStyle);
+    EXPECT_EQ(0, iImage);
+}
+
 // ── DDV_MinMax* actually validate ─────────────────────────────────────────
 //
 // These were no-ops, so every numeric range in every property page was

@@ -278,6 +278,11 @@ int i;
 
   m_bNotesInRGB = false;    // notes are in palette colour right now
   m_iNoteStyle = NORMAL;    // notes are not bold right now
+  // literal colours, not m_normalcolour[]: SetDefaultAnsiColours has not run
+  // yet, so the palette is not valid.  White on black is what SetNoteColourRGB
+  // falls back to, and Tell reads these before any note has set them.
+  m_iNoteColourFore = RGB (255, 255, 255);
+  m_iNoteColourBack = RGB (0, 0, 0);
 
 // MXP
 

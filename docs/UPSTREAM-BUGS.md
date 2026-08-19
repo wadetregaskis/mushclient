@@ -49,6 +49,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 38 | `world.SetRemoveMapReverses` raises an error when passed a boolean | this commit | lua_methods.cpp `L_SetRemoveMapReverses` |
 | 39 | Three world-table entries reject the documented `other:Method (…)` form | this commit | lua_methods.cpp `L_StripANSI`, `L_GetWorld`, `L_GetWorldById` |
 | 40 | `pushVariant` hands an uninitialised `VARIANT` to `SafeArrayGetElement` | this commit | lua_methods.cpp `pushVariant` (VT_ARRAY arm) |
+| 41 | The note colours a deferred note carries are never initialised | this commit | doc_construct.cpp `CMUSHclientDoc::CMUSHclientDoc` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -875,3 +876,20 @@ and pointer happen to name.  It is the same defect the file already fixes for
 **Fix:** `VariantInit (&val);` after the declaration.  No behaviour change on
 the port — its `SafeArrayGetElement` shim copies without clearing — so this one
 needs a **Windows debug run** (poisoned stack) to see the original fault.
+
+## 41 — The note colours a deferred note carries are never initialised (this commit)
+**Bug:** `m_iNoteColourFore` / `m_iNoteColourBack` get no value from the
+document constructor and none from the options table, yet `Tell` reads them on
+its deferred arm — the one taken while `m_bNotesNotWantedNow` is set, i.e.
+inside a telnet-negotiation or plugin callback — and pushes them into
+`m_OutstandingLines`.  The custom-palette lookup just below only overwrites
+them when `NoteCustomColourIndex ()` returns an index, so a world whose
+`note_text_colour` is the `SAMECOLOUR` sentinel (`world.NoteColour = 0`)
+carries whatever the heap held into `OutputOutstandingLines`, and from there
+into a real `AddStyle`.  On the port the read is unconditional, because the
+headless constructor sets `m_bNotesInRGB` true.
+**Fix:** initialise both beside `m_bNotesInRGB` / `m_iNoteStyle` with
+literals — `RGB (255, 255, 255)` on `RGB (0, 0, 0)`, the pair
+`SetNoteColourRGB` already falls back to.  Literals rather than
+`m_normalcolour [WHITE]` / `[BLACK]` because `SetDefaultAnsiColours` does not
+run until ~50 lines later, so the palette is not valid at that point.

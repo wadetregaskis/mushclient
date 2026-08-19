@@ -255,7 +255,11 @@ TEST(PluginCallback, RuntimeErrorLatchesCallbackOff)
     CPlugin* p = doc.GetPlugin(IDA);
     ASSERT_NE(nullptr, p);
 
-    doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "x", true);   // errors once
+    // plugins.cpp: ExecuteLua returns from its error arm WITHOUT writing the
+    // result out-parameter, so the veto the caller reads is whatever the
+    // one-argument ExecutePluginScript overload initialised it to.  A handler
+    // that dies must not veto the send -- "assume they OK'd it".
+    EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "x", true));  // errors once
     EXPECT_STREQ("1", (const char*)plugin_var(p, "count"));
     EXPECT_FALSE(p->m_PluginCallbacks[ON_PLUGIN_SEND].isvalid());  // latched
 

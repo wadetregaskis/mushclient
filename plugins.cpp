@@ -285,7 +285,13 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
       list<double> nparams;
       list<string> sparams;
       sparams.push_back (sText);
-      bool result;
+      // Initialised: the rich Execute* overloads return early WITHOUT writing
+      // *result on the "function not found" and error arms, and this value is
+      // returned straight to the caller -- who reads it as "did the plugin veto
+      // this?".  An uninitialised read decided, at random, whether a line was
+      // sent, displayed or suppressed.  true is the right default: it is what
+      // ExecuteLua writes when a handler returns nothing.
+      bool result = true;
       m_ScriptEngine->ExecuteLua (iRoutine, 
                                    callinfo._name.c_str (), 
                                    eDontChangeAction,

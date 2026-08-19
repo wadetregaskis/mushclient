@@ -434,9 +434,27 @@ public:
     // CMainFrame::SetStatusMessage sends).  Returns false when this frame has
     // no visible strip, so the caller can fall back to the MDI parent's bar.
     bool SetTransientStatus(const wxString& text);
+    // ── Status-bar panes ──────────────────────────────────────────────────
+    // Windows' order, from CMainFrame's `indicators[]` (mainfrm.cpp:236),
+    // minus ID_INDICATOR_CAPS (macOS has no Caps-Lock indicator convention).
+    enum StatusPaneId {
+        kStatusPaneMessage = 0,   // ID_SEPARATOR            — the status line
+        kStatusPaneName,          // ID_STATUSLINE_MUSHNAME  — world name
+        kStatusPaneTime,          // ID_STATUSLINE_TIME      — connected time
+        kStatusPaneLines,         // ID_STATUSLINE_LINES     — lines in/out
+        kStatusPaneLog,           // ID_STATUSLINE_LOG       — logging?
+        kStatusPaneCount
+    };
+
     // Selftest probe: pane 0's current text (the transient/status line).
-    wxString StatusPane0() const
-        { return m_statusBar ? m_statusBar->GetStatusText(0) : wxString(); }
+    wxString StatusPane0() const { return StatusPane(kStatusPaneMessage); }
+    // Selftest probe: any pane's current text (kStatusPane* below).
+    wxString StatusPane(int field) const
+        { return m_statusBar ? m_statusBar->GetStatusText(field) : wxString(); }
+    // Repaint every pane from the doc.  Normally driven by the world timer,
+    // activation and the connection-phase change; public so the in-app
+    // selftest can sample a pane without waiting a timer tick.
+    void UpdateStatusBar();
     bool IsStatusBarStripShown() const;
 
     // Show/hide the inline find bar (Ctrl+F to show, Escape in find bar to hide).
@@ -608,9 +626,6 @@ private:
     void OnActivate(wxActivateEvent& evt);
 
     // ── Helpers ───────────────────────────────────────────────────────────
-    // Write the current connection status to the MDI parent's status bar.
-    // Called from OnActivate and OnWorldTimer (only when this frame is active).
-    void UpdateStatusBar();
 
     // Returns the currently-visible input control (m_input or m_inputPassword).
     wxTextCtrl* ActiveInput() const;

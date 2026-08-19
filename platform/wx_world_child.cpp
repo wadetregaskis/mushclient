@@ -1630,10 +1630,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // mirroring the Windows status line; UpdateStatusBar() fills them.
     m_statusBar = new wxStatusBar(this, wxID_ANY,
                                   wxSTB_DEFAULT_STYLE & ~wxSTB_SIZEGRIP);
-    m_statusBar->SetFieldsCount(5);
+    m_statusBar->SetFieldsCount(kStatusPaneCount);
     {
-        const int widths[5] = { -1, 160, 90, 130, 70 };  // -1 = stretch (message)
-        m_statusBar->SetStatusWidths(5, widths);
+        // Indexed by StatusPaneId; -1 = stretch (the message pane).
+        const int widths[kStatusPaneCount] = { -1, 160, 90, 130, 70 };
+        m_statusBar->SetStatusWidths(kStatusPaneCount, widths);
     }
     sizer->Add(m_statusBar, 0, wxEXPAND);
 
@@ -3157,7 +3158,7 @@ void CWorldChildFrame::UpdateStatusBar()
     const bool connected = (phase == eConnectConnectedToMud);
 
     // ── Pane 1: world name (its own field now, no longer a message prefix) ──
-    pane(1, static_cast<const char*>(m_doc->m_mush_name));
+    pane(kStatusPaneName, static_cast<const char*>(m_doc->m_mush_name));
 
     // ── Pane 0 (stretch): main status / connection state ───────────────────
     // Script status takes priority, then scrollback, reconnect countdown, the
@@ -3191,18 +3192,30 @@ void CWorldChildFrame::UpdateStatusBar()
         default:                             msg = "Not connected.";             break;
         }
     }
-    pane(0, msg);
+    pane(kStatusPaneMessage, msg);
 
     // ── Pane 2: connection duration (H:MM:SS) while connected ──────────────
+    // m_tStatusTime, NOT m_tConnectTime.  This pane is CMainFrame's
+    // ID_STATUSLINE_TIME, whose canonical text comes from
+    // CMUSHclientDoc::OnUpdateStatuslineTime (doc.cpp:1069) -- and that reads
+    // m_tStatusTime, which is seeded at doc construction and re-seeded by the
+    // only two things that claim to reset this pane: Game > Reset Connected
+    // Time (OnGameResetconnectedtime, doc.cpp:3691) and world.ResetStatusTime
+    // (methods_output.cpp:87).  Reading m_tConnectTime instead made BOTH of
+    // them dead on the port: they wrote a member the pane never looked at.
+    // (m_tConnectTime is a different clock -- the connect instant that
+    // GetInfo(301) and the "--- Connected on ... ---" banner report -- and
+    // nothing resets it but a fresh connection, which is why the difference
+    // was invisible until you tried the menu item.)
     if (connected) {
-        time_t start = m_doc->m_tConnectTime.GetTime();
+        time_t start = m_doc->m_tStatusTime.GetTime();
         time_t now   = time(nullptr);
         long secs = (start > 0 && now >= start) ? (long)(now - start) : 0;
         char buf[32];
         snprintf(buf, sizeof buf, "%ld:%02ld:%02ld", secs / 3600, (secs / 60) % 60, secs % 60);
-        pane(2, buf);
+        pane(kStatusPaneTime, buf);
     } else {
-        pane(2, "");
+        pane(kStatusPaneTime, "");
     }
 
     // ── Pane 3: lines received ↓ / sent ↑ this connection ──────────────────
@@ -3210,11 +3223,11 @@ void CWorldChildFrame::UpdateStatusBar()
         char buf[64];
         snprintf(buf, sizeof buf, "\xe2\x86\x93%ld \xe2\x86\x91%ld",
                  (long) m_doc->m_nTotalLinesReceived, (long) m_doc->m_nTotalLinesSent);
-        pane(3, buf);
+        pane(kStatusPaneLines, buf);
     }
 
     // ── Pane 4: log indicator ──────────────────────────────────────────────
-    pane(4, IsLogging() ? "\xf0\x9f\x94\xb4 Log" : "");
+    pane(kStatusPaneLog, IsLogging() ? "\xf0\x9f\x94\xb4 Log" : "");
 }
 
 bool CWorldChildFrame::SetTransientStatus(const wxString& text)
@@ -3224,7 +3237,7 @@ bool CWorldChildFrame::SetTransientStatus(const wxString& text)
     // put.  The next UpdateStatusBar() (world timer, activation, connection
     // change) redraws pane 0 from the doc, which is the same transience the
     // MDI parent bar had.
-    m_statusBar->SetStatusText(text, 0);
+    m_statusBar->SetStatusText(text, kStatusPaneMessage);
     return true;
 }
 

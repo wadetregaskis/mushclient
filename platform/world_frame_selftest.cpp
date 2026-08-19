@@ -2956,6 +2956,62 @@ int RunWorldFrameSelfTest()
               "log filename: an empty world name falls back to \"world_\"");
     }
 
+    // ── the duration pane counts from m_tStatusTime, so the resets work ────
+    // ID_STATUSLINE_TIME's canonical text comes from
+    // CMUSHclientDoc::OnUpdateStatuslineTime (doc.cpp:1069), which reads
+    // m_tStatusTime.  The port's pane read m_tConnectTime instead, which made
+    // BOTH resets that write m_tStatusTime -- Game > Reset Connected Time and
+    // world.ResetStatusTime -- silently do nothing to the only thing they
+    // claim to change.
+    //
+    // The fixture keeps the two clocks an hour apart on purpose: if they held
+    // the same instant, "which member does the pane read" would be an identity
+    // and none of this would discriminate.
+    {
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+        const CTime t0 = CTime::GetCurrentTime();
+        doc->m_tStatusTime  = t0 - 90L;     // 90 seconds ago
+        doc->m_tConnectTime = t0 - 3600L;   // an hour ago
+        child->UpdateStatusBar();
+
+        const wxString shown =
+            child->StatusPane(CWorldChildFrame::kStatusPaneTime);
+        check(shown == wxT("0:01:30"),
+              "status time pane counts from m_tStatusTime (90s -> 0:01:30)");
+        check(shown != wxT("1:00:00"),
+              "...and NOT from m_tConnectTime (which is an hour back here)");
+
+        // Game > Reset Connected Time, through the canonical doc command map
+        // -- the same route the menu item takes (wx_mfc_impl.cpp's table
+        // dispatches 33032 to the active doc via AfxDispatchCommand).
+        check(AfxDispatchCommand(doc, 0, ID_GAME_RESETCONNECTEDTIME),
+              "ID_GAME_RESETCONNECTEDTIME has a canonical handler to dispatch to");
+        child->UpdateStatusBar();
+        check(child->StatusPane(CWorldChildFrame::kStatusPaneTime) ==
+                  wxT("0:00:00"),
+              "Game > Reset Connected Time zeroes the pane (was: dead)");
+
+        // world.ResetStatusTime() is the scripting half of the same reset.
+        doc->m_tStatusTime = t0 - 90L;
+        child->UpdateStatusBar();
+        check(child->StatusPane(CWorldChildFrame::kStatusPaneTime) ==
+                  wxT("0:01:30"),
+              "...control: the pane is back to 90 seconds before the script call");
+        doc->ResetStatusTime();
+        child->UpdateStatusBar();
+        check(child->StatusPane(CWorldChildFrame::kStatusPaneTime) ==
+                  wxT("0:00:00"),
+              "world.ResetStatusTime() zeroes the pane too (was: dead)");
+
+        // Disconnected the pane is blank on both platforms, so the checks
+        // above cannot be passing because everything is blank.
+        doc->m_iConnectPhase = eConnectNotConnected;
+        child->UpdateStatusBar();
+        check(child->StatusPane(CWorldChildFrame::kStatusPaneTime).empty(),
+              "...and the pane is blank while not connected");
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

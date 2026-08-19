@@ -36,6 +36,7 @@
 #include "platform/selftest_support.h"   // plugin-loading fixture
 #include "platform/wx_mfc_hooks.h"    // g_wxhook_message_box
 #include "platform/wx_osx_text.h"     // wxOSXSmartSubstitutionsDisabled
+#include "pal/itransport.h"           // the recording transport below (F2/F9)
 
 #include <cstdio>
 #include <functional>
@@ -105,6 +106,21 @@ int swallow_message_box(const char* text, const char* /*caption*/, unsigned)
     printf("  (suppressed message box: %s)\n", text ? text : "");
     return IDOK;
 }
+
+// A pal::ITransport that just discards what is sent -- the same recipe
+// tests/test_connection.cpp's RecTransport and world_frame_selftest.cpp's
+// RecordingTransport use, headless.  Only needed so DoSendMsg's own
+// ConnectionOpen() gate does not swallow the F2/F9 checks below before they
+// reach the echo/log logic under test.
+struct RecordingTransport : pal::ITransport {
+    void resolve (const char*, pal::ResolveToken) override {}
+    void cancelResolve () override {}
+    void connect (unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send (const char*, size_t) override {}
+    void startTls (const pal::TlsParams&) override {}
+    void close () override {}
+    std::string lastErrorString () const override { return "rec"; }
+};
 
 } // namespace
 
@@ -273,6 +289,35 @@ int RunInputSelfTest()
     sendKey(inp, WXK_UP);
     chkStr(inp->GetValue(), "newer still",
            "Up from the start of the text still browses the history");
+
+    // ── arrows_change_history OFF must not swallow Ctrl+P too ──────────────
+    // The option is meant to free plain Up/Down for caret movement; it has no
+    // business also disabling Ctrl+P (remapped to WXK_UP just above, but with
+    // RawControlDown() still set on the event) -- Windows routes Ctrl+P through
+    // OnFileCtrlP, entirely outside the option.
+    {
+        const unsigned savedArrows = doc->m_bArrowsChangeHistory;
+        const BOOL     savedCtrlP  = doc->m_bCtrlPGoesToPreviousCommand;
+
+        child->addToCommandHistory("f3_older");
+        child->addToCommandHistory("f3_newest");
+
+        doc->m_bArrowsChangeHistory        = 0;
+        doc->m_bCtrlPGoesToPreviousCommand = TRUE;
+
+        sendKey(inp, 'X'); inp->Clear();   // restart the browse cursor
+        sendKey(inp, WXK_UP);
+        chkStr(inp->GetValue(), "",
+               "arrows_change_history OFF: a plain Up leaves the bar alone");
+
+        sendKey(inp, 'P', /*ctrl*/ true);
+        chkStr(inp->GetValue(), "f3_newest",
+               "...but Ctrl+P still reaches the history");
+
+        doc->m_bArrowsChangeHistory        = savedArrows;
+        doc->m_bCtrlPGoesToPreviousCommand = savedCtrlP;
+        sendKey(inp, 'X'); inp->Clear();   // restart the browse cursor for what follows
+    }
 
     // ── caret movement does not cancel a history browse ────────────────────
     // Every key that was not Up/Down or a bare modifier reset m_histIdx, so
@@ -562,6 +607,55 @@ int RunInputSelfTest()
         remove(pluginPath.c_str());
     }
 
+    // ── auto-repeat: the first Up must not re-show what's already on screen ─
+    // reenterForAutoRepeat puts the just-sent command back in the bar AFTER
+    // addToCommandHistory has already made it the newest entry, so an ordinary
+    // walk starting at "the newest entry" just re-displays the text already
+    // there.  Windows skips one further entry in exactly this state
+    // (sendvw.cpp:533-538).  Two DISTINCT commands, or Up would trivially find
+    // "the same" entry it started on and prove nothing.
+    {
+        const bool           savedRepeat     = doc->m_bAutoRepeat != 0;
+        const unsigned short savedArrows     = doc->m_bArrowsChangeHistory;
+        const BOOL           savedPartial    = doc->m_bArrowRecallsPartial;
+        const unsigned short savedAltPartial = doc->m_bAltArrowRecallsPartial;
+        doc->m_bArrowsChangeHistory    = 1;
+        doc->m_bArrowRecallsPartial    = 0;
+        doc->m_bAltArrowRecallsPartial = 0;
+        doc->m_bAutoRepeat             = 1;
+
+        auto pressEnter3 = [&]() {
+            wxCommandEvent enter(wxEVT_TEXT_ENTER, wxID_HIGHEST + 200 /*ID_INPUT*/);
+            enter.SetEventObject(inp);
+            child->GetEventHandler()->ProcessEvent(enter);
+        };
+
+        sendKey(inp, 'X'); inp->Clear();   // restart the browse cursor
+
+        inp->SetValue(wxT("f4_older"));
+        pressEnter3();
+        inp->SetValue(wxT("f4_newer"));
+        pressEnter3();
+        // The bar now holds "f4_newer", SELECTED -- auto-repeat's re-entry
+        // (reenterForAutoRepeat: SetSelection(-1,-1), "select all").  Collapse
+        // it first, as any caret-moving key (End, Right...) naturally would:
+        // the SEPARATE caret-edge gate (CommandCaretAtEdge(), added for a
+        // different bug) does not treat a full-string SELECTION as "at the
+        // edge", so an uncollapsed selection would block the Up before it
+        // ever reached the history-walk code this check is actually about.
+        inp->SetInsertionPointEnd();
+
+        sendKey(inp, WXK_UP);
+        chkStr(inp->GetValue(), "f4_older",
+               "auto repeat: the first Up reaches the OLDER command, not the "
+               "one already on screen");
+
+        doc->m_bAutoRepeat             = savedRepeat ? 1 : 0;
+        doc->m_bArrowsChangeHistory    = savedArrows;
+        doc->m_bArrowRecallsPartial    = savedPartial;
+        doc->m_bAltArrowRecallsPartial = savedAltPartial;
+    }
+
     // ── the password-prompt bar swap ───────────────────────────────────────
     // The MUD asks for a password with IAC WILL ECHO; the world timer polls
     // m_bNoEcho and swaps the visible bar for a masked one (and back).  Get it
@@ -653,6 +747,267 @@ int RunInputSelfTest()
         doc->m_bNoEcho = false;
         child->PollNoEcho();
         normal->Clear();
+    }
+
+    // ── the password bar-swap RACE: spell check, echo, log and history ─────
+    // m_bNoEcho is set the instant the telnet parser sees IAC WILL/WONT ECHO,
+    // but the visible swap to and from the masked bar happens in OnWorldTimer,
+    // up to 100 ms later.  In the window after the server restores echo, the
+    // flag is already false while the masked control is STILL on screen and
+    // still focused -- so any gate that tests the flag alone, rather than
+    // which CONTROL the text came from, misclassifies a password typed in
+    // that window as an ordinary command.  The four checks below drive that
+    // race directly: show the masked bar via PollNoEcho, then flip m_bNoEcho
+    // back to false WITHOUT polling again, exactly as a server that restores
+    // echo just before the port's next 100 ms tick would leave things.
+    {
+        wxTextCtrl* normal = child->NormalInputPublic();
+        wxTextCtrl* secret = child->PasswordInputPublic();
+
+        // ── F1: the spell-check gate ────────────────────────────────────────
+        {
+            const bool savedSpell = doc->m_bSpellCheckOnSend != 0;
+            doc->m_bSpellCheckOnSend = true;
+
+            doc->m_bNoEcho = true;
+            child->PollNoEcho();      // show the masked bar
+            doc->m_bNoEcho = false;   // ...then the race
+
+            installSpellChecker(spell_correct);
+            secret->SetValue(wxT("hunter2"));
+            {
+                wxCommandEvent enter(wxEVT_TEXT_ENTER);
+                enter.SetEventObject(secret);
+                secret->GetEventHandler()->ProcessEvent(enter);
+            }
+            chk(g_spellCalls == 0,
+                "F1: a password still in the masked bar is not spell-checked, "
+                "even with m_bNoEcho already false");
+
+            // Control: the identical press on the ORDINARY bar (not in the
+            // race) is still checked, so a handler that skips spell-check for
+            // everyone would pass the assertion above for the wrong reason.
+            doc->m_bNoEcho = false;
+            child->PollNoEcho();      // swap the ordinary bar back in
+            installSpellChecker(spell_correct);
+            normal->SetValue(wxT("teh"));
+            {
+                wxCommandEvent enter(wxEVT_TEXT_ENTER, wxID_HIGHEST + 200 /*ID_INPUT*/);
+                enter.SetEventObject(normal);
+                child->GetEventHandler()->ProcessEvent(enter);
+            }
+            chk(g_spellCalls == 1,
+                "...while the same press on the ordinary bar is");
+
+            doc->m_bSpellCheckOnSend = savedSpell;
+            normal->Clear();
+        }
+
+        // ── F2 / F9: echo/log suppression on the send path ──────────────────
+        // A "fake connection" (RecordingTransport) is needed here: DoSendMsg
+        // and Execute's empty-line arm both bail out via ConnectionOpen() /
+        // CheckConnected() before reaching the echo logic otherwise.
+        {
+            // DisplayMsg (which USER_INPUT echo goes through) is a no-op until
+            // m_LinePositions is allocated -- normally done at world load. This
+            // doc never went through that, so without this the LineList counts
+            // below never move either way and both assertions below would pass
+            // vacuously.
+            doc->SetUpOutputWindow();
+
+            RecordingTransport wire;
+            doc->m_pTransport       = &wire;
+            doc->m_iConnectPhase    = eConnectConnectedToMud;
+            doc->m_display_my_input = TRUE;
+
+            // F2: a NON-empty password, in the race (m_bNoEcho already false).
+            doc->m_bNoEcho = true;
+            child->PollNoEcho();      // show the masked bar
+            doc->m_bNoEcho = false;   // ...then the race
+
+            const long before = doc->m_LineList.GetCount();
+            secret->SetValue(wxT("hunter2"));
+            {
+                wxCommandEvent enter(wxEVT_TEXT_ENTER);
+                enter.SetEventObject(secret);
+                secret->GetEventHandler()->ProcessEvent(enter);
+            }
+            chk(doc->m_LineList.GetCount() == before,
+                "F2: a password typed in the race is not drawn to the output "
+                "pane (and so not written to the session log either)");
+
+            // Control: the identical text typed in the ordinary bar DOES draw
+            // a line, so a handler that suppresses ALL echo would pass the
+            // assertion above for the wrong reason.
+            doc->m_bNoEcho = false;
+            child->PollNoEcho();      // swap the ordinary bar back in
+            normal->SetValue(wxT("hunter2"));
+            {
+                wxCommandEvent enter(wxEVT_TEXT_ENTER, wxID_HIGHEST + 200 /*ID_INPUT*/);
+                enter.SetEventObject(normal);
+                child->GetEventHandler()->ProcessEvent(enter);
+            }
+            chk(doc->m_LineList.GetCount() > before,
+                "...while the same text typed in the ordinary bar is");
+
+            // F9: a BLANK Enter at a masked prompt.  No race needed here --
+            // m_bNoEcho stays TRUE throughout, which is exactly what exposed
+            // the bug: DoSendMsg (which the old code called directly) never
+            // tested m_bNoEcho at all, only SendMsg does.
+            doc->m_bNoEcho = true;
+            child->PollNoEcho();      // show the masked bar again
+
+            const long beforeBlank = doc->m_LineList.GetCount();
+            secret->Clear();
+            {
+                wxCommandEvent enter(wxEVT_TEXT_ENTER);
+                enter.SetEventObject(secret);
+                secret->GetEventHandler()->ProcessEvent(enter);
+            }
+            chk(doc->m_LineList.GetCount() == beforeBlank,
+                "F9: a blank Enter at a masked prompt draws no output line");
+
+            // Control: a blank Enter on the ordinary bar (connected, echo on)
+            // DOES draw a line (SendMsg's empty-list arm sends one blank
+            // line), so a handler that swallows every blank Enter would pass
+            // the assertion above for the wrong reason.
+            doc->m_bNoEcho = false;
+            child->PollNoEcho();      // swap the ordinary bar back in
+            normal->Clear();
+            {
+                wxCommandEvent enter(wxEVT_TEXT_ENTER, wxID_HIGHEST + 200 /*ID_INPUT*/);
+                enter.SetEventObject(normal);
+                child->GetEventHandler()->ProcessEvent(enter);
+            }
+            chk(doc->m_LineList.GetCount() > beforeBlank,
+                "...while the same blank Enter on the ordinary bar does");
+
+            doc->m_pTransport    = nullptr;
+            doc->m_iConnectPhase = eConnectNotConnected;
+        }
+
+        // ── F6: world.PushCommand() must not persist a password to disk ─────
+        // The same rule OnInputEnter's isPassword gate uses (m_history is
+        // persisted to a PLAINTEXT file at close, see :792-798), applied to
+        // PushCommand's own write into it.
+        {
+            // A password string not typed anywhere else in this file -- F2's
+            // own checks above push "hunter2" through the ORDINARY bar, and
+            // commandList(0) would still find that leftover entry and pass
+            // this check for the wrong reason.
+            doc->m_bNoEcho = true;
+            child->PollNoEcho();      // show the masked bar
+            secret->SetValue(wxT("f6_hunter3"));
+
+            std::string ret = child->pushCommand();
+            chk(ret == "f6_hunter3",
+                "F6: PushCommand still RETURNS the password text");
+
+            bool found = false;
+            for (const std::string& c : child->commandList(0))
+                if (c == "f6_hunter3") found = true;
+            chk(!found, "...but does not record it into the persisted history");
+
+            // Control: the identical text pushed from the ORDINARY bar IS
+            // recorded, so an implementation that records nothing at all
+            // would pass the assertion above for the wrong reason.
+            doc->m_bNoEcho = false;
+            child->PollNoEcho();      // swap the ordinary bar back in
+            normal->SetValue(wxT("look_f6"));
+
+            std::string ret2 = child->pushCommand();
+            chk(ret2 == "look_f6",
+                "...and the normal-bar push still returns its text");
+
+            bool found2 = false;
+            for (const std::string& c : child->commandList(0))
+                if (c == "look_f6") found2 = true;
+            chk(found2, "...and this one DOES get recorded");
+        }
+
+        // Leave the frame in the state the rest of the app expects.
+        doc->m_bNoEcho = false;
+        child->PollNoEcho();
+        normal->Clear();
+    }
+
+    // ── F7: SEND_NOW macros must (conditionally) enter the command history ──
+    // do_not_add_macros_to_command_history had no reader at all before this;
+    // an unfixed FireMacro leaves BOTH checks below finding nothing, so the
+    // second assertion needs the first one to have proven the wiring exists.
+    {
+        const CString        savedMac   = doc->m_macros[MAC_F7];
+        const unsigned short savedType  = doc->m_macro_type[MAC_F7];
+        const unsigned short savedDoNot = doc->m_bDoNotAddMacrosToCommandHistory;
+        doc->m_bOmitFromCommandHistory  = false;
+        doc->m_bNoEcho                  = false;
+        doc->m_macro_type[MAC_F7]       = SEND_NOW;
+
+        doc->m_bDoNotAddMacrosToCommandHistory = 0;
+        doc->m_macros[MAC_F7] = "f7_macro_on";
+        child->FireMacro(MAC_F7);
+        auto list1 = child->commandList(0);
+        chk(!list1.empty() && list1.front() == "f7_macro_on",
+            "F7: a SEND_NOW macro enters the command history by default");
+
+        doc->m_bDoNotAddMacrosToCommandHistory = 1;
+        doc->m_macros[MAC_F7] = "f7_macro_off";
+        child->FireMacro(MAC_F7);
+        bool foundOff = false;
+        for (const std::string& c : child->commandList(0))
+            if (c == "f7_macro_off") foundOff = true;
+        chk(!foundOff,
+            "...but not when do_not_add_macros_to_command_history is set");
+
+        doc->m_macros[MAC_F7]                  = savedMac;
+        doc->m_macro_type[MAC_F7]              = savedType;
+        doc->m_bDoNotAddMacrosToCommandHistory = savedDoNot;
+    }
+
+    // ── F8: Display > Clear Command History (ID_DISPLAY_CLEAR_COMMAND_HISTORY,
+    // 32343) -- the menu item itself is pinned in --menubar-selftest; this is
+    // the confirm-then-wipe handler, driven directly through the confirmation
+    // seam (g_wxhook_message_box) both ways, so a handler that wipes
+    // regardless of the answer fails the No arm rather than passing by luck.
+    {
+        int (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
+        static int s_clearAnswer  = IDNO;
+        static int s_clearPrompts = 0;
+        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+            ++s_clearPrompts;
+            return s_clearAnswer;
+        };
+
+        child->deleteCommandHistory();   // start from a known-empty state
+        child->addToCommandHistory("f8_one");
+        child->addToCommandHistory("f8_two");
+        chk(!child->commandList(0).empty(),
+            "F8: the history has entries to clear before the test starts");
+
+        s_clearAnswer  = IDNO;
+        s_clearPrompts = 0;
+        child->ClearCommandHistory();
+        chk(s_clearPrompts == 1, "...ClearCommandHistory asks for confirmation");
+        chk(!child->commandList(0).empty(),
+            "...and answering No leaves the history alone");
+
+        s_clearAnswer = IDYES;
+        child->ClearCommandHistory();
+        chk(s_clearPrompts == 2, "...asks again");
+        chk(child->commandList(0).empty(),
+            "...and answering Yes empties the in-memory history");
+
+        const std::string& histPath = child->HistoryFilePath();
+        if (!histPath.empty()) {
+            if (FILE* f = fopen(histPath.c_str(), "rb")) {
+                fseek(f, 0, SEEK_END);
+                const long sz = ftell(f);
+                fclose(f);
+                chk(sz == 0, "...and the persisted history file is emptied too");
+            }
+        }
+
+        g_wxhook_message_box = savedMB;
     }
 
     // ── BUG-2 (GUI drive run 2026-08-12/13): the command-bar Ctrl+click ────

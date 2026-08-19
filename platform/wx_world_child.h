@@ -370,6 +370,7 @@ public:
     void RepeatLastCommand();     // Input ▸ Repeat Last Command
     void RecallLastWord();        // Edit ▸ Recall Last Word (also Ctrl+Backspace)
     void ShowCommandHistory();    // Input ▸ Command History (pick a past command)
+    void ClearCommandHistory();   // Display ▸ Clear Command History (confirm, then wipe)
     void HighlightSelectedWord(); // Display ▸ Highlight Word (canonical dialog → trigger)
     void MakeMultiLineTrigger();  // Display ▸ Multi-Line Trigger (canonical dialog → trigger)
     void GotoMatchingBrace(bool select); // Edit ▸ Go To / Select To Matching Brace (input bar)

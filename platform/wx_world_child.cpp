@@ -2648,6 +2648,28 @@ void CWorldChildFrame::ShowCommandHistory()
     }
 }
 
+// Display ▸ Clear Command History (ID_DISPLAY_CLEAR_COMMAND_HISTORY, 32343).
+// Windows carries this on CSendView (sendvw.cpp:2001-2016), which the port
+// never constructs, so before this there was no UI route to emptying the
+// persistent per-world history file at all — only a script calling
+// world.DeleteCommandHistory() could.  Same Yes/No confirmation, naming the
+// entry count, then the same wipe deleteCommandHistory() already does for
+// that scripting call.
+//
+// ::UMessageBox rather than wxMessageBox: it is the seam (g_wxhook_message_box)
+// the rest of the app's prompts use, and the only way an automated test can
+// answer one — see the OnClose comment above for the fuller explanation.
+void CWorldChildFrame::ClearCommandHistory()
+{
+    char msg[128];
+    snprintf(msg, sizeof(msg),
+             "Are you SURE you want to clear all %d commands you have typed?",
+             (int) m_history.size());
+    if (::UMessageBox(msg, MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION,
+                      "Command History") == IDYES)
+        deleteCommandHistory();
+}
+
 void CWorldChildFrame::HighlightSelectedWord()
 {
     if (!m_doc || !m_output) return;
@@ -3532,15 +3554,11 @@ bool CWorldChildFrame::AltArrowRecall(bool bUp)
 // DoCommand still returned eOK while nothing happened.  The command-id route
 // into here is in platform/wx_mfc_impl.cpp's frame menu handler.
 //
-// NOT reproduced from SendMacro, deliberately, both pending item 23:
+// NOT reproduced from SendMacro, deliberately, pending item 23:
 //   * REPLACE_COMMAND does not call CheckTyping (the
 //     confirm_before_replacing_typing prompt).  That option defaults TRUE and
 //     the port has no m_bChanged to tell user-typed text from script-placed
 //     text, so wiring it naively would pop a modal on nearly every macro.
-//   * SEND_NOW does not add to the command history.  Windows gates that on
-//     !m_bDoNotAddMacrosToCommandHistory; the port's history has different
-//     password rules and persists to a plaintext file, so that belongs with the
-//     rest of the history work, not here.
 bool CWorldChildFrame::FireMacro(int idx)
 {
     if (!m_doc) return false;
@@ -3574,6 +3592,16 @@ bool CWorldChildFrame::FireMacro(int idx)
         m_doc->m_iExecutionDepth = 0;
         m_doc->Execute(cmd);
         m_doc->m_iCurrentActionSource = eUnknownActionSource;
+        // Record AFTER Execute, matching OnInputEnter's history add
+        // (sendvw.cpp:736 does the same, after its own Execute) --
+        // m_bOmitFromCommandHistory is set by evaluate.cpp while an alias with
+        // "omit from command history" is being evaluated, so it does not exist
+        // yet before this call.  Gated on the option Windows uses for macros
+        // specifically (m_bDoNotAddMacrosToCommandHistory, sendvw.cpp:775) plus
+        // the two rules every other history add on this port already applies.
+        if (!m_doc->m_bDoNotAddMacrosToCommandHistory &&
+            !m_doc->m_bOmitFromCommandHistory && !m_doc->m_bNoEcho)
+            addToCommandHistory(mac);
         m_doc->UpdateAllViews(nullptr);
         break;
     }
@@ -4062,11 +4090,21 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // "Arrow keys traverse command history" (m_bArrowsChangeHistory).  When the
     // user turns this off they want Up/Down to move the caret instead, so fall
     // through to the text control rather than browsing history.
-    if (code == WXK_UP && inp == m_input && m_doc && !m_doc->m_bArrowsChangeHistory) {
+    //
+    // Restricted to a PLAIN arrow -- Windows' PreTranslateMessage arm gates
+    // Alt+Arrow on this option too (sendvw.cpp:1704/1730), but by the time
+    // control reaches here Ctrl+P/Ctrl+N have already been remapped to
+    // WXK_UP/WXK_DOWN (just above), and Windows routes those through
+    // OnFileCtrlP/OnFileCtrlN, entirely outside the option.  Swallowing them
+    // here as well killed both remaps whenever the user turned the option off,
+    // leaving only the port's own Ctrl+R history search still working.
+    if (code == WXK_UP && inp == m_input && m_doc && !m_doc->m_bArrowsChangeHistory &&
+        !evt.AltDown() && !evt.RawControlDown()) {
         evt.Skip();
         return;
     }
-    if (code == WXK_DOWN && inp == m_input && m_doc && !m_doc->m_bArrowsChangeHistory) {
+    if (code == WXK_DOWN && inp == m_input && m_doc && !m_doc->m_bArrowsChangeHistory &&
+        !evt.AltDown() && !evt.RawControlDown()) {
         evt.Skip();
         return;
     }
@@ -4150,7 +4188,18 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             // browse, so the park-then-wrap pair below always needs two presses.
             m_histParked = eHistNotParked;
             m_histSaved  = m_input->GetValue();
-            m_histIdx    = (int) m_history.size() - 1;   // newest
+            // Auto-repeat (m_bAutoRepeat) re-enters the just-sent command in the
+            // bar, selected, once addToCommandHistory has already made it the
+            // newest entry -- so a fresh walk starting at the newest entry just
+            // re-shows the command already on screen.  Windows skips one further
+            // entry in exactly this state (sendvw.cpp:533-538:
+            // m_HistoryPosition && !strCommand.IsEmpty() && m_bAutoRepeat &&
+            // m_iHistoryStatus == eAtBottom) so the first Up reaches something
+            // new.
+            if (m_doc->m_bAutoRepeat && !m_histSaved.empty() && m_history.size() >= 2)
+                m_histIdx = (int) m_history.size() - 2;   // skip the re-entered one
+            else
+                m_histIdx = (int) m_history.size() - 1;   // newest
         } else {
             const int found = m_histIdx - 1;             // next older
             if (found < 0) {
@@ -4703,6 +4752,22 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     } asGuard { m_doc };
     m_doc->m_iCurrentActionSource = eUserTyping;
 
+    // Don't record passwords in history, or write them to the log, or spell
+    // check them.
+    //
+    // Ask WHICH CONTROL the text came from, not just what the echo flag says
+    // right now.  m_bNoEcho is set the instant the telnet parser sees IAC
+    // WILL/WONT ECHO, but the visible swap to and from the masked bar happens in
+    // OnWorldTimer, up to 100 ms later.  In the window after the server restores
+    // echo, the flag is already false while the masked control is still on screen
+    // and still focused — so text the user typed as a password would have been
+    // classified as an ordinary command.  Testing the control closes that window;
+    // the flag stays in the test as well, so a masked prompt is still recognised
+    // in the moment before the swap.  Computed up front because the spell-check
+    // block below needs it too — it used to test m_bNoEcho alone and so missed
+    // exactly that window.
+    bool isPassword = (inp == m_inputPassword) || m_doc->m_bNoEcho;
+
     // "Spell check on send" (m_bSpellCheckOnSend): check the line before it goes
     // anywhere, then re-read the possibly-corrected text.  Mirrors sendvw.cpp:329.
     // Collapse any selection first so SpellCheckInput checks the whole line, and
@@ -4714,7 +4779,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     //     before it ran.  Windows skips the check entirely for those lines.
     //   * CANCELLING the suggestion dialog still sent the line.  On Windows
     //     `if (!bOK) return;` aborts the send and leaves the text in the bar.
-    if (m_doc->m_bSpellCheckOnSend && !m_doc->m_bNoEcho &&
+    if (m_doc->m_bSpellCheckOnSend && !isPassword &&
         !m_doc->IsScriptPrefixCommand(CString(inp->GetValue().ToUTF8().data()))) {
         inp->SetSelection(0, 0);
         if (!SpellCheckInput())
@@ -4728,19 +4793,6 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     wxString text = inp->GetValue();
     m_histIdx = -1; ApplyHistRSearch(false);   // exit history browsing on send
     m_histParked = eHistNotParked;             // ...and forget any parked end
-
-    // Don't record passwords in history, or write them to the log.
-    //
-    // Ask WHICH CONTROL the text came from, not just what the echo flag says
-    // right now.  m_bNoEcho is set the instant the telnet parser sees IAC
-    // WILL/WONT ECHO, but the visible swap to and from the masked bar happens in
-    // OnWorldTimer, up to 100 ms later.  In the window after the server restores
-    // echo, the flag is already false while the masked control is still on screen
-    // and still focused — so text the user typed as a password would have been
-    // classified as an ordinary command.  Testing the control closes that window;
-    // the flag stays in the test as well, so a masked prompt is still recognised
-    // in the moment before the swap.
-    bool isPassword = (inp == m_inputPassword) || m_doc->m_bNoEcho;
 
     // History is recorded at the END of this function, not here.  Windows
     // orders it that way (sendvw.cpp:736, AFTER Execute) for three reasons the
@@ -4863,10 +4915,27 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
         // happens to start with the script prefix through the script engine.
         // It also has no way to carry bOmitFromLog, so the password would be
         // written to the session log.  Keep the direct path for this case.
+        //
+        // SendMsg's only echo guard is `if (m_bNoEcho) bEcho = false;`
+        // (doc_shared.cpp), which is exactly the flag the comment above isPassword
+        // warns can already have gone false while the masked bar is still up (the
+        // bar-swap race).  Force it true across the send so a password typed in
+        // that window is neither drawn nor written to the port's session log, then
+        // restore it -- the mirror image of pal/win_worldview.cpp's pushCommand,
+        // which forces the flag FALSE across its own AddToCommandHistory so the
+        // command it deliberately wants to keep is not swallowed by echo-off.
+        bool bSaveNoEcho = m_doc->m_bNoEcho;
+        m_doc->m_bNoEcho = true;
         if (cmd.IsEmpty())
-            m_doc->DoSendMsg(cmd, m_doc->m_display_my_input, !bOmitFromLog);
+            // DoSendMsg is not to be called directly (its own header says so) --
+            // it skips SendMsg's no-echo test and the speed-walk queue branch, so
+            // a blank Enter at a masked prompt drew (and logged) an empty
+            // USER_INPUT line even with echo suppressed.  Go through SendMsg, as
+            // methods_commands.cpp:301 does for the same blank-line case.
+            m_doc->SendMsg(ENDLINE, m_doc->m_display_my_input, false, !bOmitFromLog);
         else
             m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmitFromLog);
+        m_doc->m_bNoEcho = bSaveNoEcho;
     } else {
         // Everything else goes through the canonical engine entry point, which
         // the port previously bypassed entirely by calling EvaluateCommand
@@ -5645,7 +5714,15 @@ std::string CWorldChildFrame::pushCommand()
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return {};
     std::string text(inp->GetValue().ToUTF8());
-    if (!text.empty()) {
+    // Never record while echo is off -- the same rule the Return path and the
+    // double-click-send path use, and the same reason: this port persists
+    // m_history to a PLAINTEXT file at close (see :792-798), so a plugin
+    // calling PushCommand while the masked password bar is up must not write
+    // it to disk.  Windows' own PushCommand deliberately does the opposite --
+    // it forces m_bNoEcho false around the equivalent AddToCommandHistory call
+    // (pal/win_worldview.cpp) -- but its history is RAM-only, so that is not a
+    // rule to follow here.
+    if (!text.empty() && inp != m_inputPassword && !m_doc->m_bNoEcho) {
         wxString wxText = wxString::FromUTF8(text.c_str());
         if (m_history.empty() || m_history.back() != wxText)
             m_history.push_back(wxText);

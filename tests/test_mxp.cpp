@@ -1726,6 +1726,56 @@ TEST(MxpR4, OpenTagVetoDoesNotLeakTheArgumentList)
 }
 #endif
 
+// mxpStart.cpp: MXP_StartTag's custom-element expansion path builds a LOCAL
+// CArgumentList (BuiltArgumentList) of new CArgument nodes as it substitutes
+// entities into each atomic item's arguments.  The "No closing ';' in MXP
+// element argument" error return in that loop used to leave WITHOUT a
+// DELETE_LIST(BuiltArgumentList), so every CArgument already added leaked --
+// and because BuiltArgumentList is a stack local (not the function-static
+// ArgumentList the F21 drains covered), no later call ever frees it: this
+// leak is PERMANENT and accumulates.
+//
+// Isolate it with a differential rather than a zero-delta bracket, because a
+// custom tag legitimately allocates a style and an outstanding-tag record
+// before it reaches the failing atom loop.  Both tags below are custom,
+// non-command, and hit the SAME error return; they differ only in that
+// <boomleak>'s <font> atom has a well-formed argument (color=red) BEFORE the
+// unterminated-entity one (back="&x"), so one CArgument is added to the built
+// list before the abort, whereas <boombare>'s very first atom argument is the
+// malformed one, so its built list is still empty at the abort.  Every other
+// allocation (style, active tag, the identical MXP_error message on "&x") is
+// the same, so with the drain in place the two calls change the heap by the
+// same amount; without it, <boomleak> leaks the extra CArgument and its
+// per-call delta is strictly larger.  (live_heap_blocks() is exact per the
+// note on the helper.)
+TEST(MxpR4, CustomElementArgumentAbortDoesNotLeakTheBuiltList)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    doc.m_iMXPdebugLevel = DBG_NONE;   // keep MXP_error's notepad append out
+                                       // of the heap measurement
+
+    mud(doc, "<!ELEMENT boombare '<font back=\"&x\">'>");
+    mud(doc, "<!ELEMENT boomleak '<font color=red back=\"&x\">'>");
+
+    // warm each tag path once (first use of a line/style can allocate one-off
+    // scaffolding that would otherwise land in the measured call)
+    mud(doc, "<boombare>");
+    mud(doc, "<boomleak>");
+
+    size_t b1 = live_heap_blocks();
+    mud(doc, "<boombare>");
+    size_t bareDelta = live_heap_blocks() - b1;
+
+    size_t b2 = live_heap_blocks();
+    mud(doc, "<boomleak>");
+    size_t leakDelta = live_heap_blocks() - b2;
+
+    // with BuiltArgumentList drained the extra good argument is freed on the
+    // way out and the deltas match; without it, boomleak leaks it
+    EXPECT_EQ(bareDelta, leakDelta);
+}
+
 // ── round 5: phase-machine abort arms, script discard, wrapped links ──────
 
 // A carriage return inside an MXP element aborts it: "got <NEWLINE>".

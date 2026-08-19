@@ -81,6 +81,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 70 | MCCP compression-start `memmove` into `m_CompressInput` has no size guard, overflowing the buffer when the post-`SE` remainder exceeds `COMPRESS_BUFFER_LENGTH` | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (`Phase_COMPRESS_WILL` / `Phase_SUBNEGOTIATION_IAC`) |
 | 71 | `/triggerlist`, `/aliaslist`, `/variablelist` and `/acceleratorlist` compute their truncation width as `(m_nWrapColumn - N)` with no floor, so a narrow wrap column drives it to zero or negative and `CString::Left` (which clamps `n<=0` to empty) prints a bare `"..."` for every entry | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` (triggerlist/aliaslist/variablelist/acceleratorlist) |
 | 72 | `strnrchr` never increments its counter (`while (*s && n < count++)`), so it ignores the `count` length bound and scans to the first NUL; both MXP `<P>`-mode callers pass `m_pCurrentLine->text`, a `CLine` buffer of exactly `len` bytes with no NUL terminator, so a hostile long line with no space reads past `len` into uninitialised heap (and possibly past the allocation) | `6491c97` | utilities_shared.cpp `strnrchr`; doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (MXP `<P>` last-space scan) |
+| 73 | MXP's malformed-tag/definition error returns leak their argument lists: `MXP_StartTag`'s custom-element expansion drops the LOCAL `BuiltArgumentList` (the `CArgument` nodes already built for the tag) on an unterminated-entity abort, and both it and `MXP_Element` skip `DELETE_LIST` on their function-static `ArgumentList` on several early returns | this commit | mxpStart.cpp `CMUSHclientDoc::MXP_StartTag`; mxpDefs.cpp `CMUSHclientDoc::MXP_Element` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1494,3 +1495,24 @@ paragraph-mode space collapsing.
 **Fix:** increment the counter, not the bound (`while (*s && n++ < count)`), so
 the scan stops at `count`. Shared since the `Utilities.cpp` original; covered by
 a mutation-verified test in `tests/test_utilities.cpp`.
+
+## 73 — MXP argument-list early returns leak their CArgument nodes (this commit)
+**Bug:** `CArgumentList` is a `CTypedPtrList` whose destructor frees only its
+list nodes, not the `CArgument*` pointees — those are freed explicitly with
+`DELETE_LIST`. Several MXP error returns skipped it. In `MXP_StartTag`'s
+user-defined-element expansion the "No closing ';' in MXP element argument"
+abort (`mxpStart.cpp`) returned without draining the LOCAL `BuiltArgumentList`,
+so every `CArgument` already built for that tag leaked — and because it is a
+stack local, not the function-static list, no later call ever reclaims it: a
+permanent, attacker-reachable leak (define e.g. `<!ELEMENT boom '<font color=red
+back="&x">'>`, then `<boom>` leaks the `color=red` argument). The same
+function's atomic-path entity abort, and `MXP_Element`'s eight
+malformed-definition returns plus its bad-attribute return, likewise skipped
+`DELETE_LIST` on their function-static `ArgumentList` (which the next call's
+`BuildArgumentList` drains, so latent unless MXP is then left idle). This
+completes the class F21 (`0dae192`) fixed for the neighbouring returns.
+**Fix:** `DELETE_LIST` the appropriate list(s) before each of these returns —
+`BuiltArgumentList` and the static `ArgumentList` at the custom-element abort,
+and the static `ArgumentList` at the atomic abort and every `MXP_Element` early
+return. Covered by `MxpR4.CustomElementArgumentAbortDoesNotLeakTheBuiltList` in
+`tests/test_mxp.cpp` (a differential live-heap-blocks test, mutation-verified).

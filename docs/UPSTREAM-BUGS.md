@@ -100,6 +100,7 @@ patches upstream, not as a claim that this tree fixed it.
 | 83 | `L_ReplaceNotepad` pushes its success boolean and then `return 0;` — zero result fields — so Lua callers get nil while the dispatch map hands every other engine the `VT_BOOL` `mushclient.odl` declares; it was the only push-with-`return 0` body in the file | `203c0fe` | lua_methods.cpp `L_ReplaceNotepad` |
 | 84 | `GetLineInfo(n).time` builds its field as `(int) m_theTime.GetTime()`, truncating a 64-bit `time_t`, so every line's timestamp comes back negative from 2038-01-19 03:14:08 UTC | `43e27b8` | lua_methods.cpp `L_GetLineInfo` (table form) |
 | 85 | `MXP_StartTag` records a built-in tag as open — an active-list entry plus a `START_TAG` marker style — before `MXP_OpenAtomicTag` asks the veto, and nothing unwinds it, so a vetoed tag stays on the active list: a spurious `StartNewLine` from its close, a swallowed outstanding-tag warning, a close-tag callback for an open that was suppressed, and a vetoed `<send>` rewriting the enclosing anchor's action | `3095c2a` | mxpStart.cpp `CMUSHclientDoc::MXP_StartTag`; mxpOpenAtomic.cpp `CMUSHclientDoc::MXP_OpenAtomicTag` |
+| 86 | `calculate_line_and_column`'s two UTF-8 fix-ups disagree about direction — the first walks **forward** to the next character's lead byte (`col++`) where the half-way arm below walks **backward** (`col--`) — so the two arms can resolve the same click to different characters, and a click just left of a multi-byte character selects one too far right | not fixed (needs a Windows run) | mushview.cpp `CMUSHView::calculate_line_and_column` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1984,3 +1985,33 @@ Covered by the atomic-veto battery added in `4f4b667`, which closed a real gap: 
 had a Lua fixture whose `OnOpen` already returned `name == 'suppressme'`, but nothing
 ever sent `<suppressme>`, so the atomic-veto branch had **zero** coverage at HEAD. See
 `docs/WINDOWS-VALIDATION.md` §4c-duodequadragies.
+
+## 86 — The two UTF-8 click fix-ups walk in opposite directions (not fixed; needs a Windows run)
+**Bug:** `CMUSHView::calculate_line_and_column` corrects a click that lands mid-character
+twice, and the two corrections disagree. The first, right after `col--` makes the column
+zero-relative (`mushview.cpp:1927-1932`), walks **forward** to the next character's lead
+byte:
+
+```cpp
+  if (pDoc->m_bUTF_8)
+    while ((col > 0) && (col < pLine->len) && (pLine->text [col] & 0xC0) == 0x80)
+      col++;
+```
+
+The half-way arm below it (`:1943-1947`), reached when the click is past the midpoint of
+the character and `bHalfWay` is set, walks **backward** with `col--`. So on Windows the
+same click can resolve to different characters depending on which arm runs, and a click
+just left of a multi-byte character selects one too far right.
+
+**Not fixed, on either platform.** `CMUSHView` is never constructed on the port, so the
+change is unverifiable from this side — nothing here can observe the defect or a fix for
+it. Correcting it is a single token (`col++` -> `col--`) in canonical `mushview.cpp`, but
+editing sacred upstream code on evidence this platform cannot produce is exactly the kind
+of change the project has learned not to make from reading alone. It needs a Windows run
+to confirm the misresolution, and then a call.
+
+**What a Windows run has to show:** in a UTF-8 world, click just to the left of a
+multi-byte character (an accented letter or a box-drawing glyph) and start a drag
+selection. The selection should begin at that character, not one to its right. Compare
+against a click past the character's midpoint, which takes the backward arm and is
+believed correct. Recorded as `docs/DECISION-QUEUE-2026-08.md` D-26.

@@ -184,6 +184,9 @@ public:
     // harnesses (CLAUDE.md's structural hazard), so pixel assertions call the
     // engine-shaped function directly — the composite-selftest pattern.
     void RenderLineForTest(wxDC& dc, int lineIdx, int yOff);
+    // ...and the same for the in-progress (pending) row: it is drawn by its own
+    // pass, so RenderLineForTest cannot reach it.
+    void RenderPendingRowForTest(wxDC& dc, int yOff);
 
     // World option line_spacing: the row pitch in pixels, or 0 to derive it
     // from the font's own height.  Windows applies this in ChangeFont
@@ -728,7 +731,9 @@ public:
     // buffer, pane, find state).  Ctrl+L and the context-menu item route here
     // rather than calling ClearOutput() directly: clearing the pane behind the
     // engine's back leaves world.GetLinesInBufferCount() counting the cleared
-    // lines, and RebuildOutputView (any palette change) puts them all back.
+    // lines, and the engine still holds them — so the next thing to re-read a
+    // line (the pull path's fetch, or a RebuildOutputView re-emit) puts them
+    // all back.
     // Wired by CWorldChildFrame; if unwired, the pane-only clear is the
     // fallback so a pane with no frame is still usable.
     std::function<void()> m_fn_clear_output_buffer;
@@ -781,6 +786,11 @@ private:
 
     void DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
                       const SOutputRun& run, bool selected);
+
+    // Draw the in-progress (pending) row at yOff, dimmed toward the pane
+    // background.  Its own pass rather than a DrawLine call: the row has no
+    // index, no wrap row and no selection, and it is not in m_lines.
+    void DrawPendingRow(wxDC& dc, int yOff);
 
     // ── Scroll ────────────────────────────────────────────────────────────────
     void OnScrollWinUpdate(wxScrollWinEvent& evt);

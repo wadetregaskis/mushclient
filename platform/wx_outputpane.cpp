@@ -517,7 +517,15 @@ void COutputPane::AppendLine(SOutputLine&& line)
     // line the wrap cache actually needs.  The push still happens: it is how
     // the pane learns a line exists and how wide it is.
     const SOutputLine& loggedLine = m_fn_fetch_line ? line : (m_lines.push_back(std::move(line)), m_lines.back());
-    ++m_bufferGen; InvalidateLineCache();
+    // The find cache is content-keyed, so it does have to go (m_bufferGen).  The
+    // LINE cache is keyed by index, and a tail append shifts no index, so it
+    // does NOT: it used to be dropped here as well, which meant that during
+    // continuous output -- i.e. whenever a MUD is talking -- no cached
+    // conversion ever survived from one paint to the next and every paint
+    // re-materialised the whole viewport from its CLines.  Every path that DOES
+    // shift indices invalidates for itself (DropFrontLines, DeleteTailLines,
+    // SetMaxLines, ClearOutput), and SetBookmark erases just the one entry.
+    ++m_bufferGen;
 
     // Trim the front back to what the pane should be holding.  -1 = unlimited
     // (max_output_lines 0 in the push model), so nothing is ever dropped.
@@ -1533,33 +1541,8 @@ void COutputPane::OnPaint(wxPaintEvent&)
         int pendingY = pal::clampToDeviceExtent(
                            pal::rowsToPixels(m_totalVisualRows, m_lineH));
         int clientTop = scrollY * unitH;
-        if (pendingY >= clientTop && pendingY < clientTop + clientH) {
-            dc.SetFont(m_font);
-            // Draw each run of the pending line at reduced opacity by blending
-            // the foreground halfway toward the background (gives a dim look).
-            int x = 0;
-            for (const auto& run : m_pendingLine) {
-                if (run.text.empty()) continue;
-                // Dim the fg colour: blend 50% toward bg.
-                auto blend = [](uint8_t fg, uint8_t bg) -> uint8_t {
-                    return (uint8_t)((int(fg) + int(bg)) / 2);
-                };
-                uint8_t bgR = GetRValue(m_bgColor), bgG = GetGValue(m_bgColor),
-                        bgB = GetBValue(m_bgColor);
-                wxColour fg(blend(GetRValue(run.fg), bgR),
-                            blend(GetGValue(run.fg), bgG),
-                            blend(GetBValue(run.fg), bgB));
-                wxColour bg(bgR, bgG, bgB);
-                dc.SetTextForeground(fg);
-                dc.SetTextBackground(bg);
-                dc.SetBackgroundMode(wxSOLID);
-                wxString text = DecodeRunText(run);
-                dc.DrawText(text, x, pendingY);
-                wxCoord tw, th;
-                dc.GetTextExtent(text, &tw, &th);
-                x += tw;
-            }
-        }
+        if (pendingY >= clientTop && pendingY < clientTop + clientH)
+            DrawPendingRow(dc, pendingY);
     }
 
     if (trActive)
@@ -1606,6 +1589,52 @@ void COutputPane::OnPaint(wxPaintEvent&)
     }
 }
 
+// ── DrawPendingRow ────────────────────────────────────────────────────────────
+// The in-progress row, drawn through the same DrawRunChunk every committed line
+// goes through.
+//
+// It used to be hand-painted here -- one DrawText per run, advancing x by the
+// font's natural extents -- which quietly dropped everything DrawRunChunk
+// carries: the run's own BACKGROUND colour (the fill was always the pane's),
+// the bold / italic / underline font variant, the strikethrough rule, and the
+// fixed character-cell grid.  A prompt is exactly the kind of line a MUD
+// colours, so the dim row disagreed with the committed line it turned into a
+// moment later, and its glyphs sat off the grid the selection rectangle and
+// click hit-testing are computed on.
+//
+// The dim itself is port design (Windows draws its in-progress line like any
+// other) and is kept: blend both colours halfway toward the pane background.
+// That is done to a COPY of the run rather than through m_paintOpacity, because
+// the opacity is TranslateColour's and scales toward BLACK -- which on a
+// light-background world would darken the row and paint a grey band behind it
+// instead of fading it out.
+void COutputPane::DrawPendingRow(wxDC& dc, int yOff)
+{
+    // m_paintOpacity is DrawLine's scratch state and still holds whatever the
+    // last line painted with.  The pending row is the newest content there is,
+    // so it never fades.
+    m_paintOpacity = 1.0;
+
+    const int bgR = GetRValue(m_bgColor), bgG = GetGValue(m_bgColor),
+              bgB = GetBValue(m_bgColor);
+    auto dim = [&](uint32_t c) -> uint32_t {
+        return RGB((GetRValue(c) + bgR) / 2,
+                   (GetGValue(c) + bgG) / 2,
+                   (GetBValue(c) + bgB) / 2);
+    };
+
+    int x = 0;
+    for (const auto& run : m_pendingLine) {
+        const wxString text = DecodeRunText(run);
+        if (text.IsEmpty()) continue;
+        SOutputRun dimmed = run;          // colours only; every flag rides along
+        dimmed.fg = dim(run.fg);
+        dimmed.bg = dim(run.bg);
+        DrawRunChunk(dc, text, x, yOff, dimmed, false);
+        x += (int) text.length() * m_charW;
+    }
+}
+
 // ── DrawLine ──────────────────────────────────────────────────────────────────
 
 // See the header: the OnInit-scoped selftests can never receive a paint, so
@@ -1613,6 +1642,13 @@ void COutputPane::OnPaint(wxPaintEvent&)
 void COutputPane::RenderLineForTest(wxDC& dc, int lineIdx, int yOff)
 {
     DrawLine(dc, lineIdx, yOff);
+}
+
+// ...and the same for the in-progress row, which no committed-line render can
+// reach.
+void COutputPane::RenderPendingRowForTest(wxDC& dc, int yOff)
+{
+    DrawPendingRow(dc, yOff);
 }
 
 void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)

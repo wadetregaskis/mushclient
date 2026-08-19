@@ -55,6 +55,16 @@ static std::vector<SOutputLine> committed(const FakeWorldView& v)
     return out;
 }
 
+// the in-progress prompt row, in emission order — the counterpart of
+// committed().  Its EMPTINESS is meaningful: an empty pending line is how the
+// drain says the row has gone away.
+static std::vector<SOutputLine> pending_only(const FakeWorldView& v)
+{
+    std::vector<SOutputLine> out;
+    for (const auto& l : v.lines) if (l.pending) out.push_back(l);
+    return out;
+}
+
 static void feed(CMUSHclientDoc& doc, const char* bytes)
 {
     doc.DisplayMsg(bytes, (int)strlen(bytes), 0);
@@ -553,6 +563,55 @@ TEST(PalWorldView, PromptWithoutNewlineEmittedAsPendingRow)
     EXPECT_STREQ("> ", line_text(done[0]).c_str());   // same text, committed
 }
 
+// ...and the row can GO AWAY without a completed line replacing it: a '\r'
+// under carriage_return_clears_line empties the current line in place
+// (doc_shared.cpp), so nothing is committed and the view's only other way of
+// dropping the row never fires.  The drain has to say so itself, or the partial
+// text keeps painting as a dim ghost row until some later line happens to land.
+TEST(PalWorldView, AnEmptiedPromptIsEmittedAsAnEmptyPendingRow)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+    doc.m_bCarriageReturnClearsLine = TRUE;
+
+    feed(doc, "HP:100 > ");                       // prompt, no newline
+    auto shown = pending_only(view);
+    ASSERT_EQ(1u, (unsigned)shown.size());
+    EXPECT_STREQ("HP:100 > ", line_text(shown[0]).c_str());
+
+    feed(doc, "\r");                              // empties the line in place
+    auto after = pending_only(view);
+    ASSERT_EQ(2u, (unsigned)after.size());        // the clear is an EMISSION…
+    EXPECT_TRUE(after[1].empty());                // …carrying no runs
+    EXPECT_EQ(0u, (unsigned)committed(view).size());   // and nothing was committed
+
+    // An idle drain stays silent: with no row on screen there is nothing to
+    // clear, so the 100 ms world timer must not emit a fresh empty row per tick.
+    doc.UpdateAllViews(nullptr);
+    doc.UpdateAllViews(nullptr);
+    EXPECT_EQ(2u, (unsigned)pending_only(view).size());
+}
+
+// The control for the test above: with carriage_return_clears_line OFF the same
+// '\r' leaves the prompt alone, so what is being asserted there is the CLEAR
+// and not merely a drain that emitted nothing new.
+TEST(PalWorldView, ACarriageReturnKeepsThePromptWhenTheOptionIsOff)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+    doc.m_bCarriageReturnClearsLine = FALSE;
+
+    feed(doc, "HP:100 > ");
+    feed(doc, "\r");
+
+    auto after = pending_only(view);
+    ASSERT_TRUE(!after.empty());
+    EXPECT_FALSE(after.back().empty());
+    EXPECT_STREQ("HP:100 > ", line_text(after.back()).c_str());
+}
+
 // doc_display_shared.cpp: "MUSHclient maps BLINK → italic [run.italic =
 // (pStyle->iFlags & BLINK) != 0]" — ANSI SGR 5 comes out the seam as italic.
 TEST(PalWorldView, BlinkFlagEmitsItalicRun)
@@ -683,9 +742,13 @@ TEST(PalWorldView, BookmarkEmitsThroughTheSeam)
     EXPECT_EQ(2u, (unsigned)view.bookmarks.size());
 }
 
-// The flag rides out with the line, so a view that re-reads the buffer
-// (RebuildOutputView, e.g. after a palette change) gets the bookmarks back
-// without saving and restoring them itself.
+// The flag rides out with the line, so a view that re-reads the buffer gets the
+// bookmarks back without saving and restoring them itself.
+//
+// RebuildOutputView is the exerciser: it has had no production caller since a
+// palette change started recolouring in place, but it is the only thing that
+// drives the EmitClearOutput + m_gui_lines_emitted rewind, which ClearOutput
+// depends on too — so this test carries that rewind's whole contract.
 TEST(PalWorldView, RebuiltLinesCarryTheBookmarkFlag)
 {
     FakeWorldView view;
@@ -695,7 +758,18 @@ TEST(PalWorldView, RebuiltLinesCarryTheBookmarkFlag)
     feed(doc, "one\ntwo\nthree\n");
     doc.Bookmark(2, TRUE);
 
+    view.cleared = false;
     doc.RebuildOutputView();                     // clear + re-emit the buffer
+
+    // A clear FIRST, then the whole buffer again: the fake empties its vector on
+    // a clear, so anything still in it arrived afterwards.  The counts are
+    // exact — a rewind that emits nothing, or one that emits the buffer twice,
+    // fails here rather than passing quietly.
+    EXPECT_TRUE(view.cleared);
+    const long committedCount = doc.m_LineList.GetCount() - 1;   // less m_pCurrentLine
+    EXPECT_EQ(3L, committedCount);
+    EXPECT_EQ(committedCount, doc.m_gui_lines_emitted);   // cursor back at the end
+    EXPECT_EQ((unsigned)committedCount, (unsigned)view.lines.size());  // no extras
 
     auto lines = committed(view);
     ASSERT_EQ(3u, (unsigned)lines.size());

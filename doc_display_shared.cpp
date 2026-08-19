@@ -31,6 +31,8 @@
 // Uses BeginOutputBatch / EndOutputBatch (BeginBatch / EndBatch on the pane) to
 // accumulate all new lines and trigger a single scrollbar update + repaint
 // rather than one per line.
+
+// ── CMUSHclientDoc::RebuildOutputView ────────────────────────────────────────
 // Re-resolve the whole scrollback through the current palette.
 //
 // Rewind-and-re-drain, reusing exactly the mechanism ClearOutput already uses
@@ -41,6 +43,14 @@
 // The caller owns preserving anything the view cares about across this -- the
 // wx frame snapshots the scroll position -- because what is worth keeping is a
 // frontend question, not a doc one.
+//
+// NO PRODUCTION CALLER: a palette change used to come through here, and now
+// recolours in place instead (COutputPane::RecolourFromPalette, driven by
+// CWorldChildFrame's palette poll) -- runs carry the style inputs their colours
+// were resolved from, so nothing has to be re-emitted.  Retained, and exercised
+// only by tests/test_pal_worldview.cpp, because it is the sole exerciser of the
+// EmitClearOutput + m_gui_lines_emitted rewind that ClearOutput also relies on.
+// Whether it should go at all is a separate call (ledger K-750).
 void CMUSHclientDoc::RebuildOutputView()
 {
     if (!HaveOutputSink()) return;
@@ -80,8 +90,9 @@ static void BuildLineFromCLine (const CMUSHclientDoc & doc,
     out.userInput = (pLine->flags & USER_INPUT) != 0;
     // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
     // Selection).  Carrying it here makes the CLine the single source of
-    // truth: RebuildOutputView re-emits the buffer, so bookmarks survive a
-    // palette change without the view having to save and restore them.
+    // truth, so a view that re-reads a line -- the pull path's on-demand
+    // fetch, or a RebuildOutputView re-emit -- gets the bookmark back without
+    // having to save and restore it itself.
     out.bookmark = (pLine->flags & BOOKMARK) != 0;
 
     // Horizontal rule: emit a single sentinel run rather than text.
@@ -135,6 +146,29 @@ static void BuildLineFromCLine (const CMUSHclientDoc & doc,
         }
         charOff += pStyle->iLength;
     }
+}
+
+// ── EmitPendingClear ───────────────────────────────────────────
+// Tell the view the in-progress row has GONE.
+//
+// The view holds the pending row until something replaces it, and the only
+// thing that does is a COMPLETED line (COutputPane::AppendLine drops
+// m_pendingLine when a non-pending one arrives).  So when the engine EMPTIES
+// the current line instead — a '\r' under carriage_return_clears_line
+// (doc_shared.cpp) sets len back to 0, and a gag deletes the CLine outright —
+// nothing said so, and the partial text kept painting as a dim ghost row until
+// some later completed line happened to land.  In the gag case that means text
+// the user asked to hide stayed on screen.
+//
+// An empty pending SOutputLine IS the clear: AppendLine's pending branch stores
+// whatever it is given, and the paint's `!m_pendingLine.empty()` guard then
+// draws nothing.  Callers gate on the OLD fingerprint, so an idle drain (no row
+// before, none now) still emits nothing at all.
+static void EmitPendingClear (CMUSHclientDoc & doc)
+{
+    SOutputLine gone;
+    gone.pending = true;
+    doc.EmitOutputLine (std::move (gone));
 }
 
 // ── BuildOutputLine ─────────────────────────────────────────────
@@ -239,6 +273,12 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         // either (m_pCurrentLine is the tail when it exists), so the pending
         // fingerprint must not be left stale — HasUnflushedOutput would then
         // report a phantom change on every tick and defeat the idle skip.
+        //
+        // This is where a GAGGED prompt lands: ProcessPreviousLine deleted the
+        // CLine the view is still showing, so the row has no owner left and the
+        // view has to be told (EmitPendingClear).
+        if (m_iPendingFingerprint != 0)
+            EmitPendingClear (*this);
         m_iPendingFingerprint = 0;
         EmitRepaint();
         return;
@@ -292,8 +332,17 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             (long) m_pCurrentLine->len * 31 +
             (long) m_pCurrentLine->styleList.GetCount () + 1;   // never 0
     }
-    else
+    else {
+        // The row is gone rather than merely absent: it was on screen last
+        // drain (the fingerprint says so) and the current line is now empty, so
+        // emit the clear.  Counting it as an emit keeps the repaint arithmetic
+        // below honest — AppendLine has already invalidated for it.
+        if (m_iPendingFingerprint != 0) {
+            EmitPendingClear (*this);
+            emittedPending = true;
+        }
         m_iPendingFingerprint = 0;   // no pending row on screen
+    }
 
     // Close the batch: ONE scrollbar update and ONE invalidation for everything
     // this call emitted, completed lines and the prompt row together.

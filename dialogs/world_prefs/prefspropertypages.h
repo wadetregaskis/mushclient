@@ -115,50 +115,6 @@ protected:
 
 
 /////////////////////////////////////////////////////////////////////////////
-// CPrefsP2 dialog
-
-class CPrefsP2 : public CPropertyPage
-{
-	DECLARE_DYNCREATE(CPrefsP2)
-
-// Construction
-public:
-	CPrefsP2();
-	~CPrefsP2();
-
-  CMUSHclientDoc * m_doc;
-  int m_page_number;
-
-// Dialog Data
-	//{{AFX_DATA(CPrefsP2)
-	enum { IDD = IDD_PREFS_P2 };
-	CString	m_sound_pathname;
-	//}}AFX_DATA
-
-// Overrides
-	// ClassWizard generate virtual function overrides
-	//{{AFX_VIRTUAL(CPrefsP2)
-	public:
-	virtual BOOL OnSetActive();
-	protected:
-	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
-	//}}AFX_VIRTUAL
-
-// Implementation
-protected:
-	// Generated message map functions
-	//{{AFX_MSG(CPrefsP2)
-	afx_msg void OnBrowseSounds();
-	afx_msg void OnTestSound();
-	afx_msg void OnNoSound();
-	//}}AFX_MSG
-  afx_msg LRESULT OnKickIdle(WPARAM, LPARAM);
-  afx_msg void OnUpdateNeedSound(CCmdUI* pCmdUI);
-	DECLARE_MESSAGE_MAP()
-
-};
-
-/////////////////////////////////////////////////////////////////////////////
 // CPrefsP3 dialog
 
 class CPrefsP3 : public CPropertyPage

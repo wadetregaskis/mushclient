@@ -22,7 +22,6 @@ enum
   {
 //  eEnabled = 0x01,    // same as above
   eUseClipboard = 0x02,
-//  eDelayed = 0x04,    // delayed send
 //  eMatchStart = 0x04,
 //  eMatchAnywhere = 0x08,
 //  eMatchExactly = 0x10,

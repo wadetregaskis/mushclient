@@ -5,6 +5,15 @@
 #include "platform/compat.h"
 #include "regexp.h"
 
+// Real doc.h layout (matches mushcore / mushcore_testsupport -- see the
+// WIN32/_NOSOUND/MUSHCLIENT_FULL_BUILD comment in tests/CMakeLists.txt) is
+// needed for the RecallText leak test below.
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+
+#include <sys/resource.h>   // getrusage (RSS leak check)
+
 // RAII compile+free wrapper (audit §4): compile in the ctor, delete in the dtor,
 // so the repeated `t_regexp* r = regcomp(...); ...; delete r;` boilerplate collapses
 // and an early ASSERT return no longer leaks the compiled program.  regcomp THROWS on
@@ -344,6 +353,55 @@ TEST(RegexpWildcardsTest, ErroredProgramDegradesToASingleEmptyEntry) {
 
     ASSERT_EQ(1u, wc.size());
     EXPECT_EQ("", wc[0]);
+}
+
+// ── CMUSHclientDoc::RecallText ─────────────────────────────────────────────
+//
+// doc.cpp: RecallText compiles a fresh t_regexp (regcomp) on every call when
+// bRegexp is set, but the compiled program was never deleted on the way out
+// -- neither the normal fall-through nor the catch(CException*) exit freed
+// it, so every regexp recall (Edit > Find with "regular expression" ticked)
+// leaked one compiled PCRE program. The observable is memory, same shape as
+// LuaScripting.StringReturningMethodsDoNotLeakTheirVariant: a large loop with
+// a generous threshold well clear of allocator noise.
+TEST(RegexpTest, RecallTextDoesNotLeakItsCompiledRegexp) {
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+
+    // Populate the output buffer with enough lines for RecallText to walk
+    // (and find) on every call.
+    for (int i = 0; i < 50; i++) {
+        CString line;
+        line.Format("haystack line %d\n", i);
+        doc.DisplayMsg((LPCTSTR) line, line.GetLength(), 0);
+    }
+
+    auto rss = [] () -> long {
+        // ru_maxrss is a high-water mark, which is what we want: it cannot
+        // fall back and hide a leak that has already happened.
+        struct rusage ru;
+        getrusage(RUSAGE_SELF, &ru);
+        return (long) ru.ru_maxrss;      // bytes on macOS, KB on Linux
+    };
+
+    auto recall = [&] () {
+        doc.RecallText("haystack", false, true, false, true, false, 0, "");
+    };
+
+    for (int i = 0; i < 2000; i++)       // warm up the allocator
+        recall();
+
+    const long before = rss();
+    for (int i = 0; i < 20000; i++)
+        recall();
+    const long after = rss();
+
+#ifdef __APPLE__
+    const long budget = 2L * 1024 * 1024;      // bytes
+#else
+    const long budget = 2L * 1024;             // KB
+#endif
+    EXPECT_LT(after - before, budget);
 }
 
 

@@ -282,9 +282,15 @@ for (int nItem = -1;
 
   CPlugin * p = (CPlugin *) m_ctlPluginList.GetItemData (nItem);
 
+  PluginListIterator pit = find (m_pDoc->m_PluginList.begin (),
+                                 m_pDoc->m_PluginList.end (),
+                                 p);
+
+  if (pit == m_pDoc->m_PluginList.end ())
+      continue;
 
   // need a non-blank description for at least one of them
-   
+
   if (!p->m_strDescription.IsEmpty ())
     {
     pCmdUI->Enable (TRUE);

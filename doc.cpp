@@ -2102,7 +2102,20 @@ void CMUSHclientDoc::ShowStatusLine (const bool bNow)
 
 
 
-BOOL CMUSHclientDoc::SaveModified() 
+// SaveModified splits into two halves, and which half a caller wants depends on
+// how many worlds are closing.  QueryCloseWorld asks the questions (and performs
+// whatever save the answers call for); CommitCloseWorld runs the side effects
+// that actually END the world -- m_bWorldClosing, MXP shutdown, the
+// on_world_close script.  SaveModified itself is unchanged: query, then commit.
+//
+// The split exists because closing ALL the worlds at once has to ask every world
+// before ending any of them.  Windows reaches that through
+// CFrameWnd::OnClose -> SaveAllModified() -> CloseAllDocuments(), and macOS
+// through the quit hook, which -[NSApp terminate:] makes necessary; running the
+// commit half per world as the walk prompted left every world BEFORE a cancelled
+// one half-closed for the rest of the session.  See
+// platform/world_close_decision.h (QueryThenCloseAllWorlds).
+BOOL CMUSHclientDoc::QueryCloseWorld ()
 {
 CString str;
 
@@ -2152,30 +2165,64 @@ CString str;
       }
     } // end of variables only changing
 
-  m_bWorldClosing =  CDocument::SaveModified();
+  // CDocument::SaveModified is the standard "Save changes to <name>?" prompt.
+  // It is the last QUESTION; deliberately not stored in m_bWorldClosing, which
+  // now means "this world is being closed" and not "this world may be closed".
+  return CDocument::SaveModified();
+}   // end of CMUSHclientDoc::QueryCloseWorld
 
+
+// The half that ends the world.  Everything here is irreversible from the
+// user's point of view -- the script sees the world go away, MXP tells the
+// server and the plugins, and m_bWorldClosing stays true until the document is
+// destroyed -- so none of it may run until every world being closed has agreed.
+void CMUSHclientDoc::CommitCloseWorld ()
+{
   if (m_bWorldClosing)
-    MXP_Off (true);   // turn MXP off
+    return;                 // already committed, and the script below would
+                            // run a second time if this were re-entered
+
+  m_bWorldClosing = true;
+
+  MXP_Off (true);   // turn MXP off
 
   // execute "close" script
-  if (m_bWorldClosing && m_ScriptEngine)
+  if (m_ScriptEngine)
     {
     if (SeeIfHandlerCanExecute (m_strWorldClose))
       {
       DISPPARAMS params = { NULL, NULL, 0, 0 };
       long nInvocationCount = 0;
 
-      ExecuteScript (m_dispidWorldClose,  
+      ExecuteScript (m_dispidWorldClose,
                    m_strWorldClose,
                    eWorldAction,
-                   "world close", 
+                   "world close",
                    "closing world",
-                   params, 
-                   nInvocationCount); 
+                   params,
+                   nInvocationCount);
       }
     } // end of executing close script
 
-  return m_bWorldClosing;
+}   // end of CMUSHclientDoc::CommitCloseWorld
+
+
+BOOL CMUSHclientDoc::SaveModified()
+{
+  if (!QueryCloseWorld ())
+    {
+    // The single `m_bWorldClosing = CDocument::SaveModified()` this replaced
+    // left it false on the last of the three refusals and untouched on the
+    // other two.  It is false in every state that can reach here anyway -- it
+    // starts false (doc_construct.cpp) and only a commit sets it -- and false
+    // is the right answer for a close the user has just refused.
+    m_bWorldClosing = false;
+    return FALSE;
+    }
+
+  CommitCloseWorld ();
+
+  return TRUE;
 }
 
 

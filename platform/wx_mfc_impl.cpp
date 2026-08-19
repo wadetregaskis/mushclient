@@ -55,6 +55,7 @@
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
 #include <memory>
 #include "platform/wx_world_child.h"  // CWorldChildFrame
+#include "platform/world_close_decision.h"  // QueryThenCloseAllWorlds — the quit pass
 #include "StatLink.h"                 // CStaticLink — the only real SubclassDlgItem client
 #include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 #include "platform/wx_activity.h"     // ShowActivityWindow (Game ▸ Activity List)
@@ -3225,14 +3226,19 @@ static int hook_query_quit_save()
             if (!d->SaveModified())
                 return 0;   // user cancelled → do not quit
 
-        // Phase 1 — prompt for any world with unsaved edits.  SaveModified() is
-        // the canonical Save / Discard / Cancel prompt: it auto-saves or prompts
-        // per the world's settings, handles the variables-only-changed case, and
-        // returns FALSE only if the user cancelled.  Run the whole prompt pass
-        // before persisting layout so a late Cancel aborts cleanly.
-        for (CMUSHclientDoc* d : worlds)
-            if (!d->PortPromptSaveModified())
-                return 0;   // user cancelled → do not quit
+        // Phase 1 — ask EVERY world, then close them.  Two passes, not one:
+        // CMUSHclientDoc::QueryCloseWorld is the canonical Save / Discard /
+        // Cancel chain (auto-save, variables-only, unsaved changes) with none of
+        // the closing side effects, and CommitCloseWorld is those side effects.
+        // Walking the worlds calling SaveModified — which is both halves —
+        // closed each world as it prompted, so cancelling at world 3 left worlds
+        // 1 and 2 with their on_world_close script already run, MXP shut down
+        // and m_bWorldClosing stuck true for the rest of the session, silently
+        // killing those worlds' ON_PLUGIN_GETFOCUS / ON_PLUGIN_LOSEFOCUS.
+        // MFC has the same shape one level up: SaveAllModified() asks about
+        // every document and only a unanimous yes reaches CloseAllDocuments().
+        if (!QueryThenCloseAllWorlds(worlds))
+            return 0;   // user cancelled → do not quit, and nothing has closed
 
         // Phase 2 — fire each world's plugin OnPluginClose, then SaveState, just
         // as ~CPlugin does on a normal world close (which [NSApp terminate:]

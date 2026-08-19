@@ -5353,6 +5353,170 @@ TEST(WorldClose, TheTwoPreferencesBuyDifferentQuestions)
     EXPECT_TRUE(p.askSaveVariables);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Quitting with several worlds open: ask them all, THEN close them
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// QueryThenCloseAllWorlds (platform/world_close_decision.h) is what the macOS
+// quit hook walks the world list with.  It used to be a single loop calling
+// CMUSHclientDoc::SaveModified, which asks the questions AND ends the world, so
+// cancelling at the third world left the first two with their on_world_close
+// script already run, MXP shut down and m_bWorldClosing stuck true for the rest
+// of the session -- which silently suppressed those worlds'
+// ON_PLUGIN_GETFOCUS / ON_PLUGIN_LOSEFOCUS for as long as the app stayed up.
+//
+// The fake records the same three effects the real CommitCloseWorld has, plus a
+// shared transcript, so the ORDER of the two passes is observable and not just
+// their totals -- the old interleaved loop agrees with every total.
+
+namespace {
+
+struct FakeWorldDoc
+{
+    FakeWorldDoc(const char* n, std::string* log, bool willAgree)
+        : name(n), transcript(log), agrees(willAgree) {}
+
+    const char*  name;
+    std::string* transcript;
+    bool         agrees;
+
+    // What CommitCloseWorld does to a real world, mirrored so a test can see it.
+    bool worldClosing   = false;   // m_bWorldClosing
+    bool mxpUp          = true;    // m_bMXP
+    bool closeScriptRan = false;   // on_world_close
+
+    int  timesAsked = 0;
+
+    bool QueryCloseWorld()
+    {
+        ++timesAsked;
+        *transcript += std::string("ask ") + name + "; ";
+        return agrees;
+    }
+
+    void CommitCloseWorld()
+    {
+        *transcript += std::string("close ") + name + "; ";
+        worldClosing   = true;
+        mxpUp          = false;
+        closeScriptRan = true;
+    }
+
+    // "Untouched" in the sense that matters: nothing observable happened to it.
+    bool StillOpen() const
+    {
+        return !worldClosing && mxpUp && !closeScriptRan;
+    }
+};
+
+// SaveModified is protected (ClassWizard's AFX_VIRTUAL block); the two halves
+// it now delegates to are public, so only the whole-thing check needs this.
+struct CloseWorldDoc : public CMUSHclientDoc
+{
+    using CMUSHclientDoc::SaveModified;
+};
+
+}  // namespace
+
+TEST(QuitCloseAllWorlds, ACancelLeavesEveryWorldOpenAndUntouched)
+{
+    std::string transcript;
+    FakeWorldDoc a("a", &transcript, true);
+    FakeWorldDoc b("b", &transcript, true);
+    FakeWorldDoc c("c", &transcript, false);   // the user cancels here
+    FakeWorldDoc d("d", &transcript, true);
+    std::vector<FakeWorldDoc*> worlds { &a, &b, &c, &d };
+
+    EXPECT_FALSE(QueryThenCloseAllWorlds(worlds));
+
+    // The worlds BEFORE the cancelled one are the whole point: they had already
+    // said yes, and under the old single loop they were already gone.
+    EXPECT_TRUE(a.StillOpen());
+    EXPECT_TRUE(b.StillOpen());
+    EXPECT_FALSE(a.worldClosing);        // spelled out: this is the flag that
+    EXPECT_FALSE(b.worldClosing);        // used to stick true all session
+    EXPECT_FALSE(a.closeScriptRan);
+    EXPECT_FALSE(b.closeScriptRan);
+    EXPECT_TRUE(a.mxpUp);
+    EXPECT_TRUE(b.mxpUp);
+
+    EXPECT_TRUE(c.StillOpen());          // and the one that refused, obviously
+    EXPECT_TRUE(d.StillOpen());
+    EXPECT_EQ(0, d.timesAsked);          // MFC stops at the first refusal
+
+    // No close of any kind happened, in any order.
+    EXPECT_EQ(std::string("ask a; ask b; ask c; "), transcript);
+}
+
+TEST(QuitCloseAllWorlds, AQuitThatIsNotCancelledStillClosesEverything)
+{
+    // The control.  Without it "we never close anything" passes the test above.
+    std::string transcript;
+    FakeWorldDoc a("a", &transcript, true);
+    FakeWorldDoc b("b", &transcript, true);
+    FakeWorldDoc c("c", &transcript, true);
+    std::vector<FakeWorldDoc*> worlds { &a, &b, &c };
+
+    EXPECT_TRUE(QueryThenCloseAllWorlds(worlds));
+
+    for (FakeWorldDoc* w : worlds) {
+        EXPECT_TRUE(w->worldClosing);
+        EXPECT_TRUE(w->closeScriptRan);
+        EXPECT_FALSE(w->mxpUp);
+        EXPECT_EQ(1, w->timesAsked);
+    }
+
+    // ...and every question came before every close.  Totals alone would be
+    // satisfied by the old interleaved loop, which is the bug.
+    EXPECT_EQ(std::string("ask a; ask b; ask c; close a; close b; close c; "),
+              transcript);
+}
+
+TEST(QuitCloseAllWorlds, NoWorldsOpenIsNotACancel)
+{
+    std::vector<FakeWorldDoc*> none;
+    EXPECT_TRUE(QueryThenCloseAllWorlds(none));
+}
+
+// ── The real halves of SaveModified ────────────────────────────────────────
+// The loop above is only correct if CMUSHclientDoc::QueryCloseWorld really does
+// keep its hands off the closing side effects, so drive the shipping bodies.
+TEST(QuitCloseAllWorlds, QueryingAWorldDoesNotStartClosingIt)
+{
+    CMUSHclientDoc doc;
+    doc.m_bMXP = true;               // a live MXP session...
+    doc.SetModifiedFlag(FALSE);      // ...with nothing to ask about
+    doc.m_bVariablesChanged = false;
+
+    EXPECT_TRUE(doc.QueryCloseWorld());
+
+    // Neither of the two effects a bare document can show.  (on_world_close
+    // needs a script engine, which a bare document has none of; the flag is the
+    // one that used to stick true for the rest of the session.)
+    EXPECT_FALSE(doc.m_bWorldClosing);
+    EXPECT_TRUE(doc.m_bMXP);
+
+    // Committing is what does them -- so the query pass above is a genuine
+    // skip, not a document that had nothing to do either way.
+    doc.CommitCloseWorld();
+    EXPECT_TRUE(doc.m_bWorldClosing);
+    EXPECT_FALSE(doc.m_bMXP);
+}
+
+TEST(QuitCloseAllWorlds, SaveModifiedStillDoesBothHalves)
+{
+    // Windows' caller of SaveModified must be unaffected by the split: it is
+    // CanCloseFrame's "may I, and if so goodbye" in a single call.
+    CloseWorldDoc doc;
+    doc.m_bMXP = true;
+    doc.SetModifiedFlag(FALSE);
+    doc.m_bVariablesChanged = false;
+
+    EXPECT_TRUE(doc.SaveModified());
+    EXPECT_TRUE(doc.m_bWorldClosing);
+    EXPECT_FALSE(doc.m_bMXP);
+}
+
 // ── UMessageBox's headless fallback answers the RIGHT button ────────────────
 // With no hook installed there is no user to ask, so it must answer the least
 // destructive button of whichever set was requested -- decline, never proceed.

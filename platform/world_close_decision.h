@@ -76,3 +76,36 @@ inline WorldClosePlan DecideWorldClose(bool canVeto,
 
     return plan;
 }
+
+// ── Closing every world at once: the quit path ────────────────────────────
+// -[NSApp terminate:] bypasses MFC's document flow entirely, which is why the
+// port has a quit hook at all; that hook stands in for CWinApp::SaveAllModified.
+// The shape to copy is CFrameWnd::OnClose: SaveAllModified() asks about EVERY
+// document first, and only a unanimous yes reaches CloseAllDocuments().
+//
+// The port used to run the whole of CMUSHclientDoc::SaveModified per world as it
+// walked them — questions and closing side effects together — so cancelling at
+// world 3 left worlds 1 and 2 with their on_world_close script already run, MXP
+// shut down, and m_bWorldClosing stuck true for the rest of the session, which
+// permanently suppressed those worlds' ON_PLUGIN_GETFOCUS / ON_PLUGIN_LOSEFOCUS
+// callbacks (wx_world_child.cpp:3263).  Two passes, never one.
+//
+// `QueryCloseWorld` asks the questions and performs whatever save the user asked
+// for, with none of the closing side effects; `CommitCloseWorld` runs those side
+// effects.  Templated on the container purely so the ordering can be checked
+// against a recording fake in tests/test_mfc_ui.cpp — the app instantiates it
+// with CMUSHclientDoc.  Returns false if any world declined, in which case
+// nothing at all has been closed.
+template <class Docs>
+inline bool QueryThenCloseAllWorlds(Docs& worlds)
+{
+    for (auto* d : worlds)
+        if (d && !d->QueryCloseWorld())
+            return false;            // one cancel and NOTHING closes
+
+    for (auto* d : worlds)
+        if (d)
+            d->CommitCloseWorld();
+
+    return true;
+}

@@ -85,7 +85,11 @@ public:
     void EnableDocking(DWORD) {}
     DWORD GetBarStyle() const { return 0; }
     void  SetBarStyle(DWORD) {}
-    BOOL  GetButtonInfo(int, UINT&, UINT&, int&) const { return FALSE; }
+    // Assign the outputs even though there is no toolbar: OnUpdateBtnWorlds
+    // compares iImage against a freshly computed one, so leaving the caller's
+    // locals uninitialised is an uninitialised read on a live path.
+    BOOL  GetButtonInfo(int, UINT& nID, UINT& nStyle, int& iImage) const
+      { nID = 0; nStyle = 0; iImage = 0; return FALSE; }
     BOOL  SetButtonInfo(int, UINT, UINT, int) { return FALSE; }
     DECLARE_MESSAGE_MAP()
 };

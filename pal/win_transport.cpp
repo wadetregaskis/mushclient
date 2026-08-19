@@ -400,7 +400,13 @@ private:
             stepTls();
             return;
         }
-        char buff[9000];   // must be less than COMPRESS_BUFFER_LENGTH (ReceiveMsg)
+        // Must be at least COMPRESS_BUFFER_LENGTH: OnBytesReceived's MCCP
+        // Z_STREAM_END path copies the post-stream residue (up to avail_in,
+        // capped there at COMPRESS_BUFFER_LENGTH) back into this buffer, so a
+        // smaller one overflows the stack on a crafted two-packet stream.
+        char buff[COMPRESS_BUFFER_LENGTH];
+        static_assert (sizeof buff >= COMPRESS_BUFFER_LENGTH,
+                       "receive buffer must hold the MCCP Z_STREAM_END residue");
         int count;
         std::shared_ptr<bool> alive = m_alive;
 

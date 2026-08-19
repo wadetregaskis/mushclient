@@ -8,6 +8,7 @@
 #include <wx/timer.h>
 #include <wx/dcbuffer.h>   // wxAutoBufferedPaintDC -- the DC OnPaint actually uses
 #include <wx/dcclient.h>
+#include <wx/fileconf.h>   // wxFileConfig -- the scratch config the geometry test writes into
 
 #include "platform/extended_selftest.h"
 #include "platform/app_config.h"
@@ -23,6 +24,13 @@
 int RunDialogBridgeSelfTest();
 
 int RunNotepadSelfTest();   // platform/notepad_selftest.cpp
+
+// Defined in wx_mfc_impl.cpp: the geometry writer the quit hook and the MDI
+// parent's close handler share, and the full-screen toggle that stashes (or
+// discards) a window's pre-full-screen rect for it -- see R2-12-F5 in
+// RunPaintDeliverySelfTest below.
+void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame);
+void wx_toggle_full_screen(wxTopLevelWindow* target);
 
 namespace {
 
@@ -147,6 +155,69 @@ int RunPaintDeliverySelfTest()
 
     frame->Destroy();
     wxYield();
+
+    // ── R2-12-F5: the full-screen pre-rect stash is PER WINDOW ─────────────
+    // s_preFullScreenRects (wx_mfc_impl.cpp) used to be a single global pair,
+    // so a second window entering full screen could stomp the first's stash,
+    // and leaving full screen on EITHER window cleared it for BOTH -- the
+    // quit-time save would then persist a still-full-screen window's
+    // display-sized bounds as its saved geometry.  ShowFullScreen animates on
+    // macOS (real transition, real Space), which is exactly why this lives
+    // here rather than in an OnInit-scoped selftest: it needs the real loop
+    // this mode buys to settle before GetRect()/IsFullScreen() can be trusted.
+    {
+        wxFrame* winA = new wxFrame(nullptr, wxID_ANY, wxT("fs-A"),
+                                    wxPoint(15, 15), wxSize(500, 350));
+        wxFrame* winB = new wxFrame(nullptr, wxID_ANY, wxT("fs-B"),
+                                    wxPoint(15, 15), wxSize(640, 480));
+        winA->Show();
+        winB->Show();
+        for (int i = 0; i < 20; ++i) { wxYield(); wxMilliSleep(10); }
+
+        wx_toggle_full_screen(winA);   // A enters full screen; stashes 500x350
+        wx_toggle_full_screen(winB);   // B enters full screen; stashes 640x480
+        for (int i = 0; i < 100 && (!winA->IsFullScreen() || !winB->IsFullScreen()); ++i) {
+            wxYield();
+            wxMilliSleep(20);
+        }
+        chk(winA->IsFullScreen() && winB->IsFullScreen(),
+            "both windows report full screen before either leaves");
+
+        wx_toggle_full_screen(winA);   // A leaves full screen -- A's own entry is erased
+        for (int i = 0; i < 100 && winA->IsFullScreen(); ++i) { wxYield(); wxMilliSleep(20); }
+        chk(!winA->IsFullScreen(), "A has left full screen");
+        chk(winB->IsFullScreen(),
+            "...while B is STILL full screen -- this is the moment the quit "
+            "hook's geometry save would run in");
+
+        wxFileName fn(wxStandardPaths::Get().GetTempDir(),
+                     wxString::Format(wxT("mushclient-extended-fullscreen-%ld.ini"),
+                                      (long) getpid()));
+        if (fn.FileExists()) wxRemoveFile(fn.GetFullPath());
+        {
+            wxFileConfig cfg(wxEmptyString, wxEmptyString, fn.GetFullPath(),
+                             wxEmptyString, wxCONFIG_USE_LOCAL_FILE);
+            SaveWindowGeometryTo(cfg, winB);
+            long w = 0, h = 0;
+            cfg.Read(wxT("/geometry/main_w"), &w);
+            cfg.Read(wxT("/geometry/main_h"), &h);
+            chk(w == 640 && h == 480,
+                "B's PRE-full-screen size survives the save even though A left "
+                "full screen first -- with a single shared stash, A's leave "
+                "clears B's entry too and this reads the (display-sized) "
+                "current rect instead");
+        }
+        wxRemoveFile(fn.GetFullPath());
+
+        // Leave full screen before Destroy(), so the async exit animation
+        // does not fight the window's teardown.
+        wx_toggle_full_screen(winB);
+        for (int i = 0; i < 100 && winB->IsFullScreen(); ++i) { wxYield(); wxMilliSleep(20); }
+
+        winA->Destroy();
+        winB->Destroy();
+        wxYield();
+    }
 
     printf("EXTENDED-SELFTEST(paint): %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

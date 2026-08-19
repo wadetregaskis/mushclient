@@ -195,13 +195,36 @@ static wxTopLevelWindow* wx_visible_frame(wxMDIParentFrame* frame)
 // world frame its own bar because the parent's is hidden, so "show the status
 // bar" has to be an app-wide setting applied to every frame -- otherwise the
 // menu item toggles one window and the tick lies about the rest.
-static bool   s_statusBarVisible     = true;
-static bool   s_hadPreFullScreenRect = false;
-static wxRect s_preFullScreenRect;
+static bool s_statusBarVisible = true;
+// Keyed per window, not one global pair: with two world windows open, going
+// full screen on one and then the OTHER used to share a single stash, so
+// leaving full screen on either window cleared it for both -- the quit-time
+// save could then persist a still-full-screen window's display-sized bounds
+// as its saved geometry.  Insert on entering full screen, erase on leaving;
+// see wx_toggle_full_screen and wx_geometry_rect_for_save below.
+static std::map<wxTopLevelWindow*, wxRect> s_preFullScreenRects;
 
 // Read by CWorldChildFrame's constructor so a world opened later comes up
 // matching the current setting instead of always showing its bar.
 bool wx_status_bar_visible() { return s_statusBarVisible; }
+
+// ── wx_toggle_full_screen ─────────────────────────────────────────────────
+// Enter/leave full screen on `target`, stashing (entering) or discarding
+// (leaving) `target`'s own entry in s_preFullScreenRects.  Split out of the
+// ID_MENU_VIEW_FULLSCREEN handler below for the same reason
+// SaveWindowGeometryTo is split out of the quit hook (see its comment): the
+// extended (loop-running) selftest can drive it directly against throwaway
+// top-level windows, without a fully wired MDI parent and wxEVT_MENU
+// dispatch.  Not static -- forward-declared where the selftest needs it.
+void wx_toggle_full_screen(wxTopLevelWindow* target)
+{
+    const bool goingFull = !target->IsFullScreen();
+    if (goingFull)
+        s_preFullScreenRects[target] = target->GetRect();
+    else
+        s_preFullScreenRects.erase(target);
+    target->ShowFullScreen(goingFull);
+}
 
 static void apply_status_bar_visibility(wxMDIParentFrame* frame)
 {
@@ -1666,15 +1689,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
         if (id == ID_MENU_VIEW_FULLSCREEN) {
-            wxTopLevelWindow* target = wx_visible_frame(frame);
-            const bool goingFull = !target->IsFullScreen();
-            if (goingFull) {
-                s_preFullScreenRect    = target->GetRect();
-                s_hadPreFullScreenRect = true;
-            } else {
-                s_hadPreFullScreenRect = false;
-            }
-            target->ShowFullScreen(goingFull);
+            wx_toggle_full_screen(wx_visible_frame(frame));
             return;
         }
         if (id == ID_MENU_VIEW_STATUSBAR) {
@@ -3038,6 +3053,23 @@ static void hook_open_default_world()
     }
 }
 
+// ── wx_geometry_rect_for_save ─────────────────────────────────────────────
+// The rect to persist for `win`: its pre-full-screen rect if it is currently
+// full screen and one is stashed in s_preFullScreenRects (see
+// wx_toggle_full_screen above), otherwise its current GetRect().  Declared in
+// wx_world_child.h and shared by the quit-time save (SaveWindowGeometryTo,
+// below) and CWorldChildFrame::OnClose (Cmd+W) — the two used to disagree,
+// because OnClose called a bare GetRect() and so persisted the full-screen
+// bounds for a world closed with Cmd+W while it was still full screen.
+wxRect wx_geometry_rect_for_save(wxTopLevelWindow* win)
+{
+    if (!win) return wxRect();
+    auto it = s_preFullScreenRects.find(win);
+    if (win->IsFullScreen() && it != s_preFullScreenRects.end())
+        return it->second;
+    return win->GetRect();
+}
+
 // ── SaveWindowGeometryTo ──────────────────────────────────────────────────
 // Persist `frame`'s size / position / maximized state into `cfg`.  Split out of
 // SaveMainWindowGeometry (below) so the in-app selftest can drive it against a
@@ -3065,11 +3097,9 @@ void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
     cfg.Write(wxT("/geometry/status_bar"), s_statusBarVisible);
     // Full screen is not a size worth restoring, and on macOS the exit is
     // animated so GetRect() here would still report the full-screen bounds
-    // even if we asked it to leave first.  Use the rect stashed when the
-    // user entered full screen.
-    const wxRect r = (geomWin->IsFullScreen() && s_hadPreFullScreenRect)
-                     ? s_preFullScreenRect
-                     : geomWin->GetRect();
+    // even if we asked it to leave first.  wx_geometry_rect_for_save
+    // substitutes the rect stashed when the user entered full screen.
+    const wxRect r = wx_geometry_rect_for_save(geomWin);
     if (!maximized) {
         cfg.Write(wxT("/geometry/main_x"), (long)r.x);
         cfg.Write(wxT("/geometry/main_y"), (long)r.y);

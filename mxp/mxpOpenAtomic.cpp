@@ -30,7 +30,8 @@ void CMUSHclientDoc::MXP_OpenAtomicTag (const CString strTag,
                                         CString & strAction,    // new action
                                         CString & strHint,      // new hint
                                         CString & strVariable,   // new variable
-                                        CArgumentList & ArgumentList)
+                                        CArgumentList & ArgumentList,
+                                        bool * pbVetoed)
   {
 CString strArgument;
 CString strArgumentName;
@@ -81,7 +82,20 @@ COLORREF       iBackColour = pStyle->iBackColour;
     pStyle->iBackColour = iBackColour; 
 
     if (bNotWanted)
-      return;   // they didn't want to go ahead with this tag
+      {
+      // They didn't want to go ahead with this tag, so take no action here.
+      // The tag has, however, ALREADY been recorded as open by MXP_StartTag
+      // (the active-tag record and its START_TAG marker style are added
+      // before we are called).  Only the caller can undo that, so tell it
+      // to; without this the suppressed tag stays on the active list and is
+      // later "closed" -- firing a close-tag callback for an open that never
+      // happened, and running the closing action (eg. </p> starts a new
+      // line).  A custom element's veto (mxpStart.cpp) returns before that
+      // bookkeeping exists, which is why only this path needs unwinding.
+      if (pbVetoed)
+        *pbVetoed = true;
+      return;
+      }
 
     }
 

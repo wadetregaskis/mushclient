@@ -1976,7 +1976,8 @@ public:
                           CString & strAction,    // new action
                           CString & strHint,      // new hint
                           CString & strVariable,  // new variable
-                          CArgumentList & ArgumentList);  // args
+                          CArgumentList & ArgumentList,   // args
+                          bool * pbVetoed = NULL);  // set true if a script/plugin vetoed the tag
   void MXP_CloseAtomicTag (const int iAction, 
                            const CString & strText,
                            const POSITION firstlinepos,

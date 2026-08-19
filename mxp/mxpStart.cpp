@@ -73,6 +73,12 @@ CString strAction;
 CString strHint;      
 CString strVariable;  
 
+// Remembered so that a veto arriving from inside MXP_OpenAtomicTag -- ie.
+// AFTER the active-tag bookkeeping below -- can be unwound.  Both are inert
+// unless the tag is actually vetoed.
+CStyle * pStartTagStyle          = NULL;   // the START_TAG marker style, if any
+int      iOldOutstandingTagCount = m_iLastOutstandingTagCount;
+
   // get old action, hint etc. so that something like:
   // <send href="nick"> <b> blah </b> </send> will work
   // in this case we want the href (action) to persist through the <b>
@@ -193,13 +199,13 @@ CString strVariable;
   // add a marker to the current line for the tag itself
   // this is a record of what the text style was at this point
 
-    AddStyle (iFlags | START_TAG, 
-              iForeColour, 
-              iBackColour, 
-              0, 
-              strName,
-              "",
-              strVariable);
+    pStartTagStyle = AddStyle (iFlags | START_TAG, 
+                               iForeColour,
+                               iBackColour,
+                               0,
+                               strName,
+                               "",
+                               strVariable);
 
     // remember what is outstanding
 
@@ -330,13 +336,69 @@ CStyle * pNewStyle = AddStyle (iFlags & STYLE_BITS,
         } // end of subsitution needed
       } // end of processing each argument in the atomic list
 
+    bool bVetoed = false;
+
     MXP_OpenAtomicTag (strName,
                        pAtomicElement->iAction, 
                        pNewStyle,
                        strAction,
                        strHint,
                        strVariable,
-                       ArgumentList);
+                       ArgumentList,
+                       &bVetoed);
+
+    if (bVetoed)
+      {
+      // A script or plugin refused this tag, but we had already recorded it
+      // as open (above) because the veto is only asked once the arguments
+      // have been rebuilt.  Undo that record, so a vetoed built-in tag ends
+      // up in the same state as a vetoed custom element - which returns
+      // before any of it happens.  Command tags have no record to undo.
+      //
+      // Note that pNewStyle (the run subsequent text uses) is deliberately
+      // NOT removed: it was created with the pre-tag attributes, so leaving
+      // it is exactly the "tag did nothing" result we want, and the code
+      // below re-attaches the enclosing action to it.
+      if (!bCommand)
+        {
+        // 1. drop the outstanding-tag record, and un-count it
+        if (!m_ActiveTagList.IsEmpty () &&
+            m_ActiveTagList.GetTail ()->strName == strName)
+          {
+          CActiveTag * pVetoedTag = m_ActiveTagList.RemoveTail ();
+          delete pVetoedTag;
+          m_iLastOutstandingTagCount = iOldOutstandingTagCount;
+          }
+
+        // 2. drop the START_TAG marker style.  A veto handler is free to
+        // have called world.Note, which starts a new line, so the marker is
+        // not necessarily on m_pCurrentLine any more - walk back for it.
+        for (POSITION vlinepos = m_LineList.GetTailPosition (); 
+             vlinepos && pStartTagStyle; )
+          {
+          CLine * pVetoLine = m_LineList.GetPrev (vlinepos);
+          POSITION vfoundpos = 0;
+
+          for (POSITION vstylepos = pVetoLine->styleList.GetTailPosition (); 
+               vstylepos; )
+            {
+            POSITION vthispos = vstylepos;
+            if (pVetoLine->styleList.GetPrev (vstylepos) == pStartTagStyle)
+              {
+              vfoundpos = vthispos;
+              break;
+              }
+            }
+
+          if (vfoundpos)
+            {
+            pVetoLine->styleList.RemoveAt (vfoundpos);
+            DELETESTYLE (pStartTagStyle);
+            break;
+            }
+          }   // end of looking for the marker style
+        }   // end of not a command tag
+      }   // end of the tag having been vetoed
 
     // new style might have changed if they started a new line
     // (eg. BR)

@@ -26,7 +26,7 @@ Date/time
 %j - Day of year as decimal number (001 - 366)
 %m - Month as decimal number (01 - 12)
 %M - Minute as decimal number (00 - 59)
-%p - Current locale’s A.M./P.M. indicator for 12-hour clock
+%p - Current locale's A.M./P.M. indicator for 12-hour clock
 %S - Second as decimal number (00 - 59)
 %U - Week of year as decimal number, with Sunday as first day of week (00 - 53)
 %w - Weekday as decimal number (0 - 6; Sunday is 0)

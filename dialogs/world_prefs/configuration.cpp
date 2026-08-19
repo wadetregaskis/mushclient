@@ -882,7 +882,8 @@ bool CMUSHclientDoc::ChangedPrefsP1  (CPrefsP1  &page1)
     m_iProxyServerPort    !=     page1.m_iProxyServerPort ||
     m_iSocksProcessing    !=     page1.m_iSocksProcessing ||
     m_strProxyUserName    !=     page1.m_strProxyUserName ||
-    m_strProxyPassword    !=     page1.m_strProxyPassword;
+    m_strProxyPassword    !=     page1.m_strProxyPassword ||
+    (m_bUseSSL != 0)      !=     (page1.m_bUseSSL != 0);
 
 
   } // end of CMUSHclientDoc::ChangedPrefsP1
@@ -2503,13 +2504,17 @@ int CMUSHclientDoc::RecompileRegularExpressions ()
     GetTriggerMap ().GetNextAssoc (pos, strName, pTrigger);
 
     if (pTrigger->regexp)
-      {
       delete pTrigger->regexp;    // get rid of old one
-      if (pTrigger->bRegexp)
-        strRegexp = pTrigger->trigger;
-      else
-        strRegexp = ConvertToRegularExpression (pTrigger->trigger);
-      }
+
+    // this must be worked out for every trigger, not just the ones which
+    //  currently have a compiled expression, otherwise a trigger whose
+    //  expression is NULL (a failed compile earlier on) is recompiled from
+    //  whatever the previous one left behind
+
+    if (pTrigger->bRegexp)
+      strRegexp = pTrigger->trigger;
+    else
+      strRegexp = ConvertToRegularExpression (pTrigger->trigger);
 
       // compile regular expression
       try 
@@ -2538,13 +2543,14 @@ int CMUSHclientDoc::RecompileRegularExpressions ()
     GetAliasMap ().GetNextAssoc (pos, strName, pAlias);
 
     if (pAlias->regexp)
-      {
       delete pAlias->regexp;    // get rid of old one
-      if (pAlias->bRegexp)
-        strRegexp = pAlias->name;
-      else
-        strRegexp = ConvertToRegularExpression (pAlias->name);
-      }
+
+    // as for triggers above - work this out unconditionally
+
+    if (pAlias->bRegexp)
+      strRegexp = pAlias->name;
+    else
+      strRegexp = ConvertToRegularExpression (pAlias->name);
 
       // compile regular expression
       try 

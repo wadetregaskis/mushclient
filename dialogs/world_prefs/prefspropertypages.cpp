@@ -2691,16 +2691,14 @@ void CPrefsP7::LoadDialog (CDialog * pDlg, CObject * pItem)
   }   // end of CPrefsP7::LoadDialog
 
 
-void CPrefsP7::UnloadDialog (CDialog * pDlg, CObject * pItem)
+// Copy every field of the alias dialog into the alias.  Shared with
+// CMapDlg::AddAlias (MapDlg.cpp), which runs the same CAliasDlg but used to
+// have its own copy of this list - one that had fallen seven fields behind, so
+// the settings the user made in those seven were silently discarded.
+// Declared in stdafx.h.
+
+void CopyAliasFromDialog (CAlias * alias_item, CAliasDlg * dlg)
   {
-  CAliasDlg * dlg = (CAliasDlg *) pDlg;
-  CAlias * alias_item = (CAlias *) pItem;
-
-  ASSERT_VALID (dlg);
-  ASSERT( dlg->IsKindOf( RUNTIME_CLASS( CAliasDlg ) ) );
-  ASSERT_VALID (alias_item);
-  ASSERT( alias_item->IsKindOf( RUNTIME_CLASS( CAlias ) ) );
-
   alias_item->name            = dlg->m_name;
   alias_item->contents        = dlg->m_contents;
   alias_item->bIgnoreCase     = dlg->m_bIgnoreCase;
@@ -2722,6 +2720,20 @@ void CPrefsP7::UnloadDialog (CDialog * pDlg, CObject * pItem)
   alias_item->bOneShot        = dlg->m_bOneShot;
   alias_item->bEchoAlias      = dlg->m_bEchoAlias;
   alias_item->bOmitFromCommandHistory      = dlg->m_bOmitFromCommandHistory;
+
+  }   // end of CopyAliasFromDialog
+
+void CPrefsP7::UnloadDialog (CDialog * pDlg, CObject * pItem)
+  {
+  CAliasDlg * dlg = (CAliasDlg *) pDlg;
+  CAlias * alias_item = (CAlias *) pItem;
+
+  ASSERT_VALID (dlg);
+  ASSERT( dlg->IsKindOf( RUNTIME_CLASS( CAliasDlg ) ) );
+  ASSERT_VALID (alias_item);
+  ASSERT( alias_item->IsKindOf( RUNTIME_CLASS( CAlias ) ) );
+
+  CopyAliasFromDialog (alias_item, dlg);
 
   delete alias_item->regexp;    // get rid of earlier regular expression
   alias_item->regexp = NULL;
@@ -5132,7 +5144,7 @@ void CPrefsP10::DoDataExchange(CDataExchange* pDX)
 	DDX_Text(pDX, IDC_LINE_PREAMBLE, m_line_preamble);
 	DDX_Check(pDX, IDC_COMMENTED_SOFTCODE, m_bCommentedSoftcode);
 	DDX_Text(pDX, IDC_LINE_DELAY, m_iLineDelay);
-	DDV_MinMaxLong(pDX, m_iLineDelay, 0, 10000);
+	DDV_MinMaxLong(pDX, m_iLineDelay, 0, 100000);
 	DDX_Check(pDX, IDC_CONFIRM_ON_SEND, m_bConfirmOnSend);
 	DDX_Check(pDX, IDC_ECHO, m_bEcho);
 	DDX_Text(pDX, IDC_LINE_DELAY_PER_LINES, m_nFileDelayPerLines);
@@ -5805,7 +5817,7 @@ void CPrefsP13::DoDataExchange(CDataExchange* pDX)
 	DDX_Check(pDX, IDC_CONFIRM_ON_PASTE, m_bConfirmOnPaste);
 	DDX_Check(pDX, IDC_COMMENTED_SOFTCODE, m_bCommentedSoftcode);
 	DDX_Text(pDX, IDC_LINE_DELAY, m_iLineDelay);
-	DDV_MinMaxLong(pDX, m_iLineDelay, 0, 10000);
+	DDV_MinMaxLong(pDX, m_iLineDelay, 0, 100000);
 	DDX_Check(pDX, IDC_ECHO, m_bEcho);
 	DDX_Text(pDX, IDC_LINE_DELAY_PER_LINES, m_nPasteDelayPerLines);
 	DDV_MinMaxLong(pDX, m_nPasteDelayPerLines, 1, 100000);
@@ -6133,8 +6145,8 @@ CString filename;
   filedlg.m_ofn.lpstrTitle = "Select sound to play";
   filedlg.m_ofn.lpstrFile = filename.GetBuffer (_MAX_PATH); // needed!! (for Win32s)  
 
-  strcpy (filedlg.m_ofn.lpstrFile, m_strBeepSound);
-    
+  lstrcpyn (filedlg.m_ofn.lpstrFile, m_strBeepSound, _MAX_PATH);
+
   ChangeToFileBrowsingDirectory ();
   int nResult = filedlg.DoModal();
   ChangeToStartupDirectory ();

@@ -42,6 +42,8 @@
 #include "dialogs/global_prefs/GlobalPrefs.h"         // CGlobalPrefsP4 — printer font
 #include "dialogs/DebugWorldInputDlg.h"                // CDebugWorldInputDlg — fixed-pitch font
 #include "dialogs/plugins/PluginsDlg.h"                // CPluginsDlg — description liveness guard
+#include "dialogs/MapDlg.h"                            // CMapDlg — the mapper's "make alias"
+#include "dialogs/world_prefs/aliasdlg.h"              // CAliasDlg — what it runs
 
 #include <cctype>                       // isxdigit/islower — the GUID shape check
 
@@ -1561,6 +1563,16 @@ void TestSubstitutionTextResource()
 
     check(text != nullptr, "IDR_SUBSTITUTION resolves to bundled text (was: nullptr, \"Could not load text\")");
     check(size > 0, "...with non-zero size");
+
+    // DecodeTextLenient is all-or-nothing per buffer: ONE stray CP1252 byte
+    // sends the whole file down the Latin-1 fallback.  The file carried a 0x92
+    // where an apostrophe belonged, so the popup rendered the invisible C1
+    // control U+0092 instead of one.
+    const wxString decoded = text ? wxString::FromUTF8(text, size) : wxString();
+    check(!decoded.empty(),
+          "...and the bundled bytes are valid UTF-8 (was: one CP1252 0x92)");
+    check(decoded.Contains(wxT("locale's")),
+          "...so the apostrophe in \"locale's\" is an apostrophe");
 }
 
 // The Debug "summary" page is a wall of hyperlinks whose action is
@@ -1777,6 +1789,312 @@ void TestPluginsDlgDescriptionLiveness()
     delete erased;   // no longer owned by doc.m_PluginList after the erase() above
 }
 
+// ── 16. Connecting page, regexp recompile, sound browse, mapper alias (2026-08-19) ──
+// Four more upstream defects in the same two mushgui-only TUs as section 15.
+
+// ChangedPrefsP1 decides whether pressing OK on the World Properties
+// "Connecting" page marks the world modified.  It compared nine of the ten
+// members SavePrefsP1 writes, leaving out m_bUseSSL — so a user who ticked
+// "Use SSL" and changed nothing else had it applied to the live document and
+// thrown away at the next save decision.  The reloaded world then connected in
+// the clear.
+void TestUseSslIsAChange()
+{
+    printf("World-properties change detection (Use SSL):\n");
+
+    CMUSHclientDoc doc;
+    CPrefsP1 page1;
+
+    doc.m_bUseSSL = 0;
+    doc.LoadPrefsP1(page1);
+
+    // The control.  Without it a gutted `return true` would pass everything
+    // below.
+    check(!doc.ChangedPrefsP1(page1),
+          "an untouched Connecting page reports NO change");
+
+    page1.m_bUseSSL = TRUE;
+    check(doc.ChangedPrefsP1(page1),
+          "ticking Use SSL IS a change (was: silently thrown away)");
+
+    // ...and the other way round, from a world that already uses TLS.
+    doc.m_bUseSSL = 1;
+    doc.LoadPrefsP1(page1);
+    check(!doc.ChangedPrefsP1(page1),
+          "a TLS world round-trips as unchanged");
+    page1.m_bUseSSL = FALSE;
+    check(doc.ChangedPrefsP1(page1),
+          "...and un-ticking it is a change too");
+
+    // The member is an unsigned short and the dialog field a BOOL, so both
+    // sides have to be normalised: any non-zero means the same thing.
+    doc.m_bUseSSL = 1;
+    doc.LoadPrefsP1(page1);
+    page1.m_bUseSSL = 2;
+    check(!doc.ChangedPrefsP1(page1),
+          "...and a non-zero that is not 1 is still 'on', not a change");
+
+    // A sibling term must still be compared, so a fix that replaced one rather
+    // than adding one would show up.
+    doc.LoadPrefsP1(page1);
+    page1.m_port = doc.m_port + 1;
+    check(doc.ChangedPrefsP1(page1),
+          "changing the port is still a change (the other terms survive)");
+}
+
+// RecompileRegularExpressions runs over every trigger when the world's UTF-8
+// flag changes.  It refreshed strRegexp only inside `if (pTrigger->regexp)` but
+// called regcomp outside it, so a trigger whose compiled expression is NULL —
+// which this function's own catch and EvaluateTrigger both produce — was
+// recompiled from whatever the PREVIOUS trigger left in strRegexp, or from an
+// empty pattern if it came first.  An empty pattern matches every line.
+void TestRecompileKeepsEachTriggersOwnPattern()
+{
+    printf("Trigger regexp recompile (stale pattern):\n");
+
+    CMUSHclientDoc doc;
+    doc.m_mush_name   = "zz_selftest_recompile";
+    doc.m_nWrapColumn = 80;
+    doc.m_maxlines    = 5000;
+    doc.SetUpOutputWindow();       // else a compile error has nowhere to note it
+
+    CTrigger * pAlpha = new CTrigger;
+    pAlpha->trigger  = "^alpha$";
+    pAlpha->bRegexp  = true;
+    pAlpha->regexp   = regcomp(pAlpha->trigger, 0);   // already compiled
+
+    CTrigger * pBeta = new CTrigger;
+    pBeta->trigger   = "^beta$";
+    pBeta->bRegexp   = true;
+    pBeta->regexp    = NULL;                          // the failed-compile state
+
+    doc.m_TriggerMap.SetAt("alpha", pAlpha);
+    doc.m_TriggerMap.SetAt("beta",  pBeta);
+
+    check(doc.RecompileRegularExpressions() == 0,
+          "both triggers recompile without error");
+
+    // "Did nothing" fails here: pBeta would still be NULL.
+    check(pAlpha->regexp != NULL && pBeta->regexp != NULL,
+          "every trigger ends up with a compiled expression");
+
+    // The map is a hash, so the iteration order is not ours to choose — but
+    // under the defect BOTH orders are wrong: beta-first gives it the empty
+    // pattern (which matches anything), alpha-first gives it "^alpha$".
+    if (pAlpha->regexp && pBeta->regexp)
+        {
+        check(regexec(pAlpha->regexp, "alpha") != 0,
+              "the already-compiled trigger still matches its own text");
+        check(regexec(pAlpha->regexp, "beta") == 0,
+              "...and not its neighbour's");
+        check(regexec(pBeta->regexp, "beta") != 0,
+              "the NULL-expression trigger matches ITS own text "
+              "(was: the previous trigger's pattern)");
+        check(regexec(pBeta->regexp, "alpha") == 0,
+              "...and not its neighbour's (was: an empty pattern matching all)");
+        }
+}
+
+// CPrefsP14::OnBrowseSounds — the world's beep sound — was the eighth "browse
+// for a file" site, and the only one the lstrcpyn sweep missed, because it has
+// no VER_PLATFORM_WIN32s ternary above it.  beep_sound is a script-settable
+// alpha option with no length check, and the raw strcpy ran it straight past
+// the end of a GetBuffer (_MAX_PATH) allocation.
+void TestBeepSoundBrowseBoundsItsPath()
+{
+    printf("Beep sound browse (unbounded initial path):\n");
+
+    static size_t s_leafLen = 0;
+    static int s_calls = 0;
+    char* (*saved)(bool, const char*, const char*, const char*, const char*,
+                   bool) = g_wxhook_file_dialog;
+    g_wxhook_file_dialog = [](bool, const char*, const char*, const char* leaf,
+                              const char*, bool) -> char* {
+        s_leafLen = leaf ? strlen(leaf) : 0;
+        ++s_calls;
+        return nullptr;                     // cancel — no file touched
+    };
+
+    struct Probe : CPrefsP14 { using CPrefsP14::OnBrowseSounds; };
+    Probe page;
+    page.m_strBeepSound = CString('x', 400);   // longer than the buffer
+
+    s_calls = 0;
+    page.OnBrowseSounds();
+
+    check(s_calls == 1, "the file dialog was reached");
+    check(s_leafLen == _MAX_PATH - 1,
+          "an over-long beep-sound path is truncated to the buffer "
+          "(was: 400 bytes copied into 261)");
+
+    // An ordinary path must still arrive whole, so this is not a blanket clamp.
+    page.m_strBeepSound = "beep.wav";
+    s_calls = 0;
+    page.OnBrowseSounds();
+    check(s_calls == 1 && s_leafLen == strlen("beep.wav"),
+          "an ordinary path still arrives in full");
+
+    g_wxhook_file_dialog = saved;
+}
+
+// CMapDlg::AddAlias (Game ▸ Mapper ▸ Make alias) runs the same CAliasDlg as the
+// world-properties Aliases page, but had its own copy of the dialog-to-CAlias
+// field list — one that had fallen seven fields behind, so everything the user
+// set in those seven was discarded.  Both now go through CopyAliasFromDialog.
+void TestMapperAliasKeepsEveryDialogField()
+{
+    printf("Mapper 'make alias' (dropped dialog fields):\n");
+
+    CMUSHclientDoc doc;
+
+    static short s_seenSequence = 0;
+    static bool  s_setEverything = false;
+    intptr_t (*const savedRunDlg)(void*, unsigned) = g_run_mfc_dialog;
+    g_run_mfc_dialog = [](void* self, unsigned idd) -> intptr_t {
+        if (idd != IDD_EDIT_ALIAS)
+            return IDCANCEL;
+        CAliasDlg * d = (CAliasDlg *) self;
+        s_seenSequence = d->m_iSequence;       // what AddAlias seeded it with
+        d->m_name = "go_north";
+        if (s_setEverything)
+            {
+            d->m_bTemporary             = TRUE;
+            d->m_strVariable            = "last_move";
+            d->m_iSequence              = 42;
+            d->m_bKeepEvaluating        = TRUE;
+            d->m_bOneShot               = TRUE;
+            d->m_bEchoAlias             = TRUE;
+            d->m_bOmitFromCommandHistory = TRUE;
+            }
+        return IDOK;
+        };
+
+    // The alias the dialog last added to the map (there is only ever one here).
+    struct Finder {
+        static CAlias * Only (CMUSHclientDoc & d) {
+            CAlias * pFound = NULL;
+            CString strName;
+            for (POSITION pos = d.m_AliasMap.GetStartPosition(); pos;)
+                d.m_AliasMap.GetNextAssoc(pos, strName, pFound);
+            return pFound;
+            }
+        };
+
+    struct Probe : CMapDlg { using CMapDlg::AddAlias; };
+
+    // ── the seven dropped fields ───────────────────────────────────────────
+    {
+        Probe mapper;
+        mapper.m_pDoc = &doc;
+        s_setEverything = true;
+        mapper.AddAlias("n");
+
+        CAlias * pAlias = Finder::Only(doc);
+        check(pAlias != NULL, "the alias reached the world's alias map");
+        if (pAlias)
+            {
+            check(pAlias->name == "go_north" &&
+                  pAlias->iSendTo == eSendToSpeedwalk,
+                  "the fields it always copied are still copied");
+            check(pAlias->bTemporary && pAlias->bKeepEvaluating &&
+                  pAlias->bOneShot && pAlias->bEchoAlias &&
+                  pAlias->bOmitFromCommandHistory,
+                  "the five ticked boxes survive (was: the CAlias defaults)");
+            check(pAlias->strVariable == "last_move",
+                  "...as does the variable name");
+            check(pAlias->iSequence == 42,
+                  "...and the sequence the user typed");
+            }
+    }
+
+    // ── the sequence the dialog is SEEDED with ─────────────────────────────
+    // CAliasDlg's constructor zeroes m_iSequence while CAlias's uses
+    // DEFAULT_ALIAS_SEQUENCE, so copying the field without seeding it first
+    // would give every mapper alias a sequence of 0.
+    {
+        doc.m_AliasMap.RemoveAll();     // ownership: the CAlias above is leaked
+        Probe mapper;
+        mapper.m_pDoc = &doc;
+        s_setEverything = false;
+        s_seenSequence = -1;
+        mapper.AddAlias("s");
+
+        check(s_seenSequence == DEFAULT_ALIAS_SEQUENCE,
+              "the dialog opens on the default sequence, not 0");
+        CAlias * pAlias = Finder::Only(doc);
+        check(pAlias && pAlias->iSequence == DEFAULT_ALIAS_SEQUENCE,
+              "...so an untouched sequence lands as the default, not 0");
+    }
+
+    g_run_mfc_dialog = savedRunDlg;
+}
+
+// The Send-to-world and Paste pages validate their "delay in milliseconds"
+// field at 0..10000, but paste_delay / send_file_delay are option-table entries
+// bounded at 0..100000 — so a value a script or a world file legitimately set
+// above 10000 made World Properties refuse to close, with no way to fix it in
+// the dialog but to lower the number.  DDV_MinMaxLong is a real enforcer here.
+// Runs one property page's data exchange, answering "did the validation refuse
+// it?" — DDV_MinMaxLong signals that by throwing, the way MFC's Fail() does.
+template <class T>
+static bool DdxRefused (T & page, CDataExchange & dx)
+{
+    try { page.DoDataExchange(&dx); }
+    catch (const CDdxValidationFail &) { return true; }
+    return false;
+}
+
+void TestSendAndPasteDelaysAcceptTheOptionRange()
+{
+    printf("Send/Paste delay validation range:\n");
+
+    // No control window, so the DDX calls are no-ops and only the DDV bounds
+    // decide — which is exactly what is under test.  A refusal puts up a
+    // message box first, and there is no event loop here to answer one, so the
+    // hook stands in for it (and records that the box was asked for).
+    CDataExchange dx;
+    dx.m_bSaveAndValidate = TRUE;
+
+    static int s_boxes = 0;
+    int (*const savedBox)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+        ++s_boxes;
+        return IDOK;
+    };
+
+    struct P10 : CPrefsP10 { using CPrefsP10::DoDataExchange; };
+    struct P13 : CPrefsP13 { using CPrefsP13::DoDataExchange; };
+
+    {
+        P10 page;
+        page.m_nFileDelayPerLines = 1;       // its own bound is 1..100000
+        page.m_iLineDelay = 50000;
+        s_boxes = 0;
+        check(!DdxRefused(page, dx) && s_boxes == 0,
+              "Send-to-world accepts a 50000 ms delay (the option-table ceiling)");
+        page.m_iLineDelay = 100001;
+        check(DdxRefused(page, dx) && s_boxes == 1,
+              "...but still refuses one past it (the bound was widened, not removed)");
+        page.m_iLineDelay = -1;
+        check(DdxRefused(page, dx),
+              "...and still refuses a negative one");
+    }
+
+    {
+        P13 page;
+        page.m_nPasteDelayPerLines = 1;
+        page.m_iLineDelay = 50000;
+        s_boxes = 0;
+        check(!DdxRefused(page, dx) && s_boxes == 0,
+              "Paste accepts a 50000 ms delay too");
+        page.m_iLineDelay = 100001;
+        check(DdxRefused(page, dx) && s_boxes == 1,
+              "...and refuses one past the ceiling");
+    }
+
+    g_wxhook_message_box = savedBox;
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1807,6 +2125,11 @@ int RunGuiBridgeSelfTest()
     TestSubstitutionTextResource();
     TestDebugHelperPluginContext();
     TestPluginsDlgDescriptionLiveness();
+    TestUseSslIsAChange();
+    TestRecompileKeepsEachTriggersOwnPattern();
+    TestBeepSoundBrowseBoundsItsPath();
+    TestMapperAliasKeepsEveryDialogField();
+    TestSendAndPasteDelaysAcceptTheOptionRange();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

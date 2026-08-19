@@ -569,6 +569,41 @@ TEST(Utilities, DefaultWorldFileNameNeverContainsAPathSeparator)
     }
 }
 
+// ── TipsFileName ────────────────────────────────────────────────────────────
+// Where CTipDlg looks for the Tip of the Day text.  It used to build this in a
+// `char [MAX_PATH]` with strcpy + strcat, so a long enough install path ran the
+// suffix off the end of the array — Help ▸ Tip of the Day, and the tip shown at
+// startup, smashed the stack.  The 250-character directory below is what proves
+// the fixed array is gone: 250 + 22 is past MAX_PATH, so the old code could not
+// have produced this answer at all.
+TEST(Utilities, TipsFileNameSurvivesADirectoryLongerThanMAX_PATH)
+{
+    const CString strDir = CString('d', 250);
+    const CString got = TipsFileName(strDir + "/MUSHclient");
+
+    EXPECT_STREQ((const char*) (strDir + "/../Resources/tips.txt"),
+                 (const char*) got);
+    EXPECT_GT(got.GetLength(), MAX_PATH);
+}
+
+// The ordinary case, and the two shapes the old strrchr had to handle: the
+// executable's own name is dropped, and a module name with no separator in it
+// keeps everything (the behaviour the `if (p)` guard gave).
+TEST(Utilities, TipsFileNameDropsTheExecutableName)
+{
+    EXPECT_STREQ("/Applications/MUSHclient.app/Contents/MacOS"
+                 "/../Resources/tips.txt",
+                 (const char*) TipsFileName(
+                     "/Applications/MUSHclient.app/Contents/MacOS/MUSHclient"));
+
+    EXPECT_STREQ("MUSHclient/../Resources/tips.txt",
+                 (const char*) TipsFileName("MUSHclient"));
+
+    // Only the LAST separator counts, so a directory with a dot in it is safe.
+    EXPECT_STREQ("/opt/mc.1.2/../Resources/tips.txt",
+                 (const char*) TipsFileName("/opt/mc.1.2/MUSHclient"));
+}
+
 // utilities_shared.cpp: the CommandIDs[] lookups are case-insensitive and
 // round-trip; unknown name → 0, ID 0 → "".
 extern tCommandIDMapping CommandIDs[];

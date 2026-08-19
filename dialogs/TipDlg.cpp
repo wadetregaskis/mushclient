@@ -29,38 +29,13 @@ CTipDlg::CTipDlg(CWnd* pParent /*=NULL*/)
 	: CDialog(IDD_TIP, pParent)
 {
 char fullfilename[MAX_PATH];
-char filename [MAX_PATH];
-char * p;
+CString filename;
 
   // look for tips.txt in the same directory as the executable file
   if (GetModuleFileName (NULL, fullfilename, sizeof (fullfilename)))
-   {
-
-// remove last part of file name to get working directory
-
-    strcpy (filename, fullfilename);
-
-#ifdef _WIN32
-    p = strrchr (filename, '\\');
-#else
-    p = strrchr (filename, '/');
-#endif
-    if (p)
-      *p = 0;
-
-#ifdef _WIN32
-    strcat (filename, "\\tips.txt");
-#elif defined (__APPLE__)
-    // In a .app bundle read-only resources live in Contents/Resources/, not
-    // alongside the executable in Contents/MacOS/ (code signing requires that
-    // only the executable sit there).
-    strcat (filename, "/../Resources/tips.txt");
-#else
-    strcat (filename, "/tips.txt");
-#endif
-    }
+    filename = TipsFileName (fullfilename);
   else
-    strcpy (filename, "tips.txt");
+    filename = "tips.txt";
 
 	//{{AFX_DATA_INIT(CTipDlg)
 	m_bStartup = TRUE;

@@ -597,6 +597,15 @@ CString RemoveFinalSlash (CString str);
 // Windows forbids stripped out (utilities_shared.cpp).  Used by the port's save
 // hooks; Windows reaches the same logic inline in CMUSHclientDoc::OnSaveDocument.
 CString DefaultWorldFileName (const CString & strWorldName);
+// Where the Tip of the Day text lives, given the executable's own pathname
+// (utilities_shared.cpp).  The two callers used to build it in a MAX_PATH
+// stack array, which the suffix could run off the end of.
+CString TipsFileName (const CString & strModulePath);
+// Copy the alias dialog's fields into an alias (prefspropertypages.cpp).
+// Both CPrefsP7::UnloadDialog and CMapDlg::AddAlias run the same CAliasDlg.
+class CAlias;
+class CAliasDlg;
+void CopyAliasFromDialog (CAlias * alias_item, CAliasDlg * dlg);
 
 #define PLUGIN_UNIQUE_ID_LENGTH 24
 

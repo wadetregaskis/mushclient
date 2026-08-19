@@ -747,6 +747,49 @@ CString DefaultWorldFileName (const CString & strWorldName)
   } // end of DefaultWorldFileName
 
 
+// ── TipsFileName ─────────────────────────────────────────────────────────────
+// Where CTipDlg looks for the Tip of the Day text, given the executable's own
+// pathname: the directory the executable is in, plus the platform's suffix.
+//
+// Hoisted out of dialogs/TipDlg.cpp, which built it by strcpy-ing the module
+// name into a `char [MAX_PATH]` and then strcat-ing the suffix on with no
+// bound - so an install path whose directory part reached 238 characters (249
+// on the Mac, where the suffix is longest) smashed the stack the moment
+// Help > Tip of the Day, or a startup showing the tip, ran.  GetModuleFileName
+// itself hands back up to 259 characters, so the input really can get there.
+//
+// A module name with no separator in it keeps the old behaviour: the suffix is
+// appended to the whole thing.
+// Declared in stdafx.h.
+CString TipsFileName (const CString & strModulePath)
+  {
+  CString strDirectory = strModulePath;
+
+// remove last part of file name to get working directory
+
+#ifdef _WIN32
+  int iSlash = strDirectory.ReverseFind ('\\');
+#else
+  int iSlash = strDirectory.ReverseFind ('/');
+#endif
+
+  if (iSlash != -1)
+    strDirectory = strDirectory.Left (iSlash);
+
+#ifdef _WIN32
+  return strDirectory + "\\tips.txt";
+#elif defined (__APPLE__)
+  // In a .app bundle read-only resources live in Contents/Resources/, not
+  // alongside the executable in Contents/MacOS/ (code signing requires that
+  // only the executable sit there).
+  return strDirectory + "/../Resources/tips.txt";
+#else
+  return strDirectory + "/tips.txt";
+#endif
+
+  } // end of TipsFileName
+
+
 // ── tolower(string) / GetWord / StringToVector ─────────────────────────────
 // Relocated verbatim from the Windows Utilities.cpp.  The old portable twin
 // of StringToVector had DRIFTED: its 4th argument meant include_delim (append

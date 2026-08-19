@@ -49,6 +49,8 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 38 | `world.SetRemoveMapReverses` raises an error when passed a boolean | this commit | lua_methods.cpp `L_SetRemoveMapReverses` |
 | 39 | Three world-table entries reject the documented `other:Method (…)` form | this commit | lua_methods.cpp `L_StripANSI`, `L_GetWorld`, `L_GetWorldById` |
 | 40 | `pushVariant` hands an uninitialised `VARIANT` to `SafeArrayGetElement` | this commit | lua_methods.cpp `pushVariant` (VT_ARRAY arm) |
+| 41 | `DebugHelper`'s `callbacklist` branch dereferences a NULL plugin | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` |
+| 42 | Five `DebugHelper` early returns leave the document stuck in a plugin's context | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -875,3 +877,35 @@ and pointer happen to name.  It is the same defect the file already fixes for
 **Fix:** `VariantInit (&val);` after the declaration.  No behaviour change on
 the port — its `SafeArrayGetElement` shim copies without clearing — so this one
 needs a **Windows debug run** (poisoned stack) to see the original fault.
+
+## 41 — `DebugHelper`'s `callbacklist` branch dereferences a NULL plugin (this commit)
+**Bug:** `DebugHelper` starts by setting `m_CurrentPlugin = NULL` and only
+fills it in when the argument carries a `_<plugin id>_` prefix.  The
+`callbacklist` branch then walks `m_CurrentPlugin->m_PluginCallbacks` with no
+null guard — unlike the `editplugin` branch beside it, which is written
+`if (m_CurrentPlugin)`.  Reaching it with no plugin in context is an immediate
+segfault.  Every link the client itself emits carries a validated prefix, so
+the route is a script-authored `world.Hyperlink` whose action is
+`!!138a692642ab4f9e7a1af63b:callbacklist()`; it is **not** reachable from MUD
+output, MXP, or any UI-generated link, which is why it has survived.  No
+platform ifdef is involved, so Windows crashes identically.
+**Fix:** wrap the loop in `if (m_CurrentPlugin)`, with an
+`else Note (TFormat ("No plugin selected."));`, and let control fall through to
+the existing restore at the end of the function.  Needs a **Windows run** to
+confirm the same link crashes there and no longer does.
+
+## 42 — Five `DebugHelper` early returns leave the document stuck in a plugin's context (this commit)
+**Bug:** `DebugHelper` saves the caller's plugin in `pSavedPlugin`, switches
+`m_CurrentPlugin` to whichever plugin the clicked link named, and puts it back
+in a single assignment at the very end.  Five branches return before reaching
+it — `showtrigger`, `showalias` and `showtimer` when the named item does not
+exist, and `editplugin`/`editscript` when the built-in notepad is used.  After
+any of those the document is left in the clicked plugin's context, so every
+later trigger/alias/timer/variable lookup (`GetTriggerMap()` and friends
+already branch on `m_CurrentPlugin`) reads that plugin's tables instead of the
+world's.  Clicking a stale item on the Debug summary page is enough; the sixth
+early return, the one for an unknown plugin ID, already restores, which is what
+makes the omission look like an oversight rather than a design.
+**Fix:** repeat that branch's existing idiom —
+`m_CurrentPlugin = pSavedPlugin;` immediately before each of the five
+`return;`s.

@@ -1244,6 +1244,26 @@ TEST(Document, OpenMissingAndSaveUnwritableFail) {
     EXPECT_FALSE(doc.OnSaveDocument("/nonexistent/dir/out.txt"));
 }
 
+// Real MFC's CDocument::OnSaveDocument ends with SetModifiedFlag(FALSE) on
+// success; the shim used to omit it, so a save reached directly (bypassing
+// the hand-written clear in hook_save_world) left the doc dirty even though
+// the file was written.  A failed save must NOT clear it either way.
+TEST(Document, OnSaveDocumentClearsModifiedFlagOnSuccessOnly) {
+    std::string path = temp_path("doc_modflag.txt");
+    SerializingDoc doc;
+    doc.m_payload = "x";
+    doc.SetModifiedFlag();
+    EXPECT_TRUE(doc.IsModified());
+    EXPECT_TRUE(doc.OnSaveDocument(path.c_str()));
+    EXPECT_FALSE(doc.IsModified());
+    CFile::Remove(path.c_str());
+
+    doc.SetModifiedFlag();
+    EXPECT_TRUE(doc.IsModified());
+    EXPECT_FALSE(doc.OnSaveDocument("/nonexistent/dir/out.txt"));
+    EXPECT_TRUE(doc.IsModified());
+}
+
 TEST(Document, SerializeExceptionIsCaught) {
     std::string path = temp_path("doc_throw.txt");
     SerializingDoc doc;

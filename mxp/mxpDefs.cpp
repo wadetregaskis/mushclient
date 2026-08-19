@@ -133,6 +133,7 @@ bool bDelete = GetKeyword (ArgumentList, "delete");
     MXP_error (DBG_ERROR, errMXP_CannotRedefineElement,
                TFormat ("Cannot redefine built-in MXP element: <%s>" ,
                         (LPCTSTR) strName));
+    DELETE_LIST (ArgumentList);
     return;
     }
 
@@ -153,7 +154,10 @@ bool bDelete = GetKeyword (ArgumentList, "delete");
     } // end of existing element
 
   if (bDelete)
+    {
+    DELETE_LIST (ArgumentList);
     return; // all done!
+    }
 
 // add new element to map
 m_CustomElementMap.SetAt (strName, pElement = new CElement);

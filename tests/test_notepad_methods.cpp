@@ -183,6 +183,31 @@ TEST(NotepadMethods, GetWindowPositionReportsLeftTopWidthHeight)
     EXPECT_EQ(std::string(""), bstr(doc.GetNotepadWindowPosition("nope")));
 }
 
+TEST(NotepadMethods, LengthAndAppendAreByteOffsetsNotCharacterCounts)
+{
+    // GetNotepadText returns UTF-8 BYTES (it round-trips through a BSTR/
+    // CString), so GetNotepadLength and AppendToTheNotepad's own end-of-text
+    // seek (methods_notepad.cpp:117-121, m_fn_get_text_length feeding straight
+    // into m_fn_set_sel) must agree with it in bytes, not characters — the
+    // product's real seam (platform/wx_notepad.cpp) used to answer in wx
+    // CHARACTER positions instead, which is invisible to this fixture (its
+    // m_fn_get_text_length is already byte-based) but is exactly the contract
+    // this pins: a body that counted characters here would report 4 for
+    // "café" and land the append one byte short of the true end.
+    ClearAllNotepads();
+    CMUSHclientDoc doc;
+    FakeNotepad pad(&doc, "notes", doc.m_iUniqueDocumentNumber);
+    pad.text = "caf\xC3\xA9";   // "café": 4 characters, 5 UTF-8 bytes
+
+    const std::string text = bstr(doc.GetNotepadText("notes"));
+    EXPECT_EQ(5u, text.size());
+    EXPECT_EQ(strlen(text.c_str()), (size_t) doc.GetNotepadLength("notes"));
+    EXPECT_EQ(5L, doc.GetNotepadLength("notes"));
+
+    EXPECT_TRUE(doc.AppendToNotepad("notes", " latte"));
+    EXPECT_EQ(std::string("caf\xC3\xA9 latte"), pad.text);
+}
+
 TEST(NotepadMethods, GetNotepadListHonoursTheAllFlag)
 {
     // The drift this pins: the twin discarded `All` entirely and always

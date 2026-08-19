@@ -9,7 +9,6 @@
 #ifndef _WIN32
 
 #include <wx/wx.h>
-#include <wx/stc/stc.h>       // wxStyledTextCtrl for Find/replace support
 #include <map>
 #include <string>
 #include <vector>
@@ -68,6 +67,7 @@ public:
     bool SendSelectionToWorld();          // selection (or all) → the world
 
 private:
+    void OnMenuOpen(wxCommandEvent& evt);
     void OnMenuSaveAs(wxCommandEvent& evt);
     void OnMenuFind(wxCommandEvent& evt);
     void OnMenuFindNext(wxCommandEvent& evt);

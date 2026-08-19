@@ -21,7 +21,9 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box (QuoteForumCodes confirm)
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box (QuoteForumCodes + Base64 confirm)
+
+#include <string>
 
 // Convenience: run an op over a C string and return the result as std::string.
 static std::string Convert(int op, const char* src)
@@ -31,6 +33,33 @@ static std::string Convert(int op, const char* src)
         return "<failed>";
     return std::string((const char*) dst);
 }
+
+// ── g_wxhook_message_box capture ────────────────────────────────────────────
+// Shared by the Base64-decode-failure test below and the QuoteForumCodes
+// section further down: counts prompts, answers them without a window, and
+// remembers the last message text so a test can assert something was
+// actually SAID, not merely that a box was asked.
+static int         g_answer      = IDOK;
+static int         g_boxCalls    = 0;
+static std::string g_lastMessage;
+static int FakeMessageBox(const char* text, const char*, unsigned)
+{
+    g_boxCalls++;
+    g_lastMessage = text ? text : "";
+    return g_answer;
+}
+
+struct MessageBoxHook {
+    int (*saved)(const char*, const char*, unsigned);
+    MessageBoxHook(int answer) : saved(g_wxhook_message_box)
+      {
+      g_answer = answer;
+      g_boxCalls = 0;
+      g_lastMessage.clear();
+      g_wxhook_message_box = FakeMessageBox;
+      }
+    ~MessageBoxHook() { g_wxhook_message_box = saved; }
+};
 
 // ── The boundary itself ─────────────────────────────────────────────────────
 
@@ -155,9 +184,12 @@ TEST(NotepadConvert, QuoteLinesUsesThePreferenceAndQuotesEveryLine)
 {
     App.m_strNotepadQuoteString = "| ";
     EXPECT_EQ(std::string("| a\n| b\n| "), Convert(eNotepadConvertQuoteLines, "a\nb\n"));
-    // Empty preference falls back to the canonical "> ".
+    // An explicitly-cleared preference is a NO-OP quote — the canonical
+    // CTextView::OnConvertQuotelines has no "> " fallback of its own, so the
+    // port must not invent one.  A body that still falls back to "> " here
+    // fails this assertion.
     App.m_strNotepadQuoteString = "";
-    EXPECT_EQ(std::string("> a\n> b"), Convert(eNotepadConvertQuoteLines, "a\nb"));
+    EXPECT_EQ(std::string("a\nb"), Convert(eNotepadConvertQuoteLines, "a\nb"));
 }
 
 TEST(NotepadConvert, HtmlSpecialCharacters)
@@ -179,11 +211,17 @@ TEST(NotepadConvert, Base64RoundTripsThroughTheControlConvention)
 
 TEST(NotepadConvert, Base64DecodeFailsCleanlyOnGarbage)
 {
-    // Canonical CTextView catches the exception and leaves the window alone; the
-    // false return is how the caller knows not to touch the control.
+    // Canonical CTextView catches the exception, REPORTS it (ReportError —
+    // TextView.cpp:1226) and leaves the window alone; the false return is how
+    // the caller knows not to touch the control.  The port used to swallow
+    // the exception with no report at all, so a garbage decode looked like
+    // nothing happened (the wx frontend only beeped, with no indication why).
+    MessageBoxHook box(IDOK);
     CString dst("untouched");
     EXPECT_FALSE(NotepadConvertText(eNotepadConvertBase64Decode, CString("not!base64"), dst));
     EXPECT_STREQ("untouched", (const char*) dst);
+    EXPECT_EQ(1, g_boxCalls);
+    EXPECT_FALSE(g_lastMessage.empty());
 }
 
 TEST(NotepadConvert, UnknownOpIsRefused)
@@ -205,20 +243,10 @@ TEST(NotepadConvert, UnknownOpIsRefused)
 // answer is IDOK, so a test that does not install a message-box hook cannot tell
 // the real body from the identity stub: headless UMessageBox answers IDCANCEL
 // for MB_OKCANCEL (platform/wx_mfc_hooks.h:87).  Both fixtures below therefore
-// drive g_wxhook_message_box, which is the discriminator — and the second one
+// drive g_wxhook_message_box (the MessageBoxHook / FakeMessageBox pair defined
+// near the top of this file), which is the discriminator — and the second one
 // pins the cancel arm, so the auto-cancel behaviour is now covered rather than
 // merely relied upon.
-
-static int g_answer      = IDOK;
-static int g_boxCalls    = 0;
-static int FakeMessageBox(const char*, const char*, unsigned) { g_boxCalls++; return g_answer; }
-
-struct MessageBoxHook {
-    int (*saved)(const char*, const char*, unsigned);
-    MessageBoxHook(int answer) : saved(g_wxhook_message_box)
-      { g_answer = answer; g_boxCalls = 0; g_wxhook_message_box = FakeMessageBox; }
-    ~MessageBoxHook() { g_wxhook_message_box = saved; }
-};
 
 TEST(NotepadConvert, QuoteForumCodesEscapesBracketsAndBackslash)
 {

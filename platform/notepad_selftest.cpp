@@ -278,6 +278,45 @@ int RunNotepadSelfTest()
         }
     }
 
+    // ── 3b2. GetNotepadLength counts UTF-8 BYTES, not wx characters (X04-F5) ─
+    // world.GetNotepadText returns UTF-8 bytes (methods_notepad.cpp), so
+    // world.GetNotepadLength must agree with it in bytes, not the wx text
+    // control's own character count -- otherwise a well-formed multi-byte
+    // notepad reports a length that does not match strlen() of its own text.
+    // This drives the real product seam (platform/wx_notepad.cpp) directly,
+    // headless coverage cannot reach it (tests/notepad_fixture.h's fixture is
+    // already byte-based and never touches this file).  Reuses the "empty"
+    // notepad from check 1 above (otherwise idle from here on) rather than
+    // opening a new window -- this harness runs entirely inside wxApp::OnInit,
+    // with no event loop pumping between window operations, and each extra
+    // top-level frame measurably adds to that fragility.
+    {
+        CWxNotepadFrame* utf8Frame = CWxNotepadFrame::Find("selftest_np_empty");
+        npCheck(empty != nullptr && utf8Frame != nullptr,
+                "the empty notepad is reusable for the byte-length check");
+        if (empty && empty->m_fn_get_text_length && empty->m_fn_set_sel &&
+            empty->m_fn_replace_sel)
+        {
+            empty->m_fn_set_sel(0, -1);
+            empty->m_fn_replace_sel(std::string("caf\xC3\xA9"));   // "café"
+
+            const int len = empty->m_fn_get_text_length();
+            npCheck(len == 5,
+                    "the length callback reports UTF-8 BYTES, not wx "
+                    "characters (\"caf\\xC3\\xA9\" is 4 characters, 5 bytes; "
+                    "it used to report 4)");
+
+            // AppendToTheNotepad's own append arm (methods_notepad.cpp:117-121):
+            // get the length, select (length, length), write.  Must still land
+            // at the true end now that the length is in bytes.
+            empty->m_fn_set_sel(len, len);
+            empty->m_fn_replace_sel(std::string(" latte"));
+            npCheck(utf8Frame && utf8Frame->GetText() == "caf\xC3\xA9 latte",
+                    "...and an append using that length still lands at the "
+                    "true end of the text");
+        }
+    }
+
     // ── 3c. Search / navigation commands (2026-08-13) ──────────────────────
     // The canonical CTextView commands the bar lacked entirely — the whole
     // Search popup among them (the bite: Plugins ▸ Edit opens plugin .lua
@@ -426,6 +465,28 @@ int RunNotepadSelfTest()
                         "(BUG-5's repro: it used to reach nowhere)");
             }
         }
+
+        // GetNotepadWindowPosition reports the EXACT width/height
+        // MoveNotepadWindow set (E04-F2).  m_fn_get_rect used to emit
+        // wxRect's INCLUSIVE right/bottom, but both consumers of the string
+        // (this BSTR-formatted method and Lua's own
+        // L_GetNotepadWindowPosition) subtract left/top from right/bottom as
+        // if this were a Win32 RECT, whose right/bottom are EXCLUSIVE -- so
+        // the reported width/height came back one pixel short.
+        if (boundFrame)
+        {
+            npCheck(world->MoveNotepadWindow("selftest_np_worldbound",
+                                             60, 80, 300, 200) != FALSE,
+                    "MoveNotepadWindow moves the world-bound notepad");
+            wxYield();
+
+            BSTR bstrPos = world->GetNotepadWindowPosition("selftest_np_worldbound");
+            CString pos = bstrPos;
+            SysFreeString(bstrPos);
+            npCheck(pos == "60,80,300,200",
+                    "GetNotepadWindowPosition reports the EXACT width/height "
+                    "MoveNotepadWindow set (it used to read one pixel short)");
+        }
     }
 
     // ── 4. The Convert menu's end-of-line commands ─────────────────────────
@@ -455,6 +516,90 @@ int RunNotepadSelfTest()
             npCheck(frame->GetText() == "a\nb\nc",
                     "DOS to Mac keeps the line structure (it used to delete every break)");
         }
+    }
+
+    // ── 4b. File > New resets a Recall/search-results title (E19-F2) ───────
+    // CTextDocument::OnFileNew's guard (TextDocument.cpp:460): don't make
+    // another Recall window -- a fresh notepad opened from within a Recall/
+    // search-results one must reset the title to the generic form, not
+    // inherit the Recall notepad's own title.  The port's OnMenuNew used to
+    // reproduce OnFileNew's body without this guard.
+    {
+        void* pv = g_wxhook_create_text_window(
+            "recalled text", "selftest_np_recall",
+            nullptr, 2,                // no related world, distinct doc number
+            "", 0, 0, 0, 0, 0,
+            "xyz", "",                 // non-empty search string -> Recall shape
+            false, false, false, false, false, 0, eNotepadRecall);
+        CWxNotepadFrame* recallFrame = CWxNotepadFrame::Find("selftest_np_recall");
+        npCheck(pv != nullptr && recallFrame != nullptr,
+                "Recall-shaped notepad created");
+        if (recallFrame)
+        {
+            recallFrame->Hide();
+            wxMenuItem* item = FindMenuItem(recallFrame, "File", "New notepad");
+            npCheck(item != nullptr, "the notepad has a File > New notepad item");
+            if (item)
+            {
+                wxCommandEvent cmd(wxEVT_MENU, item->GetId());
+                cmd.SetEventObject(recallFrame);
+                recallFrame->GetEventHandler()->ProcessEvent(cmd);
+
+                CWxNotepadFrame* freshFrame = CWxNotepadFrame::Find("Untitled");
+                npCheck(freshFrame != nullptr,
+                        "File > New from a Recall notepad resets the title to "
+                        "\"Untitled\" (it used to inherit the Recall title)");
+                if (freshFrame) freshFrame->Hide();
+            }
+        }
+    }
+
+    // ── 4c. File > Open loads an existing file into a notepad (E19-F3) ─────
+    // CTextDocument::OnFileOpen's canonical command; the port had no menu
+    // item for it at all, so it was permanently unreachable from the UI.
+    // Drives g_wxhook_open_text_file directly -- the SAME non-modal call
+    // CWxNotepadFrame::OnMenuOpen makes once its wxFileDialog returns OK --
+    // so the file dialog itself needn't run under ctest.
+    {
+        const char* path = "/tmp/mushclient_notepad_selftest_open.txt";
+        const char* contents = "opened from disk\n";
+        FILE* fp = fopen(path, "w");
+        npCheck(fp != nullptr, "the fixture file could be created");
+        if (fp)
+        {
+            fputs(contents, fp);
+            fclose(fp);
+        }
+
+        npCheck(g_wxhook_open_text_file != nullptr,
+                "the file-open hook is installed");
+        if (g_wxhook_open_text_file && fp)
+        {
+            void* pv = g_wxhook_open_text_file(path);
+            npCheck(pv != nullptr, "opening the file returns a document");
+
+            CWxNotepadFrame* openedFrame =
+                CWxNotepadFrame::Find("mushclient_notepad_selftest_open.txt");
+            npCheck(openedFrame != nullptr,
+                    "File > Open created a notepad titled after the file "
+                    "(the menu item did not exist before)");
+            if (openedFrame)
+            {
+                openedFrame->Hide();
+                npCheck(openedFrame->GetText() == contents,
+                        "...with the file's own contents");
+                // The menu item itself, not just the hook it drives -- the
+                // hook (g_wxhook_open_text_file) already had other callers
+                // (world_debug.cpp, the Plugins dialog's Edit button), so
+                // exercising it alone would not fail if only the NEW menu
+                // item / OnMenuOpen wiring were missing.
+                npCheck(FindMenuItem(openedFrame, "File", "Open") != nullptr,
+                        "...and the File menu has the Open item that drives "
+                        "this (the notepad had no File > Open at all)");
+            }
+        }
+
+        remove(path);
     }
 
     // ── 5. Quitting asks about unsaved notepads ────────────────────────────

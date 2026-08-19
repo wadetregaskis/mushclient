@@ -539,6 +539,47 @@ enum
 bool NotepadConvertText (const int op, const CString & src, CString & dst);
 CString NotepadTextToCanonical   (const CString & in);   // control LF → CRLF
 CString NotepadTextFromCanonical (const CString & in);   // CRLF → control LF
+
+// ── Notepad line endings (notepad_convert_shared.cpp) ───────────────────────
+//
+// The wx text control can hold exactly ONE line ending: LF.  A CRLF fed to it
+// does not COLLAPSE to LF, it EXPANDS to two line breaks — measured on this
+// machine's wxWidgets 3.3.2:
+//
+//   SetValue("a\r\nb")   → GetValue() == "a\n\nb"   (3 lines, line 1 empty)
+//   SetValue("a\rb")     → GetValue() == "a\nb"     (a LONE CR does collapse)
+//   SaveFile after SetValue("a\r\nb\r\nc") → "a\n\nb\n\nc" (9 bytes in, 7 out)
+//
+// and WriteText/AppendText/LoadFile behave identically.  So a CRLF file opened
+// in a notepad was displayed double-spaced and, on the next Save, rewritten
+// that way — every bundled plugin is CRLF, and Plugins ▸ Edit, Game ▸ Edit
+// Script File, notepad File ▸ Open and Lua world.Open all reach that path.
+//
+// The fix: the control is only ever fed LF, and the file's real style is
+// carried BESIDE it on the document (CTextDocument::m_iLineEndings), then
+// restored when the document is written back out.
+enum
+  {
+  eLineEndingsLF,          // "\n"   — Unix, and the platform default here
+  eLineEndingsCRLF,        // "\r\n" — DOS / Windows
+  eLineEndingsCR,          // "\r"   — classic Mac
+  };
+
+// What a brand-new notepad — and a loaded file with no line breaks at all —
+// gets.  LF is right on macOS/Linux.  A notepad opened ON a CRLF file does NOT
+// come through here: its style is detected from the file's own bytes, so it
+// stays CRLF.
+const int eLineEndingsDefault = eLineEndingsLF;
+
+// The style of a raw byte buffer.  Majority wins; ties resolve CRLF > CR > LF.
+int NotepadDetectLineEndings (const char * data, size_t len);
+// Raw file bytes → the LF-only convention the control can hold.
+std::string NotepadBytesToControlText (const char * data, size_t len);
+// Control text (LF-only) → the raw bytes of a file using `style`.
+std::string NotepadControlTextToBytes (const std::string & strText, const int style);
+// Read/write a notepad's file, converting line endings at the boundary.
+bool NotepadReadFile  (const char * path, std::string & strText, int & style);
+bool NotepadWriteFile (const char * path, const std::string & strText, const int style);
 #endif // !_WIN32
 
 // different ways of saving things — implementations in xml/xml_save_world.cpp
@@ -1046,7 +1087,7 @@ int myAtoF(const char *z, double *pResult);
 
 
 
-long LoadPng (LPCTSTR FileName, HBITMAP & hbmp);  // load a PNG file into a bitmap
+long LoadPng (LPCTSTR FileName, HBITMAP & hbmp);  // load a PNG file into a bitmap
 // Decode a .bmp into a Windows-shaped HBITMAP (bmp_load_shared.cpp).  The port's
 // stand-in for ::LoadImage(IMAGE_BITMAP, LR_LOADFROMFILE), which Win32 owns.
 long LoadBmp (LPCTSTR FileName, HBITMAP & hbmp);

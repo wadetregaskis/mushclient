@@ -64,6 +64,17 @@ public:
    BOOL m_bReadOnly;
 
 #ifndef _WIN32
+   // ── The file's line endings ──────────────────────────────────────────────
+   // Windows needs no such field: its CEdit buffer holds the file's bytes
+   // verbatim (CEditView::SerializeRaw), so the buffer IS the line-ending
+   // style.  The wx control cannot — it holds LF and nothing else, and turns a
+   // CRLF into TWO line breaks (see stdafx.h) — so the style has to be carried
+   // out of band from the buffer and put back when the document is saved.
+   //
+   // Set from the loaded file's own bytes (NotepadDetectLineEndings); the four
+   // Convert-menu line-ending commands are exactly "change this".
+   int m_iLineEndings = eLineEndingsDefault;
+
    // ── wx notepad callbacks ─────────────────────────────────────────────────
    // Wired by CWxNotepadFrame (platform/wx_notepad.cpp) at window creation.
    // Each callback is cleared to nullptr when the window is destroyed.

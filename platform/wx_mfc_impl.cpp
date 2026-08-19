@@ -3393,22 +3393,20 @@ static void* hook_open_text_file(const char* path)
     if (!wxFileName::FileExists(wxPath))
         return nullptr;
 
-    // Read the whole file.  wxFile handles the binary read; the notepad is a
-    // text control, so anything unreadable as text simply displays oddly rather
-    // than failing — the same as the Windows notepad.
-    wxFile f;
-    if (!f.Open(wxPath, wxFile::read))
+    // Read the whole file, and DETECT ITS LINE ENDINGS on the way past.  The
+    // notepad is a text control, so anything unreadable as text simply
+    // displays oddly rather than failing — the same as the Windows notepad.
+    //
+    // The detected style is remembered on the document below, because the
+    // control cannot: it holds LF and turns a CRLF into two line breaks, so
+    // every CRLF file (which is every bundled plugin) was displayed
+    // double-spaced and rewritten that way by the next Save.  Reading through
+    // NotepadReadFile normalises to LF; m_iLineEndings puts the file back the
+    // way it came.
+    std::string buf;
+    int         iLineEndings = eLineEndingsDefault;
+    if (!NotepadReadFile(path, buf, iLineEndings))
         return nullptr;
-    wxFileOffset len = f.Length();
-    std::string  buf;
-    if (len > 0) {
-        buf.resize((size_t) len);
-        ssize_t got = f.Read(&buf[0], (size_t) len);
-        if (got < 0)
-            return nullptr;
-        buf.resize((size_t) got);
-    }
-    f.Close();
 
     static long long s_openedFileDocNum = 0;
 
@@ -3432,6 +3430,8 @@ static void* hook_open_text_file(const char* path)
     CTextDocument* td = static_cast<CTextDocument*>(pv);
     // The point of opening a FILE: saving writes back here instead of prompting.
     td->SetPathName(path);
+    // ...and writes it back in the line endings it arrived with.
+    td->m_iLineEndings = iLineEndings;
     td->SetModifiedFlag(FALSE);
     return pv;
 }

@@ -101,6 +101,7 @@ patches upstream, not as a claim that this tree fixed it.
 | 84 | `GetLineInfo(n).time` builds its field as `(int) m_theTime.GetTime()`, truncating a 64-bit `time_t`, so every line's timestamp comes back negative from 2038-01-19 03:14:08 UTC | `43e27b8` | lua_methods.cpp `L_GetLineInfo` (table form) |
 | 85 | `MXP_StartTag` records a built-in tag as open — an active-list entry plus a `START_TAG` marker style — before `MXP_OpenAtomicTag` asks the veto, and nothing unwinds it, so a vetoed tag stays on the active list: a spurious `StartNewLine` from its close, a swallowed outstanding-tag warning, a close-tag callback for an open that was suppressed, and a vetoed `<send>` rewriting the enclosing anchor's action | `3095c2a` | mxpStart.cpp `CMUSHclientDoc::MXP_StartTag`; mxpOpenAtomic.cpp `CMUSHclientDoc::MXP_OpenAtomicTag` |
 | 86 | `calculate_line_and_column`'s two UTF-8 fix-ups disagree about direction — the first walks **forward** to the next character's lead byte (`col++`) where the half-way arm below walks **backward** (`col--`) — so the two arms can resolve the same click to different characters, and a click just left of a multi-byte character selects one too far right | not fixed (needs a Windows run) | mushview.cpp `CMUSHView::calculate_line_and_column` |
+| 87 | lsqlite3 decides whether a column value survives as a Lua number with `n == i64`, where the usual arithmetic conversions widen the int64 operand to double — so the test reads `(double) i64 == (double) i64`, is vacuously true, and the exact-decimal-string branch beside it is unreachable at all three sites; any value a double cannot hold is pushed to Lua silently **rounded** (a column holding `9007199254740993` reads back as `9007199254740992`) | `fbb6695` | lsqlite3.c `vm_push_column`, `db_last_insert_rowid`, `db_push_value` — vendored third-party code, so upstream lsqlite3 carries it too |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -2015,3 +2016,59 @@ multi-byte character (an accented letter or a box-drawing glyph) and start a dra
 selection. The selection should begin at that character, not one to its right. Compare
 against a click past the character's midpoint, which takes the backward arm and is
 believed correct. Recorded as `docs/DECISION-QUEUE-2026-08.md` D-26.
+
+## 87 — lsqlite3's int64 round-trip test is vacuously true, so the module rounds silently (`fbb6695`)
+**Bug:** the bundled Lua `sqlite3` module decides whether an INTEGER column survives
+as a Lua number by round-tripping it through a `lua_Number`. The intent is plain from
+the shape — push a number if the value is held exactly, else push the exact decimal
+text — and all three sites spell it the same way (`vm_push_column`,
+`db_last_insert_rowid`, and the `sqlite3_value` variant `db_push_value`):
+
+```c
+sqlite_int64 i64 = sqlite3_column_int64 (vm, idx);
+lua_Number   n   = (lua_Number) i64;
+if (n == i64)
+    lua_pushnumber (L, n);
+else
+    lua_pushlstring (L, (const char *) sqlite3_column_text (vm, idx), …);
+```
+
+In `n == i64` the usual arithmetic conversions widen the `sqlite_int64` operand to
+`double` before comparing, so the expression reads `(double) i64 == (double) i64` and
+is **always true**. The `else` branch is unreachable on any platform with IEEE
+doubles, and a value a double cannot hold comes back silently rounded: a column
+holding `9007199254740993` (2^53+1) reads as the Lua number `9007199254740992`.
+Verified rather than inferred — the test that used to pin the defect asserted exactly
+that value.
+
+**Fix:** round-trip back through `sqlite_int64`, which is what the test was meant to
+do, behind a named helper (`lsqlite_double_holds_int64_exactly`) shared by the three
+sites. The range check comes **first**, because `(double) INT64_MAX` rounds *up* to
+exactly 2^63 and casting that back to an integer is undefined behaviour — arm64
+saturates to `INT64_MAX`, which would call the value exact and reinstate the bug at
+the one input most likely to be tested, while x86-64 yields `INT64_MIN` and would
+not. Comparing against 2^63 before the cast removes the undefined behaviour and the
+platform dependency together.
+
+**Why it is worth having:** this is the app's *other* SQLite surface. A script
+reaches these three functions through `sqlite3.open_memory()`, where it reaches
+`world.Database*` for the same data by another route — and the two disagreed. Entry
+80 above fixed the `world.Database*` readers' 32-bit truncation, and `e24ab4b` then
+moved their middle band from a 2^53 magnitude cap to the same round-trip test; this
+closes the last of the gap, so both surfaces now band identically. The shared
+reasoning and the band boundaries live in `scripting/db_int64.h`.
+
+**Script-visible, and deliberately so.** A value above 2^53 that a double cannot hold
+now arrives as a lossless decimal string where it used to arrive as a wrong number.
+That is a type change for anything reading such a column, which is why it was taken
+as a decision rather than folded into entry 80's fix (the branch report for the
+`world.Database*` realign raised it as an open question and left the module alone;
+the call was made afterwards, and this is it). Covered by
+`DatabaseTest.Lsqlite3ModuleBandsExactlyAsWeDo`, which asserts both halves — exactly
+representable values stay numbers, including 2^60 and `INT64_MIN`; non-representable
+ones are the string — and pins `INT64_MAX` specifically, since that is the input the
+range guard exists for. Mutation-checked: restoring the vacuous test fails it.
+
+**Vendored code.** `lsqlite/lsqlite3.c` is third-party and is in `MUSHclient.vcxproj`,
+so the defect ships to Windows too and the fix is a local patch that upstream
+lsqlite3 does not carry. See `docs/WINDOWS-VALIDATION.md` §4c-sexquadragies.

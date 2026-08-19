@@ -50,6 +50,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 39 | Three world-table entries reject the documented `other:Method (…)` form | this commit | lua_methods.cpp `L_StripANSI`, `L_GetWorld`, `L_GetWorldById` |
 | 40 | `pushVariant` hands an uninitialised `VARIANT` to `SafeArrayGetElement` | this commit | lua_methods.cpp `pushVariant` (VT_ARRAY arm) |
 | 41 | `GetRecentLines` narrows its start position to `int`, so a large Count reads outside the buffer | this commit | methods_output.cpp `CMUSHclientDoc::GetRecentLines` |
+| 42 | A names file with an empty section makes name generation divide by zero and subscript an empty array | this commit | NameGeneration.cpp `ReadNames`, `GenerateName` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -893,3 +894,19 @@ wrap (`if (Count > 0 && (size_t) Count < m_sRecentLines.size ())`), walk with a
 the buffer now returns the whole buffer, which is what a smaller overshoot
 always did.  Covered by `LuaSurface.GetRecentLinesClampsACountBiggerThanTheBuffer`.
 
+## 42 — An empty section in the names file is loaded as a valid names list (this commit)
+**Bug:** `ReadNames` checks that each of `[start]`, `[middle]`, `[end]` and
+`[stop]` is present, but not that any lines were collected between them, so a
+file whose section markers are adjacent sets `bNamesRead = true` with one or
+more of `FirstNames` / `MiddleNames` / `LastNames` empty.  `GenerateName` then
+evaluates `rand () % FirstNames.GetSize ()` — a division by zero — and
+subscripts the empty array.  It reaches the user through Edit ▸ Generate Name
+and through `world.GenerateName`, and `world.ReadNamesFile` reports `eOK` for
+the file that causes it.
+**Fix:** after each collecting loop, refuse the file the same way the missing
+markers already do — `if (FirstNames.GetSize () == 0) ThrowErrorException
+("No names in [start] section of names file");` — so `bNamesRead` is never set
+with an empty list and `world.ReadNamesFile` answers `eCouldNotOpenFile`.
+NameGeneration.cpp is a `mushgui_adapters` TU (the headless build takes the
+`platform/windows_stubs.cpp` `ReadNames`, which always throws), so there is no
+headless coverage for this one and it wants a **Windows or GUI run**.

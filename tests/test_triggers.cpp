@@ -816,6 +816,37 @@ TEST(TriggerApi, GetTriggerRoundTripAndList)
     EXPECT_STREQ("rt", vs(e).c_str());
 }
 
+// GetTrigger must report omit_from_log and omit_from_output as distinct
+// bits: it used to OR eOmitFromOutput in for BOTH source members, so a
+// trigger created with only omit_from_log read back indistinguishable from
+// one created with only omit_from_output (upstream bug #46).
+TEST(TriggerApi, GetTriggerReportsOmitFromLogAndOmitFromOutputAsDistinctBits)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("log_only", "m", "",
+                                          eEnabled | eOmitFromLog,
+                                          -1, 0, "", "", eSendToWorld, 100));
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("output_only", "m", "",
+                                          eEnabled | eOmitFromOutput,
+                                          -1, 0, "", "", eSendToWorld, 100));
+
+    VARIANT m, r, f, c, w, snd, scr;
+    VariantInit(&m); VariantInit(&r); VariantInit(&f); VariantInit(&c);
+    VariantInit(&w); VariantInit(&snd); VariantInit(&scr);
+
+    EXPECT_EQ((long)eOK,
+              doc.GetTrigger("log_only", &m, &r, &f, &c, &w, &snd, &scr));
+    ASSERT_EQ(VT_I2, (int)f.vt);
+    EXPECT_TRUE ((f.iVal & eOmitFromLog)    != 0);
+    EXPECT_FALSE((f.iVal & eOmitFromOutput) != 0);
+
+    EXPECT_EQ((long)eOK,
+              doc.GetTrigger("output_only", &m, &r, &f, &c, &w, &snd, &scr));
+    ASSERT_EQ(VT_I2, (int)f.vt);
+    EXPECT_TRUE ((f.iVal & eOmitFromOutput) != 0);
+    EXPECT_FALSE((f.iVal & eOmitFromLog)    != 0);
+}
+
 // GetTriggerInfo conventions and representative arms.
 TEST(TriggerApi, GetTriggerInfoArms)
 {

@@ -7,6 +7,7 @@
 #include "../../doc.h"
 #include "../../MUSHview.h"
 #include "../errors.h"
+#include "../db_int64.h"
 
 // Implements:
 
@@ -397,10 +398,9 @@ VARIANT CMUSHclientDoc::DatabaseColumnValue(LPCTSTR Name, long Column)
         break;
 
       case SQLITE_INTEGER:
-        {
-        int iResult =  sqlite3_column_int  (it->second->pStmt, Column - 1);
-        SetUpVariantLong (vaResult, iResult); 
-        }
+        // 64-bit safe: long / double / decimal string, per db_int64.h.
+        SetUpVariantDatabaseInteger (vaResult,
+                    sqlite3_column_int64 (it->second->pStmt, Column - 1));
         break;
 
       case SQLITE_FLOAT:
@@ -640,6 +640,25 @@ VARIANT CMUSHclientDoc::DatabaseColumnNames(LPCTSTR Name)
 // WARNING: Lua version implemented separately in lua_methods.cpp
 //          due to conversion problems with BSTR and some code pages
 
+// The array-element flavour of SetUpVariantDatabaseInteger (db_int64.h) -- same
+// banding, different string ownership.  A COleVariant assigned a CString takes
+// the string by value on Windows and BORROWS it on the port (platform/mfc_ui.h),
+// and COleSafeArray::PutElement makes its own copy either way, so strScratch
+// must be the caller's and must outlive the PutElement.  The other two bands
+// carry no string, so they defer to the shared helper.
+static void SetUpArrayElementDatabaseInteger (COleVariant & vaElement,
+                                              const sqlite3_int64 iValue,
+                                              CString & strScratch)
+  {
+  if (DatabaseIntegerBand (iValue) == eDatabaseIntegerAsString)
+    {
+    strScratch = DatabaseIntegerAsString (iValue);
+    vaElement = strScratch;
+    }
+  else
+    SetUpVariantDatabaseInteger (vaElement, iValue);
+  }   // end of SetUpArrayElementDatabaseInteger
+
 // returns an array of column values
 VARIANT CMUSHclientDoc::DatabaseColumnValues(LPCTSTR Name) 
 {
@@ -663,6 +682,10 @@ VARIANT CMUSHclientDoc::DatabaseColumnValues(LPCTSTR Name)
 
         int iType = sqlite3_column_type(it->second->pStmt, i);
         COleVariant v ;
+        // Declared out here, not inside the arms: on the port a COleVariant
+        // borrows the string it is assigned, and PutElement below is what
+        // copies it, so the CString has to still be alive at that point.
+        CString strResult;
 
         switch (iType)
           {
@@ -670,7 +693,6 @@ VARIANT CMUSHclientDoc::DatabaseColumnValues(LPCTSTR Name)
           case SQLITE_BLOB:
           default:
             {
-            CString strResult;
             const unsigned char * p = sqlite3_column_text (it->second->pStmt, i);
             if (p)
               strResult = p;
@@ -683,10 +705,9 @@ VARIANT CMUSHclientDoc::DatabaseColumnValues(LPCTSTR Name)
             break;
 
           case SQLITE_INTEGER:
-            {
-            long iResult =  sqlite3_column_int  (it->second->pStmt, i);
-            v = iResult; 
-            }
+            // 64-bit safe: long / double / decimal string, per db_int64.h.
+            SetUpArrayElementDatabaseInteger (v,
+                        sqlite3_column_int64 (it->second->pStmt, i), strResult);
             break;
 
           case SQLITE_FLOAT:

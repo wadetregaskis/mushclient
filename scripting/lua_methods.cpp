@@ -7,6 +7,7 @@
 #include "../MUSHclient.h"
 #include "../doc.h"
 #include "../scripting/errors.h"
+#include "../scripting/db_int64.h"
 #include "../winplace.h"
 #include "../TextDocument.h"
 #include "../TextView.h"
@@ -1859,6 +1860,28 @@ static int L_DatabaseColumnText (lua_State *L)
   return 1;    // number of result fields
   } // end of L_DatabaseColumnText
 
+// The Lua flavour of the int64 column banding (scripting/db_int64.h): both Lua
+// column readers go through here, so they cannot drift from each other or from
+// the VARIANT readers the other five languages use.  A Lua number is a double,
+// so anything past 2^53 is pushed as a decimal string instead of being rounded.
+static void PushDatabaseInteger (lua_State *L, const sqlite3_int64 iValue)
+  {
+  switch (DatabaseIntegerBand (iValue))
+    {
+    case eDatabaseIntegerAsLong:
+      lua_pushinteger (L, (lua_Integer) iValue);
+      break;
+
+    case eDatabaseIntegerAsDouble:
+      lua_pushnumber (L, (lua_Number) iValue);
+      break;
+
+    default:
+      lua_pushstring (L, DatabaseIntegerAsString (iValue));
+      break;
+    }
+  }   // end of PushDatabaseInteger
+
 static void GetDatabaseColumnValue (lua_State *L, CMUSHclientDoc *pDoc, LPCTSTR Name, int Column)
   {
 
@@ -1891,7 +1914,7 @@ static void GetDatabaseColumnValue (lua_State *L, CMUSHclientDoc *pDoc, LPCTSTR 
         break;
 
       case SQLITE_INTEGER:
-        lua_pushinteger (L, sqlite3_column_int  (it->second->pStmt, Column - 1));
+        PushDatabaseInteger (L, sqlite3_column_int64 (it->second->pStmt, Column - 1));
         break;
 
       case SQLITE_FLOAT:
@@ -2085,7 +2108,7 @@ static int L_DatabaseColumnValues (lua_State *L)
           break;
 
         case SQLITE_INTEGER:
-          lua_pushinteger (L, sqlite3_column_int  (it->second->pStmt, i));
+          PushDatabaseInteger (L, sqlite3_column_int64 (it->second->pStmt, i));
           break;
 
         case SQLITE_FLOAT:

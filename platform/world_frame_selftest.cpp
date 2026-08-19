@@ -3194,6 +3194,100 @@ int RunWorldFrameSelfTest()
         if (!barWasShown) child->ShowStatusBarStrip(false);
     }
 
+    // ── what "the main window" means on a platform that hides it ───────────
+    // GetInfo(249)/(250) and world.GetMainWindowPosition all describe "the
+    // main window".  On Windows that is the MDI parent (Frame): its client
+    // rect and its window placement.  Here the MDI parent is NEVER SHOWN --
+    // hook_load_mdi_frame sizes it once at launch and nothing moves it again,
+    // and Frame.m_hWnd stays null forever -- so all three used to describe a
+    // window no user can see.  They now describe the world child, which is the
+    // window on screen; the same call GetInfo(125) already makes.
+    //
+    // The fixture puts the child somewhere the PARENT is not, so "reports the
+    // child" and "reports the parent" cannot both pass.
+    {
+        parent->SetSize(40, 60, 900, 700);
+
+        // Size the child so its client width is NOT a whole number of
+        // characters.  The answer these checks replaced was
+        // m_gui_cols * m_gui_font_width, i.e. the client width rounded DOWN to
+        // a character boundary -- and whenever the width happens to land on one
+        // the old and new answers coincide, the conversion under test becomes
+        // an identity, and nothing below can tell them apart.  (Measured: at
+        // 640 wide they did coincide, and reverting GetInfo(250) passed every
+        // check here while still failing tests/test_info.cpp.)
+        int cw = 0, ch = 0;
+        long gridW = 0;
+        for (int nudge = 0; nudge < 40; ++nudge) {
+            child->SetSize(210, 230, 640 + nudge, 470);
+            wxYield();
+            child->GetClientSize(&cw, &ch);
+            gridW = (long) doc->m_gui_cols * doc->m_gui_font_width;
+            if (gridW != (long) cw) break;
+        }
+
+        const wxRect childRect  = child->GetRect();
+        const wxRect parentRect = parent->GetScreenRect();
+        check(childRect.width != parentRect.width ||
+              childRect.height != parentRect.height ||
+              childRect.x != parentRect.x || childRect.y != parentRect.y,
+              "main window: control -- the child and the MDI parent differ");
+
+        check(cw > 0 && ch > 0,
+              "main window: the child has a real client size");
+        check(gridW != (long) cw,
+              "main window: fixture -- the client width is not a whole number "
+              "of characters, so the old grid guess is a different number");
+
+        const pal::Rect mc = child->mainClientRect();
+        check(mc.x == 0 && mc.y == 0 && mc.w == cw && mc.h == ch,
+              "main window: mainClientRect IS the child's client rect at (0,0)");
+        check(mc.w != childRect.width || mc.h != childRect.height,
+              "main window: ...and the client rect is inside the outer rect");
+
+        // ...and the engine reports it, which is the whole point.
+        check(doc->GetInfo(249).lVal == (long) ch,
+              "GetInfo(249) is the main window's client HEIGHT");
+        check(doc->GetInfo(250).lVal == (long) cw,
+              "GetInfo(250) is the main window's client WIDTH");
+        // 281 measures the OUTPUT WINDOW.  Off Windows both used to be the
+        // same expression (m_gui_cols * m_gui_font_width), so no sizing could
+        // ever tell them apart; the input bar and status strip make them
+        // differ now.
+        check(doc->GetInfo(250).lVal != doc->GetInfo(280).lVal,
+              "GetInfo(250) and (280) are no longer the same measurement");
+
+        // GetMainWindowPosition follows the same window.
+        int mx = 0, my = 0, mw = 0, mh = 0;
+        check(doc->GetMainRect(mx, my, mw, mh),
+              "GetMainWindowPosition answers while a world window is open");
+        check(mx == childRect.x && my == childRect.y &&
+              mw == childRect.width && mh == childRect.height,
+              "world.GetMainWindowPosition reports the world window's screen rect");
+        check(!(mx == parentRect.x && my == parentRect.y &&
+                mw == parentRect.width && mh == parentRect.height),
+              "...and NOT the hidden MDI parent's, frozen at launch");
+
+        // Moving the window moves the answer -- a value frozen at launch
+        // passes every check above and fails this one.  Same non-degeneracy
+        // rule for the new size.
+        for (int nudge = 0; nudge < 40; ++nudge) {
+            child->SetSize(150, 170, 560 + nudge, 430);
+            wxYield();
+            child->GetClientSize(&cw, &ch);
+            gridW = (long) doc->m_gui_cols * doc->m_gui_font_width;
+            if (gridW != (long) cw) break;
+        }
+        check(gridW != (long) cw,
+              "resize: fixture -- the new client width is not a grid multiple");
+        check(doc->GetInfo(250).lVal == (long) cw &&
+              doc->GetInfo(249).lVal == (long) ch,
+              "resizing the world window moves GetInfo(249)/(250) with it");
+        doc->GetMainRect(mx, my, mw, mh);
+        check(mx == child->GetRect().x && mw == child->GetRect().width,
+              "...and GetMainWindowPosition with it");
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

@@ -6174,15 +6174,30 @@ bool CWorldChildFrame::saveWorld()
     return m_doc->DoSave(savePath.c_str(), TRUE) != FALSE;
 }
 
-// world.GetMainWindowPosition(): screen rect of the MDI parent frame.
+// world.GetMainWindowPosition(): the screen rect of "the main window".
+//
+// This world's own frame, NOT the wxMDIParentFrame -- the same call
+// isFullscreen above makes, and for the same reason.  The MDI parent is never
+// shown on macOS: hook_load_mdi_frame sizes it once at launch and nothing ever
+// moves it again, so reporting its rect handed every script a constant that
+// described a window nobody can see, frozen at startup.  The world child IS the
+// window on screen here.  Documented divergence; on Windows the adapter still
+// answers Frame's own window placement, where there really is one main frame.
 pal::Rect CWorldChildFrame::mainRect() const
 {
-    wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
-    if (parent) {
-        wxRect r = parent->GetScreenRect();
-        return { r.x, r.y, r.width, r.height };
-    }
-    return { 0, 0, 1024, 768 };
+    const wxRect r = GetRect();
+    return { r.x, r.y, r.width, r.height };
+}
+
+// GetInfo(249)/(250): the CLIENT rect of the same window mainRect describes --
+// inside the title bar, the toolbars, the input bar and the status strip, which
+// is what Frame.GetClientRect measures on Windows.  Origin (0,0), as a client
+// rect has.
+pal::Rect CWorldChildFrame::mainClientRect() const
+{
+    int w = 0, h = 0;
+    GetClientSize(&w, &h);
+    return { 0, 0, w, h };
 }
 
 // Re-run the miniwindow mouse-move hit test at a point the pane is not

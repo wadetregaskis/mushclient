@@ -16,6 +16,7 @@
 #include "doc.h"
 #include "scripting/errors.h"   // eOK etc. (self-sufficiency for the
                                 // real-header flip; no-op today)
+#include "fake_worldview.h"     // GetInfo 249/250 now ask the frontend
 
 #include <cstring>
 #include <cstdio>
@@ -232,6 +233,9 @@ TEST(GetInfo, HeadlessGuiMetricsDeriveFromGuiFields)
     EXPECT_EQ(0L, doc.GetInfo(259).lVal);            // status bar: none
     EXPECT_EQ(25L * 10L, doc.GetInfo(261).lVal);     // frame height
     EXPECT_EQ(80L * 6L,  doc.GetInfo(262).lVal);     // frame width
+    // 249/250 ask the frontend now; with no view attached they fall back to
+    // this derivation, which is what a headless host gets.  The "+2 rows" is
+    // the fallback's own fudge for the chrome a real client rect includes.
     EXPECT_EQ(27L * 10L, doc.GetInfo(249).lVal);     // main client height (+2 rows)
     EXPECT_EQ(80L * 6L,  doc.GetInfo(250).lVal);     // main client width
     EXPECT_EQ(25L * 10L, doc.GetInfo(280).lVal);     // output window height
@@ -249,6 +253,42 @@ TEST(GetInfo, HeadlessGuiMetricsDeriveFromGuiFields)
     EXPECT_EQ(4L, doc.GetInfo(273).lVal);
     EXPECT_EQ(5L, doc.GetInfo(274).lVal);
     EXPECT_EQ(6L, doc.GetInfo(275).lVal);
+}
+
+// 249/250 are the MAIN WINDOW's client rect, which only the frontend knows.
+// They used to be a hand-written platform pair: Frame.GetClientRect on Windows,
+// and off it a guess derived from the output pane's character grid -- which
+// made 250 and 281 the same expression, so the two codes could never disagree
+// however differently the two windows were sized.  Now they come through
+// pal::IWorldView, and the grid derivation is only the no-view fallback.
+TEST(GetInfo, MainClientRectComesFromTheViewNotTheCharacterGrid)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_gui_rows = 25;
+    doc.m_gui_cols = 80;
+    doc.m_gui_font_height = 10;
+    doc.m_gui_font_width  = 6;
+
+    // Control: no view -> the old derivation, so the checks below cannot be
+    // passing because everything answers the view.
+    EXPECT_EQ(27L * 10L, doc.GetInfo(249).lVal);
+    EXPECT_EQ(80L * 6L,  doc.GetInfo(250).lVal);
+
+    doc.m_pWorldView = &view;
+    EXPECT_EQ(517L, doc.GetInfo(249).lVal);          // view.mainClientR.h
+    EXPECT_EQ(793L, doc.GetInfo(250).lVal);          // view.mainClientR.w
+
+    // The output-window pair still measures the pane, so 250 and 281 are now
+    // free to differ -- the fixture's rect is deliberately not a grid multiple.
+    EXPECT_EQ(25L * 10L, doc.GetInfo(280).lVal);
+    EXPECT_EQ(80L * 6L,  doc.GetInfo(281).lVal);
+    EXPECT_TRUE(doc.GetInfo(250).lVal != doc.GetInfo(281).lVal);
+
+    // A view with no window to measure must fall back, not report zero.
+    view.mainClientR = pal::Rect{ 0, 0, 0, 0 };
+    EXPECT_EQ(27L * 10L, doc.GetInfo(249).lVal);
+    EXPECT_EQ(80L * 6L,  doc.GetInfo(250).lVal);
 }
 
 // GetInfo(294): headless there is no keyboard hook, so no modifier bits.

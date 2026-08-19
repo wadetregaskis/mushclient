@@ -472,6 +472,20 @@ TEST(PalWorldView, WindowFamilyDrivesTheView)
     int x = 0, y = 0, w = 0, h = 0;
     EXPECT_TRUE(doc.GetMainRect(x, y, w, h));
     EXPECT_TRUE(x == 5 && y == 6 && w == 1024 && h == 768);
+
+    // The client rect is a SEPARATE question from the screen rect -- the fake
+    // answers different numbers for the two on purpose, so a getter wired to
+    // the wrong one cannot pass.
+    int cx = 0, cy = 0, cw = 0, ch = 0;
+    EXPECT_TRUE(doc.GetMainClientRect(cx, cy, cw, ch));
+    EXPECT_TRUE(cx == 0 && cy == 0 && cw == 793 && ch == 517);
+
+    // A view with no window to measure reports false and leaves the outputs
+    // alone, so the caller can keep its own approximation.
+    view.mainClientR = pal::Rect{ 0, 0, 0, 0 };
+    cx = cy = cw = ch = 7;
+    EXPECT_TRUE(!doc.GetMainClientRect(cx, cy, cw, ch));
+    EXPECT_TRUE(cx == 7 && cy == 7 && cw == 7 && ch == 7);
 }
 
 // With no view: main-rect reports false with outputs untouched, Save is
@@ -490,6 +504,10 @@ TEST(PalWorldView, WindowFamilyNullHostIsInert)
     int x = 9, y = 9, w = 9, h = 9;
     EXPECT_TRUE(!doc.GetMainRect(x, y, w, h));
     EXPECT_TRUE(x == 9 && y == 9 && w == 9 && h == 9);
+
+    int cx = 8, cy = 8, cw = 8, ch = 8;
+    EXPECT_TRUE(!doc.GetMainClientRect(cx, cy, cw, ch));
+    EXPECT_TRUE(cx == 8 && cy == 8 && cw == 8 && ch == 8);
 }
 
 // The info bar family drives the view through its typed-only helpers.

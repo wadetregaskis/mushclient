@@ -858,6 +858,17 @@ public:
         return out;
     }
 
+    Rect mainClientRect() const override
+    {
+        // GetInfo 249 / 250 (methods_info.cpp) -- the two lines those cases
+        // used to run inline, moved here so the engine has no platform arm.
+        // A client rect always has its origin at (0, 0), so right/bottom ARE
+        // the width and height.
+        RECT rect;
+        Frame.GetClientRect(&rect);
+        return Rect{ 0, 0, (int) rect.right, (int) rect.bottom };
+    }
+
     // ── miniwindow mouse routing ───────────────────────────────────────────
     void mouseMoveMiniWindow(long x, long y) override
     {

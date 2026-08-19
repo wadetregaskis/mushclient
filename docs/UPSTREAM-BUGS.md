@@ -57,6 +57,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 46 | `GetTrigger` reports `omit_from_log` back as `eOmitFromOutput`, so a save/restore round-trip turns it into `omit_from_output` | this commit | methods_triggers.cpp `CMUSHclientDoc::GetTrigger` |
 | 47 | `world.GetUdpPort` never considers `Last` itself, so it fails for any single-port range | this commit | methods_udp.cpp `CMUSHclientDoc::GetUdpPort` |
 | 48 | `InfoTypes[]` reuses codes 31/32 for "world get focus"/"world lose focus", clobbering the "world connect"/"world disconnect" rows and omitting 33/34 | this commit | methods_info.cpp `InfoTypes[]` |
+| 49 | Plugins dialog reads a stale `CPlugin*` once it leaves `m_PluginList` | this commit | dialogs/plugins/PluginsDlg.cpp `CPluginsDlg::OnUpdateNeedDescription` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -963,6 +964,29 @@ makes the omission look like an oversight rather than a design.
 **Fix:** repeat that branch's existing idiom —
 `m_CurrentPlugin = pSavedPlugin;` immediately before each of the five
 `return;`s.
+
+## 49 — `CPluginsDlg::OnUpdateNeedDescription` reads a stale `CPlugin*` (this commit)
+**Bug:** every other selected-item handler in the Plugins dialog —
+`OnShowDescription`, `OnEdit`, `OnEnable`, `OnDisable`, `OnRdblclkPluginsList` —
+looks the row's `CPlugin*` item data up with
+`find (m_PluginList.begin (), m_PluginList.end (), p)` before touching it, and
+skips the row (`continue`) when it is not found.  `OnUpdateNeedDescription` —
+the `ON_UPDATE_COMMAND_UI` handler behind the "Show Info" button — is the one
+exception: it dereferences `p->m_strDescription` straight off the item data.
+A plugin removed from `m_PluginList` while the dialog stays open, without a
+`LoadList()` rebuilding the rows — `world.UnloadPlugin`/`ReloadPlugin` called
+from a trigger or timer while the dialog's modal loop is pumping messages, or
+the object `OnReload` already `delete`s before the `::UMessageBox` it shows on
+a failed reload — leaves that row's item data pointing at memory this handler
+then reads on the next idle-driven update-UI pass.
+**Fix:** add the same `find()` liveness check the five sibling handlers
+already have, skipping the row when its plugin is no longer in
+`m_PluginList`.  `needs: windows-run` — canonical dialog code, unreachable
+from the headless build; covered in-app by `GuiBridgeSelfTest`'s
+`TestPluginsDlgDescriptionLiveness` (`platform/gui_bridge_selftest.cpp`),
+which keeps the "erased" plugin object alive and only removes it from the
+list, so the assertion exercises the liveness check itself rather than the
+underlying use-after-free.
 
 <<<<<<< HEAD
 ## 46 — `GetTrigger` reports `omit_from_log` back as `eOmitFromOutput` (this commit)

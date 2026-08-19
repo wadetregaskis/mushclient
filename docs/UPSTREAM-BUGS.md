@@ -964,6 +964,7 @@ makes the omission look like an oversight rather than a design.
 `m_CurrentPlugin = pSavedPlugin;` immediately before each of the five
 `return;`s.
 
+<<<<<<< HEAD
 ## 46 — `GetTrigger` reports `omit_from_log` back as `eOmitFromOutput` (this commit)
 **Bug:** `CMUSHclientDoc::GetTrigger` builds its returned `Flags` by testing
 each trigger member and OR-ing in the matching bit, and every other line does
@@ -1001,3 +1002,27 @@ builds a lookup keyed by `iInfoType`, and codes 33/34 are missing from the
 table entirely.
 **Fix:** renumber the two rows to 33 and 34, matching `GetInfo`'s switch.
 Covered by `Info.InfoTypesTableHasNoDuplicateCodesAndCovers33And34`.
+=======
+## 46 — Seven file dialogs `strcpy` an unbounded name into a `_MAX_PATH` buffer (this commit)
+**Bug:** every "browse for a file" site in the app follows the same recipe —
+`filedlg.m_ofn.lpstrFile = filename.GetBuffer (_MAX_PATH);` and then
+`strcpy (filedlg.m_ofn.lpstrFile, suggested_name);`.  `GetBuffer (_MAX_PATH)`
+hands out exactly `_MAX_PATH + 1` bytes, and nothing anywhere caps the length
+of what is copied in: the log-session name is `FormatTime` applied to the
+world's *Auto log file name* setting (`doc.cpp:754`), the trigger/alias/timer
+set names are the world name plus a directory (`evaluate.cpp:617` and `:790`,
+`GlobalPrefs.cpp:952`, `prefspropertypages.cpp:5299`), and the two sound
+browsers copy in a whole saved path (`triggdlg.cpp:421`,
+`prefspropertypages.cpp:9126`).  All seven are user-settable and none is
+validated for length, so a long enough one overruns the buffer.  There is no
+platform ifdef involved; Windows overruns identically.  It has stayed quiet
+because the `else` these copies live in is only taken when
+`App.platform != VER_PLATFORM_WIN32s`, i.e. on every Windows since NT — the
+arm everybody is on.
+**Fix:** use the bounded copy the tree already uses elsewhere —
+`lstrcpyn (filedlg.m_ofn.lpstrFile, suggested_name, _MAX_PATH);` — which
+always NUL-terminates and matches the `nMaxFile` that MFC's own `CFileDialog`
+gives the common dialog.  Covered headless by
+`LogSession.AnOverlongSuggestedNameIsTruncatedRatherThanOverrunning` in
+`tests/test_mfc_ui.cpp`.
+>>>>>>> fix/f24

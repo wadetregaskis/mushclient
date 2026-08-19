@@ -614,7 +614,7 @@ if (strFileName.IsEmpty ())
     if (App.platform == VER_PLATFORM_WIN32s)
       strcpy (filedlg.m_ofn.lpstrFile, "");
     else
-      strcpy (filedlg.m_ofn.lpstrFile, suggested_name);
+      lstrcpyn (filedlg.m_ofn.lpstrFile, suggested_name, _MAX_PATH);
 
     ChangeToFileBrowsingDirectory ();
     int nResult = filedlg.DoModal();
@@ -787,7 +787,7 @@ CString filename;
   if (App.platform == VER_PLATFORM_WIN32s)
     strcpy (filedlg.m_ofn.lpstrFile, "");
   else
-    strcpy (filedlg.m_ofn.lpstrFile, suggested_name);
+    lstrcpyn (filedlg.m_ofn.lpstrFile, suggested_name, _MAX_PATH);
 
   ChangeToFileBrowsingDirectory ();
   int nResult = filedlg.DoModal();

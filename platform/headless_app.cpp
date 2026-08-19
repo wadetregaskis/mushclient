@@ -81,6 +81,11 @@ CMUSHclientApp::CMUSHclientApp()
     m_nUniqueNumber     = 0;                           // __int64 GetUniqueNumber()
                                                        // { return m_nUniqueNumber++; }
 
+    // Which flavour of Windows.  MUSHclient.cpp InitInstance takes this from
+    // GetVersionEx, and zero means Win32s — which seven file dialogs read as
+    // "suggest no file name at all" (doc.cpp:751 and friends).
+    platform = VER_PLATFORM_WIN32_NT;
+
     m_pWorldDocTemplate  = &s_worldDocTemplate;        // world registry (see above)
     m_pNormalDocTemplate = &s_normalDocTemplate;       // notepad registry (see above)
 

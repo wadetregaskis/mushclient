@@ -36,6 +36,7 @@
 #include <wx/dcbuffer.h>   // wxAutoBufferedPaintDC (config sheet caption band)
 #include <wx/progdlg.h>    // wxProgressDialog (CProgressDlg's port backing)
 #include <wx/display.h>    // wxDisplay (screen-size system metrics)
+#include <wx/odcombo.h>    // wxOwnerDrawnComboBox (CBS_OWNERDRAWFIXED combos)
 #include <algorithm>
 #include <unordered_map>
 #include <map>
@@ -460,6 +461,11 @@ static void hook_set_window_text(void* h, const char* text)
     // avoids firing a change event during the DDX load.
     if (wxTextCtrl* tc = wxDynamicCast(w, wxTextCtrl))
         tc->ChangeValue(s);
+    // Owner-draw combo (CBS_OWNERDRAWFIXED): a wxOwnerDrawnComboBox is neither a
+    // wxComboBox nor a wxChoice, so without this arm its text falls through to
+    // SetLabel, which a combo ignores.
+    else if (wxOwnerDrawnComboBox* od = wxDynamicCast(w, wxOwnerDrawnComboBox))
+        od->SetValue(s);
     else if (wxComboBox* cb = wxDynamicCast(w, wxComboBox))
         cb->SetValue(s);
     else if (wxChoice* ch = wxDynamicCast(w, wxChoice))
@@ -4884,6 +4890,10 @@ static char* hook_get_window_text(void* hwnd)
     if (!w) return nullptr;
     wxString s;
     if (wxTextCtrl* t = wxDynamicCast(w, wxTextCtrl))      s = t->GetValue();
+    // Owner-draw combo first: it is neither wxComboBox nor wxChoice, and
+    // GetLabel() on one answers "" rather than the selected row's text.
+    else if (wxOwnerDrawnComboBox* o = wxDynamicCast(w, wxOwnerDrawnComboBox))
+                                                           s = o->GetValue();
     else if (wxComboBox* c = wxDynamicCast(w, wxComboBox)) s = c->GetValue();
     else if (wxChoice* ch = wxDynamicCast(w, wxChoice))    s = ch->GetStringSelection();
     else                                                   s = w->GetLabel();
@@ -5317,9 +5327,17 @@ static int hook_listbox_set_sel(void* hwnd, int index, int select)
 // CBS_DROPDOWNLIST combos are built as wxChoice (native pop-up menu); editable
 // combos as wxComboBox.  Both derive from wxItemContainer, which provides all
 // the item operations the CComboBox hooks need, so we bridge against that base.
+//
+// A THIRD class reaches here: CBS_OWNERDRAWFIXED templates (the colour
+// drop-downs) are built as wxOwnerDrawnComboBox, which is neither a wxComboBox
+// nor a wxChoice.  It must be listed, or every CComboBox call on those five
+// controls answers CB_ERR / no-ops — GetCurSel returns -1, so DDX_CBIndex saves
+// -1 over the user's colour choice and the dialog silently forgets it.  That is
+// the failure this line exists to prevent.
 namespace {
 inline wxItemContainer* CB(void* hwnd) {
     wxWindow* w = (wxWindow*) hwnd;
+    if (wxOwnerDrawnComboBox* c = wxDynamicCast(w, wxOwnerDrawnComboBox)) return c;
     if (wxComboBox* c = wxDynamicCast(w, wxComboBox)) return c;
     if (wxChoice*   c = wxDynamicCast(w, wxChoice))   return c;
     return nullptr;
@@ -5500,10 +5518,105 @@ static void* hook_make_owner_draw_button(void* parent, int id, const char* text,
                                wxPoint(x, y), wxSize(w, h));
 }
 
-static void hook_bind_owner_draw(void* hwnd, void* cbtn)
+// ── Owner-draw combos (CBS_OWNERDRAWFIXED → canonical CComboBox::DrawItem) ──
+// The colour drop-downs (CColourComboBox) paint each row in the custom colour
+// it stands for instead of writing its name.  Windows does that by handing the
+// owner a DRAWITEMSTRUCT per row; wxChoice/wxComboBox have no such callback, so
+// the bridge builds these templates as a wxOwnerDrawnComboBox — the generic
+// combo whose OnDrawItem we can override — and forwards each row to the
+// canonical DrawItem through the same CDC machinery the buttons use.
+//
+// It is deliberately still a wxItemContainer, because that is the whole of the
+// value contract: CB() below accepts it, so AddString / GetCurSel / SetCurSel /
+// GetLBText / item data — and therefore DDX_CBIndex — behave exactly as for the
+// plain builds.  Anything reaching a combo by wxDynamicCast(w, wxComboBox) or
+// wxDynamicCast(w, wxChoice) would MISS this control, which is the silent
+// failure mode to watch for when touching combo code.
+namespace {
+class OwnerDrawCombo : public wxOwnerDrawnComboBox
 {
+public:
+    OwnerDrawCombo(wxWindow* parent, wxWindowID id,
+                   const wxPoint& pos, int width, bool readOnly)
+        : wxOwnerDrawnComboBox(parent, id, wxEmptyString, pos,
+                               wxSize(width, -1), 0, nullptr,
+                               readOnly ? wxCB_READONLY : 0)
+    {}
+
+    CComboBox* m_ccb = nullptr;   // canonical backing combo (set by bind hook)
+
+    // Public override so the in-app selftest can render a row without a popup
+    // (selftests exit before the event loop, so no paint ever happens).
+    void OnDrawItem(wxDC& dc, const wxRect& rect, int item, int flags) const override
+    {
+        if (rect.width <= 0 || rect.height <= 0) return;
+        if (!m_ccb) {                        // not yet bound: leave the row blank
+            wxOwnerDrawnComboBox::OnDrawItem(dc, rect, item, flags);
+            return;
+        }
+
+        // itemID is UINT on the Windows side and the canonical body explicitly
+        // copes with 0xFFFFFFFF ("no selection"), which is exactly what a
+        // wxNOT_FOUND item turns into here — so pass it through unchanged.
+        unsigned state = 0;
+        if (!IsThisEnabled())                     state |= ODS_DISABLED;
+        if (flags & wxODCB_PAINTING_SELECTED)     state |= ODS_SELECTED | ODS_FOCUS;
+
+        wxBitmap* painted = PaintOwnerDrawComboItem(m_ccb, item,
+                                                    rect.width, rect.height, state);
+        if (painted) {
+            dc.DrawBitmap(*painted, rect.x, rect.y, false);
+            delete painted;
+        }
+    }
+
+protected:
+    // DrawItem fills the whole row itself (that IS the swatch), and the
+    // canonical body ignores ODS_SELECTED — so wx must not paint its own
+    // highlight underneath, exactly as Windows does not.
+    void OnDrawBackground(wxDC&, const wxRect&, int, int) const override {}
+};
+} // namespace
+
+static void* hook_make_owner_draw_combo(void* parent, int id,
+                                        int x, int y, int w, int readOnly)
+{
+    return new OwnerDrawCombo((wxWindow*) parent,
+                              id < 0 ? wxID_ANY : id,
+                              wxPoint(x, y), w, readOnly != 0);
+}
+
+// Test seam: render one row of an owner-draw combo by the same call its popup
+// paint makes.  Returns an invalid bitmap when `combo` is not one (or has no
+// bound CComboBox), so a caller can tell "wrong control" from "drew nothing".
+wxBitmap wx_render_owner_draw_combo_item(wxWindow* combo, int item, int flags,
+                                         int w, int h)
+{
+    OwnerDrawCombo* odc = dynamic_cast<OwnerDrawCombo*>(combo);
+    if (!odc || w <= 0 || h <= 0) return wxBitmap();
+    wxBitmap out(w, h, 24);
+    wxMemoryDC dc(out);
+    dc.SetBackground(*wxBLACK_BRUSH);   // so "painted nothing" is distinguishable
+    dc.Clear();
+    odc->OnDrawItem(dc, wxRect(0, 0, w, h), item, flags);
+    dc.SelectObject(wxNullBitmap);
+    return out;
+}
+
+static void hook_bind_owner_draw(void* hwnd, void* ctl)
+{
+    // An owner-draw combo binds its canonical CComboBox the same way.  The cast
+    // is safe for the same reason the button's is: this arm only runs when the
+    // wx widget is one the bridge built for an owner-draw COMBO template, and
+    // only a CComboBox-derived member is ever DDX_Control'd onto one.
+    if (OwnerDrawCombo* odc = dynamic_cast<OwnerDrawCombo*>((wxWindow*) hwnd)) {
+        odc->m_ccb = static_cast<CComboBox*>(static_cast<CWnd*>(ctl));
+        odc->Refresh();
+        odc->CallAfter([odc]{ odc->Refresh(); });   // colours are set in OnInitDialog
+        return;
+    }
     if (OwnerDrawButton* odb = dynamic_cast<OwnerDrawButton*>((wxWindow*) hwnd)) {
-        odb->m_cbtn = static_cast<CButton*>(cbtn);
+        odb->m_cbtn = static_cast<CButton*>(ctl);
         odb->Refresh();   // repaint now that the backing button is available
         // The swatch colour (CColourButton::m_colour) is usually assigned in the
         // page's OnInitDialog, which runs AFTER this DDX_Control bind.  Without a
@@ -5775,6 +5888,7 @@ void wx_mfc_install_hooks()
     g_wxhook_radio_set                = hook_radio_set;
     g_wxhook_make_owner_draw_button   = hook_make_owner_draw_button;
     g_wxhook_bind_owner_draw          = hook_bind_owner_draw;
+    g_wxhook_make_owner_draw_combo    = hook_make_owner_draw_combo;
     g_wxhook_slider_set_range         = hook_slider_set_range;
     g_wxhook_slider_get_pos           = hook_slider_get_pos;
     g_wxhook_slider_set_pos           = hook_slider_set_pos;

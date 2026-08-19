@@ -147,6 +147,8 @@ enum {
     ES_AUTOHSCROLL = 0x80, ES_READONLY = 0x800,
     SS_TYPEMASK = 0x1F, SS_CENTER = 1, SS_RIGHT = 2, SS_ICON = 3, SS_BITMAP = 14,
     CBS_SIMPLE = 1, CBS_DROPDOWN = 2, CBS_DROPDOWNLIST = 3,
+    CBS_OWNERDRAWFIXED = 0x10, CBS_OWNERDRAWVARIABLE = 0x20,
+    CBS_OWNERDRAWMASK  = CBS_OWNERDRAWFIXED | CBS_OWNERDRAWVARIABLE,
     LBS_EXTENDEDSEL = 0x800, LBS_MULTIPLESEL = 8,
     SBS_VERT = 1,
 };
@@ -272,28 +274,50 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         // Preset items recovered from the dialog's DLGINIT resource (e.g. the
         // scripting-language list, proxy type, alias/timer "send to").  Combos
         // that instead fill themselves in OnInitDialog have no DLGINIT items.
-        if ((c.style & 3) == CBS_DROPDOWNLIST)
+        const bool readOnly  = (c.style & 3) == CBS_DROPDOWNLIST;
+        const bool ownerDraw = (c.style & CBS_OWNERDRAWMASK) != 0;
+
+        if (ownerDraw && g_wxhook_make_owner_draw_combo)
+        {
+            // Owner-draw combo (CBS_OWNERDRAWFIXED / CBS_OWNERDRAWVARIABLE):
+            // the OWNER paints each row, not the control — which is how the five
+            // colour drop-downs in the recovered resources show a swatch of the
+            // custom colour rather than the word "Custom3".  Built plain, the
+            // canonical CColourComboBox::DrawItem never ran and every row was
+            // just its name.
+            //
+            // Neither wxChoice (an NSPopUpButton here) nor wxComboBox can hand
+            // item painting back to us, so this is the one place the bridge
+            // picks a control class by STYLE rather than by class name: a
+            // wxOwnerDrawnComboBox, whose OnDrawItem callback runs the canonical
+            // DrawItem.  It is still a wxItemContainer, so the CComboBox hooks —
+            // and therefore DDX — drive it through exactly the same item API as
+            // the plain builds; see CB() in wx_mfc_impl.cpp.
+            w = (wxWindow*) g_wxhook_make_owner_draw_combo(
+                    parent, id, pos.x, pos.y, size.x, readOnly);
+        }
+        else if (readOnly)
         {
             // Read-only drop-down → a native pop-up menu (NSPopUpButton on
             // macOS): clicking anywhere opens the list, and the text is not
             // editable/selectable.  A wxCB_READONLY wxComboBox on macOS is still
             // an editable-style combo (click-on-text doesn't open it), which is
             // exactly the reported bug.
-            wxChoice* ch = new wxChoice(parent, id, pos,
-                                        wxSize(size.GetWidth(), -1), 0, nullptr);
-            for (const std::string& item : c.comboItems)
-                ch->Append(wxString::FromUTF8(item.c_str()));
-            w = ch;
+            w = new wxChoice(parent, id, pos,
+                             wxSize(size.GetWidth(), -1), 0, nullptr);
         }
         else
         {
             // Editable combo (CBS_DROPDOWN / CBS_SIMPLE).
-            wxComboBox* cb = new wxComboBox(parent, id, wxEmptyString, pos,
-                                            wxSize(size.GetWidth(), -1), 0, nullptr, 0);
-            for (const std::string& item : c.comboItems)
-                cb->Append(wxString::FromUTF8(item.c_str()));
-            w = cb;
+            w = new wxComboBox(parent, id, wxEmptyString, pos,
+                               wxSize(size.GetWidth(), -1), 0, nullptr, 0);
         }
+
+        // DLGINIT preset items, appended through wxItemContainer so all three
+        // control classes above are filled by the same code.
+        if (wxItemContainer* items = dynamic_cast<wxItemContainer*>(w))
+            for (const std::string& item : c.comboItems)
+                items->Append(wxString::FromUTF8(item.c_str()));
     }
     else if (cls == "ListBox")
     {

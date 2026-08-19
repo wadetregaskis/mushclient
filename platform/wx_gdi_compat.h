@@ -19,6 +19,7 @@ class wxBitmap;
 class CDC;
 class CBitmap;
 class CButton;
+class CComboBox;
 
 // Return the wxDC* that backs dc (a mushapp CDC with an active CDCImpl).
 // Returns nullptr if dc is null or has no impl (e.g. a mushcore stub CDC).
@@ -35,6 +36,18 @@ wxBitmap* WxBitmapFromCBitmap(CBitmap* bmp);
 // stub CDC whose CreateCompatibleDC is a no-op.  `disabled` → ODS_DISABLED.
 // Returns a heap wxBitmap* (caller deletes), opaque (alpha stripped), or null.
 wxBitmap* PaintOwnerDrawButton(CButton* btn, int w, int h, bool disabled);
+
+// Paint ONE item of an owner-draw combo (CBS_OWNERDRAWFIXED, e.g.
+// CColourComboBox) into a fresh w×h wxBitmap by running the canonical
+// CComboBox::DrawItem against a real CDC.  Same reason for living here as
+// PaintOwnerDrawButton: only this TU sees the wx-backed CDC.
+//
+// `item` is the DRAWITEMSTRUCT itemID — the combo's own item index, which the
+// canonical body offsets by one itself ("(no change)" is row 0).  `itemState`
+// is the ODS_* set (ODS_SELECTED / ODS_FOCUS / ODS_DISABLED).
+// Returns a heap wxBitmap* (caller deletes), opaque (alpha stripped), or null.
+wxBitmap* PaintOwnerDrawComboItem(CComboBox* cb, int item, int w, int h,
+                                  unsigned itemState);
 
 #endif // MUSHCLIENT_WX_BACKEND
 #endif // !_WIN32

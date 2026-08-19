@@ -2093,6 +2093,42 @@ wxBitmap* PaintOwnerDrawButton(CButton* btn, int w, int h, bool disabled)
     return new wxBitmap(img, 24);
 }
 
+wxBitmap* PaintOwnerDrawComboItem(CComboBox* cb, int item, int w, int h,
+                                  unsigned itemState)
+{
+    if (!cb || w <= 0 || h <= 0) return nullptr;
+
+    // Real (wx-backed) CDC — this TU is compiled with MUSHCLIENT_FULL_BUILD.
+    CDC dc;
+    dc.CreateCompatibleDC(nullptr);
+    CBitmap bmp;
+    bmp.CreateCompatibleBitmap(&dc, w, h);
+    CBitmap* oldBmp = dc.SelectObject(&bmp);
+
+    DRAWITEMSTRUCT dis;
+    memset(&dis, 0, sizeof(dis));
+    dis.CtlType      = ODT_COMBOBOX;     // the canonical body returns unless this
+    dis.CtlID        = 0;
+    dis.itemID       = (UINT) item;
+    dis.hDC          = dc.GetSafeHdc();
+    dis.rcItem.left  = 0; dis.rcItem.top    = 0;
+    dis.rcItem.right = w; dis.rcItem.bottom = h;
+    dis.itemState    = itemState;
+
+    cb->DrawItem(&dis);                  // virtual → CColourComboBox::DrawItem
+
+    dc.SelectObject(oldBmp);             // deselect so the wxBitmap is readable
+
+    wxBitmap* src = static_cast<wxBitmap*>(bmp.m_impl);
+    if (!src || !src->IsOk()) return nullptr;
+    // Opaque copy, for the same reason as the button: the scratch bitmap is
+    // 32-bit and an un-cleared alpha channel reads back transparent when blitted.
+    wxImage img = src->ConvertToImage();
+    if (!img.IsOk()) return new wxBitmap(*src);
+    if (img.HasAlpha()) img.ClearAlpha();
+    return new wxBitmap(img, 24);
+}
+
 // ── SelectObject(HDC, HGDIOBJ) ─────────────────────────────────────────────
 // Intercepts raw Win32 SelectObject calls (e.g. SelectObject(A_DC.m_hDC, hbm))
 // so that a DIBSection's wxBitmap is selected into the right CDC's wxMemoryDC.

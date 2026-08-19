@@ -603,9 +603,25 @@ extern void* (*g_wxhook_make_owner_draw_button)(void* parent, int id,
                                                 const char* text,
                                                 int x, int y, int w, int h);
 // bind_owner_draw: associate the control's wxWindow (hwnd) with the canonical
-// CButton* that backs it (set by DDX_Control), so its paint handler can call
-// that button's virtual DrawItem.  `cbtn` is a CButton* (as void*).
-extern void (*g_wxhook_bind_owner_draw)(void* hwnd, void* cbtn);
+// CWnd* that backs it (set by DDX_Control), so its paint handler can call that
+// control's virtual DrawItem.  `ctl` is a CWnd* (as void*); the hook works out
+// from the wx widget whether it is really a CButton (owner-draw button) or a
+// CComboBox (owner-draw combo), and no-ops for every other control.
+extern void (*g_wxhook_bind_owner_draw)(void* hwnd, void* ctl);
+
+// ── Owner-draw combos (CBS_OWNERDRAWFIXED, e.g. CColourComboBox swatches) ──
+// make_owner_draw_combo: build a self-painting drop-down for an owner-draw
+// combo template; its item-paint callback runs the canonical CComboBox::DrawItem
+// (CColourComboBox paints each row in that custom colour instead of naming it).
+// `readOnly` is CBS_DROPDOWNLIST — no editable text field.  Returns the
+// wxWindow* (as void*).  Defined in wx_mfc_impl.cpp (needs OwnerDrawCombo).
+//
+// The result is a wxOwnerDrawnComboBox, NOT a wxChoice/wxComboBox, so anything
+// that reaches a combo by wxDynamicCast must know about it — see CB() in
+// wx_mfc_impl.cpp, which is what keeps DDX_CBIndex round-tripping.
+extern void* (*g_wxhook_make_owner_draw_combo)(void* parent, int id,
+                                               int x, int y, int w,
+                                               int readOnly);
 
 // ── CSliderCtrl → wxSlider (msctls_trackbar32, e.g. ColourPickerDlg RGB) ────
 // `hwnd` is the wxSlider* (a CSliderCtrl member's m_hWnd, bound by DDX_Control).

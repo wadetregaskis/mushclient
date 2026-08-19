@@ -3902,9 +3902,13 @@ TEST(LuaSurface, NotepadFamilyWithNoNotepadOpen)
     LuaDoc f; ASSERT_NE(nullptr, f.L);
     EXPECT_TRUE(run(f.L,
         "assert(world.AppendToNotepad('t', 'text') == false)\n"
-        // L_ReplaceNotepad pushes its boolean but returns 0 results (canonical
-        // lua_methods.cpp quirk) — Lua callers always see nil.
-        "assert(world.ReplaceNotepad('t', 'text') == nil)\n"
+        // L_ReplaceNotepad used to push its boolean and then `return 0`, so Lua
+        // callers saw nil while the dispatch map hands Python/Perl/JS/Tcl/Ruby
+        // the VT_BOOL mushclient.odl declares.  It returns the boolean now, and
+        // false is the right value here: with no notepad by this name the body
+        // falls through to CreateTextWindow, which fails headless — exactly as
+        // its two siblings above and below report.
+        "assert(world.ReplaceNotepad('t', 'text') == false)\n"
         "assert(world.SendToNotepad('t', 'text') == false)\n"
         "assert(world.CloseNotepad('t', false) == 0)\n"
         "assert(world.GetNotepadLength('t') == 0)\n"
@@ -3948,6 +3952,16 @@ TEST(LuaSurface, NotepadFamilyWithANotepadOpen)
         "assert(world.NotepadReadOnly('t', true) == 1)\n"
         "assert(world.MoveNotepadWindow('t', 1, 2, 3, 4) == true)\n"
         "assert(world.GetNotepadWindowPosition('t') ~= '')\n"
+
+        // ReplaceNotepad reaches Lua as the boolean mushclient.odl declares and
+        // the dispatch map registers (VT_BOOL) — it used to push the value and
+        // then `return 0`, so Lua alone saw nil while the other five engines got
+        // the boolean.  Assert the VALUE, not merely that it is non-nil, and
+        // check the replace really happened: `true` from a body that did nothing
+        // would be no better than the nil.
+        "assert(world.ReplaceNotepad('t', 'fresh') == true,"
+        "       'ReplaceNotepad did not return true on success')\n"
+        "assert(world.GetNotepadText('t') == 'fresh', 'replace did not replace')\n"
     ));
     EXPECT_TRUE(pad.readOnly);
     EXPECT_EQ(1, pad.moveCalls);

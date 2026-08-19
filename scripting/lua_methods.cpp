@@ -5077,7 +5077,7 @@ static int L_ReplaceNotepad (lua_State *L)
       my_checkstring (L, 1),  // Title
       concatArgs (L, "", 2).c_str ()   // Contents
       ));
-  return 0;  // number of result fields
+  return 1;  // number of result fields
   } // end of L_ReplaceNotepad
 
 

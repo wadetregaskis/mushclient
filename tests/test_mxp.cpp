@@ -1540,7 +1540,7 @@ TEST(MxpR4, TagAndErrorScriptCallbacks)
         "opened = {} closed = {} errors = {}\n"
         "function OnOpen(name, args)\n"
         "  table.insert(opened, name)\n"
-        "  return name == 'suppressme'\n"     // suppress that one tag
+        "  return name == 'u'\n"              // suppress that one tag
         "end\n"
         "function OnClose(name, text) table.insert(closed, name) end\n"
         "function OnError(num, line, level, msg)\n"
@@ -1555,6 +1555,14 @@ TEST(MxpR4, TagAndErrorScriptCallbacks)
 
     mud(doc, "<B>bold</B>\n");
     mud(doc, "<3bad>\n");                    // triggers the error callback
+    mud(doc, "<u>plain</u>\n");              // vetoed: must NOT be underlined
+
+    // the veto was honoured -- the tag it named did nothing.  (Before this
+    // was fixed the callback returned true for a name the test never sent,
+    // so the suppression arm had no coverage at all.)
+    CStyle* su = pstyle(pline(doc, 2), 0);
+    ASSERT_NE(nullptr, su);
+    EXPECT_TRUE((su->iFlags & UNDERLINE) == 0);
 
     lua_State* L = engine->L;
     lua_getglobal(L, "opened");
@@ -1578,6 +1586,233 @@ TEST(MxpR4, TagAndErrorScriptCallbacks)
     }
     EXPECT_TRUE(sawInvalid);
     lua_pop(L, 1);
+}
+
+// ═══ D-20: vetoing an atomic tag must also undo the tag's bookkeeping ═══════
+//
+// MXP_StartTag records a tag as open (an m_ActiveTagList entry + a START_TAG
+// marker style) BEFORE MXP_OpenAtomicTag asks the script/plugin whether the
+// tag is wanted -- the veto is only asked once the arguments have been
+// rebuilt.  A custom element's veto returns before any of that exists, so the
+// two paths used to disagree: a vetoed BUILT-IN tag stayed on the active list
+// and was later "closed", which fired a close-tag callback for an open that
+// never happened, ran the closing action (</p> starts a new line) and counted
+// toward the outstanding-tag warning.
+
+#include <vector>
+#include <algorithm>
+
+namespace {
+
+// Every START_TAG marker style currently in the output buffer.  One is added
+// per open non-command tag and removed again when the tag closes.
+int start_tag_styles(CMUSHclientDoc& doc)
+{
+    int n = 0;
+    for (POSITION lpos = doc.m_LineList.GetHeadPosition(); lpos; ) {
+        CLine* l = doc.m_LineList.GetNext(lpos);
+        for (POSITION spos = l->styleList.GetHeadPosition(); spos; )
+            if (l->styleList.GetNext(spos)->iFlags & START_TAG) n++;
+    }
+    return n;
+}
+
+// A Lua engine whose OnMXP_OpenTag vetoes exactly the tag called `vetoName`
+// (pass "" to veto nothing -- the control), recording every open it is asked
+// about in `opened` and every close in `closed`.
+CScriptEngine* install_veto_engine(CMUSHclientDoc& doc, const char* vetoName)
+{
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    EXPECT_TRUE(!engine->CreateScriptEngine());
+    CString script;
+    script.Format("opened = {} closed = {}\n"
+                  "function OnOpen(name, args)\n"
+                  "  table.insert(opened, name)\n"
+                  "  return name == '%s'\n"
+                  "end\n"
+                  "function OnClose(name, text) table.insert(closed, name) end\n",
+                  vetoName);
+    EXPECT_TRUE(!engine->Parse(script, "<test>"));
+    doc.m_ScriptEngine      = engine;
+    doc.m_strOnMXP_OpenTag  = "OnOpen";
+    doc.m_strOnMXP_CloseTag = "OnClose";
+    doc.FindAllEntryPoints();
+    return engine;
+}
+
+std::vector<std::string> lua_list(lua_State* L, const char* name)
+{
+    std::vector<std::string> out;
+    lua_getglobal(L, name);
+    for (int i = 1; ; i++) {
+        lua_rawgeti(L, -1, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        const char* s = lua_tostring(L, -1);
+        out.push_back(s ? s : "");
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    return out;
+}
+
+bool has(const std::vector<std::string>& v, const char* s)
+{
+    return std::find(v.begin(), v.end(), std::string(s)) != v.end();
+}
+
+} // namespace
+
+// (a) A vetoed built-in atomic tag leaves the active-tag list -- and the
+// START_TAG marker style that shadows it -- exactly as they were.
+TEST(MxpD20, VetoedBuiltInTagLeavesNoOpenTagRecord)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    CScriptEngine* engine = install_veto_engine(doc, "u");
+
+    mud(doc, "x<u>");                      // vetoed
+
+    // assert the DECLINE, not just the absence: the handler was asked...
+    EXPECT_TRUE(has(lua_list(engine->L, "opened"), "u"));
+    // ...and the tag was suppressed rather than recorded as open
+    EXPECT_EQ(0, (int) doc.m_ActiveTagList.GetCount());
+    EXPECT_EQ(0, start_tag_styles(doc));
+}
+
+// (e) The control for (a): the very same tag, NOT vetoed, still opens
+// normally.  Without this the test above would pass vacuously if <u> had
+// simply never reached MXP_StartTag at all.
+TEST(MxpD20, ControlNonVetoedTagStillOpensNormally)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    CScriptEngine* engine = install_veto_engine(doc, "");   // veto nothing
+
+    mud(doc, "x<u>");
+
+    EXPECT_TRUE(has(lua_list(engine->L, "opened"), "u"));
+    EXPECT_EQ(1, (int) doc.m_ActiveTagList.GetCount());
+    EXPECT_STREQ("u", (LPCTSTR) doc.m_ActiveTagList.GetTail()->strName);
+    EXPECT_EQ(1, start_tag_styles(doc));
+}
+
+// (b) A vetoed <p> must not leave a "p" on the active list for </p> to close,
+// because closing MXP_ACTION_P calls StartNewLine.
+TEST(MxpD20, VetoedParagraphTagCausesNoSpuriousNewLine)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    install_veto_engine(doc, "p");
+
+    mud(doc, "<p>hello</p>world\n");
+
+    // <p> did nothing, so </p> has nothing to close and no line is started:
+    // both halves stay on one line.
+    ASSERT_NE(nullptr, pline(doc, 0));
+    EXPECT_EQ(std::string("helloworld"), ptext(pline(doc, 0)));
+    EXPECT_EQ(0, (int) doc.m_ActiveTagList.GetCount());
+}
+
+// (e) The control for (b): a NON-vetoed <p>...</p> does still break the line.
+TEST(MxpD20, ControlNonVetoedParagraphTagStartsNewLine)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    install_veto_engine(doc, "");            // veto nothing
+
+    mud(doc, "<p>hello</p>world\n");
+
+    ASSERT_NE(nullptr, pline(doc, 1));
+    EXPECT_EQ(std::string("hello"), ptext(pline(doc, 0)));
+    EXPECT_EQ(std::string("world"), ptext(pline(doc, 1)));
+}
+
+// (c) A vetoed tag must not count toward the every-100 outstanding-tag
+// warning -- neither by inflating the count nor by consuming the "already
+// warned at this count" marker, which would swallow the warning for the
+// genuine hundredth tag.
+TEST(MxpD20, VetoedTagDoesNotCountTowardOutstandingTagWarning)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    install_veto_engine(doc, "b");
+    const int lastBefore = doc.m_iLastOutstandingTagCount;
+
+    for (int i = 0; i < 99; i++)
+        mud(doc, "<i>");
+    ASSERT_EQ(99, (int) doc.m_ActiveTagList.GetCount());
+    ASSERT_EQ(lastBefore, doc.m_iLastOutstandingTagCount);   // no warning yet
+
+    mud(doc, "<b>");                       // vetoed: must not be the 100th
+    EXPECT_EQ(99, (int) doc.m_ActiveTagList.GetCount());
+    EXPECT_EQ(lastBefore, doc.m_iLastOutstandingTagCount);   // still no warning
+
+    mud(doc, "<i>");                       // the genuine hundredth
+    EXPECT_EQ(100, (int) doc.m_ActiveTagList.GetCount());
+    EXPECT_EQ(100, doc.m_iLastOutstandingTagCount);          // now it fires
+}
+
+// (d) No close-tag callback may fire for an open that was suppressed.
+TEST(MxpD20, NoCloseCallbackForSuppressedOpen)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    CScriptEngine* engine = install_veto_engine(doc, "b");
+
+    mud(doc, "<b>x</b>");                  // vetoed open, then its close
+    mud(doc, "<i>y</i>");                  // control: not vetoed
+
+    std::vector<std::string> closed = lua_list(engine->L, "closed");
+    EXPECT_FALSE(has(closed, "b"));        // suppressed open => no close
+    EXPECT_TRUE(has(closed, "i"));         // control still closes
+}
+
+// (f) The second veto ask -- one per atom of a custom element, from the other
+// MXP_OpenAtomicTag call site -- must keep working, and must NOT unwind the
+// custom element's own open-tag record (the atoms are not the tag).
+TEST(MxpD20, CustomElementPerAtomVetoStillWorks)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    CScriptEngine* engine = install_veto_engine(doc, "b");   // veto the ATOM
+
+    mud(doc, "<!ELEMENT mytag '<b><i>'>");
+    mud(doc, "<mytag>zz</mytag>\n");
+
+    std::vector<std::string> opened = lua_list(engine->L, "opened");
+    EXPECT_TRUE(has(opened, "mytag"));     // asked about the element...
+    EXPECT_TRUE(has(opened, "b"));         // ...and about each of its atoms
+    EXPECT_TRUE(has(opened, "i"));
+
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & HILITE) == 0);   // <b> atom was vetoed
+    EXPECT_TRUE((s->iFlags & BLINK)  != 0);   // <i> atom was not
+
+    // the element itself opened and closed normally despite the atom veto
+    EXPECT_TRUE(has(lua_list(engine->L, "closed"), "mytag"));
+    EXPECT_EQ(0, (int) doc.m_ActiveTagList.GetCount());
+}
+
+// A vetoed <send> nested inside a hyperlink used to close "early": </send>
+// found the suppressed open still on the active list, and MXP_CloseAtomicTag
+// then rewrote every enclosing style's action from the marker onwards --
+// substituting &text; with the INNER text ("me") instead of the anchor's own
+// text.  Half the link sent one command and half another.  Undoing the open
+// record fixes it, because </send> now has nothing to close.
+TEST(MxpD20, VetoedSendDoesNotRewriteEnclosingHyperlinkTarget)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    install_veto_engine(doc, "send");
+
+    mud(doc, "<a href=\"go &text;\">click <send>me</send> now</a>\n");
+
+    // every run of the anchor carries the SAME, fully-substituted action
+    CLine* l = pline(doc, 0);
+    ASSERT_NE(nullptr, l);
+    int actions = 0;
+    for (POSITION pos = l->styleList.GetHeadPosition(); pos; ) {
+        CStyle* s = l->styleList.GetNext(pos);
+        if ((s->iFlags & ACTIONTYPE) == 0 || s->iLength == 0)
+            continue;
+        ASSERT_NE(nullptr, s->pAction);
+        EXPECT_STREQ("go click me now", (const char*) s->pAction->m_strAction);
+        actions++;
+    }
+    EXPECT_TRUE(actions > 0);      // the anchor really did produce link runs
 }
 #endif // MUSHCLIENT_LUA_SCRIPTING
 

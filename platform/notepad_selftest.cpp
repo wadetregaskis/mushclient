@@ -38,8 +38,10 @@
 #include "wx_world_child.h"
 #include "../pal/itransport.h"
 
+#include <algorithm>   // std::sort / std::unique (the Convert id-distinctness check)
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -62,6 +64,22 @@ int CountingMessageBox (const char* text, const char* /*caption*/, unsigned /*fl
     g_promptCount++;
     g_lastPrompt = text ? text : "";
     return g_promptAnswer;
+}
+
+// Read a file's raw bytes, for the line-ending round-trip checks.  Deliberately
+// NOT via NotepadReadFile: that is one of the functions under test here, and
+// comparing its output with itself would make the assertion vacuous.
+std::string SlurpFile (const char* path)
+{
+    FILE* f = fopen(path, "rb");
+    if (!f) return "<unreadable>";
+    std::string out;
+    char buf[4096];
+    size_t got;
+    while ((got = fread(buf, 1, sizeof buf, f)) > 0)
+        out.append(buf, got);
+    fclose(f);
+    return out;
 }
 
 // ── Notepad construction ───────────────────────────────────────────────────
@@ -518,6 +536,101 @@ int RunNotepadSelfTest()
         }
     }
 
+    // ── 4a2. The four line-ending conversions actually convert (D-10) ──────
+    // They were provable no-ops: the control cannot hold a CR, so the
+    // canonical CR-keyed transforms had nothing to rewrite, and the only
+    // assertion on them ("the text came back unchanged") was equally true of a
+    // body that did nothing.  Now they change the DOCUMENT's line-ending tag,
+    // and the discriminator is what lands on disk.
+    //
+    // Driven through the real menu items, so the event table, the id mapping
+    // and OnConvert's new arm are all in the path.
+    {
+        // ASCII-only fragments of the menu labels, which carry "→" arrows.
+        // Each is unique across the four: "(LF" only appears in Unix→DOS,
+        // "Unix (CRLF" only in DOS→Unix, "(CR " only in Mac→DOS (DOS→Mac's
+        // "(CRLF" has an L where that space is), "Mac (CRLF" only in DOS→Mac.
+        struct ConvCase { const char* leaf; const char* label; const char* expected; };
+        const ConvCase kCases[] = {
+            { "u2d", "(LF",        "l1\r\nl2\r\n" },   // Unix → DOS
+            { "d2u", "Unix (CRLF", "l1\nl2\n"     },   // DOS  → Unix
+            { "m2d", "(CR ",       "l1\r\nl2\r\n" },   // Mac  → DOS
+            { "d2m", "Mac (CRLF",  "l1\rl2\r"     },   // DOS  → Mac
+        };
+        std::vector<int> firedIds;
+
+        for (const ConvCase& c : kCases)
+        {
+            // A distinct file per case: same starting state every time, and no
+            // frame has to be closed and reopened under a title the registry
+            // would still be holding.
+            char path[128], leafname[64];
+            snprintf(path, sizeof path,
+                     "/tmp/mushclient_np_selftest_conv_%s.txt", c.leaf);
+            snprintf(leafname, sizeof leafname,
+                     "mushclient_np_selftest_conv_%s.txt", c.leaf);
+
+            FILE* fp = fopen(path, "wb");
+            if (fp) { fputs("l1\nl2\n", fp); fclose(fp); }
+
+            CTextDocument* td = g_wxhook_open_text_file
+                ? static_cast<CTextDocument*>(g_wxhook_open_text_file(path))
+                : nullptr;
+            CWxNotepadFrame* cf = CWxNotepadFrame::Find(leafname);
+            if (cf) cf->Hide();
+            npCheck(td != nullptr && cf != nullptr,
+                    "the convert fixture opens into a notepad");
+            if (!td || !cf)
+            {
+                remove(path);
+                continue;
+            }
+
+            npCheck(td->m_iLineEndings == eLineEndingsLF,
+                    "...starting as a Unix file");
+            td->SetModifiedFlag(FALSE);
+
+            // Which item the label fragment actually resolves to.  Two of the
+            // four cases expect the SAME bytes (both DOS targets), so without
+            // this a fragment that matched the wrong item would still pass —
+            // the ids are collected and checked for distinctness below.
+            wxMenuItem* item = FindMenuItem(cf, "Convert", c.label);
+            npCheck(item != nullptr, "the Convert item is on the menu");
+            if (item)
+                firedIds.push_back(item->GetId());
+
+            const std::string before = cf->GetText();
+            npCheck(FireConvert(cf, c.label), "...and fires");
+
+            // A tag-only change raises no wxEVT_TEXT, so nothing sets the
+            // modified flag for it -- and SaveModified would then throw the
+            // user's conversion away on close without even asking.
+            npCheck(td->IsModified(),
+                    "...and it marks the document modified (no wxEVT_TEXT "
+                    "fires for a tag-only change)");
+            npCheck(cf->GetText() == before,
+                    "...without touching the text");
+
+            npCheck(td->DoSave((LPCTSTR) td->GetPathName()) != FALSE,
+                    "...the converted notepad saves");
+            npCheck(SlurpFile(path) == c.expected,
+                    "...and the SAVED BYTES carry the new line endings "
+                    "(all four used to be no-ops)");
+
+            td->SetModifiedFlag(FALSE);   // nothing to prompt about at quit
+            remove(path);
+        }
+
+        // Four labels, four DIFFERENT menu items.  Without this, "(LF" and
+        // "(CR " could both be resolving to Unix→DOS and the two DOS cases
+        // would still agree with their (identical) expected bytes.
+        std::vector<int> sorted = firedIds;
+        std::sort(sorted.begin(), sorted.end());
+        npCheck(sorted.size() == 4 &&
+                std::unique(sorted.begin(), sorted.end()) == sorted.end(),
+                "the four conversions are four distinct menu commands");
+    }
+
     // ── 4b. File > New resets a Recall/search-results title (E19-F2) ───────
     // CTextDocument::OnFileNew's guard (TextDocument.cpp:460): don't make
     // another Recall window -- a fresh notepad opened from within a Recall/
@@ -600,6 +713,162 @@ int RunNotepadSelfTest()
         }
 
         remove(path);
+    }
+
+    // ── 4d. Line endings survive a load/save round trip (D-10) ─────────────
+    //
+    // The corruption this section exists for: the wx control does not COLLAPSE
+    // a CRLF to LF, it EXPANDS it to two line breaks, and SaveFile wrote that
+    // expansion back.  Opening any CRLF file (every bundled plugin is one)
+    // through Plugins ▸ Edit, Game ▸ Edit Script File or File ▸ Open therefore
+    // double-spaced it on screen, and one Ctrl+S rewrote the user's file that
+    // way.  Two clicks, no warning.
+    //
+    // The pure functions are pinned headlessly (tests/test_notepad_convert.cpp,
+    // NotepadLineEndings.*).  What can only be checked HERE is that the real
+    // wxTextCtrl still behaves the way the fix assumes, and that the real frame
+    // routes its loads, its saves and its script writes through the
+    // normalisation.
+    {
+        // (i) The wx fact the whole design rests on.  A raw control, so this
+        //     fails the day wxOSX starts collapsing CRLF — at which point the
+        //     normalisation stops being load-bearing and should be revisited
+        //     rather than silently kept.
+        wxTextCtrl* raw = new wxTextCtrl(wxTheApp->GetTopWindow(), wxID_ANY,
+                                         wxEmptyString, wxDefaultPosition,
+                                         wxDefaultSize, wxTE_MULTILINE);
+        raw->SetValue(wxT("a\r\nb"));
+        npCheck(raw->GetValue() == wxT("a\n\nb"),
+                "the wx control EXPANDS a CRLF into two line breaks "
+                "(the whole reason this section exists)");
+        npCheck(raw->GetNumberOfLines() == 3,
+                "...three lines where the file had two");
+        raw->Destroy();
+
+        // (ii) The frame must not let that happen.  Before the fix this text
+        //      arrived verbatim and GetText() came back "a\n\nb\n\nc\n".
+        CTextDocument* eol = MakeNotepad("selftest_np_eol", "a\r\nb\r\nc\r\n");
+        CWxNotepadFrame* eolFrame = CWxNotepadFrame::Find("selftest_np_eol");
+        npCheck(eol != nullptr && eolFrame != nullptr, "eol notepad created");
+        if (eolFrame)
+            npCheck(eolFrame->GetText() == "a\nb\nc\n",
+                    "a notepad created from CRLF text is NOT double-spaced");
+
+        // (iii) world.AppendToNotepad with embedded CRLF — the script-facing
+        //       path, which reaches the control through m_fn_replace_sel.
+        if (eolFrame && eol)
+        {
+            CMUSHclientDoc* npWorld = new CMUSHclientDoc();
+            npWorld->m_mush_name = "zz_selftest_notepad_eol";
+            eol->m_pRelatedWorld = npWorld;
+            eol->m_iUniqueDocumentNumber = npWorld->m_iUniqueDocumentNumber;
+
+            npCheck(npWorld->ReplaceNotepad("selftest_np_eol",
+                                            "x\r\ny\r\nz") != FALSE,
+                    "world.ReplaceNotepad reaches the notepad");
+            npCheck(eolFrame->GetText() == "x\ny\nz",
+                    "...and CRLF in the replaced text does not double-space it");
+
+            npCheck(npWorld->AppendToNotepad("selftest_np_eol",
+                                             "\r\np\r\nq") != FALSE,
+                    "world.AppendToNotepad reaches the notepad");
+            npCheck(eolFrame->GetText() == "x\ny\nz\np\nq",
+                    "...and CRLF in the appended text does not double-space it");
+
+            eol->m_pRelatedWorld = nullptr;
+            delete npWorld;
+        }
+
+        // (iv) The acceptance criterion, end to end through the real objects:
+        //      open a CRLF file, save it untouched, and the bytes must be
+        //      identical.  Then edit one line and save again — every OTHER
+        //      byte must still be identical, and the file must still be CRLF.
+        const char* path = "/tmp/mushclient_notepad_selftest_crlf.xml";
+        const std::string original =
+            "<?xml version=\"1.0\"?>\r\n<muclient>\r\n<plugin name=\"x\"/>\r\n</muclient>\r\n";
+        {
+            FILE* fp = fopen(path, "wb");
+            npCheck(fp != nullptr, "the CRLF fixture file could be created");
+            if (fp)
+            {
+                fwrite(original.data(), 1, original.size(), fp);
+                fclose(fp);
+            }
+        }
+
+        if (g_wxhook_open_text_file)
+        {
+            CTextDocument* td =
+                static_cast<CTextDocument*>(g_wxhook_open_text_file(path));
+            npCheck(td != nullptr, "the CRLF file opens into a notepad");
+            CWxNotepadFrame* crlfFrame =
+                CWxNotepadFrame::Find("mushclient_notepad_selftest_crlf.xml");
+            if (crlfFrame) crlfFrame->Hide();
+
+            if (td && crlfFrame)
+            {
+                npCheck(td->m_iLineEndings == eLineEndingsCRLF,
+                        "...tagged with the CRLF style it arrived in");
+                npCheck(crlfFrame->GetText().find('\r') == std::string::npos,
+                        "...with LF-only text in the control");
+                npCheck(crlfFrame->GetText() ==
+                            "<?xml version=\"1.0\"?>\n<muclient>\n"
+                            "<plugin name=\"x\"/>\n</muclient>\n",
+                        "...and NOT double-spaced (4 lines, not 8)");
+
+                // Save with no edit at all.
+                npCheck(td->DoSave((LPCTSTR) td->GetPathName()) != FALSE,
+                        "the unedited notepad saves");
+                npCheck(SlurpFile(path) == original,
+                        "an unedited CRLF file saves back BYTE-IDENTICAL "
+                        "(it used to come back double-spaced)");
+
+                // Now change exactly one line, the way the user would.
+                const int n = crlfFrame->ReplaceAllInText(
+                    wxT("<plugin name=\"x\"/>"), wxT("<plugin name=\"yy\"/>"),
+                    true /*matchCase*/);
+                npCheck(n == 1, "exactly one line was edited");
+                npCheck(td->DoSave((LPCTSTR) td->GetPathName()) != FALSE,
+                        "the edited notepad saves");
+
+                std::string expected = original;
+                const size_t at = expected.find("<plugin name=\"x\"/>");
+                if (at != std::string::npos)
+                    expected.replace(at, strlen("<plugin name=\"x\"/>"),
+                                     "<plugin name=\"yy\"/>");
+                npCheck(SlurpFile(path) == expected,
+                        "...and the file comes back byte-identical APART FROM "
+                        "the edited line, still CRLF");
+            }
+        }
+        remove(path);
+
+        // (v) The control cannot represent CR, but a CR-only file must still
+        //     be written back as a CR-only file.
+        const char* crPath = "/tmp/mushclient_notepad_selftest_cr.txt";
+        const std::string crOriginal = "one\rtwo\rthree\r";
+        {
+            FILE* fp = fopen(crPath, "wb");
+            if (fp) { fwrite(crOriginal.data(), 1, crOriginal.size(), fp); fclose(fp); }
+        }
+        if (g_wxhook_open_text_file)
+        {
+            CTextDocument* td =
+                static_cast<CTextDocument*>(g_wxhook_open_text_file(crPath));
+            CWxNotepadFrame* crFrame =
+                CWxNotepadFrame::Find("mushclient_notepad_selftest_cr.txt");
+            if (crFrame) crFrame->Hide();
+            npCheck(td != nullptr && td->m_iLineEndings == eLineEndingsCR,
+                    "a CR-only file is tagged as CR");
+            if (td)
+            {
+                npCheck(td->DoSave((LPCTSTR) td->GetPathName()) != FALSE,
+                        "the CR-only notepad saves");
+                npCheck(SlurpFile(crPath) == crOriginal,
+                        "...back as a CR-only file, byte-identical");
+            }
+        }
+        remove(crPath);
     }
 
     // ── 5. Quitting asks about unsaved notepads ────────────────────────────

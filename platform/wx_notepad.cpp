@@ -113,6 +113,37 @@ static wxFont MakeFont(const CTextDocument* pDoc)
                   pDoc->m_bFontUnderline, face);
 }
 
+// ── The one thing the control may be fed ────────────────────────────────────
+// LF, and nothing else.  wx does not COLLAPSE a CRLF to LF, it EXPANDS it to
+// two line breaks (measured on wx 3.3.2 — see stdafx.h), so text that reaches
+// the control with a CR in it is silently double-spaced, and the next Save
+// writes that damage into the user's file.  Every write site below goes
+// through here.
+//
+// A thin wrapper over the shared NotepadBytesToControlText rather than a
+// second implementation: two copies of "\r\n → \n" is exactly how the port
+// grows twin-drift bugs.  The fast path costs one scan and skips the
+// conversion entirely, which is what almost every call takes.
+
+// For text that arrives as raw bytes (the m_fn_* callbacks, AppendText):
+// normalise first, then decode.
+static wxString NotepadBytesForControl(const char* data, size_t len)
+{
+    const std::string lf = NotepadBytesToControlText(data, len);
+    return DecodeUTF8Lenient(lf.data(), lf.size());
+}
+
+// For text that is already a wxString (the constructor, the Convert menu).
+static wxString NotepadTextForControl(const wxString& s)
+{
+    if (s.Find(wxT('\r')) == wxNOT_FOUND)
+        return s;                       // the overwhelmingly common case
+    // Named, not inlined: utf8_str() on a temporary returns a NON-owning view
+    // whose bytes die at the semicolon.
+    const wxScopedCharBuffer utf8 = s.utf8_str();
+    return NotepadBytesForControl(utf8.data(), utf8.length());
+}
+
 // ── Text-conversion transforms ──────────────────────────────────────────────
 // The transforms themselves live in notepad_convert_shared.cpp (mushcore) —
 // faithful copies of the canonical CTextView::OnConvert* bodies, wrapped in the
@@ -224,7 +255,7 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
 
     // ── Initial content ─────────────────────────────────────────────────
     if (!text.IsEmpty())
-        m_ctrl->SetValue(text);
+        m_ctrl->SetValue(NotepadTextForControl(text));
 
     // ── Track edits ─────────────────────────────────────────────────────
     // CEditView reflects the edit control's EN_CHANGE to
@@ -302,7 +333,11 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
         // returning true), and ReplaceNotepad — which selects all first —
         // replaced the content with that nothing.  data()+size() also stops
         // c_str() truncating at an embedded NUL.
-        m_ctrl->WriteText(DecodeUTF8Lenient(s.data(), s.size()));
+        //
+        // Normalised on the way in: world.AppendToNotepad / ReplaceNotepad hand
+        // over whatever the script or the world produced, and a CRLF in that
+        // text used to reach the control and double-space it.
+        m_ctrl->WriteText(NotepadBytesForControl(s.data(), s.size()));
     };
 
     pDoc->m_fn_activate = [this]() {
@@ -349,7 +384,17 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
             wxPath = dlg.GetPath();
         }
 
-        bool ok = m_ctrl->SaveFile(wxPath);
+        // NOT m_ctrl->SaveFile: that writes the control's LF-only buffer
+        // verbatim, so saving a file that came in as CRLF (every bundled
+        // plugin) rewrote it as LF -- and, before the load side was
+        // normalised, as a DOUBLE-SPACED LF file.  Write the bytes the
+        // document's own line-ending style calls for instead.
+        const std::string text(m_ctrl->GetValue().ToUTF8());
+        // Named: wxPath outlives the buffer, so the bytes are still there when
+        // NotepadWriteFile reads them.
+        const wxScopedCharBuffer pathUtf8 = wxPath.ToUTF8();
+        bool ok = NotepadWriteFile(pathUtf8.data(), text,
+                                   m_pDoc->m_iLineEndings);
         if (ok) {
             m_pDoc->SetPathName(static_cast<const char*>(
                 wxPath.ToUTF8().data()));
@@ -408,7 +453,8 @@ void CWxNotepadFrame::AppendText(const std::string& text, bool replace)
     // Lenient, not FromUTF8: this text is whatever the world or a script
     // handed us.  FromUTF8 is all-or-nothing, so a single stray byte replaced
     // the notepad with an empty one -- silent data loss on the replace arm.
-    const wxString decoded = DecodeUTF8Lenient(text.data(), text.size());
+    // Line endings normalised in the same pass -- see NotepadBytesForControl.
+    const wxString decoded = NotepadBytesForControl(text.data(), text.size());
     if (replace) {
         m_ctrl->SetValue(decoded);
     } else {
@@ -647,7 +693,9 @@ int CWxNotepadFrame::ReplaceAllInText(const wxString& term,
         from = hit + ndl.length();
         ++count;
     }
-    if (count) m_ctrl->SetValue(out);              // fires wxEVT_TEXT → modified
+    // Normalised: the replacement string comes from a dialog field, and a
+    // pasted CRLF in it would otherwise reach the control.
+    if (count) m_ctrl->SetValue(NotepadTextForControl(out));   // fires wxEVT_TEXT → modified
     return count;
 }
 
@@ -907,8 +955,8 @@ void CWxNotepadFrame::OnEditAsciiArt(wxCommandEvent&)
     // Inserted at the caret, replacing any selection — the same place
     // ReplaceSel puts it on Windows.
     for (int i = 0; i < straLines.GetSize(); i++)
-        m_ctrl->WriteText(wxString::FromUTF8(
-            static_cast<const char*>(straLines[i])) + wxT("\n"));
+        m_ctrl->WriteText(NotepadTextForControl(wxString::FromUTF8(
+            static_cast<const char*>(straLines[i]))) + wxT("\n"));
 }
 
 void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
@@ -942,6 +990,23 @@ void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
         default: return;
     }
 
+    // The four line-ending conversions change the DOCUMENT, not the text.  The
+    // control holds LF and only LF, so there is nothing in the buffer for them
+    // to rewrite -- run over the text they are exact no-ops, which is what
+    // they were until now.  What they mean is "write this file out with those
+    // line endings", and that is the tag.
+    int iNewStyle = eLineEndingsDefault;
+    if (NotepadConvertLineEndingTarget(op, &iNewStyle)) {
+        if (!m_pDoc)
+            return;
+        m_pDoc->m_iLineEndings = iNewStyle;
+        // A tag-only change raises no wxEVT_TEXT, so the binding in the
+        // constructor never fires and the document would still look clean --
+        // SaveModified would then discard the user's change without asking.
+        m_pDoc->SetModifiedFlag(TRUE);
+        return;
+    }
+
     // A failure here is base64 decode on invalid input: leave the notepad
     // alone.  NotepadConvertText already reported the error (ReportError, the
     // same box CTextView::OnConvertBase64decode puts up) — no beep on top of
@@ -952,7 +1017,10 @@ void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
     // Base64 DECODE produces arbitrary binary, and several of the other
     // conversions can too.  FromUTF8 returned "" for those and the SetValue
     // below then ERASED the whole notepad.
-    wxString wxdst = DecodeUTF8Lenient(static_cast<const char*>(dst), dst.GetLength());
+    // ...and Base64 decode can therefore also produce a CR, which the control
+    // would double-space.  NotepadBytesForControl normalises in the same pass.
+    wxString wxdst = NotepadBytesForControl(static_cast<const char*>(dst),
+                                            (size_t) dst.GetLength());
     if (bAll) {
         m_ctrl->SetValue(wxdst);
         m_ctrl->SetSelection(0, m_ctrl->GetLastPosition());

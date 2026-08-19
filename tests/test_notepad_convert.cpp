@@ -23,7 +23,9 @@
 #include "doc.h"
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box (QuoteForumCodes + Base64 confirm)
 
+#include <cstdio>
 #include <string>
+#include <unistd.h>
 
 // Convenience: run an op over a C string and return the result as std::string.
 static std::string Convert(int op, const char* src)
@@ -60,6 +62,344 @@ struct MessageBoxHook {
       }
     ~MessageBoxHook() { g_wxhook_message_box = saved; }
 };
+
+// ── Line endings: the file boundary ─────────────────────────────────────────
+//
+// A DIFFERENT boundary from the LF↔CRLF one below.  That one is internal to a
+// Convert op; this one is about the user's FILE, and getting it wrong was
+// silent data corruption: the wx control expands a CRLF into TWO line breaks
+// (SetValue("a\r\nb") reads back "a\n\nb" — re-measured against wxWidgets
+// 3.3.2 while writing this), so opening any CRLF file double-spaced it and the
+// next Save wrote the damage back.  Every bundled plugin is CRLF.
+//
+// These assertions live at the mushcore layer, over the real functions the
+// product calls.  The wx half — that the control really does expand a CRLF,
+// and that the frame really does route its loads and saves through here — is
+// pinned in platform/notepad_selftest.cpp (--notepad-selftest), because
+// nothing in this executable links a wxTextCtrl.
+
+// A scratch file that removes itself, so a failing assertion cannot leave one
+// behind to make the NEXT run pass.
+struct ScratchFile {
+    std::string path;
+    explicit ScratchFile(const char* tag)
+    {
+        char buf[256];
+        snprintf(buf, sizeof buf, "/tmp/mushclient_np_eol_%s_%d.txt",
+                 tag, (int) getpid());
+        path = buf;
+        remove(path.c_str());
+    }
+    ~ScratchFile() { remove(path.c_str()); }
+
+    void write(const std::string& bytes) const
+    {
+        FILE* f = fopen(path.c_str(), "wb");
+        if (!f) return;
+        if (!bytes.empty())
+            fwrite(bytes.data(), 1, bytes.size(), f);
+        fclose(f);
+    }
+
+    std::string read() const
+    {
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) return "<unreadable>";
+        std::string out;
+        char buf[4096];
+        size_t got;
+        while ((got = fread(buf, 1, sizeof buf, f)) > 0)
+            out.append(buf, got);
+        fclose(f);
+        return out;
+    }
+
+    ScratchFile(const ScratchFile&)            = delete;
+    ScratchFile& operator=(const ScratchFile&) = delete;
+};
+
+TEST(NotepadLineEndings, DetectionIsByMajorityNotByTheFirstBreak)
+{
+    // The uniform cases — what nearly every real file is.
+    EXPECT_EQ(eLineEndingsCRLF, NotepadDetectLineEndings("a\r\nb\r\n", 6));
+    EXPECT_EQ(eLineEndingsLF,   NotepadDetectLineEndings("a\nb\n", 4));
+    EXPECT_EQ(eLineEndingsCR,   NotepadDetectLineEndings("a\rb\r", 4));
+
+    // No line breaks at all, and the empty file: nothing to preserve, so the
+    // platform default.  LF here.
+    EXPECT_EQ(eLineEndingsDefault, NotepadDetectLineEndings("no breaks", 9));
+    EXPECT_EQ(eLineEndingsDefault, NotepadDetectLineEndings("", 0));
+    EXPECT_EQ(eLineEndingsLF,      eLineEndingsDefault);
+
+    // MAJORITY, and specifically not first-wins: a Unix file whose FIRST break
+    // happens to be a CRLF is still a Unix file.  Under first-wins this would
+    // answer CRLF and the next save would rewrite every line of the file.
+    EXPECT_EQ(eLineEndingsLF,   NotepadDetectLineEndings("a\r\nb\nc\nd\n", 9));
+    // ...and the mirror: one stray LF does not make a DOS file a Unix one.
+    EXPECT_EQ(eLineEndingsCRLF, NotepadDetectLineEndings("a\nb\r\nc\r\nd\r\n", 11));
+}
+
+TEST(NotepadLineEndings, TiesResolveTowardsWhatTheControlCannotHold)
+{
+    // Documented rule: ties go CRLF > CR > LF, because those are the styles
+    // the user LOSES by defaulting — LF is what the control holds anyway.
+    EXPECT_EQ(eLineEndingsCRLF, NotepadDetectLineEndings("a\r\nb\nc", 6));
+    EXPECT_EQ(eLineEndingsCR,   NotepadDetectLineEndings("a\rb\nc", 5));
+    EXPECT_EQ(eLineEndingsCRLF, NotepadDetectLineEndings("a\r\nb\rc\nd", 8));
+}
+
+TEST(NotepadLineEndings, ACRLFBecomesONELineBreakInTheControl)
+{
+    // The bug in one assertion.  wx makes this "a\n\nb"; the control must be
+    // handed "a\nb" instead.
+    EXPECT_EQ(std::string("a\nb"),   NotepadBytesToControlText("a\r\nb", 4));
+    EXPECT_EQ(std::string("a\nb"),   NotepadBytesToControlText("a\rb", 3));
+    EXPECT_EQ(std::string("a\nb"),   NotepadBytesToControlText("a\nb", 3));
+    EXPECT_EQ(std::string("x\ny\nz\n"),
+              NotepadBytesToControlText("x\r\ny\r\nz\r\n", 9));
+    // A lone CR followed by a lone LF is two breaks, not one — only an
+    // ADJACENT pair is a single CRLF.
+    EXPECT_EQ(std::string("a\n\nb"), NotepadBytesToControlText("a\n\rb", 4));
+}
+
+TEST(NotepadLineEndings, WritingBackUsesTheDocumentsOwnStyle)
+{
+    EXPECT_EQ(std::string("a\r\nb\r\n"),
+              NotepadControlTextToBytes("a\nb\n", eLineEndingsCRLF));
+    EXPECT_EQ(std::string("a\nb\n"),
+              NotepadControlTextToBytes("a\nb\n", eLineEndingsLF));
+    EXPECT_EQ(std::string("a\rb\r"),
+              NotepadControlTextToBytes("a\nb\n", eLineEndingsCR));
+    // No line breaks: the style cannot show, and must not add anything.
+    EXPECT_EQ(std::string("one line"),
+              NotepadControlTextToBytes("one line", eLineEndingsCRLF));
+}
+
+// ── (a) The regression that matters: load → save with no edit ───────────────
+
+TEST(NotepadLineEndings, LoadThenSaveUneditedIsByteIdentical)
+{
+    // Read the actual file bytes back and compare them.  Before the fix the
+    // CRLF case came back double-spaced and half again as long.
+    struct Case { const char* tag; const char* bytes; int style; };
+    const Case kCases[] = {
+        { "crlf", "line one\r\nline two\r\nline three\r\n", eLineEndingsCRLF },
+        { "lf",   "line one\nline two\nline three\n",       eLineEndingsLF   },
+        { "cr",   "line one\rline two\rline three\r",       eLineEndingsCR   },
+        // No trailing break — a real shape, and the one an off-by-one in the
+        // writer would corrupt.
+        { "notrail", "alpha\r\nbeta",                       eLineEndingsCRLF },
+        // A blank line in the middle must survive as ONE blank line.
+        { "blank", "a\r\n\r\nb\r\n",                        eLineEndingsCRLF },
+    };
+
+    for (const Case& c : kCases)
+    {
+        ScratchFile f(c.tag);
+        const std::string original(c.bytes);
+        f.write(original);
+
+        std::string text;
+        int style = -1;
+        EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+        EXPECT_EQ(c.style, style);
+        // Whatever came in, the control only ever sees LF.
+        EXPECT_TRUE(text.find('\r') == std::string::npos);
+
+        EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, style));
+        EXPECT_EQ(original, f.read());
+    }
+}
+
+// ── (b) The same, with one line edited ──────────────────────────────────────
+
+TEST(NotepadLineEndings, EditingOneLineChangesOnlyThatLine)
+{
+    // The acceptance criterion, at this layer: open a CRLF file, change one
+    // line, save — everything else comes back byte for byte, still CRLF.
+    ScratchFile f("edit");
+    f.write("first\r\nsecond\r\nthird\r\n");
+
+    std::string text;
+    int style = -1;
+    EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+    EXPECT_EQ(eLineEndingsCRLF, style);
+    EXPECT_EQ(std::string("first\nsecond\nthird\n"), text);
+
+    // The edit a user would make in the control, in the control's convention.
+    const size_t at = text.find("second");
+    EXPECT_TRUE(at != std::string::npos);
+    text.replace(at, 6, "SECOND EDITED");
+
+    EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, style));
+    EXPECT_EQ(std::string("first\r\nSECOND EDITED\r\nthird\r\n"), f.read());
+}
+
+TEST(NotepadLineEndings, SavingAnLFFileDoesNotGiveItCRLF)
+{
+    // The control's convention is LF, so a bug that unconditionally wrote CRLF
+    // would pass every CRLF case above and corrupt Unix files instead.
+    ScratchFile f("lfedit");
+    f.write("alpha\nbeta\n");
+
+    std::string text;
+    int style = -1;
+    EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+    text += "gamma\n";
+    EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, style));
+    EXPECT_EQ(std::string("alpha\nbeta\ngamma\n"), f.read());
+}
+
+// ── (d) A file whose endings are mixed ──────────────────────────────────────
+
+TEST(NotepadLineEndings, AMixedFileIsNormalisedToItsMajorityStyle)
+{
+    // Documented rule: mixed endings do NOT round-trip byte-for-byte — they
+    // cannot, since the control holds one kind — they are unified to the
+    // majority style.  Pinned so the behaviour is a decision, not an accident.
+    ScratchFile f("mixed");
+    f.write("dos\r\nunix\ndos\r\ndos\r\n");     // 3 CRLF vs 1 LF
+
+    std::string text;
+    int style = -1;
+    EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+    EXPECT_EQ(eLineEndingsCRLF, style);
+    EXPECT_EQ(std::string("dos\nunix\ndos\ndos\n"), text);
+
+    EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, style));
+    // The stray LF is now a CRLF like its neighbours — the file got MORE
+    // consistent, not less, which is the point of picking the majority.
+    EXPECT_EQ(std::string("dos\r\nunix\r\ndos\r\ndos\r\n"), f.read());
+}
+
+TEST(NotepadLineEndings, ReadAndWriteRefuseAPathTheyCannotUse)
+{
+    std::string text("unchanged");
+    int style = -1;
+    EXPECT_FALSE(NotepadReadFile("/tmp/mushclient_np_eol_definitely_absent", text, style));
+    EXPECT_FALSE(NotepadReadFile(nullptr, text, style));
+    EXPECT_FALSE(NotepadReadFile("", text, style));
+    // A refused read must not have touched the caller's buffer.
+    EXPECT_EQ(std::string("unchanged"), text);
+
+    EXPECT_FALSE(NotepadWriteFile("/no/such/directory/at/all.txt", "x", eLineEndingsLF));
+    EXPECT_FALSE(NotepadWriteFile(nullptr, "x", eLineEndingsLF));
+    EXPECT_FALSE(NotepadWriteFile("", "x", eLineEndingsLF));
+}
+
+TEST(NotepadLineEndings, AnEmptyFileRoundTripsAsEmpty)
+{
+    ScratchFile f("empty");
+    f.write("");
+
+    std::string text("stale");
+    int style = -1;
+    EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+    EXPECT_EQ(std::string(""), text);
+    EXPECT_EQ(eLineEndingsDefault, style);
+    EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, style));
+    EXPECT_EQ(std::string(""), f.read());
+}
+
+// ── The four line-ending Convert ops ────────────────────────────────────────
+//
+// These were provable no-ops: the control cannot hold a CR, so the canonical
+// CR-keyed transforms had nothing to rewrite, and the test that "covered" them
+// asserted the text came back unchanged — which it does whether the op works or
+// does nothing at all.  With a tag on the document they mean what the menu says,
+// and the discriminator is the SAVED BYTES, not the text.
+
+TEST(NotepadLineEndings, EachConversionNamesTheStyleItTargets)
+{
+    int style = -1;
+
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertUnixToDos, &style));
+    EXPECT_EQ(eLineEndingsCRLF, style);
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertMacToDos, &style));
+    EXPECT_EQ(eLineEndingsCRLF, style);
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertDosToUnix, &style));
+    EXPECT_EQ(eLineEndingsLF, style);
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertDosToMac, &style));
+    EXPECT_EQ(eLineEndingsCR, style);
+
+    // The control: every OTHER op must be refused, or the Convert menu would
+    // start retagging the document for Base64 and UPPER CASE too.
+    const int kNotLineEndings[] = {
+        eNotepadConvertUpperCase,   eNotepadConvertLowerCase,
+        eNotepadConvertRemoveEol,   eNotepadConvertRemoveBlanks,
+        eNotepadConvertQuoteLines,  eNotepadConvertQuoteForum,
+        eNotepadConvertBase64Encode, eNotepadConvertBase64Decode,
+        eNotepadConvertHtmlSpecial,
+    };
+    for (int op : kNotLineEndings)
+        EXPECT_FALSE(NotepadConvertLineEndingTarget(op, &style));
+    EXPECT_FALSE(NotepadConvertLineEndingTarget(-1, &style));
+
+    // ...and a refusal must not have written through the out-parameter.
+    style = 12345;
+    EXPECT_FALSE(NotepadConvertLineEndingTarget(eNotepadConvertUpperCase, &style));
+    EXPECT_EQ(12345, style);
+
+    // A null out-parameter is allowed (a caller may only want the predicate).
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertDosToMac, nullptr));
+}
+
+TEST(NotepadLineEndings, EachConversionChangesTheSavedBytes)
+{
+    // The assertion the old test could not make.  Start from a Unix file, apply
+    // each conversion, and read back what actually lands on disk.
+    struct Case { int op; const char* expected; };
+    const Case kCases[] = {
+        { eNotepadConvertUnixToDos, "a\r\nb\r\n" },
+        { eNotepadConvertMacToDos,  "a\r\nb\r\n" },
+        { eNotepadConvertDosToMac,  "a\rb\r"     },
+        { eNotepadConvertDosToUnix, "a\nb\n"     },
+    };
+
+    for (const Case& c : kCases)
+    {
+        ScratchFile f("conv");
+        f.write("a\nb\n");
+
+        std::string text;
+        int style = -1;
+        EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+        EXPECT_EQ(eLineEndingsLF, style);
+
+        // What the Convert menu now does: retag, and leave the text alone.
+        int target = -1;
+        EXPECT_TRUE(NotepadConvertLineEndingTarget(c.op, &target));
+        CString dst;
+        EXPECT_TRUE(NotepadConvertText(c.op, CString(text.c_str()), dst));
+        EXPECT_EQ(text, std::string((const char*) dst));   // the TEXT is untouched
+
+        EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, target));
+        EXPECT_EQ(std::string(c.expected), f.read());
+    }
+}
+
+TEST(NotepadLineEndings, ConversionsAreNotConditionalOnTheCurrentStyle)
+{
+    // A deliberate difference from Windows, recorded so it is not "fixed" back.
+    // CTextView::OnConvertUnixtodos drops every CR and only inserts one before
+    // an LF, so on Windows applying it to a Mac (CR-only) buffer DELETES every
+    // line break in the file.  Here the op names its target, so a mismatched
+    // source is harmless.
+    ScratchFile f("mac2dos");
+    f.write("a\rb\rc\r");
+
+    std::string text;
+    int style = -1;
+    EXPECT_TRUE(NotepadReadFile(f.path.c_str(), text, style));
+    EXPECT_EQ(eLineEndingsCR, style);
+    EXPECT_EQ(std::string("a\nb\nc\n"), text);
+
+    int target = -1;
+    EXPECT_TRUE(NotepadConvertLineEndingTarget(eNotepadConvertUnixToDos, &target));
+    EXPECT_TRUE(NotepadWriteFile(f.path.c_str(), text, target));
+    // Three lines still, now DOS -- not one line with the breaks eaten.
+    EXPECT_EQ(std::string("a\r\nb\r\nc\r\n"), f.read());
+}
 
 // ── The boundary itself ─────────────────────────────────────────────────────
 
@@ -122,7 +462,22 @@ TEST(NotepadConvert, RemoveEndOfLinesDoesNotDoubleSpaceAfterAParagraph)
               Convert(eNotepadConvertRemoveEol, "a\n\nb"));
 }
 
-TEST(NotepadConvert, DosToMacKeepsTheLineStructure)
+// The four line-ending ops, at the TEXT layer.
+//
+// These three fixtures assert only half the contract, and on their own they
+// could never fail: "the text is unchanged" is equally true of a working
+// conversion and of one that does nothing, which is exactly what these four
+// were until the document gained a line-ending tag.  What they are worth is
+// the other half — the text must survive the op INTACT, so a body that
+// collapsed the document into one line (which running the canonical CR-keyed
+// transform over LF-only text really did) still fails here.
+//
+// The half that discriminates is NotepadLineEndings.EachConversionChangesThe-
+// SavedBytes above, which reads the file back, and the menu-driven version in
+// platform/notepad_selftest.cpp.  Do not read these three as coverage of the
+// conversions themselves.
+
+TEST(NotepadConvert, DosToMacLeavesTheTEXTIntact)
 {
     // The canonical strips LF from a CRLF buffer, leaving CR-separated lines —
     // which is a line ending the control renders identically.  Run raw over
@@ -132,16 +487,17 @@ TEST(NotepadConvert, DosToMacKeepsTheLineStructure)
               Convert(eNotepadConvertDosToMac, "a\nb\nc"));
 }
 
-TEST(NotepadConvert, MacToDosKeepsTheLineStructure)
+TEST(NotepadConvert, MacToDosLeavesTheTEXTIntact)
 {
     EXPECT_EQ(std::string("a\nb\nc"),
               Convert(eNotepadConvertMacToDos, "a\nb\nc"));
 }
 
-TEST(NotepadConvert, UnixToDosAndDosToUnixKeepTheLineStructure)
+TEST(NotepadConvert, UnixToDosAndDosToUnixLeaveTheTEXTIntact)
 {
-    // The control cannot represent the difference, so both are no-ops here.
-    // Unix→DOS emitting CRLF into the control DOUBLE-SPACED the document.
+    // The control cannot represent the difference, so neither op touches the
+    // text; the document's tag is where the conversion lands.  Unix→DOS
+    // emitting CRLF into the control DOUBLE-SPACED the document.
     EXPECT_EQ(std::string("a\nb\nc"),
               Convert(eNotepadConvertUnixToDos, "a\nb\nc"));
     EXPECT_EQ(std::string("a\nb\nc"),

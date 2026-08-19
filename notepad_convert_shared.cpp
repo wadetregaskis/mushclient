@@ -31,6 +31,192 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 
+#include <cstdio>
+#include <string>
+
+// ── Line endings: detection, and the file boundary ──────────────────────────
+//
+// Separate from the LF↔CRLF *canonical* conversion below, which exists only so
+// the CR-keyed transforms can run.  This half is about the FILE: the control
+// holds LF and only LF, so a document's real line-ending style has to be
+// detected when it is read and put back when it is written, or every CRLF file
+// the notepad touches is silently rewritten (double-spaced — wx expands a CRLF
+// to two line breaks, it does not collapse it; see stdafx.h for the numbers).
+
+int NotepadDetectLineEndings (const char * data, size_t len)
+  {
+  if (data == NULL)
+    return eLineEndingsDefault;
+
+  size_t nCRLF = 0, nLF = 0, nCR = 0;
+  for (size_t i = 0; i < len; ++i)
+    {
+    if (data [i] == '\r')
+      {
+      if (i + 1 < len && data [i + 1] == '\n')
+        { nCRLF++; i++; }     // one CRLF, not a CR and an LF
+      else
+        nCR++;
+      }
+    else if (data [i] == '\n')
+      nLF++;
+    }
+
+  // No line breaks at all — a one-liner, or an empty file.  Nothing to
+  // preserve, so take the platform default rather than guessing.
+  if (nCRLF == 0 && nLF == 0 && nCR == 0)
+    return eLineEndingsDefault;
+
+  // MAJORITY wins, not first-wins: a single stray break of the other kind is
+  // common in hand-edited files, and under first-wins one leading CRLF in an
+  // otherwise-Unix file would convert the whole file on the next save.
+  //
+  // Ties resolve CRLF > CR > LF — toward the styles the control CANNOT
+  // represent, because those are the ones the user loses by defaulting; LF is
+  // the fallback because it is what the platform and the control use natively.
+  if (nCRLF >= nCR && nCRLF >= nLF)
+    return eLineEndingsCRLF;
+  if (nCR >= nLF)
+    return eLineEndingsCR;
+  return eLineEndingsLF;
+  }   // end of NotepadDetectLineEndings
+
+std::string NotepadBytesToControlText (const char * data, size_t len)
+  {
+  std::string out;
+  if (data == NULL)
+    return out;
+  out.reserve (len);
+  for (size_t i = 0; i < len; ++i)
+    {
+    if (data [i] == '\r')
+      {
+      out += '\n';
+      if (i + 1 < len && data [i + 1] == '\n')
+        i++;                  // a CRLF is ONE line break — this is the bug
+      }
+    else
+      out += data [i];
+    }
+  return out;
+  }   // end of NotepadBytesToControlText
+
+std::string NotepadControlTextToBytes (const std::string & strText, const int style)
+  {
+  const char * eol = (style == eLineEndingsCRLF) ? "\r\n"
+                   : (style == eLineEndingsCR)   ? "\r"
+                   :                               "\n";
+
+  std::string out;
+  out.reserve (strText.size ());
+  // The input is LF-only by contract, but accept any of the three defensively
+  // so that this is total and so that read→write is an identity for a file
+  // with uniform endings whatever reached the buffer.
+  for (size_t i = 0; i < strText.size (); ++i)
+    {
+    const char c = strText [i];
+    if (c == '\r')
+      {
+      out += eol;
+      if (i + 1 < strText.size () && strText [i + 1] == '\n')
+        i++;
+      }
+    else if (c == '\n')
+      out += eol;
+    else
+      out += c;
+    }
+  return out;
+  }   // end of NotepadControlTextToBytes
+
+// Deliberately stdio rather than wxFile: this is the byte boundary, and it has
+// to be reachable from the headless test suite, which links no wx at all.
+bool NotepadReadFile (const char * path, std::string & strText, int & style)
+  {
+  if (path == NULL || *path == 0)
+    return false;
+
+  FILE * f = fopen (path, "rb");
+  if (f == NULL)
+    return false;
+
+  std::string raw;
+  char buf [16384];
+  size_t got;
+  while ((got = fread (buf, 1, sizeof buf, f)) > 0)
+    raw.append (buf, got);
+  const bool bError = ferror (f) != 0;
+  fclose (f);
+  if (bError)
+    return false;
+
+  style   = NotepadDetectLineEndings (raw.data (), raw.size ());
+  strText = NotepadBytesToControlText (raw.data (), raw.size ());
+  return true;
+  }   // end of NotepadReadFile
+
+bool NotepadWriteFile (const char * path, const std::string & strText, const int style)
+  {
+  if (path == NULL || *path == 0)
+    return false;
+
+  const std::string raw = NotepadControlTextToBytes (strText, style);
+
+  FILE * f = fopen (path, "wb");
+  if (f == NULL)
+    return false;
+  const bool bWrote = raw.empty () ||
+                      fwrite (raw.data (), 1, raw.size (), f) == raw.size ();
+  const bool bClosed = fclose (f) == 0;
+  return bWrote && bClosed;
+  }   // end of NotepadWriteFile
+
+// ── The four line-ending conversions ────────────────────────────────────────
+//
+// On Windows these four rewrite the CEdit buffer byte for byte, and since that
+// buffer IS the file, the rewrite IS the conversion.  Here the buffer cannot
+// carry the distinction at all, so the conversion is a change to the
+// document's TAG — which is the same thing one layer down, and is what the
+// menu items have always claimed to do.
+//
+// TWO DELIBERATE DIFFERENCES FROM WINDOWS, both toward not destroying the
+// document; see docs entry for D-10.
+//
+// 1. Each op names its TARGET, and is not conditional on the current style.
+//    The canonical bodies are keyed on the bytes they expect to find, so
+//    applying one to a document in the wrong style is destructive rather than
+//    inert: CTextView::OnConvertUnixtodos drops every CR it meets and only
+//    inserts one before an LF (TextView.cpp:305-311), so run over a Mac
+//    (CR-only) buffer it deletes every line break in the file.  DOS→Unix over
+//    the same buffer does likewise.  That is a consequence of the byte-level
+//    implementation, not of the intent, and there is nothing to reproduce.
+//
+// 2. Windows applies them to the SELECTION when there is one.  A line-ending
+//    style is a property of the file, and the control cannot hold two of them
+//    at once, so these are document-wide here whatever is selected.
+bool NotepadConvertLineEndingTarget (const int op, int * pStyle)
+  {
+  int style;
+  switch (op)
+    {
+    case eNotepadConvertUnixToDos:      // "Unix → DOS"
+    case eNotepadConvertMacToDos:       // "Mac → DOS"
+      style = eLineEndingsCRLF;
+      break;
+    case eNotepadConvertDosToUnix:      // "DOS → Unix"
+      style = eLineEndingsLF;
+      break;
+    case eNotepadConvertDosToMac:       // "DOS → Mac"
+      style = eLineEndingsCR;
+      break;
+    default:
+      return false;
+    }
+  if (pStyle)
+    *pStyle = style;
+  return true;
+  }   // end of NotepadConvertLineEndingTarget
+
 // ── Boundary normalisation ──────────────────────────────────────────────────
 
 // Control convention (LF-only) → canonical CEdit convention (CRLF).

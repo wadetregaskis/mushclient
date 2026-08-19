@@ -4911,7 +4911,16 @@ TEST(LuaSurface, SendFamilyOffline)
         "assert(world.SendNoEcho('hello') == error_code.eWorldClosed)\n"
         "assert(world.SendPush('hello') == error_code.eWorldClosed)\n"
         "assert(world.SendSpecial('hello', true, true, false, false) == error_code.eWorldClosed)\n"
-        "assert(world.Execute('nonexistentcmd') == 0 or true)\n"
+        // `X == 0 or true` is truthy for every X, so this pinned nothing.  The
+        // contract worth pinning is that Execute does NOT report the send's
+        // failure: it is a command EVALUATOR, so offline it still reports
+        // success even though the send it performs cannot happen -- which is
+        // exactly what distinguishes it from the five Send arms above.
+        "local ec = world.Execute('nonexistentcmd')\n"
+        "assert(ec == error_code.eOK,\n"
+        "       'Execute reported ' .. tostring(ec) .. ', expected eOK')\n"
+        "assert(ec ~= error_code.eWorldClosed,\n"
+        "       'Execute must not report the send failure the Send family does')\n"
         "world.Simulate('simulated line\\n')\n"
         "world.DiscardQueue()\n"
         "world.StopEvaluatingTriggers(false)\n"

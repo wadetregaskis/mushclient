@@ -711,53 +711,26 @@ long CMiniWindow::Font (LPCTSTR FontId,        // eg. "inventory"
   // is converted to a positive pixel height via the adapter's dpi() — exactly
   // the old  -MulDiv (Size, GetDeviceCaps (LOGPIXELSY), 72)  (the adapter negates
   // it for the cell-height CreateFont convention). Default 10pt if Size == 0.
+  //
+  // This is the Windows formula, unmodified, on every platform.  A miniwindow is
+  // a PIXEL canvas: the plugin gives WindowCreate a width and height in pixels
+  // and positions every WindowText call in pixels, all of it sized against what
+  // the font occupies on Windows -- where 96 logical dpi makes a 10-point font
+  // MulDiv (10, 96, 72) = 13 of those pixels.
+  //
+  // An adapter whose dpi() is NOT 96 therefore has to correct for that, and the
+  // correction belongs in the adapter, not here: pal::CpuRaster (dpi() 96, the
+  // Windows-parity reference) needs none at all, while pal::WxSurface (the real
+  // display PPI, 144 on a Retina Mac) needs one -- different arithmetic for the
+  // same Windows result, so it is adapter-shaped by construction.  See
+  // pal::WxSurface::createFont.
+  //
+  // Measured (D-21): a compensating factor applied HERE instead ran the wx path
+  // 1.30-1.33x oversize and the CpuRaster parity reference 1.78x, which is what
+  // made plugin strings clip the edge of their own miniwindow.
   pal::FontSpec spec;
   spec.face               = FontName;
   double dPoints = Size ? Size : 10.0;
-
-#ifndef _WIN32
-  // A miniwindow is a PIXEL canvas: the plugin gives WindowCreate a width and
-  // height in pixels and positions every WindowText call in pixels, all of it
-  // sized against what the font occupies on Windows.  There, 96 logical dpi
-  // means a 10-point font fills MulDiv(10, 96, 72) = 13 of those pixels.
-  //
-  // Off Windows the conversion below uses the display's real PPI, and
-  // CFont::CreateFont converts straight back through it, so a 10-point request
-  // renders at 10 points -- i.e. 10 canvas units where the plugin's layout
-  // expects 13.  Every plugin's text therefore comes out at 72/96 of the size
-  // its own geometry was designed around: Quow's minimap caption, the chat
-  // headers, the status counters.
-  //
-  // Restore the Windows relationship by asking for the point size that fills
-  // the same number of canvas pixels.  Deliberately NOT applied to the main
-  // output and input views: those are real text views, where a point size
-  // should mean a point size, and they look right already.
-  //
-  // Applied TWICE.  The first 96/72 is the derivation above.  The second is
-  // empirical: with one factor the text is still about a third short of the
-  // size the plugins are laid out for, judged against the real thing.  Both
-  // are the same 96-vs-72 mismatch, and the second most likely belongs to a
-  // conversion further down the drawing path that has not been pinned to a
-  // specific line -- so it is a measured correction, not a derived one, and is
-  // written here rather than buried as a fudged constant.
-  //
-  // This is a genuinely independent dial now.  Before the canvas became
-  // HiDPI-aware it was entangled with a 2x stretch, which is why an earlier
-  // attempt at this value overshot; with the canvas rendering natively the
-  // relationship between this number and what appears on screen is direct.
-  //
-  // A NOTE ON FIT: at this size some plugin text can reach the edge of its
-  // miniwindow -- the xp counter's trailing ")" is the known case.  That is
-  // expected to be a plugin-side layout bug rather than a sizing error here,
-  // and is being checked against Windows.  If it turns out the text is meant
-  // to fit, this factor is the thing to revisit.
-  //
-  // Still a CONSTANT, deliberately: the MulDiv below and the matching
-  // conversion in CFont::CreateFont cancel the display PPI exactly, so the
-  // resulting point size is identical on a 144 dpi Retina panel and a 72 dpi
-  // one.  Scaling this by dpi() would double-count it and break non-Retina.
-  dPoints = dPoints * (96.0 / 72.0) * (96.0 / 72.0);
-#endif
 
   spec.pixelHeight        = MulDiv (dPoints, srf->dpi (), 72);
   spec.weight             = Bold ? FW_BOLD : FW_NORMAL;

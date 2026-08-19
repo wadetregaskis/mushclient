@@ -864,9 +864,29 @@ FontId WxSurface::createFont(const FontSpec& spec) {
     Font f;
     f.spec = spec;
     f.font = new CFont;
-    // The engine passes a NEGATIVE pixel height into CreateFont (points were
-    // converted with dpi() above the seam).
-    const int h = spec.pixelHeight > 0 ? spec.pixelHeight : 10;
+    // pixelHeight arrived as MulDiv(points, dpi(), 72) -- the Windows formula,
+    // which at Windows' 96 logical dpi makes a 10pt font 13 pixels.  The caller
+    // (CMiniWindow::Font) measures and positions everything in those CANVAS
+    // pixels, so parity means realizing a font whose em is that same number of
+    // canvas pixels -- NOT one of `points` points.
+    //
+    // dpi() here is the real display PPI (144 on a Retina Mac, not 96), so undo
+    // it and re-apply Windows' 96.  The point size to realize is
+    //     MulDiv(pixelHeight, 96, dpi())   ==   MulDiv(points, 96, 72)
+    // and on macOS a wx point IS one logical canvas pixel, so that puts the em
+    // on Windows' pixel count: 10pt -> pixelHeight 20 -> 13 wx points -> a 13px
+    // em, against Windows' MulDiv(10, 96, 72) = 13.  CFont::CreateFont takes a
+    // pixel height and divides it straight back through the same PPI, so hand it
+    // the height that round-trips to the point size wanted.
+    //
+    // Deliberately HERE and not in CFont::CreateFont: the output and input views
+    // are real text views, where a point size means a point size, and they rely
+    // on that exact round-trip.  Only the miniwindow seam wants Windows' pixels.
+    // Measured in D-21; before this the miniwindow path ran 1.30-1.33x oversize.
+    const int px     = spec.pixelHeight > 0 ? spec.pixelHeight : 10;
+    const int dev    = dpi();
+    const int points = dev > 0 ? MulDiv(px, 96, dev) : px;
+    const int h      = dev > 0 ? MulDiv(points > 0 ? points : 1, dev, 72) : px;
     if (f.font->CreateFont(-h, 0, 0, 0,
                            spec.weight >= 700 ? FW_BOLD : FW_NORMAL,
                            spec.italic, spec.underline, spec.strikeout,
@@ -1105,20 +1125,31 @@ int RunPalSurfaceSelfTest() {
             if (ad.getPixel(ts, { x, y }) != kBlack) { inked = true; break; }
     stCheck(inked, "drawText actually inks pixels");
 
-    // 7b. point-size round-trip.  Callers (WindowFont, ChangeFont, FixFont) turn
-    // a point size into pixelHeight with MulDiv(points, dpi(), 72); CFont::
-    // CreateFont must undo that through the same PPI.  If it does not, a 10pt
-    // request realizes ~1.67x too large on a 144-PPI Retina display and every
-    // miniwindow's text overflows the box the plugin sized for it.  A correctly
-    // realized 10pt font has a line height around 12-13 logical units; the
-    // unconverted bug gives ~20+.
+    // 7b. point-size round-trip, in WINDOWS pixels.  The seam's caller
+    // (CMiniWindow::Font) turns a point size into pixelHeight with the Windows
+    // formula MulDiv(points, dpi(), 72), and its canvas is a PIXEL canvas: the
+    // plugin lays everything out against the pixel count that size occupies on
+    // Windows, i.e. MulDiv(points, 96, 72) -- 13 for 10pt.  createFont therefore
+    // has to realize an em of THAT many canvas pixels, which on a display whose
+    // dpi() is not 96 is not the same as realizing `points` points.
+    //
+    // The band is derived, not magic, and both ends are load-bearing.  Measured
+    // on a 144-PPI Retina panel (D-21), default face Helvetica:
+    //   correct                                     -> 13
+    //   compensation dropped (realize `points`)     -> 10   (below the low end)
+    //   the old extra 96/72 factor above the seam   -> ~20  (above the high end)
+    // The previous bound here was kPoints-2 .. kPoints+6, i.e. 8..16, which
+    // admitted the 10 -- it pinned the OLD contract, so it could not have caught
+    // this.  Keep the low end at the em: a face whose tmHeight dips below its own
+    // em is not what any of the three cases above look like.
     {
         const int kPoints = 10;
+        const int kWinEm  = MulDiv(kPoints, 96, 72);      // 13 -- Windows' pixels
         FontId pf = ad.createFont({ "", MulDiv(kPoints, ad.dpi(), 72), 400,
                                     false, false, false, 0, 0 });
         FontMetrics pfm = ad.fontMetrics(pf);
-        stCheck(pfm.height >= kPoints - 2 && pfm.height <= kPoints + 6,
-                "createFont round-trips a point size through dpi()");
+        stCheck(pfm.height >= kWinEm && pfm.height <= kWinEm + 4,
+                "createFont realizes a point size as its WINDOWS pixel height");
     }
 
     // 8. line interior (endpoint inclusivity is the shim's documented deviation)

@@ -55,6 +55,37 @@ static_assert(ID_SELECTALL != wxID_SELECTALL,
               "same AppKit hijack, and it silently does nothing");
 static const int ID_CLEAR      = wxID_HIGHEST + 100;
 
+// ── Canonical ids carried by the context menu ────────────────────────────────
+// Windows' own output-window popup is CG_IDR_POPUP_MUSHVIEW
+// (platform/mushclient_dialogs.rc:2767).  Its items are canonical MFC command
+// ids, and they are spelled out here — numerically, because this file is
+// wx-side and pulls in neither resource.h nor mfc_ui.h, the same reason ID_COPY
+// above is a literal.  The menu ITEM carries the canonical id (so
+// menu_ui_rules.cpp can be asked about it by name, and so the selftest can pin
+// the menu by id rather than by label); what is DISPATCHED can differ — see
+// kCanonNotepadDispatch.
+static const int ID_CANON_HIGHLIGHTPHRASE   = 33036;  // ID_DISPLAY_HIGHLIGHTPHRASE
+static const int ID_CANON_MULTILINETRIGGER  = 33044;  // ID_DISPLAY_MULTILINETRIGGER
+static const int ID_CANON_GOTOURL           = 32275;  // ID_DISPLAY_GOTOURL
+static const int ID_CANON_SENDMAILTO        = 32276;  // ID_DISPLAY_SENDMAILTO
+static const int ID_CANON_FIND              = 32248;  // ID_DISPLAY_FIND
+static const int ID_CANON_FINDAGAIN         = 32249;  // ID_DISPLAY_FINDAGAIN
+static const int ID_CANON_RECALLTEXT        = 32324;  // ID_DISPLAY_RECALLTEXT
+static const int ID_CANON_BOOKMARKSELECTION = 32318;  // ID_DISPLAY_BOOKMARKSELECTION
+static const int ID_CANON_GOTOBOOKMARK      = 32319;  // ID_DISPLAY_GOTOBOOKMARK
+static const int ID_CANON_FREEZEOUTPUT      = 32201;  // ID_DISPLAY_FREEZEOUTPUT ("Pause output")
+static const int ID_CANON_WRAPLINES         = 32118;  // ID_GAME_WRAPLINES
+static const int ID_CANON_FULLSCREENMODE    = 32332;  // ID_VIEW_FULLSCREENMODE
+static const int ID_CANON_ACTIVITYLIST      = 32203;  // ID_DISPLAY_ACTIVITYLIST
+static const int ID_CANON_GAMEPREFERENCES   = 32158;  // ID_GAME_PREFERENCES
+static const int ID_CANON_NOTESWORKAREA     = 32333;  // ID_EDIT_NOTESWORKAREA
+
+// Notepad is the one item whose id is not also the command to run.  The port's
+// standalone-notepad command is 40001, and wx_toolbar.cpp:70 already forwards
+// ID_EDIT_NOTESWORKAREA onto it; this menu does the same rather than inventing
+// a second mapping.
+static const int kCanonNotepadDispatch      = 40001;
+
 // ── UTF-8 character counting ──────────────────────────────────────────────────
 // Returns the number of Unicode code points in a UTF-8 encoded std::string.
 // This is always <= s.size() (equal for ASCII, less for multi-byte sequences).
@@ -2790,6 +2821,57 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
     evt.Skip();
 }
 
+// ── The one word scanner ─────────────────────────────────────────────────────
+// Lifted out of OnLeftDClick unchanged so the macOS select-on-right-click can
+// share it.  A second copy would drift: the delimiter set, the halfway-vs-
+// containment choice in XToChar and the "no word here" answer all have to match
+// what a double-click does, or the same pixel would resolve to two words.
+bool COutputPane::WordAtPoint(int x, int y, SelPoint& outStart, SelPoint& outEnd,
+                              wxString& outWord) const
+{
+    if (LineCountI() == 0 || m_lineH <= 0) return false;
+
+    const int lineIdx = YToLine(y);
+    if (lineIdx < 0 || lineIdx >= LineCountI()) return false;
+
+    // Build plain text for the line.
+    wxString lineText;
+    for (const auto& run : LineAt(lineIdx))
+        if (!run.horiz_rule)
+            lineText += DecodeRunText(run);
+
+    int col = XToChar(lineIdx, x, y);
+    col = std::max(0, std::min((int)lineText.size(), col));
+
+    // A character is a word character if it is not in m_wordDelimitersDblClick
+    // and not whitespace — matching the Windows MUSHclient convention.
+    auto isWordChar = [this](wxUniChar ch) -> bool {
+        if (wxIsspace(ch)) return false;
+        // Convert to a single-byte char for the delimiter lookup; for
+        // non-ASCII code points (which can't be delimiters) treat as word.
+        if (ch > 127) return true;
+        char c = static_cast<char>(ch.GetValue());
+        return m_wordDelimitersDblClick.find(c) == std::string::npos;
+    };
+
+    // Expand left to word start.
+    int wordStart = col;
+    while (wordStart > 0 && isWordChar(lineText[wordStart - 1]))
+        --wordStart;
+
+    // Expand right to word end.
+    int wordEnd = col;
+    while (wordEnd < (int)lineText.size() && isWordChar(lineText[wordEnd]))
+        ++wordEnd;
+
+    if (wordEnd <= wordStart) return false;
+
+    outStart = SelPoint{lineIdx, wordStart};
+    outEnd   = SelPoint{lineIdx, wordEnd};
+    outWord  = lineText.Mid(wordStart, wordEnd - wordStart);
+    return true;
+}
+
 void COutputPane::OnLeftDClick(wxMouseEvent& evt)
 {
     if (m_fn_miniwindow_mouse_down &&
@@ -2800,41 +2882,14 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
     }
 
     // Double-click: select the word under the cursor.
-    if (!LineCountI() == 0 && m_lineH > 0) {
+    {
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < LineCountI()) {
-            // Build plain text for the line.
-            wxString lineText;
-            for (const auto& run : LineAt(lineIdx))
-                if (!run.horiz_rule)
-                    lineText += DecodeRunText(run);
-
-            int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
-            col = std::max(0, std::min((int)lineText.size(), col));
-
-            // Expand left to word start.
-            // A character is a word character if it is not in m_wordDelimitersDblClick
-            // and not whitespace — matching the Windows MUSHclient convention.
-            auto isWordChar = [this](wxUniChar ch) -> bool {
-                if (wxIsspace(ch)) return false;
-                // Convert to a single-byte char for the delimiter lookup; for
-                // non-ASCII code points (which can't be delimiters) treat as word.
-                if (ch > 127) return true;
-                char c = static_cast<char>(ch.GetValue());
-                return m_wordDelimitersDblClick.find(c) == std::string::npos;
-            };
-            int wordStart = col;
-            while (wordStart > 0 && isWordChar(lineText[wordStart - 1]))
-                --wordStart;
-
-            // Expand right to word end.
-            int wordEnd = col;
-            while (wordEnd < (int)lineText.size() && isWordChar(lineText[wordEnd]))
-                ++wordEnd;
-
-            if (wordEnd > wordStart) {
-                m_selAnchor = SelPoint{lineIdx, wordStart};
-                m_selFocus  = SelPoint{lineIdx, wordEnd};
+            SelPoint wordStartPt, wordEndPt;
+            wxString word;
+            if (WordAtPoint(evt.GetX(), evt.GetY(), wordStartPt, wordEndPt, word)) {
+                m_selAnchor = wordStartPt;
+                m_selFocus  = wordEndPt;
                 Refresh(false);
 
                 // Windows freezes here, BEFORE the word is dispatched
@@ -2866,9 +2921,7 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                 // does (it computes an empty word and tests IsEmpty first).
                 bool aborted = false;
                 if (m_fn_word_double_clicked) {
-                    aborted = !m_fn_word_double_clicked(
-                        lineText.Mid(wordStart, wordEnd - wordStart),
-                        evt.ShiftDown());
+                    aborted = !m_fn_word_double_clicked(word, evt.ShiftDown());
                 }
 
                 // ...and copy the word if the world asked for that, which is
@@ -3091,11 +3144,137 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     if (m_fn_miniwindow_mouse_down &&
         m_fn_miniwindow_mouse_down(evt.GetX(), evt.GetY(), 0x20 /*MW_MOUSE_RH*/))
     {
+        // A hotspot claimed the click: the plugin gets it, and NOTHING else
+        // happens — no selection change, no menu.  Deliberately before the
+        // word selection below, because a miniwindow sits ON TOP of the text
+        // and the characters behind it were never the target.
         evt.Skip();
         return;
     }
+
+    // ── DELIBERATE macOS-vs-Windows difference ───────────────────────────────
+    // Windows does not resolve a right-click to anything: CMUSHView::OnRButtonDown
+    // (mushview.cpp:2283) offers the point to the miniwindow layer and then
+    // falls straight through to CView, and every context-dependent handler —
+    // OnDisplayHighlightphrase (:5921), OnDisplayGotourl (:4416),
+    // OnDisplaySendmailto (:4456), OnDisplayBookmarkselection (:4924),
+    // OnDisplayGotobookmark (:4854) — reads the selection the user made
+    // EARLIER.  Right-clicking a word you have not selected therefore offers a
+    // menu whose interesting half acts on something else entirely.
+    //
+    // macOS text views select the word under the pointer instead, and this port
+    // follows the platform (owner's decision, 2026-08).  The rule has two
+    // halves and the second is the load-bearing one:
+    //
+    //   * no selection  → select the word under the pointer, so the menu's
+    //                     context-dependent items have something sensible to
+    //                     act on;
+    //   * a selection   → leave it EXACTLY as it is.  Copy is the most-used
+    //                     item in this menu and it copies the selection; a
+    //                     right-click that moved the selection first would make
+    //                     it copy the wrong thing.
+    //
+    // What counts as "not on a word" is the SCANNER's answer rather than the
+    // pixel's, and deliberately so: it is the same scanner the double-click
+    // uses (WordAtPoint), so right-clicking a point and double-clicking it can
+    // never disagree.  The pointer resolves to a caret POSITION and the word
+    // grows outwards from there, which gives:
+    //
+    //   * the single gap beside a word takes that word — its caret position is
+    //     adjacent to it — exactly as a double-click in the same gap does;
+    //   * past the end of a line, or in the empty area below the last one (which
+    //     YToLine clamps onto it), the caret lands at the end of that text and
+    //     takes the last word, where NSTextView puts its caret too;
+    //   * a caret with no word character on EITHER side — inside a run of two
+    //     or more spaces or delimiters, or on an empty line — takes nothing and
+    //     clears nothing.  The selection-dependent items are then greyed, which
+    //     is honest.
+    //
+    // This is a macOS/Windows platform difference rather than a divergence from
+    // upstream on both platforms, so it is recorded here at the site and not in
+    // docs/UPSTREAM-DIVERGENCES.md.
+    {
+        SelPoint curStart, curEnd;
+        if (!GetNormalizedSel(curStart, curEnd)) {
+            SelPoint wordStart, wordEnd;
+            wxString word;
+            if (WordAtPoint(evt.GetX(), evt.GetY(), wordStart, wordEnd, word)) {
+                m_selAnchor = wordStart;
+                m_selFocus  = wordEnd;
+                Refresh(false);
+            }
+        }
+    }
+
+    wxMenu menu;
+    BuildContextMenu(menu, evt.GetX(), evt.GetY());
+    if (m_fn_popup_context_menu) m_fn_popup_context_menu(menu, evt.GetPosition());
+    else                         PopupMenu(&menu, evt.GetPosition());
+}
+
+// ── The right-click menu ─────────────────────────────────────────────────────
+// Windows' CG_IDR_POPUP_MUSHVIEW and the port's own output-pane menu, merged.
+// Grouped by WHAT THE USER IS TRYING TO DO rather than by which of the two
+// menus an item came from — the groups, top (nearest the pointer) to bottom:
+//
+//   1. the link under the pointer   only when there is one; Safari-shaped, and
+//                                   if you right-clicked a link that IS what
+//                                   you meant.  (The port's stand-in for the
+//                                   IDR_MXP_MENU arm CMUSHView::OnContextMenu
+//                                   runs before its own popup, mushview.cpp:3560.)
+//   2. clipboard                    Copy / Copy as HTML / Select All — Copy is
+//                                   the single most-used item, so it leads.
+//   3. do something with the        Put in Input Bar, Send to MUD, Go to URL,
+//      selection, right now         Send Mail To
+//   4. turn the selection into a    Highlight Word, Multi-Line Trigger — same
+//      standing rule                input, but these outlive the click, which
+//                                   is why they are not in group 3
+//   5. search and navigate          Find / Find Again / Recall Text /
+//      the scrollback               Bookmark Selection / Go to Bookmark
+//   6. how the output looks         Pause, Wrap, Zoom In/Out/Reset, Full Screen
+//   7. this world and this session  Logging, Activity List, Notepad,
+//                                   World Configuration
+//   8. destructive, on its own      Clear Output Buffer
+//
+// Order within a group is by expected frequency.  Nothing is omitted for
+// lacking a port equivalent; anything unwired is appended greyed instead.
+void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
+{
     SelPoint s, e;
     bool hasSel = GetNormalizedSel(s, e);
+
+    // Append a canonical MFC command.  The ITEM carries the canonical id;
+    // `dispatchId` is what actually gets run, which differs only for Notepad.
+    // Enable/check come from wx_canonical_menu_ui_state through
+    // m_fn_menu_ui_state — the same two sources the menu bar's update-UI asks,
+    // in the same order — rather than from a third set of predicates here.
+    auto canon = [&](int id, const wxString& label,
+                     bool checkable = false, bool needsSel = false,
+                     int dispatchId = 0) -> wxMenuItem*
+    {
+        wxMenuItem* item = checkable ? menu.AppendCheckItem(id, label)
+                                     : menu.Append(id, label);
+        // Unwired ⇒ greyed.  An item that cannot reach a handler must not look
+        // available; this is also what the headless/selftest pane gets.
+        bool enabled = (m_fn_menu_command != nullptr);
+        int  checked = -1;
+        if (enabled && m_fn_menu_ui_state) {
+            bool en = true;
+            int  ck = -1;
+            if (m_fn_menu_ui_state(id, en, ck)) { enabled = en; checked = ck; }
+        }
+        // The selection gate, only where Windows has one:
+        // ON_UPDATE_COMMAND_UI(…, OnUpdateNeedSelection) (mushview.cpp:128, :159).
+        if (needsSel && !hasSel) enabled = false;
+        menu.Enable(id, enabled);
+        if (checkable && checked >= 0) item->Check(checked != 0);
+        if (m_fn_menu_command) {
+            const int cmd = dispatchId ? dispatchId : id;
+            menu.Bind(wxEVT_MENU,
+                      [this, cmd](wxCommandEvent&) { m_fn_menu_command(cmd); }, id);
+        }
+        return item;
+    };
 
     // Detect whether the click landed on a link run.
     // XToChar returns the absolute char column in the logical line,
@@ -3104,9 +3283,9 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     int  linkTypeAtClick = 0;
     bool linkNoteAtClick = false;
     {
-        int lineIdx = YToLine(evt.GetY());
+        int lineIdx = YToLine(y);
         if (lineIdx >= 0 && lineIdx < LineCountI()) {
-            int col = XToChar(lineIdx, evt.GetX(), evt.GetY(),
+            int col = XToChar(lineIdx, x, y,
                               false /*containment*/);
             const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), col);
             if (run && run->isLink()) {
@@ -3117,81 +3296,15 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
         }
     }
 
-    wxMenu menu;
-    menu.Append(ID_COPY,      "Copy\tCtrl+C");
-    menu.Append(ID_SELECTALL, "Select All\tCtrl+A");
-    menu.Enable(ID_COPY, hasSel);
-
-    // "Copy as HTML": same selection, but as colour-preserving HTML markup
-    // (canonical ID_EDIT_COPYASHTML).  Only meaningful with a selection.
-    {
-        wxMenuItem* itemHtml = menu.Append(wxID_ANY, wxT("Copy as HTML"));
-        menu.Enable(itemHtml->GetId(), hasSel);
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
-            CopySelectionAsHTML(GetFont().GetFaceName());
-        }, itemHtml->GetId());
-    }
-
-    // When text is selected, offer quick-send shortcuts.
-    if (hasSel) {
-        menu.AppendSeparator();
-
-        // "Put in Input Bar": copy selection into the command input for editing.
-        // Ctrl+G is also wired in OnKeyDown for keyboard-only use.
-        wxMenuItem* itemInput = menu.Append(wxID_ANY,
-            wxT("Put in Input Bar\tCtrl+G"));
-        menu.Enable(itemInput->GetId(), m_fn_put_in_input != nullptr);
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
-            if (m_fn_put_in_input) m_fn_put_in_input(SelectedText());
-        }, itemInput->GetId());
-
-        // "Send to MUD": evaluate the selection as a command immediately.
-        wxMenuItem* itemSend = menu.Append(wxID_ANY,
-            wxT("Send to MUD"));
-        menu.Enable(itemSend->GetId(), m_fn_send_to_mud != nullptr);
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
-            if (m_fn_send_to_mud) m_fn_send_to_mud(SelectedText());
-        }, itemSend->GetId());
-    }
-
-    menu.AppendSeparator();
-    // The canonical command's own label (kCanonCmds, wx_mfc_impl.cpp:705) —
-    // this item IS that command, not a second, weaker one.  Windows binds it to
-    // Shift+Ctrl+C; Ctrl+L is an extra binding the port adds.
-    menu.Append(ID_CLEAR, wxT("Clear Output Buffer…\tCtrl+L"));
-
-    // Zoom and find — for discoverability (same as keyboard shortcuts).
-    menu.AppendSeparator();
-    {
-        wxMenuItem* fi = menu.Append(wxID_ANY, wxT("Find…\tCtrl+F"));
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
-            if (m_fn_find_next_key) m_fn_find_next_key(true);
-        }, fi->GetId());
-
-        wxMenuItem* zi = menu.Append(wxID_ANY, "Zoom In\tCtrl++");
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { AdjustFontSize(1); }, zi->GetId());
-        wxMenuItem* zo = menu.Append(wxID_ANY, "Zoom Out\tCtrl+-");
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { AdjustFontSize(-1); }, zo->GetId());
-        wxMenuItem* zr = menu.Append(wxID_ANY, "Reset Zoom\tCtrl+0");
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { ResetFontSize(); }, zr->GetId());
-    }
-
-    // Session log toggle.
-    if (m_fn_toggle_log) {
-        menu.AppendSeparator();
-        bool logging = m_fn_is_logging && m_fn_is_logging();
-        wxMenuItem* itemLog = menu.Append(wxID_ANY,
-            logging ? wxT("Stop Logging") : wxT("Start Logging…"));
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
-            if (m_fn_toggle_log) m_fn_toggle_log();
-        }, itemLog->GetId());
-    }
-
-    // If a link was right-clicked, add appropriate context menu options.
+    // ── 1. the link under the pointer ────────────────────────────────────────
+    // First because if you right-clicked a link, the link IS what you meant —
+    // the same order Safari and every other macOS app uses.  This cluster is
+    // the port's stand-in for the IDR_MXP_MENU arm CMUSHView::OnContextMenu
+    // runs BEFORE it ever reaches CG_IDR_POPUP_MUSHVIEW (mushview.cpp:3560),
+    // so it is parity behaviour and leads for the same reason it does there.
     if (!linkAtClick.empty()) {
         bool isURL = (linkAtClick.compare(0, 7, "http://")  == 0 ||
                       linkAtClick.compare(0, 8, "https://") == 0);
-        menu.AppendSeparator();
 
         if (isURL) {
             wxMenuItem* itemOpen = menu.Append(wxID_ANY, "Open URL in Browser");
@@ -3255,9 +3368,115 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
                     }
                 }, itemCopy->GetId());
         }
+        menu.AppendSeparator();
     }
 
-    PopupMenu(&menu, evt.GetPosition());
+    // ── 2. clipboard ─────────────────────────────────────────────────────────
+    // Copy leads the fixed part of the menu: it is the item the user reaches
+    // for most, and on macOS the menu opens with its top edge at the pointer.
+    menu.Append(ID_COPY,      "Copy\tCtrl+C");
+
+    // "Copy as HTML": same selection, but as colour-preserving HTML markup
+    // (canonical ID_EDIT_COPYASHTML).  Only meaningful with a selection.
+    // NOT routed through m_fn_menu_command: the pane's own CopySelectionAsHTML
+    // acts on THIS pane's selection, where the frame's arm would resolve the
+    // active child all over again.
+    {
+        wxMenuItem* itemHtml = menu.Append(wxID_ANY, wxT("Copy as HTML"));
+        menu.Enable(itemHtml->GetId(), hasSel);
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            CopySelectionAsHTML(GetFont().GetFaceName());
+        }, itemHtml->GetId());
+    }
+
+    menu.Append(ID_SELECTALL, "Select All\tCtrl+A");
+    menu.Enable(ID_COPY, hasSel);
+
+    // ── 3. do something with the selection, right now ────────────────────────
+    // Four one-shot actions on the selected text.  They are always PRESENT and
+    // greyed when there is nothing to act on, rather than appearing and
+    // disappearing: a menu whose items move between right-clicks cannot be
+    // learned.  (The first two used to be conditional.)
+    menu.AppendSeparator();
+    {
+        // "Put in Input Bar": copy selection into the command input for editing.
+        // Ctrl+G is also wired in OnKeyDown for keyboard-only use.
+        wxMenuItem* itemInput = menu.Append(wxID_ANY,
+            wxT("Put in Input Bar\tCtrl+G"));
+        menu.Enable(itemInput->GetId(), hasSel && m_fn_put_in_input != nullptr);
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            if (m_fn_put_in_input) m_fn_put_in_input(SelectedText());
+        }, itemInput->GetId());
+
+        // "Send to MUD": evaluate the selection as a command immediately.
+        wxMenuItem* itemSend = menu.Append(wxID_ANY, wxT("Send to MUD"));
+        menu.Enable(itemSend->GetId(), hasSel && m_fn_send_to_mud != nullptr);
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            if (m_fn_send_to_mud) m_fn_send_to_mud(SelectedText());
+        }, itemSend->GetId());
+    }
+    canon(ID_CANON_GOTOURL,    wxT("Go To URL…"),    false, true /*needs selection*/);
+    canon(ID_CANON_SENDMAILTO, wxT("Send Mail To…"), false, true /*needs selection*/);
+
+    // ── 4. turn the selection into a standing rule ───────────────────────────
+    // Same input as group 3, different lifetime: these two create configuration
+    // that outlives the click, which is worth a separator's worth of warning.
+    // No selection gate — Windows has none on either (no ON_UPDATE_COMMAND_UI
+    // in CMUSHView's map), and both open a dialog that is simply pre-filled
+    // from whatever is selected.
+    menu.AppendSeparator();
+    canon(ID_CANON_HIGHLIGHTPHRASE,  wxT("Highlight Word…"));
+    canon(ID_CANON_MULTILINETRIGGER, wxT("Multi-Line Trigger…"));
+
+    // ── 5. search and navigate the scrollback ────────────────────────────────
+    menu.AppendSeparator();
+    canon(ID_CANON_FIND,              wxT("Find…"));
+    canon(ID_CANON_FINDAGAIN,         wxT("Find Again"));
+    canon(ID_CANON_RECALLTEXT,        wxT("Recall Text…"));
+    canon(ID_CANON_BOOKMARKSELECTION, wxT("Bookmark Selection"));
+    canon(ID_CANON_GOTOBOOKMARK,      wxT("Go To Bookmark"));
+
+    // ── 6. how the output looks and behaves ──────────────────────────────────
+    // The two canonical toggles carry their tick from the canonical update-UI
+    // handler; the three zoom items are the port's own and act on this pane.
+    menu.AppendSeparator();
+    canon(ID_CANON_FREEZEOUTPUT, wxT("Pause Output"), true /*check item*/);
+    canon(ID_CANON_WRAPLINES,    wxT("Wrap Output"),  true /*check item*/);
+    {
+        wxMenuItem* zi = menu.Append(wxID_ANY, "Zoom In\tCtrl++");
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { AdjustFontSize(1); }, zi->GetId());
+        wxMenuItem* zo = menu.Append(wxID_ANY, "Zoom Out\tCtrl+-");
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { AdjustFontSize(-1); }, zo->GetId());
+        wxMenuItem* zr = menu.Append(wxID_ANY, "Reset Zoom\tCtrl+0");
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { ResetFontSize(); }, zr->GetId());
+    }
+    canon(ID_CANON_FULLSCREENMODE, wxT("Full Screen Mode"));
+
+    // ── 7. this world and this session ───────────────────────────────────────
+    // Session log toggle.  This is the port's counterpart to the canonical
+    // "Log session…" (ID_FILE_LOGSESSION) slot, kept because it is what the
+    // pane already had wired; NOTE that it drives CWorldChildFrame's own log
+    // file, not the document's — see the doc entry for that finding.
+    menu.AppendSeparator();
+    if (m_fn_toggle_log) {
+        bool logging = m_fn_is_logging && m_fn_is_logging();
+        wxMenuItem* itemLog = menu.Append(wxID_ANY,
+            logging ? wxT("Stop Logging") : wxT("Start Logging…"));
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            if (m_fn_toggle_log) m_fn_toggle_log();
+        }, itemLog->GetId());
+    }
+    canon(ID_CANON_ACTIVITYLIST,    wxT("Activity List"));
+    canon(ID_CANON_NOTESWORKAREA,   wxT("Notepad"), false, false,
+          kCanonNotepadDispatch);
+    canon(ID_CANON_GAMEPREFERENCES, wxT("World Configuration…"));
+
+    // ── 8. destructive, alone at the far end ─────────────────────────────────
+    // The canonical command's own label (kCanonCmds, wx_mfc_impl.cpp:705) —
+    // this item IS that command, not a second, weaker one.  Windows binds it to
+    // Shift+Ctrl+C; Ctrl+L is an extra binding the port adds.
+    menu.AppendSeparator();
+    menu.Append(ID_CLEAR, wxT("Clear Output Buffer…\tCtrl+L"));
 }
 
 // Hotspots get FIRST refusal, before the modifier is looked at.  Windows orders

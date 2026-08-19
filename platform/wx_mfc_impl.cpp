@@ -926,6 +926,71 @@ static CCmdTarget* canon_target(char t, CMUSHclientDoc* doc)
     return nullptr;
 }
 
+// ── One answer to "may the user choose this command right now" ────────────
+// Declared in platform/wx_world_child.h.  The menu BAR asks its three sources
+// inline in the update-UI lambda below; the output pane's right-click menu
+// carries the same canonical commands, and a menu that is built rather than
+// bound cannot use wxEVT_UPDATE_UI at all — so it asks here instead of growing
+// a second, drifting set of predicates.  The order is the lambda's order and
+// must stay that way:
+//
+//   1. kCanonCmds  — the canonical ON_UPDATE_COMMAND_UI handler for the table's
+//                    target (doc / Frame / App), with the table's needsDoc as
+//                    the fallback when nothing answered.
+//   2. platform/menu_ui_rules.cpp — the port's restatement of what MFC's
+//                    m_bAutoMenuEnable does for itself on Windows.
+//   3. the DOCUMENT's own ON_UPDATE_COMMAND_UI, for ids neither table names
+//                    (World Configuration is the one this menu needs: doc.cpp
+//                    :1988 greys it mid-connect, which is stricter than the
+//                    "doc != nullptr" the menu bar settles for).
+//
+// Seeds enabled=true / checked=-1 and returns false when nothing owned the id,
+// which leaves the caller free to keep the seeded "live" answer — that is what
+// keeps the app-level commands (Activity List, Notepad, Full Screen) enabled.
+bool wx_canonical_menu_ui_state(int id, CMUSHclientDoc* doc,
+                                bool& enabled, int& checked)
+{
+    enabled = true;
+    checked = -1;
+
+    if (const CanonMenuCmd* c = find_canon_cmd(id)) {
+        if (CCmdTarget* tgt = canon_target(c->target, doc)) {
+            CCmdUI cmdui;
+            cmdui.m_nID            = (UINT) id;
+            cmdui.m_pCaptureEnable = &enabled;
+            cmdui.m_pCaptureCheck  = &checked;
+            if (!AfxDispatchUpdateUI(tgt, &cmdui))
+                enabled = c->needsDoc ? (doc != nullptr) : true;
+        } else
+            enabled = false;   // a 'D' target with no active world
+        if (!c->checkable) checked = -1;
+        return true;
+    }
+
+    const MenuCmdUiState st = MenuCommandUiState(id, doc);
+    if (st.handled) {
+        enabled = st.enabled;
+        checked = st.checked;
+        return true;
+    }
+
+    // Step 3.  The document's map ends in ON_UPDATE_COMMAND_UI_RANGE(0, 0xFFFF,
+    // OnFixMenus) (doc.cpp:203), which enables nothing — so an id with no
+    // specific handler comes back TRUE with `enabled` untouched.  Seeding true
+    // above is what makes that harmless: "the document had no opinion" and
+    // "the document said yes" both end up live, which is what MFC does too.
+    if (doc != nullptr) {
+        CCmdUI cmdui;
+        cmdui.m_nID            = (UINT) id;
+        cmdui.m_pCaptureEnable = &enabled;
+        cmdui.m_pCaptureCheck  = &checked;
+        if (AfxDispatchUpdateUI(doc, &cmdui))
+            return true;
+    }
+
+    return false;
+}
+
 // ── Quit the application ──────────────────────────────────────────────────
 // Cmd-Q / the app-menu "Quit" must terminate the process as reliably as the
 // Dock icon's "Quit" — and on macOS it didn't.  The Dock's Quit uses Cocoa's

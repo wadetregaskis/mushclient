@@ -1639,6 +1639,81 @@ void TestPullSeamReads()
 // Pixels are the only observable here, and the paint path never runs under an
 // OnInit-scoped harness, so this calls the drawing entry point straight into a
 // wxMemoryDC -- the composite-selftest trick.
+// ── 18b. the PULL seam: URL auto-detection must reach what is DRAWN ─────────
+// DetectURLs runs on the append path, but under the pull model the appended
+// line's content is dropped and re-fetched through m_fn_fetch_line, so the
+// detection done at AppendLine never reached the line the pane actually draws
+// and hit-tests: a bare http:// in MUD output was neither underlined nor
+// clickable, where Windows makes it a link.  LineAt now detects as well.
+void TestPullSeamDetectsURLs()
+{
+    printf("pull seam: a bare URL fetched from the engine is a link\n");
+
+    Harness h;
+    g_pullBuf.clear();
+    g_pullFetches = 0;
+    g_pullRule    = false;
+    WirePullSeam(h.pane);
+
+    // Line 0 is the URL alone so a click anywhere in its first characters is
+    // inside the link run; line 1 is the control.  Asserting through a real
+    // click rather than through the cached line is deliberate: "is it
+    // clickable?" is the behaviour the decision was about, and the click path
+    // is what regressed -- the detector itself never stopped working.
+    const std::string kUrl   = "http://example.com/a?b=c";
+    const std::string kPlain = "see the notice board for details";
+
+    PullAppend(h.pane, kUrl);
+    PullAppend(h.pane, kPlain);
+
+    int         fired = 0;
+    std::string clicked;
+    h.pane->m_fn_link_clicked =
+        [&fired, &clicked](const std::string& action, int, bool) {
+            ++fired;
+            clicked = action;
+        };
+
+    const int cw = h.pane->CharWidth();
+    const int lh = h.pane->LineHeight();
+
+    // Column 2 of row 0 -- well inside "http://…".
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 2 + cw / 2, lh / 2);
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 2 + cw / 2, lh / 2);
+
+    opCheck(fired == 1, "pull: clicking a bare http:// URL fires the link handler");
+    opCheck(clicked == kUrl, "pull: ...with the URL itself as the action");
+
+    // ── the control ──────────────────────────────────────────────────────
+    // Without this, both assertions above would also pass a build that made
+    // every run a link.
+    fired = 0;
+    clicked.clear();
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 2 + cw / 2, lh + lh / 2);
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 2 + cw / 2, lh + lh / 2);
+
+    opCheck(fired == 0, "pull (control): a line with no URL fires nothing");
+
+    // ── the link's EXTENT, which is where an off-by-one would hide ───────
+    // The last character of the URL must still be the link, and the first
+    // column past it must not be.  This is the assertion that would catch a
+    // split that ate or duplicated a byte: the columns would shift and one of
+    // these two clicks would land on the wrong run.
+    const int lastCol = (int) kUrl.size() - 1;
+
+    fired = 0;
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * lastCol + cw / 2, lh / 2);
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * lastCol + cw / 2, lh / 2);
+    opCheck(fired == 1 && clicked == kUrl,
+            "pull: the URL's last character is still inside the link");
+
+    fired = 0;
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * (lastCol + 1) + cw / 2, lh / 2);
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * (lastCol + 1) + cw / 2, lh / 2);
+    opCheck(fired == 0,
+            "pull: the column just past the URL is NOT part of the link");
+}
+
 void TestPendingRowUsesTheRunPipeline()
 {
     printf("pending row: the prompt is drawn through DrawRunChunk\n");
@@ -1890,6 +1965,7 @@ int RunOutputPaneSelfTest()
     TestRunAtCharColumn();
     TestPluginDrawDefersAppends();
     TestPullSeamReads();
+    TestPullSeamDetectsURLs();
     TestPendingRowUsesTheRunPipeline();
     TestMiddleClickIsInert();
 

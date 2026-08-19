@@ -1114,6 +1114,15 @@ const SOutputLine& COutputPane::LineAt(int i) const
     SOutputLine built;
     if (!m_fn_fetch_line(i, built)) return kEmpty;
 
+    // Auto-detect plain http:// / https:// URLs here as well as on the append
+    // path.  Under the pull model the appended line's content is dropped and
+    // re-fetched from the engine through m_fn_fetch_line, so the detection done
+    // at AppendLine never reaches what is actually drawn or hit-tested; without
+    // this, a bare URL in MUD output is neither underlined nor clickable, where
+    // Windows makes it a link.  Splitting a run leaves the text -- and so the
+    // character count the wrap cache is keyed on -- untouched.
+    built = DetectURLs(std::move(built));
+
     // Evict oldest-first, never the entry we are about to hand back.  The cap
     // is far larger than any viewport, so a caller walking the visible rows
     // cannot evict a line it is still looking at.

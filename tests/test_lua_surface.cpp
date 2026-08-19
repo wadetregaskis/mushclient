@@ -896,6 +896,192 @@ TEST(LuaSurface, WindowFamilyWithAWindowOpen)
     ));
 }
 
+// ── the layout pass's "would not fit" decision (miniwindow_compose.cpp) ────
+//
+// CalculateMiniWindowRectangles pops a wall-centred window (position 5/7/9/11)
+// off its wall list when the wall is too short, sets m_bTemporarilyHide and
+// never lays it out — so its m_rect stays the constructor's (0, 0, 0, 0).
+// WindowInfo (6) reports the flag; both paint loops and (now) the hit test
+// read it.
+
+// WindowInfo through the real VARIANT marshalling, the way a plugin sees it.
+static long mw_info_long (CMUSHclientDoc & doc, const char * name, long which)
+{
+    VARIANT v = doc.WindowInfo (name, which);
+    long result = (v.vt == VT_I4) ? v.lVal : -1;
+    VariantClear (&v);
+    return result;
+}
+
+static bool mw_info_bool (CMUSHclientDoc & doc, const char * name, long which)
+{
+    VARIANT v = doc.WindowInfo (name, which);
+    bool result = (v.vt == VT_BOOL) && v.boolVal != 0;
+    VariantClear (&v);
+    return result;
+}
+
+// A window the layout could not fit must not swallow the click.  The port's
+// hit test replaced upstream's PtInRect with an explicit left/top + size test
+// (m_rect's right/bottom hold WIDTH/HEIGHT after a wall layout, so PtInRect
+// could never match one) — but on the un-laid-out (0,0,0,0) rect that widened
+// test claims the pane's top-left GetWidth() x GetHeight() corner, where
+// PtInRect matched nothing.  Clicks meant for the text underneath died there.
+TEST(LuaSurface, LayoutPopsWindowsThatDoNotFitAndTheyStopBeingClickable)
+{
+    CMUSHclientDoc doc;
+
+    // 100 x 200 of client area: one window that fits along the top wall and
+    // two that cannot.  Three different widths, so nothing below can be an
+    // accident of two equal numbers, and the names fix the z-order (equal
+    // z-order sorts by name, so the wide pair is popped back-to-front first).
+    ASSERT_EQ((long) eOK, doc.WindowCreate("a_fits", 0, 0,  20, 10, 5, 0, 0));
+    ASSERT_EQ((long) eOK, doc.WindowCreate("b_wide", 0, 0, 200, 10, 5, 0, 0));
+    ASSERT_EQ((long) eOK, doc.WindowCreate("c_wide", 0, 0, 300, 10, 5, 0, 0));
+    ASSERT_EQ((long) eOK, doc.WindowShow("a_fits", TRUE));
+    ASSERT_EQ((long) eOK, doc.WindowShow("b_wide", TRUE));
+    ASSERT_EQ((long) eOK, doc.WindowShow("c_wide", TRUE));
+
+    RECT clientrect = { 0, 0, 100, 200 };
+    CalculateMiniWindowRectangles(&doc, false, clientrect, clientrect);
+
+    // Only the narrow one survived the wall.
+    EXPECT_FALSE(mw_info_bool(doc, "a_fits", 6));
+    EXPECT_TRUE (mw_info_bool(doc, "b_wide", 6));
+    EXPECT_TRUE (mw_info_bool(doc, "c_wide", 6));
+
+    // The popped pair were never laid out, so their rects are still the
+    // constructor's — which is exactly what makes the widened test dangerous.
+    EXPECT_EQ(0, mw_info_long(doc, "b_wide", 10));
+    EXPECT_EQ(0, mw_info_long(doc, "b_wide", 11));
+    EXPECT_EQ(0, mw_info_long(doc, "b_wide", 12));
+    EXPECT_EQ(0, mw_info_long(doc, "b_wide", 13));
+
+    // The survivor IS laid out — centred in the 100-wide wall: the gap either
+    // side is (100 - 20) / 2 = 40.  (right/bottom hold width/height.)
+    EXPECT_EQ(40, mw_info_long(doc, "a_fits", 10));
+    EXPECT_EQ( 0, mw_info_long(doc, "a_fits", 11));
+    EXPECT_EQ(20, mw_info_long(doc, "a_fits", 12));
+    EXPECT_EQ(10, mw_info_long(doc, "a_fits", 13));
+
+    std::string sHotspotId, sMiniWindowId;
+    CHotspot * pHotspot = NULL;
+
+    // The pane's top-left corner belongs to the text underneath, not to a
+    // window that was never drawn there.
+    EXPECT_TRUE(NULL == MouseOverMiniWindow(&doc, CPoint(1, 1),
+                                            sHotspotId, pHotspot, sMiniWindowId));
+    EXPECT_TRUE(sMiniWindowId.empty());
+
+    // ...and the control: the window that WAS drawn is still hit, at the
+    // coordinates the layout gave it.  A "stop hit-testing everything" fix
+    // fails here.
+    EXPECT_TRUE(NULL != MouseOverMiniWindow(&doc, CPoint(45, 5),
+                                            sHotspotId, pHotspot, sMiniWindowId));
+    EXPECT_STREQ("a_fits", sMiniWindowId.c_str());
+}
+
+// The two layout passes (draw-underneath, then not) run back to back, and the
+// reset of m_bTemporarilyHide used to happen for EVERY window in EVERY pass —
+// so the second pass wiped the first pass's decision and WindowInfo (6) always
+// answered false for a draw-underneath window that had no room.
+TEST(LuaSurface, TemporarilyHideSurvivesTheOtherLayoutPass)
+{
+    CMUSHclientDoc doc;
+
+    ASSERT_EQ((long) eOK, doc.WindowCreate("under", 0, 0, 200, 10, 5,
+                                           MINIWINDOW_DRAW_UNDERNEATH, 0));
+    ASSERT_EQ((long) eOK, doc.WindowShow("under", TRUE));
+
+    // Too wide for the wall: the underneath pass pops it...
+    RECT narrow = { 0, 0, 100, 200 };
+    CalculateMiniWindowRectangles(&doc, true, narrow, narrow);
+    EXPECT_TRUE(mw_info_bool(doc, "under", 6));
+    // ...and the pass that does not lay it out must leave that alone.
+    CalculateMiniWindowRectangles(&doc, false, narrow, narrow);
+    EXPECT_TRUE(mw_info_bool(doc, "under", 6));
+
+    // Control: with room on the wall both passes leave it visible, so simply
+    // deleting the reset fails too.
+    RECT wide = { 0, 0, 400, 200 };
+    CalculateMiniWindowRectangles(&doc, true, wide, wide);
+    CalculateMiniWindowRectangles(&doc, false, wide, wide);
+    EXPECT_FALSE(mw_info_bool(doc, "under", 6));
+}
+
+// MouseMoveMiniWindow re-establishes pHotspot after dispatching MouseOver
+// "in case previous callback deleted it" — and then dereferenced it anyway to
+// read m_sCancelMouseOver, so the very callback the guard exists for took the
+// client down with it.
+TEST(LuaSurface, MouseOverCallbackMayDeleteItsOwnHotspot)
+{
+    CMUSHclientDoc doc;
+
+    CScriptEngine * engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "hits = 0\n"
+        "quiet = 0\n"
+        "function OnOver (flags, id)\n"
+        "  hits = hits + 1\n"
+        "  world.WindowDeleteHotspot ('m', 'h')\n"
+        "end\n"
+        "function OnQuiet (flags, id) quiet = quiet + 1 end\n"
+        "function OnCancel (flags, id) end\n"), "<test>"));
+    // The hotspot's callback dispids resolve against the engine at AddHotspot
+    // time, so it has to be attached first.
+    doc.m_ScriptEngine = engine;
+
+    ASSERT_EQ((long) eOK, doc.WindowCreate("m", 0, 0, 100, 80, 0,
+                                           MINIWINDOW_ABSOLUTE_LOCATION, 0));
+    ASSERT_EQ((long) eOK, doc.WindowShow("m", TRUE));
+    ASSERT_EQ((long) eOK, doc.WindowAddHotspot("m", "h", 0, 0, 50, 40,
+                                               "OnOver", "OnCancel",
+                                               "", "", "", "", 0, 0));
+
+    RECT clientrect = { 0, 0, 300, 200 };
+    CalculateMiniWindowRectangles(&doc, false, clientrect, clientrect);
+
+    // TrackMouseLeave is the call the dangling read guarded; count it so the
+    // fix cannot be "never arm the mouse-leave".
+    struct TrackingHooks : MiniWindowMouseHooks {
+        int tracked;
+        TrackingHooks () : tracked (0) {}
+        virtual void TrackMouseLeave () { ++tracked; }
+    };
+    TrackingHooks hooks;
+
+    EXPECT_TRUE(MouseMoveMiniWindow(&doc, CPoint(10, 10), hooks));
+
+    lua_getglobal(engine->L, "hits");
+    EXPECT_EQ(1, (int) lua_tonumber(engine->L, -1));
+    lua_pop(engine->L, 1);
+
+    // The callback really did delete it — if it had not, this test would pass
+    // against the unfixed code for the wrong reason.
+    EXPECT_EQ((long) eHotspotNotInstalled, doc.WindowDeleteHotspot("m", "h"));
+
+    // Nothing left to arm a mouse-leave for.
+    EXPECT_EQ(0, hooks.tracked);
+
+    // Control: a MouseOver that leaves its hotspot alone still arms it, so the
+    // fix is the null test and not the removal of the call.
+    ASSERT_EQ((long) eOK, doc.WindowAddHotspot("m", "k", 0, 0, 50, 40,
+                                               "OnQuiet", "OnCancel",
+                                               "", "", "", "", 0, 0));
+    EXPECT_TRUE(MouseMoveMiniWindow(&doc, CPoint(10, 10), hooks));
+    EXPECT_EQ(1, hooks.tracked);
+
+    lua_getglobal(engine->L, "quiet");
+    EXPECT_EQ(1, (int) lua_tonumber(engine->L, -1));
+    lua_getglobal(engine->L, "hits");
+    EXPECT_EQ(1, (int) lua_tonumber(engine->L, -1));   // the first one did not refire
+    lua_pop(engine->L, 2);
+
+    doc.m_ScriptEngine = NULL;
+    delete engine;
+}
+
 // Stage 2: the pixels are real.
 //
 // platform/headless_surface.cpp installs pal::CpuRaster as the headless

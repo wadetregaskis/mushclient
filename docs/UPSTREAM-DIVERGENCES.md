@@ -250,6 +250,52 @@ it is listed here as a correction, not a fresh design decision.
 source changed. Still needs a Windows run to confirm real `DrawEdge`
 truly no-ops on `nFlags == 0` before this can be called verified.
 
+## 9 — The miniwindow hit test measures from left/top by size, and only for windows that were drawn
+
+**Where:** `miniwindow_compose.cpp`, `MouseOverMiniWindow` (upstream
+`CMUSHView::Mouse_Over_Miniwindow`).
+
+**Upstream:** `if (!mw->m_rect.PtInRect (point)) continue;`.
+
+**The problem with that:** `m_rect` is not a rectangle after a wall layout.
+`CalculateMiniWindowRectangles` builds the wall-centred cases as
+`CRect (start, 0, mw->GetWidth (), mw->GetHeight ())` — right/bottom hold the
+window's *width* and *height*, not its right and bottom edges — and
+`Blit_Bitmap` leaves it that way. `PtInRect` on such a rect requires
+`left <= x < width`, which for any window placed further right than it is wide
+is unsatisfiable, so its hotspots were silently unclickable on Windows too.
+
+**Now:** the test is explicit —
+`point.x < left || point.y < top || point.x >= left + GetWidth () || point.y >= top + GetHeight ()`.
+For every window the layout pass actually drew this answers exactly what
+`PtInRect` answered; for the wall-placed ones it answers what the user can see.
+
+**And it is bounded by `m_bTemporarilyHide`,** which is the half that was
+missing. A window the pass could not fit is never laid out, so it keeps the
+constructor's `(0, 0, 0, 0)` rect — which `PtInRect` matched nothing against,
+but which the size test reads as the pane's top-left `GetWidth ()` x
+`GetHeight ()` corner. Left unbounded it swallowed clicks meant for the text
+underneath (`MouseDownMiniWindow` returns true and
+`platform/wx_outputpane.cpp:2488` gives up on selection and MXP links) and
+hit-tested an undrawn window's hotspots. `MouseOverMiniWindow` now skips
+`!GetShow () || m_bTemporarilyHide`, the same pair both paint loops already
+test (`mushview.cpp:1007` and `:1507`,
+`platform/wx_world_child.cpp:262`): if it is not drawn it cannot be clicked.
+
+**Why this is here and not in UPSTREAM-BUGS.md:** the widened test is a
+deliberate change to shared source, not a repair of a defect upstream would
+recognise. The visibility bound, taken on its own, restores exactly what
+`PtInRect` did.
+
+**Correction:** the file-head comment used to call the widened test "a strict
+extension: every point the old test matched still matches". The first half is
+true, the conclusion was not — the extra points are not all harmless, which is
+what the `m_bTemporarilyHide` skip exists to fix. Covered by
+`LuaSurface.LayoutPopsWindowsThatDoNotFitAndTheyStopBeingClickable`
+(`tests/test_lua_surface.cpp`), which asserts both halves: the popped window
+does not answer at the pane's corner, and the one that *was* laid out still
+answers at its own coordinates.
+
 ## Verification status
 
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)

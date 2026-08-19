@@ -1164,3 +1164,23 @@ COM host's equivalent early return (`scriptengine.cpp:101`) restores too.
 `SweepR4.ExecuteLuaMissingRoutineRestoresNoteStyle` and
 `SweepR4.ExecuteLuaSimpleOverloadMissingRoutineRestoresNoteStyle` in
 `tests/test_lua_scripting.cpp`.
+
+## 56 — `world.ArrayImport` mistakes a doubled backslash for an escaped delimiter (this commit)
+**Bug:** `ArrayImport`'s pre-pass un-escapes the exported string with a single
+`FindAndReplace (sValues, sEscapedDelimiter, sTemp)` (methods_arrays.cpp:284-305).
+`ArrayExport` doubles every backslash and then escapes the real delimiter, so a
+key or value ending in a literal backslash right before a REAL, unescaped
+delimiter is exported as two backslashes followed by the separator. The naive
+left-to-right search matches the SECOND backslash plus the following delimiter
+as if it were an escaped one and substitutes the scratch character over it,
+eating the real field separator. With one such field the import fails loudly
+with `eArrayNotEvenNumberOfValues`; with two, the field count stays even and
+`ArrayImport` silently stores corrupted key/value pairs instead.
+**Fix:** replace the blind `FindAndReplace` pre-pass with a left-to-right scan
+that consumes a doubled backslash as an untouched literal pair (leaving it for
+the existing post-split un-doubling) and only substitutes the scratch
+character for a backslash immediately followed by the delimiter when that
+backslash is not itself the second half of such a pair. Covered by
+`LuaScripting.ArrayImportHandlesValueEndingInBackslashBeforeDelimiter` and
+`LuaScripting.ArrayImportHandlesTwoValuesEndingInBackslashBeforeDelimiter` in
+`tests/test_lua_scripting.cpp`.

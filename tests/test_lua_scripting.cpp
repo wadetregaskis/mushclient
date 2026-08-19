@@ -1756,6 +1756,67 @@ TEST(LuaScripting, ArrayExportImportRoundTripPreservesEscapedDelimiters)
     lua_close(L);
 }
 
+// methods_arrays.cpp ArrayImport: a value ending in a backslash, immediately
+// followed in the exported string by a REAL (unescaped) delimiter, used to
+// be misread as an escaped delimiter (the doubled backslash's second half
+// pairing up with the following delimiter) - eating that delimiter and
+// making the import fail with eArrayNotEvenNumberOfValues.  'k' sorts
+// before 'z' so the doubled backslash sits right against the real
+// delimiter in the exported string, not at the end of it.
+TEST(LuaScripting, ArrayImportHandlesValueEndingInBackslashBeforeDelimiter)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "world.ArrayCreate('a')\n"
+        "world.ArraySet('a', 'k', 'ab\\\\')\n"
+        "world.ArraySet('a', 'z', 'zval')\n"
+        "s = world.ArrayExport('a', ',')\n"
+        "world.ArrayCreate('b')\n"
+        "rc = world.ArrayImport('b', s, ',')\n"));
+
+    int n = run_ret(L, "return rc, world.ArrayGet('b','k'), world.ArrayGet('b','z')");
+    ASSERT_EQ(3, n);
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -3));
+    EXPECT_STREQ("ab\\", lua_tostring(L, -2));
+    EXPECT_STREQ("zval", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// same shape but with TWO fields ending in a backslash before a real
+// delimiter: the field count stays EVEN so the old code did not even fail
+// loudly - it silently imported corrupted key/value pairs.
+TEST(LuaScripting, ArrayImportHandlesTwoValuesEndingInBackslashBeforeDelimiter)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "world.ArrayCreate('a')\n"
+        "world.ArraySet('a', 'k', 'ab\\\\')\n"
+        "world.ArraySet('a', 'm', 'cd\\\\')\n"
+        "world.ArraySet('a', 'z', 'zval')\n"
+        "s = world.ArrayExport('a', ',')\n"
+        "world.ArrayCreate('b')\n"
+        "rc = world.ArrayImport('b', s, ',')\n"));
+
+    int n = run_ret(L, "return rc, world.ArrayGet('b','k'), "
+                       "world.ArrayGet('b','m'), world.ArrayGet('b','z')");
+    ASSERT_EQ(4, n);
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -4));
+    EXPECT_STREQ("ab\\", lua_tostring(L, -3));
+    EXPECT_STREQ("cd\\", lua_tostring(L, -2));
+    EXPECT_STREQ("zval", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
 // methods_arrays.cpp: "delimiter had better be a single character, other
 // than backslash — return eBadDelimiter".
 TEST(LuaScripting, ArrayImportRejectsMultiCharOrBackslashDelimiter)

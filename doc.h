@@ -70,7 +70,7 @@ void Generate256colours (void);
 // which is Windows-only in this header).  CMUSHclientDoc's Load/Changed/Save
 // prefs methods take these by reference, so forward declarations suffice here;
 // the definitions in configuration.cpp include the full header.
-class CPrefsP1;  class CPrefsP2;  class CPrefsP3;  class CPrefsP4;
+class CPrefsP1;  class CPrefsP3;  class CPrefsP4;
 class CPrefsP5;  class CPrefsP6;  class CPrefsP7;  class CPrefsP8;
 class CPrefsP9;  class CPrefsP10; class CPrefsP11; class CPrefsP12;
 class CPrefsP13; class CPrefsP14; class CPrefsP15; class CPrefsP16;
@@ -2684,7 +2684,6 @@ public:
   // World-prefs data marshaling — portable (definitions in configuration.cpp;
   // these only take page references, satisfied by the forward declarations above).
   void LoadPrefsP1  (CPrefsP1  &page1);
-  void LoadPrefsP2  (CPrefsP2  &page2);
   void LoadPrefsP3  (CPrefsP3  &page3);
   void LoadPrefsP4  (CPrefsP4  &page4);
   void LoadPrefsP5  (CPrefsP5  &page5);
@@ -2710,7 +2709,6 @@ public:
   // check if document has changed by comparing to property page
 
   bool ChangedPrefsP1  (CPrefsP1  &page1);
-  bool ChangedPrefsP2  (CPrefsP2  &page2);
   bool ChangedPrefsP3  (CPrefsP3  &page3);
   bool ChangedPrefsP4  (CPrefsP4  &page4);
   bool ChangedPrefsP5  (CPrefsP5  &page5);
@@ -2736,7 +2734,6 @@ public:
   // unload from property page into document
 
   void SavePrefsP1  (CPrefsP1  &page1);
-  void SavePrefsP2  (CPrefsP2  &page2);
   void SavePrefsP3  (CPrefsP3  &page3);
   void SavePrefsP4  (CPrefsP4  &page4);
   void SavePrefsP5  (CPrefsP5  &page5);

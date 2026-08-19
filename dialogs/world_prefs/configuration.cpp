@@ -124,13 +124,6 @@ void CMUSHclientDoc::LoadPrefsP1  (CPrefsP1  &page1)
   page1.m_bUseSSL = m_bUseSSL;
   } // end of CMUSHclientDoc::LoadPrefsP1
 
-void CMUSHclientDoc:: LoadPrefsP2  (CPrefsP2  &page2)  
-  {  
-  DelayDebugMsg ("Loading", 2);
-  page2.m_doc = this;
-
-  }   // end of CMUSHclientDoc::LoadPrefsP2
-
 void CMUSHclientDoc:: LoadPrefsP3  (CPrefsP3  &page3)  
   {  
   DelayDebugMsg ("Loading", 3);
@@ -888,12 +881,6 @@ bool CMUSHclientDoc::ChangedPrefsP1  (CPrefsP1  &page1)
 
   } // end of CMUSHclientDoc::ChangedPrefsP1
 
-bool CMUSHclientDoc:: ChangedPrefsP2  (CPrefsP2  &page2)  
-  {  
-  DelayDebugMsg ("Checking", 2);
-  return  m_new_activity_sound != page2.m_sound_pathname;
-  }   // end of CMUSHclientDoc::ChangedPrefsP2
-
 bool CMUSHclientDoc:: ChangedPrefsP3  (CPrefsP3  &page3)  
   {  
   DelayDebugMsg ("Checking", 3);
@@ -1396,11 +1383,6 @@ void CMUSHclientDoc::SavePrefsP1  (CPrefsP1  &page1)
   m_bUseSSL            =     page1.m_bUseSSL;
 
   } // end of CMUSHclientDoc::SavePrefsP1
-
-void CMUSHclientDoc:: SavePrefsP2  (CPrefsP2  &page2)  
-  {  
-  DelayDebugMsg ("Saving", 2);
-  }   // end of CMUSHclientDoc::SavePrefsP2
 
 void CMUSHclientDoc:: SavePrefsP3  (CPrefsP3  &page3)  
   {  
@@ -2055,7 +2037,6 @@ CPrefsP23 page23;
 
 // appearance
 
-// CPrefsP2 page2;  // sounds
 CPrefsP3 page3;
 CPrefsP5 page5;
 CPrefsP14 page14;
@@ -2099,7 +2080,6 @@ Frame.DelayDebugStatus ("World config - loading pages");
 
 // appearance
 
-//  LoadPrefsP2   (page2);  // sounds
   LoadPrefsP3   (page3);
   LoadPrefsP5   (page5);
   LoadPrefsP14  (page14);
@@ -2191,8 +2171,6 @@ Frame.DelayDebugStatus ("World config - loading pages");
   page3.m_page_number  = ePageCustomColours; // custom colours 
   sheet.AddPage (tps_item_node, &page8, "Triggers");  
   page8.m_page_number  = ePageTriggers; // triggers 
-//  sheet.AddPage (tps_item_node, &page2, "Sounds");  
-//  page2.m_page_number  = ePageSounds; // sounds 
   sheet.AddPage (tps_item_endbranch, &page20, "Printing"); 
   page20.m_page_number = ePagePrinting; // printing  
 
@@ -2341,7 +2319,6 @@ Frame.DelayDebugStatus ("World config - loading pages");
 
       // appearance
 
-//      ChangedPrefsP2 (page2) ||
       ChangedPrefsP3 (page3) ||
       ChangedPrefsP5 (page5) ||
       ChangedPrefsP14 (page14) ||
@@ -2404,7 +2381,6 @@ Frame.DelayDebugStatus ("World config - loading pages");
   
   // appearance
 
-//  SavePrefsP2   (page2);
   SavePrefsP3   (page3);
   SavePrefsP5   (page5);
   SavePrefsP14  (page14);

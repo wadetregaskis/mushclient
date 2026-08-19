@@ -282,70 +282,6 @@ void CPrefsP1::OnUpdateCanClearCache(CCmdUI* pCmdUI)
 
 
 /////////////////////////////////////////////////////////////////////////////
-// CPrefsP2 property page
-
-IMPLEMENT_DYNCREATE(CPrefsP2, CPropertyPage)
-
-CPrefsP2::CPrefsP2() : CPropertyPage(CPrefsP2::IDD)
-{
-	//{{AFX_DATA_INIT(CPrefsP2)
-	m_sound_pathname = _T("");
-	//}}AFX_DATA_INIT
-  m_page_number = 1;
-  m_doc = NULL;
-}
-
-CPrefsP2::~CPrefsP2()
-{
-}
-
-void CPrefsP2::DoDataExchange(CDataExchange* pDX)
-{
-	CPropertyPage::DoDataExchange(pDX);
-	//{{AFX_DATA_MAP(CPrefsP2)
-	DDX_Text(pDX, IDC_SOUND_PATH, m_sound_pathname);
-	//}}AFX_DATA_MAP
-
-}
-
-
-BEGIN_MESSAGE_MAP(CPrefsP2, CPropertyPage)
-	//{{AFX_MSG_MAP(CPrefsP2)
-	ON_BN_CLICKED(IDC_BROWSE_SOUNDS, OnBrowseSounds)
-	ON_BN_CLICKED(IDC_TEST_SOUND, OnTestSound)
-	ON_BN_CLICKED(IDC_NO_SOUND, OnNoSound)
-	//}}AFX_MSG_MAP
-END_MESSAGE_MAP()
-
-
-/////////////////////////////////////////////////////////////////////////////
-// CPrefsP2 message handlers
-
-void CPrefsP2::OnBrowseSounds() 
-{
-}
-
-void CPrefsP2::OnTestSound() 
-{
-}
-
-void CPrefsP2::OnNoSound() 
-{
-}
-
-
-LRESULT CPrefsP2::OnKickIdle(WPARAM, LPARAM)
-  {
-  UpdateDialogControls (AfxGetApp()->m_pMainWnd, false);
-  return 0;
-  } // end of CPrefsP2::OnKickIdle
-
-void CPrefsP2::OnUpdateNeedSound(CCmdUI* pCmdUI)
-  {
-  pCmdUI->Enable (!m_sound_pathname.IsEmpty () && m_sound_pathname != NOSOUNDLIT);
-  } // end of CPrefsP2::OnUpdateNeedSound
-
-/////////////////////////////////////////////////////////////////////////////
 // CPrefsP3 property page
 
 IMPLEMENT_DYNCREATE(CPrefsP3, CPropertyPage)
@@ -8473,16 +8409,6 @@ BOOL CPrefsP1::OnSetActive()
   m_doc->m_last_prefs_page = m_page_number;
 	
   ((CTreePropertySheet *) GetParent ())->PageHasChanged (this);
-	return CPropertyPage::OnSetActive();
-}
-
-BOOL CPrefsP2::OnSetActive() 
-{
-
-  ((CTreePropertySheet *) GetParent ())->PageHasChanged (this);
-
-  m_doc->m_last_prefs_page = m_page_number;
-	
 	return CPropertyPage::OnSetActive();
 }
 

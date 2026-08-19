@@ -50,8 +50,8 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 39 | Three world-table entries reject the documented `other:Method (…)` form | this commit | lua_methods.cpp `L_StripANSI`, `L_GetWorld`, `L_GetWorldById` |
 | 40 | `pushVariant` hands an uninitialised `VARIANT` to `SafeArrayGetElement` | this commit | lua_methods.cpp `pushVariant` (VT_ARRAY arm) |
 | 41 | The note colours a deferred note carries are never initialised | this commit | doc_construct.cpp `CMUSHclientDoc::CMUSHclientDoc` |
-| 41 | `GetRecentLines` narrows its start position to `int`, so a large Count reads outside the buffer | this commit | methods_output.cpp `CMUSHclientDoc::GetRecentLines` |
-| 42 | A names file with an empty section makes name generation divide by zero and subscript an empty array | this commit | NameGeneration.cpp `ReadNames`, `GenerateName` |
+| 42 | `GetRecentLines` narrows its start position to `int`, so a large Count reads outside the buffer | this commit | methods_output.cpp `CMUSHclientDoc::GetRecentLines` |
+| 43 | A names file with an empty section makes name generation divide by zero and subscript an empty array | this commit | NameGeneration.cpp `ReadNames`, `GenerateName` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -895,7 +895,7 @@ literals — `RGB (255, 255, 255)` on `RGB (0, 0, 0)`, the pair
 `SetNoteColourRGB` already falls back to.  Literals rather than
 `m_normalcolour [WHITE]` / `[BLACK]` because `SetDefaultAnsiColours` does not
 run until ~50 lines later, so the palette is not valid at that point.
-## 41 — `GetRecentLines` narrows its start position to `int` before the clamp (this commit)
+## 42 — `GetRecentLines` narrows its start position to `int` before the clamp (this commit)
 **Bug:** the first line to return is `m_sRecentLines.size () - Count`, an
 unsigned `size_t` minus a signed `long`, stored into an `int`.  When `Count`
 exceeds the number of lines held the difference wraps, and the narrowing keeps
@@ -911,7 +911,7 @@ wrap (`if (Count > 0 && (size_t) Count < m_sRecentLines.size ())`), walk with a
 the buffer now returns the whole buffer, which is what a smaller overshoot
 always did.  Covered by `LuaSurface.GetRecentLinesClampsACountBiggerThanTheBuffer`.
 
-## 42 — An empty section in the names file is loaded as a valid names list (this commit)
+## 43 — An empty section in the names file is loaded as a valid names list (this commit)
 **Bug:** `ReadNames` checks that each of `[start]`, `[middle]`, `[end]` and
 `[stop]` is present, but not that any lines were collected between them, so a
 file whose section markers are adjacent sets `bNamesRead = true` with one or

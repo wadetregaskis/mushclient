@@ -7,6 +7,12 @@ tree, and is suitable to report/patch upstream. Port file names are given with
 their upstream equivalent where the port single-sources a method into a shared
 TU (e.g. doc_shared.cpp ← doc.cpp).
 
+A few rows are **not** fixed for Windows, and say so in the *Port commit* column
+("port only", "not fixed", "port-guarded only"): the defect is real upstream, but
+closing it there is a Windows-observable behaviour change that needs a decision
+rather than a port fix. Those rows exist so the defect is on record for whoever
+patches upstream, not as a claim that this tree fixed it.
+
 | # | Area | Port commit | Upstream file / function |
 |---|------|-------------|--------------------------|
 | 1 | MXP element delete UAF | `2cae10b` | mxpDefs.cpp `CMUSHclientDoc::MXP_Element` |
@@ -83,6 +89,17 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 72 | `strnrchr` never increments its counter (`while (*s && n < count++)`), so it ignores the `count` length bound and scans to the first NUL; both MXP `<P>`-mode callers pass `m_pCurrentLine->text`, a `CLine` buffer of exactly `len` bytes with no NUL terminator, so a hostile long line with no space reads past `len` into uninitialised heap (and possibly past the allocation) | `6491c97` | utilities_shared.cpp `strnrchr`; doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (MXP `<P>` last-space scan) |
 | 73 | MXP's malformed-tag/definition error returns leak their argument lists: `MXP_StartTag`'s custom-element expansion drops the LOCAL `BuiltArgumentList` (the `CArgument` nodes already built for the tag) on an unterminated-entity abort, and both it and `MXP_Element` skip `DELETE_LIST` on their function-static `ArgumentList` on several early returns | this commit | mxpStart.cpp `CMUSHclientDoc::MXP_StartTag`; mxpDefs.cpp `CMUSHclientDoc::MXP_Element` |
 | 74 | A telnet subnegotiation with no terminating `IAC SE` accumulates into `m_IAC_subnegotiation_data` with no size bound, so a hostile server that opens `IAC SB <type>` and streams data forever drives the client to unbounded heap allocation — memory exhaustion (on the 32-bit Windows build `std::string` throws at ~2GB, terminating) | this commit | telnet_phases.cpp `CMUSHclientDoc::Phase_SUBNEGOTIATION` / `Phase_SUBNEGOTIATION_IAC` |
+| 75 | Colour-matching triggers compare the trigger's 0-7 ANSI number straight against the style's raw `iForeColour`/`iBackColour` without consulting `iFlags & COLOURTYPE`, so no colour condition can match an xterm-256, 24-bit, MXP or custom-palette run — while a `COLOUR_RGB` run whose `COLORREF` happens to equal a small ANSI number matches by coincidence | `ef5466f` | ProcessPreviousLine.cpp `CMUSHclientDoc::ProcessOneTriggerSequence` |
+| 76 | A password typed at an `IAC WILL ECHO` prompt is hidden on screen but written verbatim to the session log: `m_bNoEcho` gates only `SendMsg`'s *echo* argument, while `DoSendMsg` logs on a separate one that `EvaluateCommand` fills from `LoggingInput()` unconditionally — and `Execute`'s `bOmitFromLog` local is hard-coded `false` and never read by `EvaluateCommand`, so Windows has no opt-out | port only (`32b28f6`) | doc_shared.cpp ← doc.cpp `SendMsg`/`DoSendMsg`; evaluate.cpp `EvaluateCommand`; methods_commands.cpp `Execute` |
+| 77 | Miniwindow mouse routing holds `CMiniWindow*` and `CHotspot*` across script dispatch while `WindowDelete` refuses only the window whose own callback is running (`m_bExecutingScript`), so a callback deleting a *different* miniwindow leaves the routine hit-testing, dispatching from and storing into freed memory; `m_bExecutingScript` is also a plain `bool`, so a nested dispatch clears the outer call's self-delete guard on the way out | `1d45c28` | miniwindow_compose.cpp ← mushview.cpp `Mouse_Move/Down/Up/Wheel_MiniWindow`; methods_miniwindows.cpp `WindowDelete` |
+| 78 | `GeneralFilter`'s vertical pass loads its `+2` tap from `row + 3` where the horizontal pass loads `+2`, so after the window shift the 5-tap kernel spans −1..+3: every blur/sharpen/edge/emboss is centred one row below the row it writes, and region row 2 is sampled by no output row at all | `d8de347` | miniwindow.cpp `CMiniWindow::GeneralFilter` (vertical pass) |
+| 79 | `GeneralFilter`'s horizontal loop bound `col < iLastByte - 4` with `col += 3` stops at pixel `width-2`, so the rightmost pixel column of every filtered region is read as a neighbour but never written and survives every filter unprocessed | `d8de347` | miniwindow.cpp `CMiniWindow::GeneralFilter` (horizontal pass) |
+| 80 | All four database column readers fetch an INTEGER column with `sqlite3_column_int` — 32 bits — so any value outside `int` range is silently truncated in every scripting language; the array reader then widens the already-truncated `int` to `long` and stamps `VT_I4`, making the loss look deliberate | `648622c` | methods_database.cpp `DatabaseColumnValue`/`DatabaseColumnValues`; lua_methods.cpp `GetDatabaseColumnValue`/`L_DatabaseColumnValues` |
+| 81 | `SaveModified` performs the close side effects (`m_bWorldClosing`, `MXP_Off`, the `on_world_close` script) before returning, so `CDocTemplate::SaveAllModified`'s walk leaves every already-prompted world half-closed when the user cancels at a later one | port only (`4d7168f`) | doc.cpp `CMUSHclientDoc::SaveModified` |
+| 82 | Convert ▸ Unix→DOS and DOS→Unix are unconditional byte filters that drop every `\r`, so running either over a classic-Mac (CR-only) notepad document deletes every line break in the file, collapsing it to one line — and File ▸ Save writes that back, with no confirmation and no undo | not fixed (port diverges) | TextView.cpp `CTextView::OnConvertUnixtodos` / `OnConvertDostounix` |
+| 83 | `L_ReplaceNotepad` pushes its success boolean and then `return 0;` — zero result fields — so Lua callers get nil while the dispatch map hands every other engine the `VT_BOOL` `mushclient.odl` declares; it was the only push-with-`return 0` body in the file | `203c0fe` | lua_methods.cpp `L_ReplaceNotepad` |
+| 84 | `GetLineInfo(n).time` builds its field as `(int) m_theTime.GetTime()`, truncating a 64-bit `time_t`, so every line's timestamp comes back negative from 2038-01-19 03:14:08 UTC | `43e27b8` | lua_methods.cpp `L_GetLineInfo` (table form) |
+| 85 | `MXP_StartTag` records a built-in tag as open — an active-list entry plus a `START_TAG` marker style — before `MXP_OpenAtomicTag` asks the veto, and nothing unwinds it, so a vetoed tag stays on the active list: a spurious `StartNewLine` from its close, a swallowed outstanding-tag warning, a close-tag callback for an open that was suppressed, and a vetoed `<send>` rewriting the enclosing anchor's action | `3095c2a` | mxpStart.cpp `CMUSHclientDoc::MXP_StartTag`; mxpOpenAtomic.cpp `CMUSHclientDoc::MXP_OpenAtomicTag` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1542,3 +1559,428 @@ not a behaviour change any world relies on, and a Windows run should confirm the
 `TelnetTest.Phase_SUBNEG_UnterminatedSubnegotiationIsCappedAndDisconnects` and
 `Phase_SUBNEG_IAC_EscapedIACsAreAlsoCapped` in `tests/test_telnet.cpp`,
 mutation-verified.
+
+## 75 — Colour-matching triggers never consult the style's `COLOURTYPE` (`ef5466f`)
+**Bug:** after a trigger's text matched, `ProcessOneTriggerSequence` found the style
+run under the match and compared the trigger's stored ANSI colour number straight
+against the style's raw members:
+
+```cpp
+iFlags = pStyle->iFlags & STYLE_BITS;
+iForeColour = pStyle->iForeColour;
+iBackColour = pStyle->iBackColour;
+...
+if (get_foreground (trigger_item->iMatch) !=
+    ((iFlags & INVERSE) ? iBackColour : iForeColour))
+  continue;
+```
+
+`get_foreground`/`get_background` yield 0-7, but `iForeColour`/`iBackColour` only
+hold ANSI colour *numbers* while `(iFlags & COLOURTYPE) == COLOUR_ANSI`. `COLOURTYPE`
+(`0x0300`) survives the `STYLE_BITS` (`0x0FFF`) mask — the comparison simply never
+looked at it. Three consequences:
+
+* **`COLOUR_RGB`** (24-bit `ESC[38;2;r;g;b`, MXP `<color>`, an earlier trigger's own
+  colour change, a hyperlink recolour) stores a literal `COLORREF` there, so a
+  condition on colours 1-7 could not match *except by coincidence* — `COLORREF` is
+  `0x00BBGGRR`, so a near-black red is the integer 1. There was exactly one such
+  false positive per ANSI colour, and black's (`0 == 0x000000`) is the one that made
+  the bug look half-working.
+* **`COLOUR_CUSTOM`** stores a 0-15 index into `m_customtext`, which the matcher read
+  as if it were an ANSI number: custom slot 1 matched "red".
+* **`COLOUR_ANSI` with an index >= 8** — which is what `ESC[38;5;n` produces, the
+  xterm lookup being deferred to display time — could never match, so **no colour
+  trigger fired on any xterm-256 line at all**.
+
+**Fix:** both sides now resolve through `pal::resolveStyleColours` (`pal/style_colour.h`),
+the one body `GetStyleRGB` paints with, and the comparison is made in RGB space. The
+run's displayed pair comes from its real flags/colours; the trigger's 0-7 numbers are
+resolved as an ANSI style carrying the **same `HILITE`/`INVERSE` flags as the run**,
+with the two indices crossed over under `INVERSE`. Carrying `HILITE` across is what
+preserves today's behaviour (a "red" condition keeps matching bold red, because
+boldness is the separate `TRIGGER_MATCH_HILITE` condition); leaving the `INVERSE` swap
+to the resolver also picks up `m_bAlternativeInverse`, which the hand-rolled swap
+ignored entirely. `GetStylePalette` is snapshotted at most **once per line**, lazily,
+and only when some trigger actually carries `TRIGGER_MATCH_TEXT`/`_BACK`; the snapshot
+is dropped after any trigger that fired into a script, since `world.SetNormalColour`
+can repaint the palette mid-line.
+
+**Not a second finding:** the trigger dialog offers "(any)" plus exactly eight colour
+names and `CPrefsP8::SaveDialog` stores `((index - 1) & 7) << 4`, and
+`get_foreground`/`get_background` mask with `0x07`, so the stored value can never
+leave 0-7 by either route. `iMatch` exists only on `CTrigger` (`OtherTypes.h:571`) —
+aliases and timers have no colour conditions, and `ProcessOneTriggerSequence` is the
+only matcher.
+
+The fix deliberately changes *what matching means* — see
+`docs/UPSTREAM-DIVERGENCES.md` §11. Covered by `TriggerColourMatch.*` (7 groups) in
+`tests/test_triggers.cpp`, over a deliberately non-degenerate palette fixture where
+every entry is a large distinct value, so no index can be confused with its own
+resolved colour.
+
+## 76 — A password typed at an `IAC WILL ECHO` prompt is written to the session log (port only: `32b28f6`)
+**Bug:** when a server sends `IAC WILL ECHO`, `telnet_phases.cpp:397` sets `m_bNoEcho`.
+The only consumer of that flag on the send path is `SendMsg` (`doc_shared.cpp:2374`):
+
+```cpp
+  if (m_bNoEcho)
+     bEcho = false;
+```
+
+It gates **drawing only**. `DoSendMsg` logs on a completely separate argument, and on
+Windows a typed line reaches it through `CSendView::SendCommand` -> `Execute` ->
+`EvaluateCommand`, whose send-now arm passed `LoggingInput()` (i.e. `m_log_input`)
+unconditionally. So with *File > Log Session* open and **"log my input"** on, the
+password is hidden on screen and written verbatim to the log file. Windows also has no
+way to opt out: `Execute` declares its `bOmitFromLog` local as `false`
+(`methods_commands.cpp:275`) and the parameter is never read by `EvaluateCommand`
+anyway.
+
+**Fix (port only):** `evaluate.cpp` gained a `CSuppressInputLogging` guard keyed off the
+`bOmitFromLog` argument, giving the existing parameter the meaning its name always
+claimed. **Windows is not fixed by this.** The guard is inert there: the sole Windows
+caller of `EvaluateCommand` is `Execute`, which passes `bOmitFromLog = false`, so
+`m_bActive` is false and the guard neither reads nor writes `m_log_input`. Making
+Windows safe would mean gating the *log* on `m_bNoEcho` in `SendMsg`/`DoSendMsg` — a
+Windows-observable behaviour change that needs a decision, not a port fix.
+
+**Residual, not fixed on either platform.** `ProcessOneAliasSequence` echoes the typed
+line itself with `bEchoAlias` seeded from `m_display_my_input`, **not** from
+`m_bNoEcho`, so `SendMsg`'s echo guard does not cover it: a password matching an
+enabled alias with *echo alias* set lands in `m_LineList` as a `USER_INPUT` line even
+at a masked prompt. After the fix that line carries no `LOG_LINE` flag and nothing is
+written at the time, but the leak is **retrospective** — when a log is opened later,
+`doc.cpp:893` replays the buffer and accepts a line if
+`(flags & LOG_LINE) || (flags & NOTE_OR_COMMAND)`, and `NOTE_OR_COMMAND` is `0x03`
+(`COMMENT | USER_INPUT`), so **any** `USER_INPUT` line qualifies regardless of
+`LOG_LINE`; the only gate left is `m_log_input` at open time, which is back to its real
+value by then. The recommended fix is one line in `evaluate.cpp` —
+`bool bEchoAlias = m_display_my_input && !m_bNoEcho;` — which is arguably an upstream
+bug fix in its own right (the server said "stop echoing" and the client echoes anyway)
+but changes Windows and so needs sign-off. Severity is low: it needs an alias whose
+pattern matches the password, *echo alias* set on it, `display_my_input` on, and a log
+opened afterwards.
+
+**Adjacent, recorded not changed:** `SendImmediate` is the only `Send*` that logs
+without being asked to (`DoSendMsg (Message, m_display_my_input, m_log_input)`), where
+`Send`, `SendNoEcho` and `SendPush` all pass `false`. It is plausibly deliberate — it
+is the queue-jumping twin of a *typed* immediate send — but it is an asymmetry worth
+knowing about.
+
+Covered by the password-path tests added with `32b28f6`; the comment corrections in
+`5f78f45` remove an earlier claim that `m_bNoEcho` guaranteed anything about the log.
+
+## 77 — Miniwindow mouse routing dereferences windows a callback has already deleted (`1d45c28`)
+**Bug:** `WindowDelete` (`methods_miniwindows.cpp:832`) refuses with `eItemInUse` only
+when `it->second->m_bExecutingScript` is set, and that flag is set only on the window
+whose own callback is currently dispatching. Every *other* window is deletable from
+inside a callback — including the ones the dispatch routine is holding across
+`SendMouseEventToPlugin`:
+
+| routine | pointer left dangling | by which callback |
+|---|---|---|
+| `MouseMoveMiniWindow` | `mw` | `ON_PLUGIN_MOUSE_MOVED` (no flag set at all), then the previous window's `CancelMouseOver` |
+| `MouseDownMiniWindow` | `mw` | the previous window's `CancelMouseOver` |
+| `MouseUpMiniWindow` | `mw` | the drag `ReleaseCallback`, then the previous window's `CancelMouseDown` |
+| `MouseWheelMiniWindow` | `mw` | only via the nested-clear below |
+
+The routine then hit-tested the freed window's `m_Hotspots`, read `m_sCallbackPlugin`
+out of it, **dispatched the dead window's own callbacks**, and stored
+`m_bExecutingScript = false` into freed memory.
+
+A second, independent hole: `m_bExecutingScript` is a plain `bool`, not a counter, so a
+**nested** dispatch on the same window clears it on the way out and the outer dispatch
+loses its self-delete protection. That is reachable, not theoretical —
+`WindowAddHotspot` re-enters the mouse routing synchronously when the new hotspot lands
+under the cursor (`methods_miniwindows.cpp:583`), so a `MouseOver` callback that adds a
+hotspot and *then* deletes its own window is allowed to, and the outer routine carries
+on using it.
+
+**Fix:** re-look-up each held window by the id already in hand after every call that can
+run script, and abandon that branch if it is gone. This is deliberately **not**
+"protect every window in use": that would answer `eItemInUse` to the legitimate
+cross-window delete plugins do all the time (a toolbar button dismissing its own popup)
+and would break working plugins, on Windows too. Re-lookup is already this file's idiom
+one container down. The self-delete guard is unchanged.
+
+**Contract points that must not be broken by later work:**
+
+1. `SendMouseEventToPlugin` takes its `string` arguments **by value**
+   (`miniwindow.h:369-375`). That is load-bearing, not an oversight: all twelve call
+   sites pass strings living inside objects the callback may destroy. Changing those
+   parameters to `const string&` would silently reintroduce a use-after-free at every
+   one of them.
+2. Every re-lookup id must be captured **by value before** the dispatch —
+   `m_sPreviousMiniWindow` can be reassigned by a nested dispatch.
+
+**Two adjacent hazards checked and deliberately left alone.** `WindowDelete` calls
+`SortWindows()`, which reallocates `m_MiniWindowsOrder` and invalidates every iterator
+into it; every loop over that vector and over `m_MiniWindows` was audited and **none
+currently reaches script**, so no code change was made. The one to watch is
+`world_debug.cpp:1496` (`DebugInfo`), which calls `Note()` per window and erases from a
+`std::map` while iterating it — safe today only because `Note` fires no plugin callback
+and no synchronous paint on either platform. Separately, the five existing
+"re-establish the hotspot pointer" blocks in these routines all read `mw->m_Hotspots`,
+so before this fix they were *themselves* the use-after-free whenever `mw` had died;
+fixing the window pointers is what makes the existing hotspot idiom sound.
+
+**Known limitation, stated rather than hidden:** `MouseWheelMiniWindow` does nothing
+after its dispatch except `mw->m_bExecutingScript = false`, so its guard prevents a
+one-byte store into freed memory with no observable consequence — only a sanitizer can
+see it, and its test survives mutation of that one guard. The observable half of the
+same hazard is covered in `MouseMove`. An ASan build over `test_lua_surface` would close
+that gap and is the natural follow-up. Covered by ten controls in
+`tests/test_lua_surface.cpp`, including
+`MouseOverCallbackMayLoseItsOwnWindowToANestedDispatch`.
+
+## 78 — `WindowFilter`'s vertical kernel is centred one row off, and skips region row 2 (`d8de347`)
+**Bug:** `GeneralFilter` runs a separable 5-tap kernel — blur, sharpen, edge detect,
+emboss, lesser blur, minor blur — as a horizontal pass then a vertical one. Both
+preload window slots 1..4 with taps -2,-1,0,+1 and then, per output pixel, shift left
+one slot and load the +2 tap, which puts the kernel centre on the pixel being written.
+The horizontal pass loads that tap from `col + rgb + 6` (six bytes = two pixels), but
+the vertical pass loaded `row + 3`. After the shift its window therefore held rows
+-1..+3, so the kernel was centred on the row *below* the one it wrote — every filtered
+region comes out displaced by one row. Worse, the row at offset +2 from the first
+output row is never read at all: the preload supplies -2..+1 (clamped to rows 0,0,0,1)
+and the loop's first load is row 3, so **region row 2 is sampled by no output row
+whatsoever** and its content is silently dropped.
+
+**Fix:** load `row + 2`, matching the horizontal pass and the +1 the preload leaves in
+slot 4. The existing `min (max (…), iHeight - 1)` clamp already covers the bottom edge,
+and the sliding window still holds pre-filter values for the rows behind (each was read
+two iterations before that row was written), so the in-place pass is unaffected.
+Covered by `LuaSurface.WindowFilterKernelIsCentredAndCoversTheLastColumn` in
+`tests/test_lua_surface.cpp`, which blurs a lone bright pixel through `pal::CpuRaster`
+and asserts the result is symmetric about that pixel's own row and that the
+formerly-skipped row contributes; mutation-verified both ways. Reached by
+`world.WindowFilter` on both platforms — see `docs/UPSTREAM-DIVERGENCES.md` §12.
+
+## 79 — `WindowFilter` never filters the rightmost pixel column (`d8de347`)
+**Bug:** the horizontal pass loops `for (col = 0; col < iLastByte - 4; col += 3)` where
+`iLastByte == width * 3`. Stepping by 3, the last iteration is the largest multiple of
+3 strictly below `3*width - 4`, which is `3*(width-2)` — pixel `width-2`. The rightmost
+pixel column is read as a neighbour by the clamped look-ahead but never written, so it
+survives every blur/sharpen/edge/emboss unfiltered, leaving a one-pixel-wide
+unprocessed stripe down the right of the region.
+**Fix:** `col < iLastByte`. The widened bound is in range in both directions: the write
+reaches at most `col + rgb == iLastByte - 1`, and the look-ahead read was already
+clamped to `iLastByte - 1` — the same edge clamp columns `width-2` and `width-3` have
+always used, so no new clamp semantics are introduced. The left-edge clamp (which
+resolves an off-region tap to byte index 0, i.e. pixel 0's BLUE byte for all three
+channels) and the in-place B/G/R pass ordering are deliberately **unchanged**, so a
+filtered left edge is still slightly channel-skewed; that is upstream behaviour and the
+covering test pins the exact values so a later change to it is visible. Covered by the
+same test as 78, asserting exact post-filter values for the last column under both blur
+and sharpen.
+
+## 80 — SQLite INTEGER columns truncate to 32 bits in all four readers (`648622c`)
+**Bug:** SQLite stores an INTEGER column as a signed 64-bit value, but every reader that
+hands one to a script fetched it with `sqlite3_column_int`, which returns a 32-bit
+`int`. Four call sites, covering all six scripting languages: `DatabaseColumnValue`
+(`methods_database.cpp:401`) and `DatabaseColumnValues` (`:687`) on the
+automation-dispatch path used by Python, Perl, JavaScript, Tcl and Ruby, and
+`GetDatabaseColumnValue` (`lua_methods.cpp:1894`) and `L_DatabaseColumnValues` (`:2088`)
+on the Lua path. `DatabaseGetField` inherits the defect through both. A rowid or
+timestamp past 2^31 came back wrapped — `2147483648` read as `-2147483648` — with no
+error and no indication. The array reader was doubly wrong on Windows: it widened the
+already-truncated `int` into a `long` and stamped `VT_I4`, so the widening looked
+deliberate.
+
+**Fix:** `sqlite3_column_int64` at all four sites, plus one shared banding decision in
+the new `scripting/db_int64.h` that all four readers call, because neither destination
+can carry a full int64 — the dispatch VARIANT has no 64-bit integral type (`VT_I8`
+exists nowhere in the shipping dispatch surface, nor in `platform/mc_dispatch.*`), and a
+Lua number is a double:
+
+| value | representation | why |
+|---|---|---|
+| within 32-bit signed range | `VT_I4` / Lua number | unchanged — nothing that works today moves |
+| magnitude up to 2^53 | `VT_R8` / Lua number | exactly representable as a double |
+| larger | `BSTR` / Lua string, decimal | lossless, and detectable as `type(v) == "string"` |
+
+The string band is not an invention: `DatabaseLastInsertRowid`
+(`methods_database.cpp:495-506`) has always formatted its `sqlite3_int64` with `"%I64d"`
+and returned a string for exactly this reason, and the bundled `lsqlite3`
+(`lsqlite/lsqlite3.c:111-121`) independently does the same. Only the threshold differs:
+lsqlite3's test is value-dependent (so it returns 2^60 as a *number*, a power of two
+being exact), whereas the 2^53 band is predictable from the magnitude alone.
+
+The change is a widening only, so no existing plugin is affected unless it was already
+reading a truncated value. **Worth announcing to script authors:** a column past 2^53
+now arrives as a *string*, so a plugin doing arithmetic on one without checking `type()`
+gets a Lua "attempt to perform arithmetic" error instead of a silently wrong number.
+Erroring is the better failure, but it is a visible change.
+
+**Also fixes a read-after-free** the string band would otherwise have inherited:
+`DatabaseColumnValues`' text arm declared its `CString` inside the `switch` arm and
+assigned it to the `COleVariant`, which on the port borrows the buffer
+(`platform/mfc_ui.h`); the `CString` died at the end of the arm, while
+`COleSafeArray::PutElement` — the thing that actually copies the string — runs after the
+`switch`. Short values survived on SSO luck. The declaration is hoisted to the loop body.
+
+Covered by nine cases in `tests/test_database.cpp`, mutation-verified per site (each of
+the four `sqlite3_column_int64` calls reverted individually, and both band boundaries
+moved in both directions). A Windows run is not strictly required — the four readers are
+shared code with no platform arms — beyond confirming `CString::Format("%I64d", …)`
+behaves as it always has there, which is a formality since that is MSVC's native
+modifier.
+
+## 81 — `SaveModified` half-closes every world it has already prompted (port only: `4d7168f`)
+**Bug:** `CMUSHclientDoc::SaveModified` performs the close side effects —
+`m_bWorldClosing = true`, `MXP_Off(true)`, the `on_world_close` script — *before*
+returning its answer. `CDocTemplate::SaveAllModified` walks the open documents calling
+`SaveModified()` on each, so cancelling at world 3 leaves worlds 1 and 2 with their
+close script already run and `m_bWorldClosing` stuck true, with nothing closed.
+
+This **corrects the premise** the port's own fix was written against: the D-09 brief
+said "Windows parity — prompt all worlds first, and if the user cancels, nothing
+closes", but stock Windows has the same half-closed state the port had. The structural
+shape (`SaveAllModified()` then `CloseAllDocuments()`) is Windows'; the ordering defect
+inside `SaveModified` is upstream's.
+
+**Fix (port only):** `SaveModified()` was split into `BOOL QueryCloseWorld()` (the
+connection warning, the `m_bSaveWorldAutomatically` save, the variables-only prompt and
+`CDocument::SaveModified()`, same code in the same order) and `void CommitCloseWorld()`
+(`m_bWorldClosing`, `MXP_Off`, the close script), with
+`SaveModified() = QueryCloseWorld() ? (CommitCloseWorld(), TRUE) : FALSE`. The macOS
+quit hook is the only caller that uses the two halves separately, so **Windows behaviour
+is unchanged** — it would get the same fix for free by routing its quit through the two
+halves, which is deliberately not done here. This is therefore an improvement over
+upstream rather than parity with it.
+
+The one side effect the query pass can still have is a save the user asked for (or
+configured), through `DoSave`, which fires `on_world_save` and `ON_PLUGIN_WORLD_SAVE` —
+identical to Windows, where the same `DoSave` runs from inside `SaveAllModified`.
+Confirmed **absent** from the query pass: `m_bWorldClosing`, `MXP_Off` (and therefore
+`OnMXP_Stop` + `ON_PLUGIN_MXP_STOP`), the `on_world_close` script,
+`SendToAllPluginCallbacks(ON_PLUGIN_CLOSE)`, `CPlugin::SaveState`,
+`PersistBeforeTeardown` and `CloseLog`. See `docs/WINDOWS-VALIDATION.md`
+§4c-quadragies for the two Windows deltas that need eyeballing.
+
+## 82 — Convert > Unix->DOS / DOS->Unix destroys a Mac-line-ending document (not fixed; the port diverges)
+**Bug:** `CTextView::OnConvertUnixtodos` and `OnConvertDostounix` (`TextView.cpp:283-350`)
+are unconditional byte filters over the whole `CEdit` buffer: `OnConvertUnixtodos` skips
+every `\r` and emits `\r` only ahead of a `\n`; `OnConvertDostounix` skips every `\r`. A
+notepad holding a classic-Mac (CR-only) document therefore loses **every line break in
+the file** to either command, collapsing it to a single line — and File > Save then
+writes that back. The Convert menu offers all four conversions unconditionally, with
+nothing indicating which one matches the document, no confirmation and no undo of the
+file.
+
+**Not reproduced on Windows** (no Windows build here); read from the canonical source.
+**Not fixed here**, because the macOS port does not have the defect and fixing it would
+be a Windows behaviour change on its own: the wx control holds LF and nothing else, so
+the port carries the line-ending style out of band on the document
+(`CTextDocument::m_iLineEndings`, inside `#ifndef _WIN32`) and the four ops retag it
+rather than rewriting bytes. That divergence, and the two behavioural differences that
+follow from it, are recorded in CLAUDE.md under the notepad line-ending representation —
+this row exists so the upstream defect is on record for whoever patches upstream.
+
+## 83 — `world.ReplaceNotepad` returns nil in Lua and a boolean in every other engine (`203c0fe`)
+**Bug:** `L_ReplaceNotepad` calls `lua_pushboolean` with the result of
+`CMUSHclientDoc::ReplaceNotepad` and then `return 0;` — zero result fields — so the
+value is discarded and every Lua caller sees nil. It was the only body in
+`lua_methods.cpp` that pushes a result and then returns 0 (`L_MtSrand`'s `lua_pushnil`
+is the `lua_next` iteration idiom, not a result). Meanwhile `mushclient.odl` declares
+`[id(61)] boolean ReplaceNotepad(BSTR, BSTR)` and the automation dispatch map registers
+it `VT_BOOL`, so Python, Perl, JavaScript, Tcl and Ruby all receive the boolean. Its two
+siblings on the same underlying body, `AppendToNotepad` and `SendToNotepad`, return
+theirs to Lua.
+**Fix:** `return 1;`. Covered by `LuaSurface.NotepadFamilyWithNoNotepadOpen` (false when
+the title does not exist) and `LuaSurface.NotepadFamilyWithANotepadOpen` (true on
+success, plus a check that the replace actually happened); mutation-verified both ways.
+This is Lua-visible on Windows too — see `docs/UPSTREAM-DIVERGENCES.md` §13.
+
+## 84 — `GetLineInfo(n).time` truncates the timestamp through `(int)` (`43e27b8`)
+**Bug:** the table form of `world.GetLineInfo` built its `time` field as
+`(int) pLine->m_theTime.GetTime ()`. `CTime::GetTime()` returns a 64-bit `time_t`, so
+the cast discards the high half: from 2038-01-19 03:14:08 UTC every line's `.time` comes
+back negative. Present since the first commit and untouched by the port. A Lua number is
+a double, which represents any realistic date exactly, so the narrowing bought nothing —
+the value was widened to double immediately afterwards by the `MakeTableItem` overload.
+**Fix:** widen with `(double)` instead of narrowing with `(int)`. The explicit cast is
+kept rather than dropped entirely because it also pins the intended
+`MakeTableItem (…, const double)` overload against the implicit `COleDateTime(double)`
+conversion — today the standard conversion wins and the resolution is unambiguous, but an
+added overload could silently change it.
+**Not affected:** the type-code form, `world.GetLineInfo(n, 9)`, goes through
+`CMUSHclientDoc::GetLineInfo` (`methods_info.cpp`), which builds a `VT_DATE` VARIANT from
+`COleDateTime` and does no narrowing. Only the Lua table form was ever wrong — worth
+stating because the decision text suggested testing through the type-code form, which
+cannot observe this bug.
+**Script-visible on both platforms:** any plugin comparing `.time` against its own clock
+changes answer for post-2038 lines. No realistic plugin can have been relying on the
+negative value. Covered by `LuaScripting.GetLineInfoTimeSurvives2038` in
+`tests/test_lua_scripting.cpp`, which stamps a line with 2038-01-20 and asserts the exact
+positive value; mutation-verified (restoring `(int)` fails it with `-2.1474e+09`).
+
+## 85 — Vetoing an atomic MXP tag leaves the tag on the active list (`3095c2a`)
+**Bug:** `MXP_StartTag` records a tag as open — an `m_ActiveTagList` entry plus a
+`START_TAG` marker style — *before* it calls `MXP_OpenAtomicTag`, which is where a
+built-in tag's veto is asked (`OnMXP_OpenTag` / `OnPluginMXPopenTag`,
+`mxpOpenAtomic.cpp:73-84`). The veto cannot be asked earlier because the argument list it
+passes is only rebuilt inside `MXP_OpenAtomicTag`. A **custom element's** veto
+(`mxpStart.cpp:162-176`) returns before any of that bookkeeping exists, so the two paths
+disagreed: a vetoed built-in tag stayed on the active list. `mxpOpenAtomic.cpp:84`
+carried the identical comment to `mxpStart.cpp:175` — "they didn't want to go ahead with
+this tag" — but only the custom path achieved it. The styling half already worked (the
+run subsequent text uses is created with pre-tag attributes before the call and the
+attributes are restored afterwards, so a vetoed `<font>`/`<color>` left no colour); only
+the bookkeeping leaked.
+
+**Four observable consequences, all confirmed by test and all now fixed:**
+
+1. A spurious `StartNewLine`: `</p>` found the suppressed `<p>` still open, so
+   `MXP_CloseAtomicTag`'s `MXP_ACTION_P` arm ran and broke the line. `</ul>` / `</ol>`
+   do the same when the line is non-empty.
+2. The dangling tag counted toward the every-100 outstanding-tag warning — and consumed
+   the `m_iLastOutstandingTagCount` marker, so the warning for the *genuine* hundredth
+   tag was then swallowed.
+3. A close-tag callback (`OnMXP_CloseTag` / `ON_PLUGIN_MXP_CLOSETAG`) fired for an open
+   that was suppressed.
+4. A vetoed `<send>` nested in a hyperlink closed "early": `MXP_CloseAtomicTag`'s
+   SEND/HYPERLINK arm rewrote every enclosing style's action from the suppressed marker
+   onwards, substituting `&text;` with the *inner* text. Measured:
+   `<a href="go &text;">click <send>me</send> now</a>` with `send` vetoed produced an
+   anchor whose later runs sent `go me` while its earlier runs sent `go click me now` —
+   one link, two commands.
+
+**Fix — unwind on veto, not reorder.** `MXP_OpenAtomicTag` gained an optional
+`bool * pbVetoed`; the built-in call site (`mxpStart.cpp:341`) passes it and undoes the
+active-tag record, the `m_iLastOutstandingTagCount` marker and the `START_TAG` marker
+style. Every added line is inside `if (bVetoed)`, so the non-vetoed path — which is
+essentially all MXP traffic — is byte-for-byte unchanged. Consequence 4 needed no code of
+its own: with no active-tag entry, `MXP_EndTag` never reaches `MXP_CloseTag`. The
+custom-element call site (`mxpStart.cpp:594`, one call per expanded atom) deliberately
+does **not** pass the out-param: an atom is not the tag, and `</mytag>` must still close.
+The unwind is additionally guarded on the active-tag tail actually being the tag being
+unwound.
+
+**Why not the alternatives** (both checked, both rejected): *moving the veto earlier*
+reorders code that runs on every tag and changes what the callback is handed —
+`MXP_OpenAtomicTag` rebuilds the arguments into the single-quoted `name='value'` form,
+where `MXP_StartTag` would pass the raw tag text, and `plugins/MXP_statusbar.xml:42`
+parses that argument with a regex that *requires* the single quotes, so the reorder
+breaks a shipped plugin (confirmed at HEAD); it would also move the veto ahead of the
+`&entity;` substitution pass, handing handlers unsubstituted values. *Asking the veto
+from inside `MXP_StartTag`* changes the custom-element path's semantics too, and would
+collapse the two asks a plugin gets for `<!ELEMENT mytag '<B>'>` into one.
+
+**Behaviour change, deliberate:** a `</p>`/`</b>`/... after a vetoed open now reports
+`wrnMXP_OpenTagNotInOutputBuffer` in the MXP debug window. That is the *correct* new
+behaviour and is exactly what a vetoed **custom** element already did, so it is parity
+being restored, not a new wart. Note also that the two veto conventions are opposite: a
+**plugin**'s `OnPluginMXPopenTag` vetoes by returning **false** (`MXP_StartTagScript`
+negates it), while a **world script**'s `OnMXP_OpenTag` vetoes by returning **true**.
+
+**Not fixed, same shape:** the `"No closing \";\""` abort (`mxpStart.cpp:302-309`) still
+leaves the same dangling tag; it is a separate early return and was deliberately not
+coupled to this fix. `mxpCloseAtomic.cpp:31-104` also still rewrites enclosing styles'
+actions for any *legitimately* nested `<send>`/`<a>` — upstream behaviour, and with the
+veto fixed there is no longer a suppressed open that can trigger it spuriously.
+
+Covered by the atomic-veto battery added in `4f4b667`, which closed a real gap: the file
+had a Lua fixture whose `OnOpen` already returned `name == 'suppressme'`, but nothing
+ever sent `<suppressme>`, so the atomic-veto branch had **zero** coverage at HEAD. See
+`docs/WINDOWS-VALIDATION.md` §4c-duodequadragies.

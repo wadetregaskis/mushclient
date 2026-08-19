@@ -4909,6 +4909,78 @@ TEST(LuaScripting, ByRefGettersReturnNilsWhenTheObjectIsMissing)
     ));
 }
 
+// Index of the first buffered line whose text contains `needle`, or -1.
+// (The line list is the only place emitted output is observable headless.)
+static int find_output_line (CMUSHclientDoc& doc, const char* needle)
+{
+    int idx = 0;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ++idx) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find(needle) != std::string::npos)
+            return idx;
+    }
+    return -1;
+}
+
+// D-17: world.SetTrace must go through CMUSHclientDoc::SetTrace, which routes to
+// OnGameTrace and emits the "Trace on"/"Trace off" marker.  The binding used to
+// assign m_bTrace directly, so Lua was the only language whose SetTrace was
+// silent — the dispatch map binds the real accessor, so world.Trace = 1 from
+// Python/Perl/JS/Tcl/Ruby has always printed it.
+TEST(LuaScripting, SetTraceEmitsTheTraceMarker)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    ASSERT_FALSE(doc.m_bTrace);
+
+    // ── on ──
+    ASSERT_TRUE(run(L, "world.SetTrace(1)"));
+    EXPECT_TRUE(doc.m_bTrace);                                // the member still lands
+    EXPECT_GE(find_output_line(doc, "TRACE: Trace on"), 0);   // ...and it SAYS so
+    EXPECT_EQ(-1, find_output_line(doc, "Trace off"));
+
+    // ── off ──
+    ASSERT_TRUE(run(L, "world.SetTrace(0)"));
+    EXPECT_FALSE(doc.m_bTrace);
+    EXPECT_GE(find_output_line(doc, "TRACE: Trace off"), 0);
+
+    // world.GetTrace agrees with the member both ways round.
+    ASSERT_TRUE(run(L, "world.SetTrace(1)"));
+    int n = run_ret(L, "return world.GetTrace()");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_toboolean(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// D-17, second observable: turning tracing ON flushes a half-built line first,
+// so a pending prompt is pushed out as its own line BEFORE the marker rather
+// than having "TRACE: Trace on" appended to it.
+TEST(LuaScripting, SetTraceFlushesAHalfBuiltLine)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    char text[] = "partial-prompt> ";
+    doc.OnBytesReceived(text, (int)sizeof text - 1);
+
+    ASSERT_TRUE(run(L, "world.SetTrace(1)"));
+
+    int prompt = find_output_line(doc, "partial-prompt>");
+    int marker = find_output_line(doc, "TRACE: Trace on");
+    EXPECT_GE(prompt, 0);
+    EXPECT_GE(marker, 0);
+    EXPECT_LT(prompt, marker);      // flushed onto its own line, ahead of the marker
+
+    lua_close(L);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

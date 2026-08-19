@@ -5850,7 +5850,13 @@ static int L_GetTrace (lua_State *L)
 static int L_SetTrace (lua_State *L)
   {
   CMUSHclientDoc *pDoc = doc (L);
-  pDoc->m_bTrace = optboolean (L, 1, 1) != 0;
+  // Deliberate divergence from upstream Lua: go through the real accessor rather
+  // than poking the member.  SetTrace -> OnGameTrace flushes a half-built output
+  // line and emits the "Trace on"/"Trace off" marker; assigning m_bTrace directly
+  // skipped both, so Lua was the only language whose world.SetTrace was silent
+  // (the dispatch map binds the accessor, so world.Trace = 1 from Python/Perl/
+  // JS/Tcl/Ruby has always printed the marker).
+  pDoc->SetTrace (optboolean (L, 1, 1) != 0);
   return 0;  // number of result fields
   } // end of L_SetTrace
 

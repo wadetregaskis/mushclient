@@ -305,7 +305,8 @@ const Dialect kDialects[] = {
   "function probedefault(s)\n"
   "  local ok = pcall(function() world.EnableTrigger('nosuchtrigger') end)\n"
   "  return ok and 'silent' or 'raised'\n"
-  "end\n",
+  "end\n"
+  "function probeloud(s) world.SetVariable('probe') end\n",
   nullptr },   // Lua keeps world.Hash as a function; no string coercion
 
 // ── Python ────────────────────────────────────────────────────────────────
@@ -387,7 +388,8 @@ const Dialect kDialects[] = {
   "    except Exception:\n        return 'raised'\n"
   "def probedefault(s):\n"
   "    try:\n        world.EnableTrigger('nosuchtrigger')\n        return 'silent'\n"
-  "    except Exception:\n        return 'raised'\n",
+  "    except Exception:\n        return 'raised'\n"
+  "def probeloud(s):\n    world.SetVariable('probe')\n",
   // str(world.Hash) invokes Hash with no arguments (py_engine.cpp Method_str).
   // Compared against the same call written out, so the assertion does not
   // depend on which hash function Hash is.  Without the introspection
@@ -460,7 +462,8 @@ const Dialect kDialects[] = {
   "sub probe { my $r = eval { $world->SetVariable('probe'); 1 };\n"
   "  return $r ? 'silent' : 'raised'; }\n"
   "sub probedefault { my $r = eval { $world->EnableTrigger('nosuchtrigger'); 1 };\n"
-  "  return $r ? 'silent' : 'raised'; }\n",
+  "  return $r ? 'silent' : 'raised'; }\n"
+  "sub probeloud { $world->SetVariable('probe'); }\n",
   nullptr },   // Perl calls methods explicitly; no bare-reference coercion
 
 // ── JavaScript ────────────────────────────────────────────────────────────
@@ -537,7 +540,8 @@ const Dialect kDialects[] = {
   "function probedefault(s) {\n"
   "  try { world.EnableTrigger('nosuchtrigger'); return 'silent'; }\n"
   "  catch (e) { return 'raised'; }\n"
-  "}\n",
+  "}\n"
+  "function probeloud(s) { world.SetVariable('probe'); }\n",
   // '' + world.Hash runs Method_convertToType (js_engine.cpp), the same
   // no-argument coercion Method_str is for Python.
   "function introspect(s) {\n"
@@ -617,7 +621,8 @@ const Dialect kDialects[] = {
   "proc probedefault {s} {\n"
   "  if {[catch {world EnableTrigger nosuchtrigger}]} { return raised }\n"
   "  return silent\n"
-  "}\n",
+  "}\n"
+  "proc probeloud {s} { world SetVariable probe }\n",
   nullptr },   // `world Foo` is a command invocation; nothing to coerce
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
@@ -695,7 +700,8 @@ const Dialect kDialects[] = {
   "end\n"
   "def probedefault(s)\n"
   "  begin; world.EnableTrigger('nosuchtrigger'); 'silent'; rescue Exception; 'raised'; end\n"
-  "end\n",
+  "end\n"
+  "def probeloud(s); world.SetVariable('probe'); end\n",
   nullptr },   // Ruby needs the parentheses; no bare-reference coercion
 };
 
@@ -1434,6 +1440,31 @@ void battery_strict_arguments(const Dialect& d)
         else
             skip(L, "strict ON: the no-argument string coercion is exempt",
                  "this language has no bare-method-reference coercion");
+    }
+
+    // ── and the author actually SEES it ───────────────────────────────────
+    // Everything above catches the error in the script, which proves it is
+    // catchable but says nothing about the uncaught case -- and uncaught is
+    // how a plugin author meets it.  The Engine constructor ticks "note
+    // errors to the output window", the same box battery_error_routing
+    // drives, so an unhandled error lands in the output where saw() can read
+    // it.  Asserting the TEXT is the point: a bare "bad arguments" would pass
+    // a mere did-it-error check while telling the author nothing.
+    {
+        Engine e(d.language, src.c_str());
+        if (!e.ok) return;
+        e.doc->m_bStrictScriptArguments = TRUE;
+
+        bool err = false;
+        e.callRtn("probeloud", "", &err);
+        check(err, L, "strict ON: an uncaught short call is reported as an error");
+        if (luaAlwaysStrict)
+            // Lua's own binding raises this one, with its own wording.
+            check(e.saw("bad argument"), L,
+                  "strict ON: ...and Lua's argument error names the argument");
+        else
+            check(e.saw("expected at least 2 arguments, got 1"), L,
+                  "strict ON: ...and the message gives the expected and supplied counts");
     }
 }
 

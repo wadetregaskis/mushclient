@@ -49,6 +49,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 38 | `world.SetRemoveMapReverses` raises an error when passed a boolean | this commit | lua_methods.cpp `L_SetRemoveMapReverses` |
 | 39 | Three world-table entries reject the documented `other:Method (…)` form | this commit | lua_methods.cpp `L_StripANSI`, `L_GetWorld`, `L_GetWorldById` |
 | 40 | `pushVariant` hands an uninitialised `VARIANT` to `SafeArrayGetElement` | this commit | lua_methods.cpp `pushVariant` (VT_ARRAY arm) |
+| 41 | `GetRecentLines` narrows its start position to `int`, so a large Count reads outside the buffer | this commit | methods_output.cpp `CMUSHclientDoc::GetRecentLines` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -875,3 +876,20 @@ and pointer happen to name.  It is the same defect the file already fixes for
 **Fix:** `VariantInit (&val);` after the declaration.  No behaviour change on
 the port — its `SafeArrayGetElement` shim copies without clearing — so this one
 needs a **Windows debug run** (poisoned stack) to see the original fault.
+
+## 41 — `GetRecentLines` narrows its start position to `int` before the clamp (this commit)
+**Bug:** the first line to return is `m_sRecentLines.size () - Count`, an
+unsigned `size_t` minus a signed `long`, stored into an `int`.  When `Count`
+exceeds the number of lines held the difference wraps, and the narrowing keeps
+only its low 32 bits — with three lines held and `Count` = 3,000,000,000 that
+is +1,294,967,299, which is positive, so the `if (iPos < 0) iPos = 0;` clamp
+below never fires.  The loop then subscripts the deque a billion entries past
+its end, with `iPos != m_sRecentLines.size ()` — an equality that the runaway
+index steps straight over — as its only stop condition.  Any plugin reaches it
+with one bad argument to `world.GetRecentLines`; headless it is a segfault.
+**Fix:** do the comparison at deque width and only subtract when it cannot
+wrap (`if (Count > 0 && (size_t) Count < m_sRecentLines.size ())`), walk with a
+`size_t`, and stop on `iPos < m_sRecentLines.size ()`.  A `Count` larger than
+the buffer now returns the whole buffer, which is what a smaller overshoot
+always did.  Covered by `LuaSurface.GetRecentLinesClampsACountBiggerThanTheBuffer`.
+

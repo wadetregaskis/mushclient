@@ -1159,7 +1159,10 @@ or report the failure it was actually given.
 **Fix:** change the second entry to `30038` in both tables
 (`lua_methods.cpp:7444`, `errors.cpp:58`) so each of the two distinct plugin
 save-state errors has its own code and description.  Covered by
-`LuaScripting.ErrorCodeTable` in `tests/test_lua_scripting.cpp`.
+`LuaScripting.ErrorCodeTable` in `tests/test_lua_scripting.cpp`.  A **third**
+copy of the same collision shipped in the Lua constants library
+(`plugins/constants.lua:54`, `<include>`d by three shipped plugins), also
+corrected to `30038`.
 
 ## 55 — `ExecuteLua`'s "function not found" arm drops the note style (this commit)
 **Bug:** both `CScriptEngine::ExecuteLua` overloads save `m_iNoteStyle` and

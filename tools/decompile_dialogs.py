@@ -27,14 +27,28 @@
 import pefile, struct, re, sys
 
 def main(dll, resh, out):
-    id2sym = {}
+    # resource.h assigns many numeric ids to more than one symbol across
+    # unrelated Win32 resource-type namespaces (dialog/menu/string/command), so
+    # a bare "first definition wins" can label a real DIALOGEX block with a
+    # command or menu symbol that happens to share its value (e.g. id 301 is
+    # both ID_GETTING_STARTED, a command, and IDD_REGEXP_PROBLEM, the dialog
+    # that actually lives there).  Two passes: IDD_-prefixed symbols (dialog
+    # template ids, by MFC convention) win any collision; everything else
+    # fills in around them.
+    defines = []
     for line in open(resh, encoding="latin-1"):
         m = re.match(r'\s*#define\s+(\w+)\s+(0x[0-9A-Fa-f]+|\d+)', line)
         if m:
             name, val = m.group(1), int(m.group(2), 0)
             if name.startswith("_APS_"):
                 continue            # apstudio bookkeeping symbols, not real IDs
+            defines.append((name, val))
+    id2sym = {}
+    for name, val in defines:
+        if name.startswith("IDD_"):
             id2sym.setdefault(val, name)
+    for name, val in defines:
+        id2sym.setdefault(val, name)
     STD = {1: "IDOK", 2: "IDCANCEL", 3: "IDABORT", 4: "IDRETRY", 5: "IDIGNORE",
            6: "IDYES", 7: "IDNO", 9: "IDHELP", 0xFFFF: "IDC_STATIC"}
 

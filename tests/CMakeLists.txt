@@ -103,6 +103,23 @@ mc_test(test_gdi_headless)
 # OTHER suite, which would just silently mis-report pass/fail.
 mc_test(test_mc_test_framework)
 
+# ── RcResources: the .rc parser's own standalone harness (P04-F2) ───────────
+# platform/wx_dialog_resource.cpp is the parser behind every one of the app's
+# 116 dialog templates and 1644 controls, but it has no wx/MFC dependency at
+# all -- it is a plain-C++ .rc-subset reader -- so it does not need mushcore,
+# mushcore_testsupport, or wxWidgets to test.  Its own -DWX_DIALOG_RESOURCE_TEST
+# main() was previously only a "build this by hand" comment; this registers
+# that same harness (now asserting, not just printing) as an ordinary ctest so
+# a future decompiler regen or hand-edit of the .rc that drops/mislabels a
+# dialog fails ctest instead of shipping silently.
+add_executable(test_wx_dialog_resource ../platform/wx_dialog_resource.cpp)
+target_compile_definitions(test_wx_dialog_resource PRIVATE WX_DIALOG_RESOURCE_TEST)
+target_compile_options(test_wx_dialog_resource PRIVATE ${MC_TEST_COMPILE_OPTIONS})
+add_test(NAME test_wx_dialog_resource
+         COMMAND test_wx_dialog_resource
+                 ${CMAKE_SOURCE_DIR}/resource.h
+                 ${CMAKE_SOURCE_DIR}/platform/mushclient_dialogs.rc)
+
 # ── Source lint: no non-ASCII in narrow string literals ─────────────────────
 # Note()/Tell()/DisplayMsg() take BYTES, decoded with the world's encoding — so
 # a UTF-8 em dash in an app-generated message renders as "â€”" in any world that

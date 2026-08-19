@@ -3439,6 +3439,7 @@ static const char* hook_load_text_resource(int id, unsigned* size)
 {
     const char* file = (id == 177) ? "credits.txt"      // IDR_CREDITS
                      : (id == 252) ? "agreement.txt"    // IDR_LICENSE
+                     : (id == 278) ? "substitutions.txt" // IDR_SUBSTITUTION
                      : nullptr;
     if (!file) { if (size) *size = 0; return nullptr; }
 

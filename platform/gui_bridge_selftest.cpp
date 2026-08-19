@@ -1421,6 +1421,21 @@ void TestMetaphoneBoundsItsInput()
           "...inside the caller's buffer");
 }
 
+// The "Special characters" help popup (CRecallSearchDlg / CPrefsP4's
+// IDC_SUBSITUTION_HELP button) opens a CCreditsDlg on IDR_SUBSTITUTION, which
+// loads its body via g_wxhook_load_text_resource the same way the About box's
+// licence/credits text does (id 252/177) -- this exercises that third id.
+void TestSubstitutionTextResource()
+{
+    printf("Substitution help text resource (IDR_SUBSTITUTION):\n");
+
+    unsigned size = 0;
+    const char* text = g_wxhook_load_text_resource(IDR_SUBSTITUTION, &size);
+
+    check(text != nullptr, "IDR_SUBSTITUTION resolves to bundled text (was: nullptr, \"Could not load text\")");
+    check(size > 0, "...with non-zero size");
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1447,6 +1462,7 @@ int RunGuiBridgeSelfTest()
     TestFixedPitchFontReachesTheDialogs();
     TestCreateGuidShape();
     TestMetaphoneBoundsItsInput();
+    TestSubstitutionTextResource();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

@@ -8,6 +8,7 @@
 
 #include "wx_dialog_resource.h"
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 
 namespace {
@@ -237,7 +238,20 @@ bool RcResources::ParseRc(const std::string& rc)
             if (startsWord(line, "BEGIN")) { ++blockDepth; continue; }
             if (startsWord(line, "END"))
             {
-                if (--blockDepth <= 0) { m_dialogs[curDlg.id] = curDlg; mode = NONE; blockDepth = 0; }
+                if (--blockDepth <= 0)
+                {
+                    // A genuine id collision between two distinct DIALOGEX blocks
+                    // would silently discard the first one here with no
+                    // diagnostic -- warn so it is at least noticed (the .rc is
+                    // machine-generated; a future decompile_dialogs.py bug or a
+                    // hand-edit could reintroduce one).
+                    if (m_dialogs.count(curDlg.id))
+                        std::fprintf(stderr,
+                            "wx_dialog_resource: dialog id %d ('%s') overwrites "
+                            "an earlier dialog with the same id\n",
+                            curDlg.id, curDlg.caption.c_str());
+                    m_dialogs[curDlg.id] = curDlg; mode = NONE; blockDepth = 0;
+                }
                 continue;
             }
             if (startsWord(line, "CONTROL"))
@@ -343,7 +357,10 @@ size_t RcResources::ControlCount() const
 }
 
 #ifdef WX_DIALOG_RESOURCE_TEST
-// Standalone test: parse resource.h + the recovered .rc and print stats.
+// Standalone test: parse resource.h + the recovered .rc, print stats, and
+// assert the shapes a future decompiler regen or .rc hand-edit must not
+// silently break.  Registered with ctest (tests/CMakeLists.txt) so this,
+// the parser's own harness, actually runs instead of being a comment.
 //   c++ -std=c++17 -DWX_DIALOG_RESOURCE_TEST platform/wx_dialog_resource.cpp -o /tmp/rctest
 //   /tmp/rctest resource.h platform/mushclient_dialogs.rc
 #include <cstdio>
@@ -354,12 +371,19 @@ static std::string slurp(const char* p)
     std::ifstream f(p, std::ios::binary);
     std::stringstream ss; ss << f.rdbuf(); return ss.str();
 }
+static int g_pass = 0, g_fail = 0;
+static void check(bool ok, const char* what)
+{
+    std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
+    (ok ? g_pass : g_fail)++;
+}
 int main(int argc, char** argv)
 {
     if (argc != 3) { std::fprintf(stderr, "usage: rctest resource.h dialogs.rc\n"); return 2; }
     RcResources r;
     r.LoadSymbols(slurp(argv[1]));
-    r.ParseRc(slurp(argv[2]));
+    const std::string rcText = slurp(argv[2]);
+    r.ParseRc(rcText);
     std::printf("dialogs=%zu menus=%zu controls=%zu unresolved-control-ids=%d\n",
                 r.DialogCount(), r.MenuCount(), r.ControlCount(), r.UnresolvedSymbols());
     bool ok;
@@ -382,7 +406,44 @@ int main(int argc, char** argv)
     const RcDialog* pd = ok ? r.FindDialog(p1) : nullptr;
     std::printf("\nIDD_PREFS_P1: %s (%zu controls)\n",
                 pd ? pd->caption.c_str() : "(not found)", pd ? pd->controls.size() : 0);
-    return 0;
+
+    // ── Assertions: the actual regression guard ────────────────────────────
+    std::printf("\n");
+    check(r.DialogCount() == 116, "116 dialog templates recovered");
+    check(r.MenuCount() == 14, "14 menu templates recovered");
+    check(r.ControlCount() == 1644, "1644 controls recovered");
+    check(r.UnresolvedSymbols() == 0, "no control id failed to resolve to a resource.h symbol");
+
+    // Three dialogs whose numeric id collides with another resource.h symbol
+    // (X06-F1/X06-F2): confirm each resolves under its OWN IDD_ name to the
+    // real template, not a same-valued command/menu id's stale label.  Since
+    // m_dialogs is keyed by the resolved NUMERIC id, FindDialog(symbol) alone
+    // cannot tell a correctly-labelled block from a mislabelled one that just
+    // happens to share the value -- so also grep the raw .rc TEXT for the
+    // DIALOGEX header actually carrying the right symbol, and NOT the wrong
+    // one, which is the part a decompiler regen or hand-edit can silently break.
+    auto checkDialog = [&](const char* symbol, const char* caption, const char* wrongSymbol)
+    {
+        bool found;
+        int id = r.ResolveSymbol(symbol, &found);
+        const RcDialog* dlg = found ? r.FindDialog(id) : nullptr;
+        std::string what = std::string(symbol) + " resolves to the \"" + caption + "\" dialog";
+        check(dlg && dlg->caption == caption, what.c_str());
+
+        const bool labelledRight = rcText.find(std::string(symbol) + " DIALOGEX") != std::string::npos;
+        std::string what2 = std::string(".rc labels that block ") + symbol + ", not " + wrongSymbol;
+        check(labelledRight, what2.c_str());
+
+        const bool labelledWrong = rcText.find(std::string(wrongSymbol) + " DIALOGEX") != std::string::npos;
+        std::string what3 = std::string(wrongSymbol) + " DIALOGEX no longer appears in the .rc";
+        check(!labelledWrong, what3.c_str());
+    };
+    checkDialog("IDD_REGEXP_PROBLEM", "Problem parsing regular expression", "ID_GETTING_STARTED");
+    checkDialog("IDD_GLOBAL_PREFSP13", "Lua", "IDR_PANETYPE");
+    checkDialog("IDD_PREFS_P19", "Auto-say", "CG_IDS_PROGRESS_CAPTION");
+
+    std::printf("\nWX-DIALOG-RESOURCE-TEST: %d passed, %d failed\n", g_pass, g_fail);
+    return g_fail == 0 ? 0 : 1;
 }
 #endif
 

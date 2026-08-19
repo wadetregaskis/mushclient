@@ -79,6 +79,7 @@ static const int ID_CANON_FULLSCREENMODE    = 32332;  // ID_VIEW_FULLSCREENMODE
 static const int ID_CANON_ACTIVITYLIST      = 32203;  // ID_DISPLAY_ACTIVITYLIST
 static const int ID_CANON_GAMEPREFERENCES   = 32158;  // ID_GAME_PREFERENCES
 static const int ID_CANON_NOTESWORKAREA     = 32333;  // ID_EDIT_NOTESWORKAREA
+static const int ID_CANON_LOGSESSION        = 32117;  // ID_FILE_LOGSESSION
 
 // Notepad is the one item whose id is not also the command to run.  The port's
 // standalone-notepad command is 40001, and wx_toolbar.cpp:70 already forwards
@@ -3466,19 +3467,24 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
     canon(ID_CANON_FULLSCREENMODE, wxT("Full Screen Mode"));
 
     // ── 7. this world and this session ───────────────────────────────────────
-    // Session log toggle.  This is the port's counterpart to the canonical
-    // "Log session…" (ID_FILE_LOGSESSION) slot, kept because it is what the
-    // pane already had wired; NOTE that it drives CWorldChildFrame's own log
-    // file, not the document's — see the doc entry for that finding.
+    // Windows' own slot: MENUITEM "&Log session...", ID_FILE_LOGSESSION in
+    // CG_IDR_POPUP_MUSHVIEW (mushclient_dialogs.rc:2781).  It is the SAME
+    // command as File ▸ Log Session and as the Connection menu's Start/Stop
+    // Logging arm — all three dispatch 32117 to the document, so there is one
+    // session log per world and one implementation of it.
+    //
+    // It used to be a port-local item driving CWorldChildFrame's own
+    // fopen(…,"a") onto a second file handle, which meant "Start Logging" here
+    // and "Start Logging" in the menu bar wrote different files in different
+    // formats, and only the menu bar's honoured m_bLogOutput / m_log_input /
+    // m_bLogNotes, the preamble/postamble and the scrollback dump.
+    //
+    // Checkable because the canonical update-UI ticks it while a log is open
+    // (CMUSHclientDoc::OnUpdateFileLogsession → SetCheck(m_logfile != NULL),
+    // doc.cpp:1008); the tick, not a changing caption, is how Windows says
+    // "logging is on".
     menu.AppendSeparator();
-    if (m_fn_toggle_log) {
-        bool logging = m_fn_is_logging && m_fn_is_logging();
-        wxMenuItem* itemLog = menu.Append(wxID_ANY,
-            logging ? wxT("Stop Logging") : wxT("Start Logging…"));
-        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
-            if (m_fn_toggle_log) m_fn_toggle_log();
-        }, itemLog->GetId());
-    }
+    canon(ID_CANON_LOGSESSION,      wxT("Log Session…"), true /*check item*/);
     canon(ID_CANON_ACTIVITYLIST,    wxT("Activity List"));
     canon(ID_CANON_NOTESWORKAREA,   wxT("Notepad"), false, false,
           kCanonNotepadDispatch);

@@ -37,6 +37,9 @@
 #include "MUSHview.h"
 #include "resource.h"
 #include "platform/wx_world_child.h"
+#include "platform/wx_outputpane.h"   // BuildContextMenu — the second of the two
+                                      // logging entry points
+#include "dialogs/logdlg.h"           // CLogDlg — answered by a hook below
 #include "platform/wx_mfc_hooks.h"
 #include "platform/wx_mfc_logic.h"   // RecentWorlds* — the MRU behind File ▸ Open Recent
 #include "platform/wx_toolbar.h"     // CWorldToolBars — the Connect/Disconnect toggle
@@ -813,6 +816,252 @@ int RunMenuBarSelfTest()
             check(logAns.enabled, "Start Logging is live with a world open");
             check(logAns.setText && logAns.text.find("Start") != std::string::npos,
                   "...and captions itself Start while the world is not logging");
+
+            // ── ONE session log, whichever menu opens it ───────────────────
+            // The defect this pins: "Start Logging" in the output pane's
+            // context menu used to drive CWorldChildFrame's own
+            // fopen(path, "a") -- its own banner, its own line format, and no
+            // idea the world had m_bLogOutput / m_log_input / m_bLogNotes, a
+            // preamble or a postamble -- while "Start Logging" in the menu bar
+            // ran the canonical CMUSHclientDoc::OnFileLogsession.  Two
+            // identically-named commands, two different files, two formats.
+            //
+            // Both entry points are driven for real here, through the frame's
+            // own dispatcher, and the resulting files are compared BYTE FOR
+            // BYTE.  This is the only harness that can: the equality is a
+            // property of the dispatch, and the dispatcher only exists on the
+            // frame the MDI bridge hook builds.
+            //
+            // The two modals the canonical handler puts up are answered by
+            // hooks (the established pattern -- world_frame_selftest.cpp:2240):
+            // CLogDlg accepts whatever OnFileLogsession seeded it with, which
+            // is exactly the world's own logging options, and the Save panel
+            // answers with the path this run wants.
+            {
+                CWorldChildFrame* const savedChild = child;
+                COutputPane* const pane = savedChild->OutputPane();
+                check(pane != NULL, "log unification: the world has an output pane");
+
+                intptr_t (*const savedRunDlg)(void*, unsigned) = g_run_mfc_dialog;
+                char* (*const savedFileDlg)(bool, const char*, const char*,
+                                            const char*, const char*, bool, bool)
+                    = g_wxhook_file_dialog;
+                const unsigned savedConfirm = App.m_bConfirmLogFileClose;
+                wxWindow* const savedTop =
+                    wxTheApp ? wxTheApp->GetTopWindow() : NULL;
+
+                // Accept the seeded options, and DO NOT dump the scrollback:
+                // the buffer differs between runs (each run logs into it), and
+                // this block is about what live logging writes.
+                g_run_mfc_dialog = [](void* self, unsigned idd) -> intptr_t {
+                    if (idd != IDD_LINE_COUNT) return IDCANCEL;
+                    ((CLogDlg*) self)->m_lines = 0;
+                    return IDOK;
+                };
+                // Where the Save panel "puts" the log.  One slot, rewritten
+                // before each run.
+                static std::string s_logPath;
+                g_wxhook_file_dialog = [](bool, const char*, const char*,
+                                          const char*, const char*, bool,
+                                          bool) -> char* {
+                    return strdup(s_logPath.c_str());
+                };
+                App.m_bConfirmLogFileClose = 0;   // no modal on the close half
+                if (wxTheApp) wxTheApp->SetTopWindow(frame);
+
+                // Fixed, %-free markers: FormatTime leaves a string with no
+                // strftime code alone, so every byte below is deterministic and
+                // each logged CATEGORY is identifiable in the output.
+                doc->m_strLogFilePreamble    = "PREAMBLE";
+                doc->m_strLogFilePostamble   = "POSTAMBLE";
+                doc->m_strLogLinePreambleOutput = "OUT:";
+                doc->m_strLogLinePreambleInput  = "IN:";
+                doc->m_strLogLinePreambleNotes  = "NOTE:";
+                doc->m_strLogLinePostambleOutput = "";
+                doc->m_strLogLinePostambleInput  = "";
+                doc->m_strLogLinePostambleNotes  = "";
+                doc->m_bWriteWorldNameToLog  = 0;   // it embeds the wall clock
+                doc->m_bLogHTML              = 0;
+                doc->m_bLogRaw               = FALSE;
+                doc->m_strAutoLogFileName    = "";
+
+                auto slurp = [](const std::string& p) -> std::string {
+                    std::string out;
+                    if (FILE* f = fopen(p.c_str(), "rb")) {
+                        char buf[4096];
+                        size_t n;
+                        while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+                            out.append(buf, n);
+                        fclose(f);
+                    }
+                    return out;
+                };
+
+                // Open through the given entry point, log one of each kind of
+                // line, close through the same entry point, return the bytes.
+                enum EntryPoint { kMenuBar, kContextMenu };
+                auto runSession = [&](EntryPoint via, const char* tag) -> std::string {
+                    char path[256];
+                    snprintf(path, sizeof path, "/tmp/mc_selftest_log_%s_%d.txt",
+                             tag, (int) getpid());
+                    remove(path);
+                    s_logPath = path;
+
+                    auto toggle = [&]() {
+                        if (via == kMenuBar) {
+                            // Connection ▸ Start/Stop Logging -- the item found
+                            // by label above, so its own port id and the arm
+                            // that forwards it to 32117 are both in the chain,
+                            // not just the canonical id.
+                            fireCmd(frame, log ? log->id : 0);
+                        } else {
+                            // The output pane's right-click item, chosen the
+                            // way a click chooses it.
+                            wxMenu menu;
+                            pane->BuildContextMenu(menu, 0,
+                                                   pane->LineHeight() / 2);
+                            wxCommandEvent pick(wxEVT_MENU, ID_FILE_LOGSESSION);
+                            menu.ProcessEvent(pick);
+                        }
+                    };
+
+                    toggle();
+                    if (doc->m_logfile != NULL) {
+                        doc->Note("a note");
+                        doc->LogCommand("a command\r\n");   // ENDLINE
+                        doc->DisplayMsg("some output\n", 12, 0);
+                        doc->UpdateAllViews(NULL);
+                        wxYield();
+                    }
+                    toggle();
+
+                    const std::string bytes = slurp(path);
+                    remove(path);
+                    return bytes;
+                };
+
+                // ── all three categories on ────────────────────────────────
+                doc->m_bLogOutput = 1;
+                doc->m_log_input  = 1;
+                doc->m_bLogNotes  = 1;
+                const std::string barAll = runSession(kMenuBar,     "bar_all");
+                const std::string ctxAll = runSession(kContextMenu, "ctx_all");
+
+                check(!barAll.empty(),
+                      "log unification: the menu bar's entry point wrote a log");
+                check(!ctxAll.empty(),
+                      "log unification: so did the context menu's");
+
+                // THE assertion.  Same world, same settings, same content --
+                // so the same bytes, or the two commands are not the same
+                // command.
+                check(barAll == ctxAll,
+                      "LOG PARITY: both entry points produce a byte-identical "
+                      "log file for the same settings");
+
+                check(barAll.find("PREAMBLE") != std::string::npos &&
+                      barAll.find("POSTAMBLE") != std::string::npos,
+                      "log unification: the preamble and postamble are both "
+                      "written (the port's own log had neither)");
+                check(barAll.find("OUT:")  != std::string::npos &&
+                      barAll.find("IN:")   != std::string::npos &&
+                      barAll.find("NOTE:") != std::string::npos,
+                      "log unification: output, input and notes are all logged "
+                      "when all three options are on");
+
+                // ── notes only: the options really are consulted ───────────
+                // Without this the equality above would also hold for two
+                // implementations that BOTH ignored the world's options.
+                doc->m_bLogOutput = 0;
+                doc->m_log_input  = 0;
+                doc->m_bLogNotes  = 1;
+                const std::string barNotes = runSession(kMenuBar,     "bar_notes");
+                const std::string ctxNotes = runSession(kContextMenu, "ctx_notes");
+
+                check(barNotes == ctxNotes,
+                      "LOG PARITY: ...and again with a different set of logging "
+                      "options, so both read the SAME options");
+                check(barNotes != barAll,
+                      "log unification: turning two options off really changed "
+                      "the file (so the equality above is not vacuous)");
+                check(barNotes.find("NOTE:") != std::string::npos,
+                      "log unification: notes still logged with log_notes on");
+                check(barNotes.find("OUT:") == std::string::npos &&
+                      barNotes.find("IN:")  == std::string::npos,
+                      "...while output and input are honoured as OFF, from "
+                      "both entry points");
+
+                // ── the TICK, which is how Windows says "logging" ──────────
+                // OnUpdateFileLogsession does SetCheck (m_logfile != NULL)
+                // (doc.cpp:1008).  The port's kCanonCmds row declared 32117
+                // uncheckable, and wx_canonical_menu_ui_state forces `checked`
+                // back to -1 for an uncheckable row -- so the tick never
+                // reached the File menu's item nor the output pane's copy of
+                // it, and nothing said a log was open.  Probed with a log
+                // really open and really closed, so "never ticks" and "always
+                // ticks" both fail.
+                {
+                    doc->m_bLogOutput = 1;
+                    doc->m_log_input  = 1;
+                    doc->m_bLogNotes  = 1;
+                    char path[256];
+                    snprintf(path, sizeof path, "/tmp/mc_selftest_log_tick_%d.txt",
+                             (int) getpid());
+                    remove(path);
+
+                    const UiAnswer shut = probeUi(frame, ID_FILE_LOGSESSION);
+                    check(shut.setChecked && !shut.checked,
+                          "log tick: Log Session is a check item, unticked with "
+                          "no log open");
+
+                    doc->OpenLog(path, FALSE);
+                    check(doc->m_logfile != NULL,
+                          "log tick: a log opened for the ticked half");
+                    const UiAnswer open = probeUi(frame, ID_FILE_LOGSESSION);
+                    check(open.setChecked && open.checked,
+                          "log tick: ...and TICKED while one is (was: never, "
+                          "the table said uncheckable)");
+                    doc->CloseLog();
+                    remove(path);
+                }
+
+                // Whichever entry point opened it, closing a world writes the
+                // postamble and lets go of the handle -- the frame's teardown
+                // hook is the document's CloseLog now, not a second one.
+                doc->m_bLogOutput = 1;
+                doc->m_log_input  = 1;
+                doc->m_bLogNotes  = 1;
+                {
+                    char path[256];
+                    snprintf(path, sizeof path, "/tmp/mc_selftest_log_close_%d.txt",
+                             (int) getpid());
+                    remove(path);
+                    s_logPath = path;
+                    wxMenu menu;
+                    pane->BuildContextMenu(menu, 0, pane->LineHeight() / 2);
+                    wxCommandEvent pick(wxEVT_MENU, ID_FILE_LOGSESSION);
+                    menu.ProcessEvent(pick);
+                    check(doc->m_logfile != NULL,
+                          "log teardown: the context menu opened a log");
+                    savedChild->PersistBeforeTeardown();
+                    check(doc->m_logfile == NULL,
+                          "log teardown: closing the world closed THAT log "
+                          "(one implementation, so one thing to close)");
+                    check(slurp(path).find("POSTAMBLE") != std::string::npos,
+                          "log teardown: ...after writing the postamble");
+                    remove(path);
+                }
+
+                if (wxTheApp) wxTheApp->SetTopWindow(savedTop);
+                App.m_bConfirmLogFileClose = savedConfirm;
+                g_wxhook_file_dialog = savedFileDlg;
+                g_run_mfc_dialog     = savedRunDlg;
+                doc->m_strLogFilePreamble  = "";
+                doc->m_strLogFilePostamble = "";
+                doc->m_strLogLinePreambleOutput = "";
+                doc->m_strLogLinePreambleInput  = "";
+                doc->m_strLogLinePreambleNotes  = "";
+            }
 
             // ── Display ▸ Stop Sound Playing and its two new halves ─────────
             // Stop Sound Playing is handled by BOTH doc.cpp and mainfrm.cpp, and

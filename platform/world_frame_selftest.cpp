@@ -35,6 +35,9 @@
 #include "platform/world_close_decision.h"  // QueryThenCloseAllWorlds
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box — answer the
                                      // clear-buffer confirmation prompt
+#include "platform/menu_ui_rules.h"  // kPortRuleLogToggle — the OTHER reader of
+                                     // m_logfile, which must agree with the
+                                     // status bar's log pane
 #include "dialogs/TextAttributesDlg.h"    // Display ▸ Text Attributes
 #include "dialogs/HighlightPhraseDlg.h"   // Display ▸ Highlight Word
 #include "scripting/errors.h"             // eOK / eBadParameter
@@ -3232,29 +3235,65 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
-    // ── the log-toggle default filename shares its sanitiser with history ───
-    // (R2-01-F5 / R2-06-F10): the world-name-to-filename rule used to be
-    // copy-pasted a second time here instead of calling
-    // SanitiseWorldNameForFile, so the two copies could silently drift.
-    // DefaultLogFileName is the small named helper that replaced the inline
-    // copy -- static, so it can be pinned without opening the real
-    // wxFileDialog the toggle-log handler itself pops (which cannot be
-    // answered headlessly).
+    // ── "is logging active?" is ONE question with ONE answer ───────────────
+    // The frame used to keep a session log of its own -- its own FILE*, its own
+    // format, opened only from the output pane's context menu -- so the status
+    // bar's log pane reported THAT file while the Connection menu's caption
+    // (menu_ui_rules.cpp, which reads m_logfile) reported the document's.
+    // Start a log from one menu and the other still said "not logging".
+    //
+    // Both read CMUSHclientDoc::m_logfile now, and this block drives the real
+    // document member without telling the frame anything, so a frame that had
+    // kept a flag of its own would fail every check below.
     {
-        const std::string withPunct =
-            CWorldChildFrame::DefaultLogFileName("Broken Lands!", (time_t) 0);
-        check(withPunct.find("Broken_Lands_") != std::string::npos,
-              "log filename: space and '!' collapse to a single underscore");
-        check(withPunct.find(' ')  == std::string::npos &&
-              withPunct.find('!')  == std::string::npos,
-              "...with no raw space or '!' surviving into the filename");
-        check(withPunct.find("Lands__") == std::string::npos,
-              "...and no trailing underscore is left before the timestamp");
+        char logPath[256];
+        snprintf(logPath, sizeof(logPath), "/tmp/mc_selftest_logstate_%d.txt",
+                 (int) getpid());
+        remove(logPath);
 
-        const std::string empty =
-            CWorldChildFrame::DefaultLogFileName("", (time_t) 0);
-        check(empty.rfind("world_", 0) == 0,
-              "log filename: an empty world name falls back to \"world_\"");
+        const char* offText = PortMenuRuleUiState(kPortRuleLogToggle, doc).text;
+        check(!child->IsLogging(),
+              "log state: no session log is open to begin with");
+        child->UpdateStatusBar();
+        const wxString quiet = child->StatusPane(CWorldChildFrame::kStatusPaneLog);
+        check(quiet.IsEmpty(),
+              "log state: ...so the status bar's log pane is blank");
+        check(offText != NULL && strcmp(offText, "Start &Logging\xE2\x80\xA6") == 0,
+              "log state: ...and the Connection menu offers to START logging");
+
+        // Open a real log the canonical way -- the same OpenLog the
+        // ID_FILE_LOGSESSION handler and world.OpenLog both reach.
+        check(doc->OpenLog(logPath, FALSE) == eOK,
+              "log state: the canonical OpenLog opened a session log");
+        check(child->IsLogging(),
+              "log state: the frame reports logging from the DOCUMENT's handle");
+
+        child->UpdateStatusBar();
+        const wxString lit = child->StatusPane(CWorldChildFrame::kStatusPaneLog);
+        check(!lit.IsEmpty(),
+              "log state: ...and the status bar's log pane lights up");
+        check(lit != quiet,
+              "log state: ...which is a real change, not the same text twice");
+
+        // The Connection menu's caption is the OTHER reader of the same field,
+        // and it moved from the same single write.
+        const char* onText = PortMenuRuleUiState(kPortRuleLogToggle, doc).text;
+        check(onText != NULL && strcmp(onText, "Stop &Logging") == 0,
+              "log state: ...as does the menu caption, from that one open");
+
+        check(doc->CloseLog() == eOK,
+              "log state: CloseLog closes it (and writes any postamble)");
+        check(!child->IsLogging(),
+              "log state: closing the document's log clears the frame's answer");
+        child->UpdateStatusBar();
+        check(child->StatusPane(CWorldChildFrame::kStatusPaneLog).IsEmpty(),
+              "log state: ...and the pane goes blank again");
+        const char* backText = PortMenuRuleUiState(kPortRuleLogToggle, doc).text;
+        check(backText != NULL &&
+              strcmp(backText, "Start &Logging\xE2\x80\xA6") == 0,
+              "log state: ...and so does the caption");
+
+        remove(logPath);
     }
 
     // ── the connected-time pane: current connection, cumulative in parens ──

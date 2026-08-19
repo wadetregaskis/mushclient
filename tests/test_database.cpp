@@ -30,6 +30,7 @@ extern "C" {
 #include <cstring>
 #include <cstdio>
 #include <string>
+#include <sys/resource.h>   // getrusage (RSS leak check)
 
 lua_State* MakeLuaState();
 int RegisterLuaRoutines(lua_State*);
@@ -149,6 +150,48 @@ TEST(DatabaseTest, OpenFailureDoesNotRegisterDatabase)
     // Consequently the id remains unknown:
     EXPECT_LUA_NUM(L, -1, "return world.DatabaseClose('bad')");
     lua_close(L);
+}
+
+// sqlite3_open_v2 allocates a connection handle even when it fails (every
+// case but out-of-memory) -- the caller must sqlite3_close it regardless.
+// DatabaseOpen's failure branch used to just `delete pDatabase`, dropping
+// the sqlite3* it had already been handed and leaking libsqlite3's internal
+// state once per failed open. Same-name-never-registered means every call
+// below re-takes the "not found, allocate + fail to open" path, so a
+// reintroduced leak shows up as RSS growth -- same shape as
+// LuaScripting.StringReturningMethodsDoNotLeakTheirVariant.
+TEST(DatabaseTest, OpenFailureClosesTheHandleSqliteAllocated)
+{
+    CMUSHclientDoc doc;
+
+    auto rss = [] () -> long {
+        // ru_maxrss is a high-water mark, which is what we want: it cannot
+        // fall back and hide a leak that has already happened.
+        struct rusage ru;
+        getrusage(RUSAGE_SELF, &ru);
+        return (long) ru.ru_maxrss;      // bytes on macOS, KB on Linux
+    };
+
+    auto open_failing = [&] () {
+        doc.DatabaseOpen("bad", "/nonexistent_mc_dir/x.db", 2);
+    };
+
+    for (int i = 0; i < 500; i++)        // warm up the allocator
+        open_failing();
+
+    const long before = rss();
+    for (int i = 0; i < 20000; i++)
+        open_failing();
+    const long after = rss();
+
+    EXPECT_EQ((size_t)0, doc.m_Databases.size());   // still never registered
+
+#ifdef __APPLE__
+    const long budget = 2L * 1024 * 1024;      // bytes
+#else
+    const long budget = 2L * 1024;             // KB
+#endif
+    EXPECT_LT(after - before, budget);
 }
 
 // ── DatabaseClose ────────────────────────────────────────────────────────

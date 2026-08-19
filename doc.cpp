@@ -2575,8 +2575,13 @@ CString strStatus = TFormat ("Recalling: %s", (LPCTSTR) strSearchString);
     strMessage.Empty ();
     }
 
+  if (regexp)
+    {
+    delete regexp;    // get rid of compiled regular expression
+    regexp = NULL;
+    }
 
-  Frame.SetStatusNormal (); 
+  Frame.SetStatusNormal ();
 
   if (pProgressDlg)
     {

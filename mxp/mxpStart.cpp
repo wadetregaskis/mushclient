@@ -170,7 +170,10 @@ CString strVariable;
     pStyle->iBackColour = iBackColour; 
 
     if (bNotWanted)
+      {
+      DELETE_LIST (ArgumentList);
       return;   // they didn't want to go ahead with this tag
+      }
 
     }
 

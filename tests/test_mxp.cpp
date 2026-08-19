@@ -13,7 +13,31 @@
 #include "doc.h"
 #include "scripting/errors.h"
 
+#if defined(__APPLE__)
+#include <malloc/malloc.h>   // malloc_zone_statistics (exact leak checks)
+#else
+#include <malloc.h>          // mallinfo2 (exact leak checks)
+#endif
+
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+// Exact count of blocks (macOS) / bytes (Linux) the heap currently has
+// outstanding. Unlike an RSS high-water mark this is precise enough to
+// bracket a SINGLE call and see a handful of leaked objects -- needed
+// because the MXP ArgumentList leaks below don't accumulate across repeated
+// calls (see the two leak tests for why), so a loop-and-watch-RSS-grow
+// budget can't see them.
+static size_t live_heap_blocks()
+{
+#if defined(__APPLE__)
+    malloc_statistics_t st;
+    malloc_zone_statistics(malloc_default_zone(), &st);
+    return (size_t) st.blocks_in_use;
+#else
+    struct mallinfo2 mi = mallinfo2();
+    return (size_t) mi.uordblks;
+#endif
+}
 
 static void make_doc(CMUSHclientDoc& doc)
 {
@@ -1149,6 +1173,47 @@ TEST(MXPDefs, CannotRedefineBuiltinElement)
     EXPECT_TRUE(dbg.contains("Cannot redefine built-in MXP element"));
 }
 
+// mxpDefs.cpp: MXP_Element's function-static ArgumentList used to leak on
+// two of its early returns -- "cannot redefine built-in element" (the arm
+// exercised above) and the "DELETE keyword" all-done return -- unlike the
+// BuildArgumentList-failure return right above them, which already called
+// DELETE_LIST. "<!ELEMENT b '<I>'>" leaves one positional CArgument ('<I>')
+// in the list; "<!ELEMENT anything DELETE>" leaves the DELETE keyword
+// argument itself.
+//
+// NOTE this is NOT a loop-and-watch-RSS-grow test: BuildArgumentList's own
+// first act on every call is DELETE_LIST(ArgumentList) (mxputils.cpp
+// "first get rid of old arguments"), so a leaked list from one call is
+// silently drained by the NEXT call before it builds fresh arguments --
+// repeating the buggy call never accumulates. What is real, and what this
+// pins, is that immediately after ONE buggy call the list is left
+// non-empty where it should be empty; live_heap_blocks() is sampled around
+// exactly one call each, bracketed by a "flush" (a normal, fully-completing
+// definition) that drains the list through the code path that was never
+// broken, so each `before` is a known-empty baseline rather than whatever
+// an earlier test left behind.
+TEST(MXPDefs, RedefinitionEarlyReturnsDoNotLeakTheArgumentList)
+{
+    CMUSHclientDoc doc; make_stream_doc(doc);
+    doc.m_iMXPdebugLevel = DBG_NONE;   // keep MXP_error's notepad append out
+                                       // of the way -- this test is about
+                                       // the ArgumentList, not the debug log
+
+    auto flush = [&] () { stream(doc, "<!ELEMENT flush01 '<I>'>"); };
+
+    flush();
+    size_t before1 = live_heap_blocks();
+    stream(doc, "<!ELEMENT b '<I>'>");             // cannot-redefine-builtin arm
+    size_t after1 = live_heap_blocks();
+    EXPECT_EQ(before1, after1);
+
+    flush();
+    size_t before2 = live_heap_blocks();
+    stream(doc, "<!ELEMENT x DELETE>");      // DELETE-keyword arm
+    size_t after2 = live_heap_blocks();
+    EXPECT_EQ(before2, after2);
+}
+
 TEST(MXPDefs, DefinitionRefusedOutsideSecureMode)
 {
     MxpDebugCapture dbg;
@@ -1619,6 +1684,65 @@ TEST(MxpR4, OpenTagCallbackReceivesFormattedArguments)
         EXPECT_TRUE(strstr(a, "fore=") != nullptr);
     }
     lua_pop(L, 1);
+}
+
+// mxpStart.cpp: MXP_StartTag's function-static ArgumentList used to leak
+// whenever the plugin/script open-tag hook vetoes the tag (bNotWanted ==
+// true) -- unlike the BuildArgumentList-failure return just above it, which
+// already called DELETE_LIST. That branch only runs when pAtomicElement ==
+// NULL ("atomic elements have their script called in MXP_OpenAtomicTag
+// [instead]" -- the comment right above it), so the tag under test MUST be a
+// custom (user-defined, non-built-in) element: a built-in like <color> or
+// <b> never reaches this call site at all.
+//
+// NOT a loop-and-watch-RSS-grow test, for the same reason as
+// MXPDefs.RedefinitionEarlyReturnsDoNotLeakTheArgumentList: BuildArgumentList
+// drains the list itself on every call (mxputils.cpp), so a leaked list from
+// one vetoed tag is silently freed by the next tag's BuildArgumentList before
+// it builds fresh arguments -- repeating the veto never accumulates. What is
+// real is that immediately after ONE vetoed call the list is left non-empty.
+// live_heap_blocks() is sampled around exactly one call, using a tag with no
+// enclosed text/close/newline (so nothing about the scrollback changes) and a
+// forced Lua GC cycle on each side (so Lua's own per-call garbage -- the
+// arguments table handed to OnOpen -- can't read as a false leak). The
+// baseline is established by flushing through an UNRELATED doc with no veto
+// handler installed, so the flush's own open tag completes normally and
+// drains the (process-wide, function-static) list via the code path that was
+// never broken.
+TEST(MxpR4, OpenTagVetoDoesNotLeakTheArgumentList)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    stream(doc, "<!ELEMENT mytag '<B>'>");   // custom -> pAtomicElement stays NULL
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnOpen(name, a) return true end\n"), "<test>"));  // veto everything
+    doc.m_ScriptEngine = engine;
+    doc.m_strOnMXP_OpenTag = "OnOpen";
+    doc.FindAllEntryPoints();
+
+    // The flush must be the LAST thing to touch the (process-wide,
+    // function-static) list before "before" is sampled -- an earlier attempt
+    // warmed up THIS doc's own veto path first, which self-contaminated: the
+    // measured call's own BuildArgumentList silently freed the warm-up call's
+    // leak before building its own, cancelling the delta and passing even
+    // with the bug. A SEPARATE doc with no veto handler installed completes
+    // normally and drains the list through the code path that was never
+    // broken, giving a known-clean baseline.
+    {
+    CMUSHclientDoc flushDoc; make_pipe_doc(flushDoc);
+    stream(flushDoc, "<!ELEMENT mytag '<B>'>");
+    mud(flushDoc, "<mytag foo=bar>");
+    }
+
+    lua_gc(engine->L, LUA_GCCOLLECT, 0);
+    size_t before = live_heap_blocks();
+    mud(doc, "<mytag foo=bar>");   // no enclosed text, no close, no \n
+    lua_gc(engine->L, LUA_GCCOLLECT, 0);
+    size_t after = live_heap_blocks();
+
+    EXPECT_EQ(before, after);
 }
 #endif
 

@@ -10,14 +10,14 @@
 // no-ops, no out-of-line symbols).  So these bodies MUST be compiled
 // MUSHCLIENT_FULL_BUILD to match the shape doc.cpp calls them through.
 //
-// ─── WHY THIS TU IS NOT (YET) IN MUSHCORE ─────────────────────────────────────
-// The current mushcore is built WITHOUT MUSHCLIENT_FULL_BUILD.  Adding a
-// full-build GDI TU into it would put two incompatible CDC/CFont/CBitmap *shapes*
-// in one library (ODR fork → the exact class of runtime SIGSEGV the memo warns
-// about).  So this TU is NOT wired into MUSHCORE_SOURCES.  It is proven in
-// isolation by the dedicated full-build test target `test_gdi_headless`
-// (tests/CMakeLists.txt), and B-3 folds it into MUSHCORE_SOURCES at the atomic
-// flip, when the whole library becomes MUSHCLIENT_FULL_BUILD and the fork closes.
+// ─── WHERE THIS TU LIVES POST-B-3 ──────────────────────────────────────────────
+// mushcore itself is built WITH MUSHCLIENT_FULL_BUILD (the B-3 flip landed), and
+// this TU is one of MUSHCORE_TESTSUPPORT_SOURCES (CMakeLists.txt) — the headless
+// fakes linked into all 40 test executables, never into mushgui (wx_gdi_compat.cpp
+// owns these symbols there instead; the two never co-link).  `test_gdi_headless`
+// still exists as one of those 40 executables, but this is not a standalone
+// target — every other test binary that touches CDC/CFont/CBitmap gets its
+// definitions from here too.
 //
 // ─── WHAT THESE BODIES DO (and why there is no wx / no cpu_raster) ────────────
 // On mushgui these same symbols are the wx-backed impls in wx_gdi_compat.cpp
@@ -56,13 +56,14 @@
 // uninitialised struct.
 //
 // ─── Duplicate audit ──────────────────────────────────────────────────────────
-// Compiled ONLY into the standalone test target `test_gdi_headless` (never into
-// mushcore, mushapp or mushgui — wx_gdi_compat.cpp owns these there).  Under
+// Compiled into mushcore_testsupport, linked into every one of the 40 test
+// executables (never into mushgui — wx_gdi_compat.cpp owns these symbols there,
+// via mushgui_adapters; the two adapter sets never co-link).  Under
 // MUSHCLIENT_FULL_BUILD the mfc_ui.h GDI members are declarations only, so these
 // are the sole definitions in the test link; there is no other headless provider
 // of CDC/CFont/CBitmap/CGdiObject out-of-line symbols (windows_stubs.cpp /
-// doc_headless_stubs.cpp / doc_gui_method_stubs.cpp / doc_flip_gui_stubs.cpp
-// provide none — verified by grep).
+// doc_headless_stubs.cpp / doc_flip_gui_stubs.cpp provide none — verified by grep;
+// doc_gui_method_stubs.cpp no longer exists, adopted 2026-08).
 
 #if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)
 

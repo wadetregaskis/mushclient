@@ -1,5 +1,10 @@
 
 // genprint.cpp - generalised printing
+//
+// Dead on the port: every entry point here is called only from mushview.cpp,
+// part of the dead-view family (CMUSHView is never constructed off-Windows).
+// The port's real printing path is platform/wx_print.cpp, a separate
+// implementation.
 
 #include "stdafx.h"
 #include <afxext.h>

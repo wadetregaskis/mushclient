@@ -703,7 +703,6 @@ if(NOT WIN32)
         # dialogs/ProgDlg.cpp is in CORE_SOURCES — adopted 2026-08-07
         dialogs/ProxyServerPasswordDlg.cpp
         dialogs/QuickConnectDlg.cpp
-        dialogs/RecallDlg.cpp
         dialogs/RecallSearchDlg.cpp
         dialogs/RegexpProblemDlg.cpp
         dialogs/ScriptErrorDlg.cpp

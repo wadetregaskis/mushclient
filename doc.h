@@ -954,7 +954,7 @@ public:
 	unsigned short m_bUseDefaultTimers;
 	unsigned short m_bUseDefaultInputFont;
 
-  CString m_strCustomColourName [255];    // custom colour names
+  CString m_strCustomColourName [MAX_CUSTOM];    // custom colour names
   CString m_strTerminalIdentification;    // for telnet negotiation, defaults to ANSI
 
   // new in version 14
@@ -1289,11 +1289,6 @@ public:
   bool m_bClient_got_IAC_DONT [256];     // client got IAC DONT x
   bool m_bClient_got_IAC_WILL [256];     // client got IAC WILL x
   bool m_bClient_got_IAC_WONT [256];     // client got IAC WONT x
-
-  // MSP (MUD Sound Protocol) stuff
-  bool m_bMSP;  // true if using MSP
-
-  // end MSP stuff
 
   // MXP (MUD Extension Protocol) stuff
 

@@ -1113,6 +1113,65 @@ TEST(LuaSurface, MouseOverCallbackMayDeleteItsOwnHotspot)
     delete engine;
 }
 
+// WindowAddHotspot's re-entrancy guard used to be a function-local static, i.e.
+// ONE flag for the whole process rather than one per world.  A hotspot created
+// under the cursor fires its MouseOver immediately — through
+// pal::IWorldView::mouseMoveMiniWindow — and a script that added a hotspot to a
+// different, simultaneously-open world from there was refused eItemInUse.
+//
+// This view is where that script runs: it re-enters WindowAddHotspot from
+// inside the create-under-the-cursor re-detect, in whichever document it is
+// pointed at, so the fix and its control take the identical code path.
+struct ReentrantHotspotView : FakeWorldView {
+    CMUSHclientDoc * target;   // whose WindowAddHotspot to call from the callback
+    bool             fired;    // one nested call only, so B cannot bounce back
+    long             nested;   // ...and what it answered
+
+    ReentrantHotspotView () : target (NULL), fired (false), nested (-999) {}
+
+    void mouseMoveMiniWindow (long x, long y) override {
+        FakeWorldView::mouseMoveMiniWindow (x, y);
+        if (fired || !target)
+            return;
+        fired = true;
+        nested = target->WindowAddHotspot ("mw", "nested", 0, 0, 10, 10,
+                                           "", "", "", "", "", "", 0, 0);
+    }
+};
+
+TEST(LuaSurface, WindowAddHotspotGuardIsPerDocument)
+{
+    CMUSHclientDoc docA, docB;
+    ReentrantHotspotView view;
+    docA.m_pWorldView = &view;
+
+    ASSERT_EQ((long) eOK, docA.WindowCreate("mw", 0, 0, 20, 20, 0, 0, 0));
+    ASSERT_EQ((long) eOK, docB.WindowCreate("mw", 0, 0, 20, 20, 0, 0, 0));
+
+    // A hotspot at the origin contains the miniwindow's last mouse position,
+    // which is where the re-detect comes from.
+    view.target = &docB;
+    EXPECT_EQ((long) eOK, docA.WindowAddHotspot("mw", "h", 0, 0, 10, 10,
+                                                "", "", "", "", "", "", 0, 0));
+    // If the re-detect never ran, nothing below proves anything — so this is an
+    // ASSERT, not an EXPECT.
+    ASSERT_TRUE(view.fired);
+    EXPECT_EQ((long) eOK, view.nested);
+    EXPECT_EQ((long) eOK, docB.WindowDeleteHotspot("mw", "nested"));
+
+    // Control: re-entering A's OWN WindowAddHotspot is still refused, which is
+    // the whole point of the guard — so simply deleting it fails here.
+    view.fired  = false;
+    view.nested = -999;
+    view.target = &docA;
+    EXPECT_EQ((long) eOK, docA.WindowAddHotspot("mw", "h2", 0, 0, 10, 10,
+                                                "", "", "", "", "", "", 0, 0));
+    ASSERT_TRUE(view.fired);
+    EXPECT_EQ((long) eItemInUse, view.nested);
+
+    docA.m_pWorldView = NULL;
+}
+
 // Stage 2: the pixels are real.
 //
 // platform/headless_surface.cpp installs pal::CpuRaster as the headless

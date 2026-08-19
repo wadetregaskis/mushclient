@@ -1528,6 +1528,13 @@ public:
   // (exactly one view per doc, so behaviour is identical).
   string m_sPreviousMiniWindow;
 
+  // WindowAddHotspot re-entrancy guard.  A hotspot created under the cursor
+  // fires its MouseOver at once, and that script may add another hotspot; the
+  // guard stops that recursing for ever.  It has to be per-document: as a
+  // function-local static it was shared by every open world, so a MouseOver in
+  // one world could not add a hotspot to another.
+  bool m_bInWindowAddHotspot;
+
   // sort miniwindows into Z-order
   void SortWindows (void);
 

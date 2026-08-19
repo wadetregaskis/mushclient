@@ -42,6 +42,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 31 | `world.BlendPixel` mode 64 (HSL) ignores the blend colour entirely | this commit | methods_pixel_shared.cpp ← methods_miniwindows.cpp `CMUSHclientDoc::BlendPixel` |
 | 32 | `world.WindowWrite` writes a .bmp strict readers refuse to open | this commit | miniwindow.cpp `CMiniWindow::Write` |
 | 33 | `Blend_ColorBurn`'s underflow clamp is dead code (unsigned comparison) | this commit | blending.h `Blend_ColorBurn` |
+| 34 | `WindowAddHotspot`'s re-entrancy guard is shared by every open world | this commit | methods_miniwindows.cpp `CMUSHclientDoc::WindowAddHotspot` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -783,3 +784,14 @@ corrupts modes 7 (ColorBurn), 9 (InverseColorBurn) and 20 (VividLight) of both
 `world.WindowBlendImage` and `world.BlendPixel`.
 **Fix:** cast the division result to `long` so the subtraction is signed, in the
 test and in the value — the shape `Blend_Freeze` already uses two lines below.
+
+## 34 — `WindowAddHotspot`'s re-entrancy guard is shared by every open world (this commit)
+**Bug:** the guard that stops a MouseOver callback recursing back into
+`WindowAddHotspot` for ever is a function-local `static bool`, so it is one flag
+for the whole process rather than one per document.  While world A is inside
+`WindowAddHotspot`, a MouseOver script that adds a hotspot to an unrelated,
+simultaneously-open world B is refused with `eItemInUse` — a world's hotspots
+depending on what another world happens to be doing.
+**Fix:** make it the `CMUSHclientDoc` member `m_bInWindowAddHotspot`, cleared in
+the constructor.  Per-document scope still terminates any A→B→A recursion,
+because the document's own flag is set on the way in.

@@ -2709,7 +2709,14 @@ static void GeneralFilter (unsigned char * inbuf, long iWidth, long iHeight,
        for (col = 0; col < 4; col++)
           window [col + 1] = pi [min (max (rgb + (col * 3) - 6, 0), iLastByte - 1)];
 
-       for (col = 0; col < iLastByte - 4; col += 3)
+       // Every pixel column, including the last.  The bound used to be
+       // `iLastByte - 4`, which stops at the largest multiple of 3 strictly
+       // below 3*iWidth - 4 -- that is pixel iWidth - 2, so the RIGHTMOST pixel
+       // column was read (as a neighbour) but never written, and stayed
+       // unfiltered.  Writing it is in range (col + rgb <= iLastByte - 1) and
+       // the look-ahead read is already clamped to iLastByte - 1 below, which is
+       // the same edge clamp the last two columns have always used.
+       for (col = 0; col < iLastByte; col += 3)
          {
          // we add 3 to get to the next pixel in that colour (R, G or B)
 
@@ -2752,7 +2759,14 @@ static void GeneralFilter (unsigned char * inbuf, long iWidth, long iHeight,
       for (row = 0; row < iHeight; row++)
        {
 
-       long from = min (max (row + 3, 0), iHeight - 1);
+       // Look TWO rows ahead, matching the horizontal pass (which reads
+       // col + rgb + 6, i.e. +2 pixels) and the +1 the preload above leaves in
+       // window [4].  This used to read row + 3: after the shift the window then
+       // held rows -1..+3 rather than -2..+2, so the kernel was centred one row
+       // off the row it writes, and row 2 of the region was never sampled at all
+       // (the preload covers rows -2..+1 -> 0,0,0,1 and the loop then started at
+       // 3).  The clamp keeps the last two rows reading the bottom row, as before.
+       long from = min (max (row + 2, 0), iHeight - 1);
        pi = inbuf + col + (from * iPerLine);
 
        // insert right-most byte into window

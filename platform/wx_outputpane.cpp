@@ -2766,16 +2766,16 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
     evt.Skip();
 }
 
-// ── OnMiddleUp ────────────────────────────────────────────────────────────────
-// Middle-click: paste the primary selection (X11/Linux) or system clipboard
-// (macOS) into the command input bar — mirrors standard terminal behaviour.
-// The text is inserted verbatim without sending it to the MUD; the user can
-// review and edit it before pressing Enter.
-// Middle button.  MW_MOUSE_MIDDLE (0x200) was never dispatched at all, so a
-// plugin hotspot with a middle-click callback never fired and the click fell
-// through to the paste below -- which Windows never does over the output window
-// (CView::OnMButtonDown/Up default to nothing).  Windows dispatches both edges:
-// mushview.cpp:2399 and :2517.
+// ── Middle button ─────────────────────────────────────────────────────────────
+// Both edges go to the miniwindow hotspot layer first.  MW_MOUSE_MIDDLE (0x200)
+// was never dispatched at all once, so a plugin hotspot with a middle-click
+// callback never fired; Windows dispatches both edges (CMUSHView::OnMButtonDown
+// mushview.cpp:2304, OnMButtonUp mushview.cpp:2420).
+//
+// Past the hotspot, Windows does NOTHING with a middle click over the output
+// window: both handlers chain to CView::OnMButtonDown/Up, which are the MFC
+// defaults, straight through to DefWindowProc, and CSendView has no
+// middle-button handling at all.  In particular there is no paste.
 void COutputPane::OnMiddleDown(wxMouseEvent& evt)
 {
     if (m_fn_miniwindow_mouse_down &&
@@ -2784,18 +2784,27 @@ void COutputPane::OnMiddleDown(wxMouseEvent& evt)
     evt.Skip();
 }
 
+// OnMiddleUp is where the paste lived.  On GTK the X11 primary-selection paste
+// is the platform convention and is deliberately kept.  Everywhere else the
+// same code read the SYSTEM clipboard and dropped it into the command bar,
+// which is a convention neither macOS nor Windows has — a stray middle click
+// silently rewrote whatever the user was typing.  That arm is gone, and the
+// event is consumed rather than skipped so "middle-click does nothing" is a
+// decision the handler makes and a test can observe, not the accident of no
+// one further up the chain caring.
 void COutputPane::OnMiddleUp(wxMouseEvent& evt)
 {
     if (m_fn_miniwindow_mouse_up &&
         m_fn_miniwindow_mouse_up(evt.GetX(), evt.GetY(), 0x200 /*MW_MOUSE_MIDDLE*/))
         return;
 
-    wxString text;
-
 #ifdef __WXGTK__
-    // On GTK (Linux/X11), primary selection = last text highlighted anywhere.
-    // wxWidgets exposes it by temporarily switching the clipboard into
-    // primary-selection mode.
+    // On GTK (Linux/X11), primary selection = last text highlighted anywhere,
+    // and middle-click pasting it is the desktop-wide convention.  wxWidgets
+    // exposes it by temporarily switching the clipboard into primary-selection
+    // mode.  The text is inserted verbatim without being sent to the MUD, so
+    // the user can review and edit it before pressing Enter.
+    wxString text;
     if (wxTheClipboard->Open()) {
         wxTheClipboard->UsePrimarySelection(true);
         if (wxTheClipboard->IsSupported(wxDF_TEXT) ||
@@ -2808,24 +2817,17 @@ void COutputPane::OnMiddleUp(wxMouseEvent& evt)
         wxTheClipboard->UsePrimarySelection(false);
         wxTheClipboard->Close();
     }
-#else
-    // On macOS (and Windows, if ever reached) fall back to the system clipboard.
-    if (wxTheClipboard->Open()) {
-        if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) ||
-            wxTheClipboard->IsSupported(wxDF_TEXT))
-        {
-            wxTextDataObject data;
-            wxTheClipboard->GetData(data);
-            text = data.GetText();
-        }
-        wxTheClipboard->Close();
-    }
-#endif
 
     if (!text.IsEmpty() && m_fn_put_in_input)
         m_fn_put_in_input(text);
 
     evt.Skip();
+#else
+    // macOS (and Windows, if ever reached): match CView::OnMButtonUp — the
+    // click is over the output window, the hotspot layer did not want it, and
+    // nothing else may act on it.  Deliberately no evt.Skip().
+    (void) evt;
+#endif
 }
 
 void COutputPane::OnRightUp(wxMouseEvent& evt)

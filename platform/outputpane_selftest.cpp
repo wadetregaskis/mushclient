@@ -1740,6 +1740,134 @@ void TestPendingRowUsesTheRunPipeline()
     }
 }
 
+// ── 20. Middle-click over the output pane does nothing ───────────────────────
+// The pane used to read the system clipboard on middle-up and drop it into the
+// command bar.  That is a convention neither macOS nor Windows has: Windows'
+// CMUSHView::OnMButtonDown/OnMButtonUp (mushview.cpp:2304 / :2420) offer the
+// point to the miniwindow hotspot layer and otherwise chain to
+// CView::OnMButtonDown/Up — the MFC defaults, straight to DefWindowProc — and
+// CSendView has no middle-button handling at all.  A stray middle click
+// therefore silently rewrote whatever the user was typing.
+//
+// The GTK primary-selection paste is a different thing and is kept, so the
+// disposition assertions are per-platform.
+//
+// "No paste happened" on its own is a weak assertion: it also passes if no
+// handler ran at all.  What discriminates DECLINED from NOTHING-RAN is
+// ProcessWindowEvent's return — true when a handler consumed the event, false
+// when it skipped and nobody else wanted it — so that is asserted directly,
+// with a control proving false is reachable through this same harness.
+void TestMiddleClickIsInert()
+{
+    printf("middle-click over the output pane (mushview.cpp:2304 / :2420)\n");
+
+    // Dispatch and report whether the pane CONSUMED the event.
+    auto send = [](COutputPane* pane, wxEventType type, int x, int y) -> bool {
+        wxMouseEvent evt(type);
+        evt.SetPosition(wxPoint(x, y));
+        evt.SetEventObject(pane);
+        evt.SetId(pane->GetId());
+        return pane->ProcessWindowEvent(evt);
+    };
+
+    // ── the instrument first ─────────────────────────────────────────────
+    // COutputPane::OnRightUp ends in evt.Skip() unconditionally, so a right-up
+    // through this same path must come back FALSE.  Without this, "middle-up
+    // was consumed" would be unfalsifiable if ProcessWindowEvent happened to
+    // return true for everything.
+    {
+        Harness h;
+        h.Feed(5);
+        opCheck(!send(h.pane, wxEVT_RIGHT_UP, 10, 10),
+                "control: an event the pane passes on reports NOT consumed");
+    }
+
+    // ── the hotspot layer still sees both edges ──────────────────────────
+    {
+        Harness h;
+        h.Feed(5);
+
+        int  downCalls = 0, upCalls = 0;
+        long downFlags = 0, upFlags = 0;
+        int  downX = -1, downY = -1, upX = -1, upY = -1;
+
+        h.pane->m_fn_miniwindow_mouse_down =
+            [&](int x, int y, long f) { downCalls++; downX = x; downY = y;
+                                        downFlags = f; return false; };
+        h.pane->m_fn_miniwindow_mouse_up =
+            [&](int x, int y, long f) { upCalls++; upX = x; upY = y;
+                                        upFlags = f; return false; };
+
+        send(h.pane, wxEVT_MIDDLE_DOWN, 37, 21);
+        send(h.pane, wxEVT_MIDDLE_UP,   37, 21);
+
+        opCheckEq(downCalls, 1, "middle-down is offered to the hotspot layer");
+        opCheckEq(upCalls,   1, "middle-up is offered to the hotspot layer");
+        opCheckEq((int) downFlags, 0x200, "...as MW_MOUSE_MIDDLE (down)");
+        opCheckEq((int) upFlags,   0x200, "...as MW_MOUSE_MIDDLE (up)");
+        opCheck(downX == 37 && downY == 21 && upX == 37 && upY == 21,
+                "...at the click point");
+    }
+
+    // ── a hotspot that claims the click consumes it, and never pastes ────
+    {
+        Harness h;
+        h.Feed(5);
+
+        int pasted = 0;
+        h.pane->m_fn_put_in_input   = [&](const wxString&) { pasted++; };
+        h.pane->m_fn_miniwindow_mouse_up   = [](int, int, long) { return true; };
+        h.pane->m_fn_miniwindow_mouse_down = [](int, int, long) { return true; };
+
+        opCheck(send(h.pane, wxEVT_MIDDLE_DOWN, 12, 12),
+                "a claimed middle-down is consumed by the hotspot layer");
+        opCheck(send(h.pane, wxEVT_MIDDLE_UP, 12, 12),
+                "a claimed middle-up is consumed by the hotspot layer");
+        opCheckEq(pasted, 0, "...and a claimed click never reaches the input bar");
+    }
+
+    // ── the real case: no hotspot under the click ────────────────────────
+    {
+        // A sentinel on the system clipboard, so that if the old arm were still
+        // there it would have something non-empty to paste.  Restored after.
+        const std::string saved = ClipboardText();
+        SetClipboardText("SENTINEL-MIDDLE-CLICK-PASTE");
+
+        Harness h;
+        h.Feed(5);
+
+        int      pasted = 0;
+        wxString pastedText;
+        h.pane->m_fn_put_in_input = [&](const wxString& t) { pasted++; pastedText = t; };
+
+        // No hotspot layer installed at all — the plain "user middle-clicked
+        // the scrollback" case.
+        send(h.pane, wxEVT_MIDDLE_DOWN, 30, 15);
+        const bool upConsumed = send(h.pane, wxEVT_MIDDLE_UP, 30, 15);
+
+#ifdef __WXGTK__
+        // Linux keeps the X11 primary-selection convention; the handler runs it
+        // and passes the event on, exactly as before.  Whether anything is IN
+        // the primary selection is an X server property this harness cannot
+        // set, so only the disposition is pinned here.
+        opCheck(!upConsumed,
+                "GTK: middle-up runs the primary-selection paste and passes the event on");
+#else
+        opCheckEq(pasted, 0,
+                  "middle-click does NOT paste the clipboard into the input bar");
+        opCheck(upConsumed,
+                "...because the handler DECLINED it: consumed, not skipped");
+        opCheck(pastedText.IsEmpty(), "...and no text was handed to the input bar");
+#endif
+
+        if (saved.empty()) {
+            if (wxTheClipboard->Open()) { wxTheClipboard->Clear(); wxTheClipboard->Close(); }
+        } else {
+            SetClipboardText(saved);
+        }
+    }
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -1763,6 +1891,7 @@ int RunOutputPaneSelfTest()
     TestPluginDrawDefersAppends();
     TestPullSeamReads();
     TestPendingRowUsesTheRunPipeline();
+    TestMiddleClickIsInert();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

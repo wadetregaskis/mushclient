@@ -31,6 +31,13 @@
 // hotspots. The m_bTemporarilyHide skip below is the bound that keeps the
 // widened test honest: if it is not drawn it cannot be clicked, which is
 // the test both paint loops already apply.
+//
+// m_bTemporarilyHide alone was not enough, because it only covers a window
+// the layout pass REJECTED. A shown window that has not been through a
+// layout pass at all — WindowAddHotspot's immediate re-detect reaches here
+// synchronously from the creating script, before any paint — has the flag
+// false and the constructor's rect, i.e. the same corner. m_bLaidOut is the
+// other half of the bound.
 CMiniWindow * MouseOverMiniWindow (CMUSHclientDoc* pDoc,
                                    CPoint point,
                                    string & sHotspotId,
@@ -50,8 +57,9 @@ CMiniWindow * MouseOverMiniWindow (CMUSHclientDoc* pDoc,
          CMiniWindow * mw = mwit->second;
          // not if not being shown, or if the layout pass could not fit it —
          // the same pair both paint loops test (mushview.cpp:1007 and :1507,
-         // platform/wx_world_child.cpp:262)
-         if (!mw->GetShow () || mw->m_bTemporarilyHide)
+         // platform/wx_world_child.cpp:262) — or if no layout pass has run
+         // for it yet, in which case m_rect is still the constructor's
+         if (!mw->GetShow () || mw->m_bTemporarilyHide || !mw->m_bLaidOut)
            continue;
 
          // underneath ones can't be clicked on - or if set to ignore the mouse
@@ -129,7 +137,10 @@ void CalculateMiniWindowRectangles (CMUSHclientDoc* pDoc, const bool bUnderneath
    // wipe the first pass's "would not fit" decision, and WindowInfo (6)
    // always answered false for a draw-underneath window that had no room
    if (((mw->GetFlags () & MINIWINDOW_DRAW_UNDERNEATH) != 0) == bUnderneath)
+     {
      mw->m_bTemporarilyHide = false;
+     mw->m_bLaidOut = true;   // this pass owns it: m_rect stops being the ctor's
+     }
 
 
    // not if not to be shown

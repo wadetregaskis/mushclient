@@ -1050,6 +1050,45 @@ TEST(LuaSurface, LayoutPopsWindowsThatDoNotFitAndTheyStopBeingClickable)
     EXPECT_STREQ("a_fits", sMiniWindowId.c_str());
 }
 
+// m_bTemporarilyHide bounds the widened bounds test only for a window the
+// layout pass REJECTED.  A shown window that has not been through a layout pass
+// at all — WindowAddHotspot's immediate re-detect runs synchronously inside the
+// creating script, long before any paint — has the flag false and the
+// constructor's (0,0,0,0) rect, which the size test reads as the pane's
+// top-left GetWidth() x GetHeight() corner.
+TEST(LuaSurface, AWindowNoLayoutPassHasSeenIsNotClickableAtThePanesCorner)
+{
+    CMUSHclientDoc doc;
+
+    // Absolute position (30,30), well away from the corner it would otherwise
+    // claim, and a hotspot covering the whole of it.
+    ASSERT_EQ((long) eOK, doc.WindowCreate("mw", 30, 30, 20, 20, 0,
+                                           MINIWINDOW_ABSOLUTE_LOCATION, 0));
+    ASSERT_EQ((long) eOK, doc.WindowShow("mw", TRUE));
+    ASSERT_EQ((long) eOK, doc.WindowAddHotspot("mw", "h", 0, 0, 20, 20,
+                                               "", "", "", "", "", "", 0, 0));
+
+    std::string sHotspotId, sMiniWindowId;
+    CHotspot * pHotspot = NULL;
+
+    // No layout pass yet: the corner belongs to the text underneath.
+    EXPECT_TRUE(NULL == MouseOverMiniWindow(&doc, CPoint(2, 2),
+                                            sHotspotId, pHotspot, sMiniWindowId));
+    EXPECT_TRUE(sMiniWindowId.empty());
+
+    // ...and the control, which a "stop hit-testing everything" fix fails: once
+    // the pass has run, the window answers at its own coordinates, hotspot and
+    // all.
+    RECT clientrect = { 0, 0, 100, 100 };
+    CalculateMiniWindowRectangles(&doc, false, clientrect, clientrect);
+
+    EXPECT_TRUE(NULL != MouseOverMiniWindow(&doc, CPoint(35, 35),
+                                            sHotspotId, pHotspot, sMiniWindowId));
+    EXPECT_STREQ("mw", sMiniWindowId.c_str());
+    EXPECT_STREQ("h", sHotspotId.c_str());
+    EXPECT_TRUE(NULL != pHotspot);
+}
+
 // The two layout passes (draw-underneath, then not) run back to back, and the
 // reset of m_bTemporarilyHide used to happen for EVERY window in EVERY pass —
 // so the second pass wiped the first pass's decision and WindowInfo (6) always

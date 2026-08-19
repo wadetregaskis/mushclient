@@ -296,6 +296,21 @@ what the `m_bTemporarilyHide` skip exists to fix. Covered by
 does not answer at the pane's corner, and the one that *was* laid out still
 answers at its own coordinates.
 
+**Second correction: `m_bTemporarilyHide` was only half the bound.** It is
+written by `CalculateMiniWindowRectangles` alone, so it only ever describes a
+window the layout pass *rejected*. A shown window that no layout pass has seen
+**at all** has the flag false and the same constructor rect — and
+`WindowAddHotspot`'s create-under-the-cursor re-detect
+(`scripting/methods/methods_miniwindows.cpp`) reaches `MouseOverMiniWindow`
+synchronously inside the creating script, before any paint, so this is not a
+theoretical window: a full-window hotspot whose rect contains the constructor's
+`m_last_mouseposition` (0,0) could fire a `MouseOver` for a window drawn
+somewhere else entirely. `CMiniWindow::m_bLaidOut` (false in the constructor,
+set true by the pass that owns the window, beside the `m_bTemporarilyHide`
+reset) is the other half, and `MouseOverMiniWindow` skips on it too. Covered by
+`LuaSurface.AWindowNoLayoutPassHasSeenIsNotClickableAtThePanesCorner`, which
+asserts both halves the same way.
+
 ## Verification status
 
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)

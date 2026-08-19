@@ -25,6 +25,7 @@ CMiniWindow::CMiniWindow ()  :
           m_iBackgroundColour (0), m_bShow (false),
           m_rect (0, 0, 0, 0),
           m_bTemporarilyHide (false),
+          m_bLaidOut (false),
           m_last_mouseposition (0, 0),
           m_last_mouse_update (0),
           m_client_mouseposition (0, 0),

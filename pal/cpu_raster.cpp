@@ -456,6 +456,17 @@ static size_t decodeUtf8(const char* s, size_t len, size_t& i) {
 FontId CpuRaster::createFont(const FontSpec& spec) {
     Font f;
     f.spec  = spec;
+    // KNOWN GAP, deliberately unfixed -- see docs/FONT-PARITY-2026-08.md section 3.
+    // dpi() here is 96, so spec.pixelHeight arrives as the Windows EM
+    // (MulDiv(points, 96, 72)).  Storing it as cellH and reporting cellH as
+    // FontMetrics::height -- i.e. as tmHeight, a CELL -- makes this reference
+    // short by the internal leading: 11 at 8pt where Windows reports ~13, a
+    // ratio of about 1.18.  The number looks right because it IS a real
+    // quantity, which is what makes it dangerous: the headless parity
+    // assertions pin it, so they under-constrain the contract and anyone
+    // treating them as the parity target would "fix" the GUI toward a wrong
+    // number.  Correcting it means carrying an em and synthesising a cell, and
+    // will turn several existing assertions red.  It changes nothing a user sees.
     f.cellH = spec.pixelHeight > 0 ? spec.pixelHeight : 10;
     f.cellW = std::max(1, f.cellH * 3 / 5);
     std::uint32_t id = m_nextFont++;

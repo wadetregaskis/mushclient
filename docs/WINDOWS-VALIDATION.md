@@ -1141,6 +1141,467 @@ previously got success and a silently wrong colour.
    `world.SetOption("hyperlink_colour", 0xFFFFFF)` must still succeed — the new
    flag is on one row only.
 
+### 4c-quintricies. Colour-matching triggers resolve through the palette (2026-08-19)
+
+`docs/UPSTREAM-BUGS.md` 75, `docs/UPSTREAM-DIVERGENCES.md` §11. Shared code:
+`ProcessPreviousLine.cpp`, `pal/style_colour.h`. Commit `ef5466f`.
+
+**This is the highest-regression-risk item of the whole campaign.** The comparison
+every colour trigger goes through now resolves both sides to RGB instead of comparing
+the trigger's 0-7 ANSI number against the style's raw members, so matching is by
+appearance rather than by colour number. On Windows that changes a matcher that has
+behaved one way since 2010.
+
+**What to check on Windows:**
+1. A trigger with *match text colour* = red, against a plain `ESC[31m` line: must still
+   fire. This is the regression guard — everything that matched before must still match.
+2. The same trigger against an `ESC[38;5;1m` (xterm-256) line and a
+   `ESC[38;2;170;0;0m` (24-bit) line: **now fires, where it never did before.** That is
+   the fix.
+3. A trigger with *match text colour* = black against a `COLOUR_RGB` run that is not
+   black: must **stop** firing. That false positive (`COLORREF 0x000000 == ANSI 0`) is
+   the one removal.
+4. Bold: a "red" condition must still match bold red — `HILITE` is carried across into
+   the resolve, and boldness is the separate *match bold* condition.
+5. Inverse, with **and** without `alternative_inverse` set: the two indices cross over
+   under `INVERSE`, and the resolver (unlike the old hand-rolled swap) consults the bold
+   table. Both arms need a look.
+6. Run a real xterm-256 world with an existing, non-trivial trigger set for a session
+   and watch for triggers that fire where they used to be silent. Nothing headless can
+   answer that question.
+
+### 4c-sextricies. Three Lua bindings join the other five engines (2026-08-19)
+
+`docs/UPSTREAM-BUGS.md` 83 and 84, `docs/UPSTREAM-DIVERGENCES.md` §13 and §14. Shared
+code: `scripting/lua_methods.cpp`. Commits `203c0fe`, `092c1f4`, `43e27b8`.
+
+All three are one-token changes in canonical source that Windows compiles, and all three
+are script-visible there.
+
+**What to check on Windows:**
+1. `world.ReplaceNotepad("t", "text")` from Lua returns **true**/**false**, not nil.
+   Confirm the boolean is correct both ways (a title that exists, and one that does
+   not). A script written `== nil` now takes the other branch — that is intended.
+2. `world.SetTrace(1)` from Lua prints `TRACE: Trace on` in the output window, and
+   `world.SetTrace(0)` prints `TRACE: Trace off`, exactly as `world.Trace = 1` from
+   JScript already does. **Eyeball where the flushed half-built line lands** — the flush
+   happens before `m_bTrace` is set, so a pending prompt should appear on its own line
+   ahead of the marker.
+3. A repeated `world.SetTrace(1)` must remain a no-op (no second marker), and
+   `world.GetTrace()` must still report the member.
+4. `world.GetLineInfo(n).time` on a line stamped after 2038-01-19 must be positive.
+   Hard to provoke live; the cheap Windows check is that `.time` for an ordinary
+   present-day line is unchanged to the second.
+
+### 4c-septentricies. WindowFilter's pixels, and SQLite INTEGER widening (2026-08-19)
+
+`docs/UPSTREAM-BUGS.md` 78, 79 and 80; `docs/UPSTREAM-DIVERGENCES.md` §12. Shared code:
+`miniwindow.cpp`, `scripting/methods/methods_database.cpp`,
+`scripting/lua_methods.cpp`, new `scripting/db_int64.h` (added to `MUSHclient.vcxproj`
+as a `ClInclude`). Commits `d8de347`, `648622c`.
+
+**What to check on Windows:**
+1. `world.WindowFilter` with a blur over a region containing a single bright pixel: the
+   result must be symmetric about that pixel's **own** row (it used to be centred one
+   row below), and the rightmost pixel column of the region must be filtered like the
+   rest (it used to survive untouched).
+2. Any plugin that draws with `WindowFilter` — the output shifts by one row and gains a
+   filtered right edge. Cosmetic, but plugin authors who tuned a blur by eye will see it.
+3. `world.DatabaseColumnValue` on a column holding `2147483648`: must return
+   `2147483648`, not `-2147483648`. From Lua and from JScript.
+4. A column past 2^53 must come back as a **decimal string**. This is deliberate and
+   lossless, but it is a type change: confirm `type(v) == "string"` in Lua and
+   `VT_BSTR` from JScript.
+5. A column that fits in 32 bits must return the same type and value it always has —
+   `VT_I4` / Lua number. Nothing that works today may move.
+6. `CString::Format("%I64d", …)` behaves as it always has (MSVC's native modifier, so
+   this is a formality — but the string band depends on it).
+
+### 4c-duodequadragies. Vetoing an atomic MXP tag now unwinds it (2026-08-19)
+
+`docs/UPSTREAM-BUGS.md` 85. Shared code: `mxp/mxpStart.cpp`, `mxp/mxpOpenAtomic.cpp` —
+both in `MUSHclient.vcxproj` (`:835`, `:839`), so this ships to Windows. Commit
+`3095c2a`.
+
+Nothing here touches `CMUSHView`; the whole change is in the MXP engine, which the
+headless tests do execute. What wants a Windows run is the interaction with real plugins
+and the on-screen result.
+
+**Note the two veto conventions are opposite, and the tests use the script one:** a
+**plugin**'s `OnPluginMXPopenTag` vetoes by returning **false** (`MXP_StartTagScript`
+negates it, `mxpStart.cpp:634-638`), while a **world script**'s `OnMXP_OpenTag` vetoes
+by returning **true**.
+
+**What to check on Windows:**
+1. A plugin implementing `OnPluginMXPopenTag` that returns `false` for `p`. Have the
+   server (or `world.Simulate`) send `<p>hello</p>world`. **Expect:** `hello` and
+   `world` on ONE line. Before the fix they were on two.
+2. Same plugin, vetoing `send`. Send
+   `<a href="go &text;">click <send>me</send> now</a>` and click each part of the link.
+   **Expect:** every part sends `go click me now`. Before the fix, the text from
+   `<send>` onwards sent `go me`.
+3. Same plugin, vetoing `b`. Send `<b>x</b>`. **Expect:** the plugin's
+   `OnPluginMXPcloseTag` is NOT called for `b`, and the MXP debug window shows
+   "Closing MXP tag </b> does not have corresponding opening tag" — that warning is the
+   *expected, correct* new behaviour, not a regression.
+4. `plugins/MXP_statusbar.xml` still works against a MUD that uses MXP status tags: its
+   regex depends on the single-quoted argument form `MXP_OpenAtomicTag` builds, which
+   this fix deliberately does not move.
+5. **Control:** with the veto plugin unloaded, `<p>hello</p>world` must still break the
+   line, and 100 unclosed tags must still raise "Now have 100 outstanding MXP tags".
+6. Custom elements: `<!ELEMENT mytag '<b><i>'>` with the plugin vetoing `b`. **Expect:**
+   the plugin is asked three times (`mytag`, `b`, `i`), the text is italic but not bold,
+   and `</mytag>` closes cleanly with no warning.
+
+### 4c-undequadragies. Bright SGR 90-97 / 100-107 and OSC swallowing (2026-08-19)
+
+`docs/UPSTREAM-DIVERGENCES.md` §15 and §16. Shared code: `ansi.cpp`,
+`telnet_phases.cpp`, both compiled unconditionally. Added in `f06e369`; recorded as a
+divergence by the D-23 decision.
+
+The code has shipped for a while; what is new is the decision that it belongs in the
+Windows build too. It has never been run there.
+
+**What to check on Windows:**
+1. `ESC[91m bright red` renders in the world's **bright** red (bold palette in RGB
+   mode; xterm palette index 9 in ANSI-table mode), not in the preceding colour. Same
+   for 92-97 and for backgrounds 100-107.
+2. A world in *custom colours* mode is promoted to RGB for these codes, exactly as it
+   already is for 30-47.
+3. `ESC[7m` inverse combined with a 90-97 code honours the inversion on both the
+   RGB and the ANSI-table arm.
+4. `ESC ] 0 ; some title BEL` produces **nothing** in the output window. Before, the
+   payload text was printed as literal garbage. Confirm the `ST` (`ESC \`) terminator
+   works as well as `BEL`.
+5. Control: an unterminated `ESC ]` must not swallow the rest of the session — check
+   what the phase machine does when the terminator never arrives.
+
+### 4c-quadragies. The world-close split, the input-log guard, and the miniwindow re-lookup (2026-08-19)
+
+`docs/UPSTREAM-BUGS.md` 76, 77 and 81. Shared code: `doc.cpp`/`doc.h`, `evaluate.cpp`,
+`miniwindow_compose.cpp`. Commits `32b28f6`, `1d45c28`, `4d7168f`.
+
+All three are behaviour-preserving on Windows **by reasoning**, and each has a specific
+thing that reasoning could have got wrong.
+
+**1. `SaveModified` split into `QueryCloseWorld` + `CommitCloseWorld` (`4d7168f`).** Same
+code, same order; `SaveModified()` is now
+`QueryCloseWorld() ? (CommitCloseWorld(), TRUE) : FALSE`. Two deltas, both believed
+unreachable:
+
+- **`m_bWorldClosing` on a refusal.** The old single
+  `m_bWorldClosing = CDocument::SaveModified();` assigned FALSE when the user cancelled
+  at the unsaved-changes prompt and left the member untouched when the user cancelled at
+  the *earlier* two prompts. The new code assigns FALSE on all three. It is FALSE in
+  every state that can reach there (initialised FALSE in `doc_construct.cpp:105`, and
+  only a commit sets it), so this should be invisible.
+- **`CommitCloseWorld` early-returns when `m_bWorldClosing` is already true.** The old
+  code would have re-run `MXP_Off` and the close script on a second `SaveModified()` for
+  the same document. The MFC paths were traced and no double call was found
+  (`CFrameWnd::OnClose` runs `CanCloseFrame` -> `SaveModified` for a child frame with an
+  active document; `SaveAllModified` -> `SaveModified` only for the main frame when
+  `GetActiveDocument()` is NULL; `CloseAllDocuments` calls `OnCloseDocument`, not
+  `SaveModified`), so the guard should be dead code on Windows.
+  **Check: close a world, close the app, and close a world while several are open —
+  `on_world_close` must fire exactly once each.**
+
+Windows behaviour is otherwise unchanged: the macOS quit hook is the only caller that
+uses the two halves separately, so Windows keeps `SaveAllModified`'s behaviour, half-
+closed worlds and all (that upstream defect is `docs/UPSTREAM-BUGS.md` 81).
+
+**2. `CSuppressInputLogging` in `evaluate.cpp` (`32b28f6`).** Additive and inert on
+Windows: the sole Windows caller of `EvaluateCommand` is `Execute`, which passes
+`bOmitFromLog = false`, so the guard neither reads nor writes `m_log_input`. **Check:**
+with *File > Log Session* open and "log my input" on, a typed command still appears in
+the log exactly as before — including a command typed at a masked (`IAC WILL ECHO`)
+prompt, which on Windows still leaks and is *supposed* to until the decision in
+`docs/UPSTREAM-BUGS.md` 76 is taken.
+
+**3. Miniwindow mouse re-lookup (`1d45c28`).** Shared TU, so the fix lands on both
+platforms. **Check:** no behaviour change in the *surviving* paths — a plugin whose
+hotspot callbacks add/remove hotspots, drag, and move between windows must behave
+exactly as before. The ten headless controls cover the abandoned branches; what Windows
+adds is that the ordinary case still works.
+
+**4. Reference claims read out of `doc.cpp:2101-2180`** for the port's Cmd+W chain
+(`e08268f`, port-only). Sanity-check against a running Windows build if convenient: a
+connected world (`ConnectionOpen()` **and** `m_iConnectPhase == eConnectConnectedToMud`)
+with `App.m_bConfirmBeforeClosingWorld` set gets `"This will end your <name> session."`
+as `MB_OKCANCEL | MB_ICONINFORMATION`; that warning is asked **before** the
+`m_bSaveWorldAutomatically` save; and there is no general "Close &lt;world&gt;?"
+confirmation anywhere.
+
+### 4c-unquadragies. AddTrayIcon's new arm, the world-menu extraction and the main client rect (2026-08-19)
+
+Shared code: `mainfrm.cpp`, `mainfrm.h`, `pal/win_worldview.cpp` (new override),
+`scripting/methods/methods_info.cpp`. Commits `1ed8720`, `7d733e4`, `6b13a53`. Typed on
+macOS; neither `CMyStatusBar` nor `CWinWorldView` can be executed here.
+
+**1. `CMainFrame::AddTrayIcon` gained a `#ifndef _WIN32` arm.** The Windows body is
+unchanged but is now wrapped in `#else … #endif`.
+- [ ] The Windows build compiles `mainfrm.cpp` (the `#endif // _WIN32` sits between the
+      `DestroyIcon` call and the closing brace).
+- [ ] With Global Preferences > Tray/Taskbar > Icon Placement = *System tray*, the tray
+      icon still appears at startup and after OK-ing the prefs dialog.
+- [ ] Tray Icon 1..9 and a custom `.ico` still select the right icon.
+
+**2. `CMainFrame::CollectWorldMenuItems`.** The world-list loop was lifted out of
+`LeftTrayClick` unchanged (only a null guard on `App.m_pWorldDocTemplate` is added, which
+cannot be reached on Windows). **To check:** open three worlds, give two of them unread
+lines, then left-click the tray icon. The menu must list all three sorted by name, each
+with its `" (n)"` unread suffix, and choosing one must still raise that world — exactly
+as before. A world whose `m_view_number - 1` is >= `TRAY_MENU_COUNT` must still be
+omitted.
+
+**3. `TrackPopupMenu`'s return value** is now captured into `nSelected` and discarded
+under `_WIN32` with `(void) nSelected;`. **To check:** the same tray-menu click — one
+`WM_COMMAND`, one world raised, no double activation. If Windows ever raises two worlds
+per click, this is the line.
+
+**4. `pal::IWorldView::mainClientRect`** (new override in `pal/win_worldview.cpp`;
+`methods_info.cpp` cases 249/250). Those two cases no longer have a `#ifdef _WIN32` arm:
+they call `GetMainClientRect`, which on Windows goes through
+`CWinWorldView::mainClientRect` -> the same `Frame.GetClientRect(&rect)` they ran inline,
+returning `rect.bottom` as the height and `rect.right` as the width. **To check:**
+`world.GetInfo(249)` and `world.GetInfo(250)` against the main frame's client area, on a
+stock and a maximised window, and with the toolbars and status bar toggled — the numbers
+must be identical to 5.06's. The doc's `m_pWorldView` is created unconditionally in the
+ctor (`doc_construct.cpp:214`), so the no-view fallback is unreachable on Windows; if it
+were ever reached, `GetInfo(249)/(250)` would answer a character-grid guess from
+`m_gui_rows`/`m_gui_cols`, which Windows never updates.
+
+**5. `mainfrm.h` now includes `<map>` and `<string>`** for the new method's signature.
+Confirm the MFC precompiled-header build still compiles clean.
+
+### 4c-duoquadragies. `script_strict_arguments`, and two canonical deletions (2026-08-19)
+
+`docs/UPSTREAM-DIVERGENCES.md` §17, §18 and §19. Shared code: `doc.h`,
+`scriptingoptions_numeric.inc`, `doc.cpp`, `doc_shared.cpp`, `OtherTypes.h`, `flags.h`,
+`dialogs/world_prefs/prefspropertypages.{h,cpp}`, `dialogs/world_prefs/configuration.cpp`
+— all in `MUSHclient.vcxproj`. Commits `fa694a4`, `0ad0cd7`, `1b17ec8`.
+
+**1. The option exists, saves and loads, and changes nothing.** `doc.h` gains
+`m_bStrictScriptArguments` and `scriptingoptions_numeric.inc` gains the
+`script_strict_arguments` row; the consumer is `platform/mc_dispatch.cpp`, which is
+`#if !defined(_WIN32)`.
+- **Compiles and round-trips:** build the Windows target, open a world, and from a script
+  run `world.SetOption("script_strict_arguments", 1)` then
+  `world.GetOption("script_strict_arguments")` — it must answer 1. Save the world, reopen
+  it, and read the option again: still 1. Confirm it also appears in
+  `world.GetOptionList()`. This is the only thing the Windows build is expected to do
+  with it.
+- **It really is inert there:** with the option **on**, call `world.SetVariable("x")`
+  from JScript or VBScript. It must fail exactly as it did before the option existed —
+  `DISP_E_BADPARAMCOUNT` from COM, not the port's message — because COM refuses the call
+  before any MUSHclient code is entered. The port's wording ("expected at least 2
+  arguments, got 1") must **not** appear on Windows.
+- **The claim the feature rests on, worth confirming empirically while there:** that
+  `IDispatch::Invoke` really does refuse a short list for these methods. The tree has
+  asserted it in a comment since `tests/test_mc_dispatch.cpp:388`, and the dispatch map's
+  total absence of `VTS_VARIANT` is the reason, but it has never been observed on Windows
+  in this project. `world.EnableTrigger("t")` from JScript is the cheapest probe: MFC
+  should reject it rather than pass a default. **If it turns out COM supplies a missing
+  optional instead, the parity argument in `docs/UPSTREAM-DIVERGENCES.md` §17 is wrong
+  and should be rewritten** — the option would then be a port-only strictness rather than
+  a return to Windows behaviour. (The feature itself still works either way; only the
+  rationale changes.)
+- **Not affected, but cheap to confirm:** `world.GetTrigger` / `GetAlias` / `GetTimer`
+  from JScript, which on Windows take by-ref variables for their `VTS_PVARIANT` slots.
+  The port counts only the script-supplied half of those parameter lists, so the two
+  platforms genuinely differ in what "a complete call" means for exactly these three
+  methods — as they already did before this change.
+
+**2. `DelayedSend` and `CPrefsP2` are deleted.** Neither can have a behavioural test —
+the removed code was unreachable on both platforms, which is the whole claim. **The
+Windows requirement is a compile:** confirm `doc.cpp`, `doc.h`, `doc_shared.cpp`,
+`OtherTypes.h`, `flags.h`, `prefspropertypages.{h,cpp}` and `configuration.cpp` all build
+clean, and that World Properties still opens with every page present — `CPrefsP14`
+("Output") is the live page that carries `m_new_activity_sound`, and its *Sound file* and
+*Beep sound* fields must both still round-trip.
+
+### 4c-terquadragies. Two items with no Windows half, recorded so the reference claim is checkable (2026-08-19)
+
+Neither of these changed canonical source, so **there is no Windows behaviour to
+re-confirm.** They are here because each rests on a claim about Windows that was read
+from code rather than measured.
+
+**1. Middle-click over the output window (`77c6f8f`, D-19).**
+`platform/wx_outputpane.cpp` `COutputPane::OnMiddleUp` no longer pastes the system
+clipboard into the command bar on non-GTK platforms. The claim it rests on is that
+Windows does nothing with a middle click over the output view:
+
+- `CMUSHView::OnMButtonDown` (`mushview.cpp:2304`) and `OnMButtonUp`
+  (`mushview.cpp:2420`) offer the point to `Mouse_Down_MiniWindow` /
+  `Mouse_Up_MiniWindow` with `MW_MOUSE_MIDDLE` and otherwise chain to
+  `CView::OnMButtonDown` / `CView::OnMButtonUp`, which are the MFC defaults through to
+  `DefWindowProc`.
+- `CMUSHView::PreTranslateMessage` (`mushview.cpp:4143`) relays `WM_MBUTTONDOWN` /
+  `WM_MBUTTONUP` to the tooltip control only.
+- `sendvw.cpp` has no `OnMButton*` / `WM_MBUTTON*` handling at all.
+
+**To confirm on Windows:** middle-click over the output window of a world with text on
+the clipboard. Nothing should appear in the command bar. Also confirm a plugin hotspot
+with a middle-click callback still fires (that path is unchanged on both platforms).
+
+**2. Owner-draw colour combos (`8314538`, D-14).** `CBS_OWNERDRAWFIXED` was ignored by
+`platform/wx_dialog_bridge.cpp`, which built every `ComboBox` template as a plain
+`wxChoice`/`wxComboBox`, so the five colour drop-downs listed the strings
+`Custom1 … Custom16` / `Other ...` instead of painting each row in the colour it stands
+for. `CColourComboBox::DrawItem` is correct and Windows runs it; the port never called
+it. The complete set of owner-draw templates in `platform/mushclient_dialogs.rc`:
+
+| Dialog | Control | Style | Class |
+|---|---|---|---|
+| `IDD_EDIT_TRIGGER` | `IDC_TRIGGER_COLOUR` | `0x50210213` | `CTriggerDlg::m_ctlTriggerColour` |
+| `IDD_HIGHLIGHT` | `IDC_TRIGGER_COLOUR` | `0x50210213` | `CHighlightPhraseDlg::m_ctlTriggerColour` |
+| `IDD_PREFS_P9` | `IDC_ECHO_COLOUR` | `0x50210213` | `CPrefsP9::m_ctlInputColour` |
+| `IDD_PREFS_P17` | `IDC_TEXT_COLOUR` | `0x50210213` | `CPrefsP17::m_ctlTextColour` |
+| `IDD_TEST_RESULT` | `IDC_TRIGGER_COLOUR` | `0x58210213` | *(orphan resource — no class declares `IDD = IDD_TEST_RESULT`, nothing calls `DoModal` on one)* |
+
+Low word `0x0213` = `CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS`;
+`IDD_TEST_RESULT`'s `0x58…` adds `WS_DISABLED`. No `ListBox` template carries
+`LBS_OWNERDRAW*` and no combo carries `CBS_OWNERDRAWVARIABLE` — the bridge accepts both
+bits anyway, since Windows treats either as "the owner paints".
+
+**To check on macOS (there is no Windows half):** World Properties > Triggers >
+add/edit a trigger, open the *Change colour to* drop-down. Each row must be filled with
+its custom colour, `(no change)` must be plain black-on-white, and `Other ...` must use
+the two "other" swatches beside the combo. Picking a row must still update those
+swatches, and picking `Other ...` must still open the colour picker (that is
+`CBN_SELCHANGE` -> `CTriggerDlg::OnSelchangeTriggerColour`). Then OK, reopen the trigger,
+and confirm the colour you chose is the one selected — the value round-trip is the part
+most likely to fail silently.
+
+**The one unmeasured link:** that `wxOwnerDrawnComboBox` raises `wxEVT_COMBOBOX` (rather
+than `wxEVT_CHOICE`) when the user picks a row is taken from wx's documented behaviour,
+not measured here — a selftest exits before the event loop, so no popup can be opened and
+no real pick can be made. The half that lives in our code *is* pinned: the selftest
+asserts the control is a child of the dialog and that a `wxEVT_COMBOBOX` from it reaches
+the dialog's `CBN_SELCHANGE` binding. If the swatches fail to follow the drop-down in the
+manual check above, that assumption is where to look first.
+
+**Known cosmetic gap:** `CDC::DrawFocusRect` is a permanent no-op in the shim
+(`platform/mfc_ui.h`), so the dotted focus rectangle the canonical body draws for
+`ODS_FOCUS` does not appear. `ODS_FOCUS` *is* passed through faithfully, so this fixes
+itself if `DrawFocusRect` is ever implemented.
+
+### 4c-quaterquadragies. Miniwindow font parity: what a Windows run must measure (2026-08-19)
+
+See `docs/FONT-PARITY-2026-08.md` for the full derivation. Nothing in canonical source
+changed — `d02c4b9` deleted a block that was inside `#ifndef _WIN32`, and
+`pal::GdiSurface::createFont` is untouched — so **Windows behaviour is unchanged by
+construction**. This entry exists because the port's remaining size gap is attributed to
+*face substitution*, and that attribution is the one part of the analysis that cannot be
+settled from the macOS side.
+
+**What to measure on Windows** (the Lua probe is in `docs/FONT-PARITY-2026-08.md` §5;
+paste it into Game > Immediate):
+
+1. **Info code 21 (`GetTextFace`) for a `Dina` request.** If it does not say `Dina`,
+   Dina is not installed on that machine and the whole bitmap-strike line of enquiry
+   collapses — the difference is then between two *different* substitutes, and the fix is
+   to honour `pitchAndFamily` so both platforms substitute by the same rule.
+2. **Info code 1 (`tmHeight`) and code 4 (`tmInternalLeading`) for Dina 8 pt.** A raster
+   strike should show `tmInternalLeading` ≈ 0; a scalable face shows ~2-3. This is what
+   decides whether Windows genuinely renders larger.
+3. **A known-present scalable face as the control** — Courier New at 8/9/10/12/14 pt.
+   Windows `tmHeight` should be within ±1 px of the macOS figure for the same face and
+   size (macOS measures 13/14/15/19/22). **A difference larger than that falsifies the
+   claim that the size pipeline is now exact**, and would mean a residual scale factor
+   still exists.
+4. `WindowTextWidth("MMMMMMMMMM")` for Courier New 10 pt: the port produces ~79 at 100%
+   scaling, and Windows should agree.
+
+Do **not** treat the headless `pal::CpuRaster` numbers as the parity target — it reports
+the em as `tmHeight` and is short by the internal leading (ratio ~1.18). See
+`docs/FONT-PARITY-2026-08.md` §3.
+
+### 4c-quinquadragies. The window-geometry seam, and multi-select file dialogs (2026-08-19)
+
+D-12 and D-15, which landed after the rest of the campaign's documentation was
+consolidated. Commits `4e4ce04`, `b29469d`, `37bebec` (D-12) and `5d6345e` (D-15).
+
+**1. Two engine bodies were split into an engine half and a `pal::IWorldView` half**
+(`setCommandWindowHeight`, `setOutputWidthPixels`). Both Windows arms live in
+`pal/win_worldview.cpp` and were **mechanically diffed** against the deleted originals
+with whitespace normalised: 24/24 and 21/21 lines identical. The only substitutions:
+
+| Original | Adapter | Why |
+|---|---|---|
+| `GetChildFrame ()` | `m_pDoc->GetChildFrame ()` | the adapter's standard doc reach, as every other method there |
+| `m_doc->` | `m_pDoc->` | same |
+| `return eBadParameter;` | `return false;` | the engine site converts it back to `eBadParameter` |
+| `return eOK;` | `return true;` | ditto |
+| `(tm.tmAveCharWidth * iColumn) + … + m_iPixelOffset +` | `textWidth +` | the same sum; the engine site computes `aveCharWidth * column + pixelOffset` |
+
+Windows behaviour is therefore unchanged **by construction**. Still worth a run, because
+`CSendView` / `CMUSHView` are never instantiated here:
+
+- [ ] `world.SetCommandWindowHeight(n)` still resizes the splitter, and still returns
+      `eBadParameter` for `n < 0`, for a too-small top view, and with no child frame.
+- [ ] World Properties ▸ Output ▸ **Adjust size to width** still widens the world window
+      to the typed column, using the **document's** current font (`m_font[0]`) — *not*
+      the font offered on the page. That asymmetry with the sibling **Adjust width to
+      size** button (which builds a `CFont` from the page's own pending fields) is
+      upstream's, and was preserved deliberately. The two buttons are not exact inverses.
+- [ ] One deliberate **non-verbatim** addition on Windows:
+      `CMUSHclientDoc::OutputFontCharWidth` returns 0 if `m_font[0]` is NULL rather than
+      calling `SelectObject(NULL)`. Upstream reached that code only from behind an "a
+      view exists" guard, so this can only change a path that previously crashed.
+
+**Two port-only behaviours introduced, recorded here rather than as divergences** (they
+are macOS-vs-Windows differences, which this project keeps in code comments and notes,
+not in `UPSTREAM-DIVERGENCES.md`):
+
+* `CWorldChildFrame::setCommandWindowHeight` imposes a **minimum command-bar height of
+  one text line plus the control's chrome** (the bar's default height, Menlo 9 is about
+  20 px here). Windows has no such floor — it hands the splitter row a 9-pixel `cyMin`
+  and relies on the user dragging the sash back. The port has **no sash and no per-world
+  geometry persistence**, so a bar shorter than one line would be unrecoverable except by
+  editing the world file. A request below the floor is refused with `eBadParameter`
+  rather than clamped, matching the shape of the canonical body's own "too small, want to
+  see a line at least" refusal.
+* `CWorldChildFrame::setOutputWidthPixels` **refuses while maximised or full screen**
+  (`eBadParameter`). wxOSX has no `rcNormalPosition` equivalent, so there is no restored
+  rect to widen; approximating one would resize the wrong rectangle — the trap
+  `wx_geometry_rect_for_save` already exists to avoid.
+
+Neither feature writes `m_nWrapColumn`: `AutoWrapColumnFor` still owns "does the window
+width drive the wrap column?", and only when `auto_wrap_window_width` is on. And
+`m_pActiveCommandView` / `m_pActiveOutputView` were **not** faked — they are read only
+inside the Windows adapter, under the original guard.
+
+**2. Multi-select file dialogs (D-15).** Nothing here needs a Windows run for
+correctness — the change is entirely inside the non-Windows shim and
+`platform/wx_mfc_impl.cpp`, and no canonical `.cpp` was touched. One behavioural claim
+*about* Windows is inferred from MFC's source rather than observed, so it is worth an
+eyeball if anyone is in front of a Windows build:
+
+- [ ] Global Preferences ▸ Startup Worlds ▸ Add, select several worlds: all of them are
+      added. This is the already-working Windows behaviour the port now matches; nothing
+      in the port changes it. The entry exists only to record that the macOS behaviour is
+      now claimed identical.
+
+Note what Windows does with the *other* accessors under multi-select, because the port
+deliberately does **not** copy it: MFC packs the answer into `m_ofn.lpstrFile` as
+`"dir\0name1\0name2\0\0"`, so `GetPathName()` returns the **directory**, and
+`GetFileName`/`GetFileExt`/`GetFileTitle` read `lpstrFileTitle`, which the common dialog
+does not fill under multi-select (MFC `ASSERT`s against calling them in that state).
+None of the three multi-select call sites calls any of the four — all use
+`GetStartPosition`/`GetNextPathName` exclusively — so the port makes all four report the
+**first** path chosen, documented at the accessors in `platform/mfc_ui.h`. A bare
+directory returned from something named `GetPathName` is the *golden adapter,
+plausible-wrong* shape.
+
+**Coverage limit, stated:** the panel is a `wxFileDialog` inside `mushgui_adapters`,
+which `mushcore` deliberately does not link, and it is modal — so it cannot be shown from
+a headless test and an in-app selftest would block on it. The tests drive the
+**iteration layer** through the `g_wxhook_file_dialog` seam. Covered: the shim's request
+(does it ask for multi-select, and only on open panels), its parse of the returned block,
+and the enumeration. **Not** covered: `hook_file_dialog`'s `wxFD_MULTIPLE` style bit and
+its packing of `wxFileDialog::GetPaths()` — that half runs only with a real panel on
+screen.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

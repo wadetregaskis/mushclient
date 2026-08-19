@@ -51,9 +51,16 @@ extern tConfigurationAlphaOption AlphaOptionsTable [];
 static const char* yn(bool b)  { return b ? "yes" : "no"; }
 static const char* en(bool b)  { return b ? "Enabled" : "DISABLED"; }
 
-// Truncate a CString to maxlen, appending "..." if needed.
+// Truncate a CString to maxlen, appending "..." if needed.  Floor maxlen
+// (mirrors ClampDebugTruncateWidth in world_debug.cpp) so a narrow
+// m_nWrapColumn can't drive it to zero or negative — CString::Left clamps
+// n<=0 to empty, which turned every entry into a bare "...".
 static CString Truncate(const CString& s, int maxlen)
 {
+    const int MIN_DEBUG_TRUNCATE_WIDTH = 20;
+    if (maxlen < MIN_DEBUG_TRUNCATE_WIDTH)
+        maxlen = MIN_DEBUG_TRUNCATE_WIDTH;
+
     if (s.GetLength() <= maxlen)
         return s;
     return s.Left(maxlen - 3) + "...";

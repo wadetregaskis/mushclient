@@ -65,6 +65,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 56 | The RGB bold/unbold colour scans stop one palette entry short, so white text never swaps | this commit | ansi.cpp `CMUSHclientDoc::InterpretANSIcode` (`ANSI_BOLD` / `ANSI_CANCEL_BOLD`) |
 | 57 | `CmcDateTime`'s constructor truncates a fractional second, so an `at_time` timer fires up to a second early | this commit | mcdatetime.cpp `mcDateFromTm` (via `CmcDateTime::SetDateTime`) |
 | 58 | `DisplayMsg`'s tab stop measures the line in bytes, so a tab after multi-byte text lands on the wrong column | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (`'\t'` and period-space cases) |
+| 59 | `/triggerlist`, `/aliaslist`, `/variablelist` and `/acceleratorlist` compute their truncation width as `(m_nWrapColumn - N)` with no floor, so a narrow wrap column drives it to zero or negative and `CString::Left` (which clamps `n<=0` to empty) prints a bare `"..."` for every entry | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` (triggerlist/aliaslist/variablelist/acceleratorlist) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`

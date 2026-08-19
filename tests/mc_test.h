@@ -258,6 +258,18 @@ inline std::string describe(const T& v) {
         return; \
     }} while(0)
 
+// Saves a process-global g_wxhook_* pointer and restores it in the
+// destructor, so an ASSERT_* between the install and a manual reset (which
+// returns out of the whole TEST body, not just past the reset line) cannot
+// leave the hook installed for every later TEST() in this binary.
+template <typename T>
+struct HookGuard {
+    T& slot;
+    T  saved;
+    explicit HookGuard(T& s) : slot(s), saved(s) {}
+    ~HookGuard() { slot = saved; }
+};
+
 // Entry point — put in exactly one .cpp in each test executable.
 //
 // Ignoring SIGPIPE mirrors what the product does at startup

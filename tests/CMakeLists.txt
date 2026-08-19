@@ -182,6 +182,27 @@ else()
     message(WARNING "Python3 not found; conflict-marker lint SKIPPED")
 endif()
 
+# ── Source lint: no duplicated test-helper definitions under tests/ ─────────
+# The HookGuard<T> RAII template (with its four-line preceding comment) was
+# pasted byte-identical into three test files, by the same commit that, the
+# same day, extracted RecordingTransport into tests/fake_transport.h to stop
+# exactly this.  Every test .cpp already includes tests/mc_test.h, so a
+# shared helper belongs there once, not copied.  As with the two lints above,
+# the second test is the checker's own fixture, so this cannot rot into a
+# vacuous pass.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME lint_duplicate_test_helpers
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_duplicate_test_helpers.py
+                     ${CMAKE_SOURCE_DIR})
+    add_test(NAME lint_duplicate_test_helpers_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_duplicate_test_helpers.py
+                     --selftest)
+else()
+    message(WARNING "Python3 not found; duplicate-test-helper lint SKIPPED")
+endif()
+
 # ── In-app conformance selftests ────────────────────────────────────────────
 # The hidden --pal-*-selftest flags run inside the real app binary (real wx
 # adapter, real transport, real world.Window* engine) and exit before the GUI

@@ -531,8 +531,9 @@ TEST(TelnetTest, Phase_SUBNEG_CapAbortsOnceNotOncePerByte)
     doc.m_phase = HAVE_SUBNEGOTIATION;   // as the loop would have left it
     for (size_t j = 0; j < 4096; j++)
         doc.Phase_SUBNEGOTIATION('X');
-    EXPECT_EQ(eConnectConnectedToMud, doc.m_iConnectPhase)
-        << "the cap re-aborted: one hostile stream closes the world once per byte";
+    // Still connected: the cap did not fire again.  If this fails, one hostile
+    // stream closes the world once per byte and puts up a modal box each time.
+    EXPECT_EQ(eConnectConnectedToMud, doc.m_iConnectPhase);
 }
 
 // The escaped-IAC vector aborts once too, on the same helper.

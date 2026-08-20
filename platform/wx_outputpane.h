@@ -351,6 +351,23 @@ public:
     // Safe to call at any time; no-op if already at the top.
     void ScrollToTop();
 
+    // ── EnsureSelectionVisible — CMUSHView::EnsureSelectionVisible ───────────
+    // (mushview.cpp:5002).  ONE rule for Find, Go To Line and Go To Bookmark,
+    // because Windows has exactly one function for all three: Go To Line and
+    // Go To Bookmark reach it through SelectLine (mushview.cpp:5595), and Find
+    // calls it directly at the end of CSendView::DoFind (sendvw.cpp:1475).
+    // The port had grown three DIFFERENT behaviours instead — Find centred the
+    // match and always froze, Go To Line had the visibility guard but not the
+    // clamp, Go To Bookmark had neither — so the same jump to the same line
+    // left the pane in a different state depending on which menu item you used.
+    void EnsureSelectionVisible();
+
+    // CMUSHView::SelectLine (mushview.cpp:5595): select the whole of 0-based
+    // line `lineIdx` — its start to the start of the next — and then
+    // EnsureSelectionVisible.  Go To Line and Go To Bookmark are both exactly
+    // this call on Windows.
+    void SelectLine(int lineIdx);
+
     // 0-based index of the topmost LOGICAL line with any part of it on screen —
     // the cut point for Clear Scrollback, which frees exactly what has scrolled
     // out of sight above the viewport.  A wrapped line only partly visible
@@ -911,6 +928,18 @@ private:
 
     // Convert a visual row index to its logical line index (binary search).
     int VisualRowToLogical(int vr) const;
+
+    // The visual ROW a selection endpoint sits on.  Windows' m_selstart_line /
+    // m_selend_line ARE rows: the engine wraps as it builds each CLine, so one
+    // CLine is exactly one row and EnsureSelectionVisible can compare them
+    // against a pixel offset divided by the font height.  The port wraps
+    // view-side instead, so a logical line can span several rows and the
+    // endpoint's COLUMN picks which one.
+    int SelectionRowOf(const SelPoint& p) const;
+
+    // Apply a computed freeze state — the m_freeze twin, so `true` means
+    // frozen — firing m_fn_autoscroll_changed only on a real transition.
+    void SetFrozen(bool frozen);
 
     // Draw a single text chunk from a run with the given selection inversion.
     // Paint-scoped: the opacity DrawLine worked out for the line it is drawing,

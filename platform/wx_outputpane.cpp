@@ -893,9 +893,14 @@ void COutputPane::ScrollToTop()
     int scrollX;
     GetViewStart(&scrollX, nullptr);
     Scroll(scrollX, 0);
-    bool wasAuto = m_autoScroll;
-    m_autoScroll = false;
-    if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+    // Windows reaches the top through ScrollToPosition, whose ENTIRE freeze
+    // assignment sits inside `if (pDoc->m_bAutoFreeze)` (mushview.cpp:4600), so
+    // in a world with auto_pause off a plain scroll neither freezes nor thaws.
+    // The port froze unconditionally, which stopped the output in exactly the
+    // world whose option says it must never stop.  RefreshAutoScrollFromPosition
+    // IS that tail — gate, keep_pause_at_bottom latch and all — and the position
+    // is readable immediately after Scroll(), so it can simply be asked.
+    RefreshAutoScrollFromPosition();
     Refresh(false);
 }
 
@@ -1002,10 +1007,170 @@ void COutputPane::ScrollToPixelY(long y)
     GetScrollPixelsPerUnit(nullptr, &unitH);
     if (unitH > 0)
         Scroll(0, pal::pixelsToScrollUnits(y < 0 ? 0 : y, unitH));
-    bool wasAuto = m_autoScroll;
-    m_autoScroll = false;
-    if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+    // ScrollToPosition's tail, as in ScrollToTop above: gated on the world's
+    // auto_pause, and — unlike the flat `m_autoScroll = false` this replaces —
+    // it thaws when the requested pixel clamped to the buffer end, so
+    // world.SetScroll(<past the end>) parks at the bottom with output running
+    // rather than silently freezing the world.
+    RefreshAutoScrollFromPosition();
     Refresh(false);
+}
+
+// ── SetFrozen ─────────────────────────────────────────────────────────────
+// One place that writes the m_freeze twin from a computed value.  m_autoScroll
+// is the INVERSE (see the header), so `frozen` here reads the way the Windows
+// arms it mirrors do, and the change hook fires only on a real transition —
+// the freeze pane redraws from it.
+void COutputPane::SetFrozen(bool frozen)
+{
+    const bool wantAuto = !frozen;
+    if (wantAuto == m_autoScroll) return;
+    m_autoScroll = wantAuto;
+    if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(m_autoScroll);
+}
+
+// The visual row a selection endpoint sits on — see the header for why Windows
+// needs no such conversion.  The column-to-row rule is the renderer's own
+// (c / m_wrapCols, as in the search-highlight mapping in DrawLine), so a match
+// found on the third wrapped row of a long line is scrolled to THAT row.
+int COutputPane::SelectionRowOf(const SelPoint& p) const
+{
+    const int n = LineCountI();
+    if (n == 0) return 0;
+    const int line = std::max(0, std::min(n - 1, p.line));
+    int row = RowStartOf(line);
+    if (m_wrapCols > 0 && p.col > 0)
+        row += std::min(p.col / m_wrapCols, std::max(0, WrapCount(line) - 1));
+    return row;
+}
+
+// ── EnsureSelectionVisible ────────────────────────────────────────────────
+// CMUSHView::EnsureSelectionVisible (mushview.cpp:5002), kept in the same shape
+// so the two can be diffed:
+//
+//     int startline = (pt.y - pDoc->m_iPixelOffset) / pDoc->m_FontHeight + 1;
+//     int endline   = ((pt.y + GetOutputWindowHeight ()) / pDoc->m_FontHeight) - 1;
+//     if (startline < 0) startline = 0;
+//     int lastline = pDoc->GetLastLine ();
+//     if (endline > lastline) endline = lastline;
+//     if (m_selend_line < startline || m_selstart_line > endline)
+//       {
+//       CPoint pt (0, m_selstart_line * pDoc->m_FontHeight -
+//                     (GetOutputWindowHeight ()) / 2);
+//       if (pt.y < 0) pt.y = 0;
+//       lastline_pt.y = (lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ();
+//       if (lastline_pt.y < 0) lastline_pt.y = 0;
+//       if (pt.y > lastline_pt.y) pt.y = lastline_pt.y;
+//       else                      m_freeze = true;
+//       ScrollToPosition (pt, App.m_bSmoothScrolling);
+//       }
+//
+// Two details carry the whole behaviour, and neither is an accident:
+//
+//  (a) BOTH ends of the visible band are shrunk by one row — the `+ 1` on the
+//      top and the `- 1` on the bottom — so a row only PARTLY on screen counts
+//      as NOT visible and gets scrolled to.  Nothing rounds; that is the point.
+//      Go To Line used the port's IsLineVisible instead, which is the
+//      any-pixel-showing rule, so a half-visible target was left half-visible.
+//
+//  (b) The `else` on the clamp.  When centring the target would scroll past the
+//      end of the buffer the position is clamped instead and the freeze is
+//      SKIPPED — after which ScrollToPosition's own rule (`m_freeze = pt.y <
+//      bottom`, and the clamped pt.y IS bottom) evaluates false.  So a jump to
+//      something near the end parks at the end and leaves output running, while
+//      a jump further back freezes so the user can read what they found.
+//
+// Note where the freeze is NOT gated: the `m_freeze = true` above runs whatever
+// m_bAutoFreeze says, while ScrollToPosition's tail is entirely inside
+// `if (pDoc->m_bAutoFreeze)`.  A selection jump therefore freezes even in a
+// world with auto_pause off; a plain scroll in that world does not.
+void COutputPane::EnsureSelectionVisible()
+{
+    if (m_lineH <= 0) return;                 // Windows: if (!pDoc->m_FontHeight)
+
+    SelPoint s, e;
+    if (!GetNormalizedSel(s, e)) return;      // nothing selected, nothing to show
+
+    int unitH = 0;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH <= 0) return;
+
+    const long long scrollY = GetScrollPositionY();
+    const long long viewH   = TextViewportH();
+
+    // (a) the FULLY visible band.
+    long long startline = (scrollY - m_pixelOffset) / m_lineH + 1;
+    long long endline   = (scrollY + viewH) / m_lineH - 1;
+    if (startline < 0) startline = 0;
+
+    // pDoc->GetLastLine(): the bottom of the scrollable extent, in rows.  The
+    // port's row axis is the VISUAL one, and m_totalVisualRows is what
+    // UpdateScrollbars builds the virtual size from, so the clamp below lands
+    // exactly where Scroll() would have clamped anyway.  m_overscrollRows is
+    // deliberately excluded: Windows has no such thing, and Clear Screen's
+    // reserved blank rows are not somewhere a selection can be.
+    const long long lastline = m_totalVisualRows;
+    if (endline > lastline) endline = lastline;
+
+    const long long selstart_row = SelectionRowOf(s);
+    const long long selend_row   = SelectionRowOf(e);
+
+    if (!(selend_row < startline || selstart_row > endline))
+        return;                   // already fully visible: no scroll, no freeze
+
+    // "scroll so bookmark is halfway down page"
+    long long y = pal::rowsToPixels(selstart_row, m_lineH) - viewH / 2;
+    if (y < 0) y = 0;
+
+    long long lastline_y = pal::rowsToPixels(lastline, m_lineH) - viewH;
+    if (lastline_y < 0) lastline_y = 0;
+
+    bool freeze = !m_autoScroll;              // the m_freeze carried in
+
+    if (y > lastline_y)
+        y = lastline_y;           // (b) clamped to the end: do NOT freeze here
+    else
+        freeze = true;            // ...and this one is NOT gated on auto_pause
+
+    Scroll(0, pal::pixelsToScrollUnits(y, unitH));
+
+    // ScrollToPosition's tail (mushview.cpp:4598-4606).  `bottom` is
+    // m_ScrollbarSizeTotal.cy - m_ScrollbarSizePage.cy, which is identically
+    // (lastline * m_FontHeight) - GetOutputWindowHeight() — the UNCLAMPED form,
+    // so a buffer shorter than the window gives a negative bottom and thaws.
+    if (m_allowAutoFreeze) {
+        const bool below = (y < pal::rowsToPixels(lastline, m_lineH) - viewH);
+        freeze = m_keepPauseAtBottom ? (freeze || below) : below;
+    }
+
+    SetFrozen(freeze);
+    Refresh(false);
+}
+
+// ── SelectLine — CMUSHView::SelectLine (mushview.cpp:5595) ────────────────
+//     m_selstart_line = iLine;  m_selend_line = iLine + 1;
+//     m_selstart_col  = 0;      m_selend_col  = 0;
+//     SelectionChanged (); Invalidate (); EnsureSelectionVisible ();
+// Go To Line and Go To Bookmark are both exactly this call on Windows, which is
+// why Go To Bookmark now SELECTS the line it lands on instead of merely
+// scrolling to it — and why the two can no longer disagree about when to move
+// the viewport or when to freeze.
+void COutputPane::SelectLine(int lineIdx)
+{
+    const int n = LineCountI();
+    if (n == 0) return;
+    lineIdx = std::max(0, std::min(n - 1, lineIdx));
+
+    // SetSelectionRange is 1-based and reads column 0 as "the whole line", so
+    // column 1 is the start-of-line those two want.  The last line has no next
+    // one, so it takes the whole-line form directly.
+    if (lineIdx + 1 < n)
+        SetSelectionRange(lineIdx + 1, lineIdx + 2, 1, 1);
+    else
+        SetSelectionRange(lineIdx + 1, lineIdx + 1, 1, 0);
+
+    Refresh(false);
+    EnsureSelectionVisible();
 }
 
 // ── Bookmarks (Display ▸ Bookmark Selection / Go To Bookmark) ─────────────────
@@ -1046,7 +1211,11 @@ void COutputPane::GotoNextBookmark()
         int idx = (((m_lastBookmarkLine % n) + n + i) % n);
         if (LineAt(idx).bookmark) {
             m_lastBookmarkLine = idx;
-            ScrollToLine(idx);
+            // CMUSHView::OnDisplayGotobookmark ends `SelectLine (nNewLine)`
+            // (mushview.cpp:4920) — the same call Go To Line makes.  This used
+            // to be a bare ScrollToLine: no selection, no visibility guard and
+            // an unconditional freeze.
+            SelectLine(idx);
             return;
         }
     }
@@ -4056,25 +4225,13 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         m_selFocus   = SelPoint{foundIdx, selEnd};
     }
 
-    {
-        int unitH;
-        GetScrollPixelsPerUnit(nullptr, &unitH);
-        if (unitH > 0) {
-            int clientH;
-            GetClientSize(nullptr, &clientH);
-            int vr = (foundIdx < (int)m_visualRowStart.size())
-                     ? RowStartOf(foundIdx) : foundIdx;
-            // Center the matched line in the viewport rather than placing it at
-            // the top: subtract half the client height so the match lands near
-            // the middle of the screen.  std::max(0,…) clamps near the buffer top.
-            const long long yPixel = pal::rowsToPixels(vr, m_lineH);
-            const long long scrollPix =
-                std::max(0LL, yPixel - (long long)(clientH - m_lineH) / 2);
-            Scroll(0, pal::pixelsToScrollUnits(scrollPix, unitH));
-            m_autoScroll = false;
-            if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
-        }
-    }
+    // CSendView::DoFind's last act on the view is
+    // `m_topview->EnsureSelectionVisible ()` (sendvw.cpp:1475) — the SAME
+    // function Go To Line and Go To Bookmark reach through SelectLine.  Find
+    // used to centre the match unconditionally and always freeze, so a match
+    // already on screen jumped the view anyway, and a match at the very end of
+    // the buffer froze the world when Windows leaves it running.
+    EnsureSelectionVisible();
     Refresh(false);
 
     if (outMatchLine) *outMatchLine = foundIdx;

@@ -7,15 +7,23 @@ Windows-side described below was written **by reasoning only** — no MSVC
 compile or run has ever happened on it.  You are the first empirical check.
 
 > **STATUS 2026-08-10 — this has now been built and run.  Read §8 (Results)
-> before working from anything below it**: every §4c question is answered, §6's
-> five deltas are measured (§8w), the four `sendvw.cpp` divergences have been
-> run (§8v), one prediction in §4b was wrong, and eight defects were found and
-> fixed (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`, `e4236e8` — a complete
-> zChat outage — `edc407e` and `ed60501`), with the build broken at HEAD until
-> the first of those.  Sections 1–7 are left exactly as written so the
-> predictions can be scored against what actually happened.  **§8z** is down to
-> one item (mapper redraw while playing); **§8-end** lists the files that still
-> need a macOS build.
+> before working from anything below it**: every §4c question *then written*
+> is answered, §6's five deltas are measured (§8w), the four `sendvw.cpp`
+> divergences have been run (§8v), one prediction in §4b was wrong, and eight
+> defects were found and fixed (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`,
+> `e4236e8` — a complete zChat outage — `edc407e` and `ed60501`), with the
+> build broken at HEAD until the first of those.  Sections 1–7 are left
+> exactly as written so the predictions can be scored against what actually
+> happened.  **§8z** is down to one item (mapper redraw while playing);
+> **§8-end** lists the files that still need a macOS build.
+
+> **STATUS 2026-08-20 — a second round is outstanding.**  §8 answers nothing
+> added after it, and a good deal has been: §4c-quintricies through
+> §4c-undequinquagies (all 2026-08-19, the decision-queue campaign) and the
+> five sections following §8t-bis (2026-08-13 … 2026-08-19) have never been
+> built or run on Windows.  The one with something waiting on it is
+> **§4c-quaterquadragies**, whose four measurements gate the remaining
+> miniwindow-font work on the macOS side.
 
 ## 1. Context in three paragraphs
 
@@ -1721,6 +1729,61 @@ against it:
       but that is inference. The port's rule is Lua's, deliberately, and stays Lua's
       either way — this only settles whether the port is *also* matching COM here or
       diverging from it.
+
+### 4c-undequinquagies. A gagging trigger's backwards walk (2026-08-19)
+
+`32d5597` changed `ProcessPreviousLine.cpp`, which `MUSHclient.vcxproj` builds
+(line 336) behind no platform ifdef, so **Windows compiles the new code**. The
+omit-from-output loop now captures its backward step and its stop condition
+*before* `RemoveTail`, where they used to be taken after it:
+
+    delete pLine;
+    m_LineList.RemoveTail ();     // unlinks and frees the node `pos` names
+    if (pos == prevpos) break;
+    m_LineList.GetPrev (pos);     // reads the freed node's prev pointer
+
+On the port that read comes back as whatever libmalloc left in the block —
+usually null — so the loop stopped after one line, and a gag on a **wrapped**
+paragraph left most of the paragraph on screen. It is the port's bug in effect,
+but it is not port-only code.
+
+**The claim this entry exists to check is that Windows was never affected.** It
+rests on `CList::FreeNode` pushing the node onto `m_pNodeFree` and leaving
+`pPrev` intact rather than returning it to the heap — so the stale read was of a
+correct pointer, in a block that is still allocated, which is also why the
+`ASSERT (AfxIsValidAddress (...))` inside `GetPrev` passes in a debug build and
+nothing upstream ever noticed. That is read out of the MFC sources, not run. If
+it holds, stock 5.06 and the new build behave identically and nothing is owed;
+if it does not, this is a **live** upstream bug and wants its own row in
+`docs/UPSTREAM-BUGS.md` instead of the "latent upstream" reading the commit
+message gives it.
+
+Note what that does *not* say. The two versions are not two different walks on
+Windows: the only dereference of a freed node was `GetPrev`, and the
+`pos == prevpos` test compares addresses without touching the block. So the
+checks below test the **premise** — that `pPrev` survived the free — and not the
+rewrite, which given that premise is the same traversal, one step earlier.
+
+- [ ] A trigger with **omit from output** set, matching a line long enough to
+      wrap into three or more screen rows (narrow the window, or have the MUD
+      send a long line). On **stock 5.06** the whole paragraph must vanish —
+      every wrapped row of it, not merely the last. Rows left behind mean the
+      bug is live on Windows too, and this entry's premise is wrong.
+- [ ] The same trigger on the new build: same result, and the lines *in front
+      of* the gag identical to stock's.
+- [ ] Fire it repeatedly — fifty gagged paragraphs — in a **debug** build, where
+      MFC's allocator diagnostics are live, and confirm no assertion, crash or
+      corrupted scrollback.
+- [ ] A gag whose batch is a **single, unwrapped** line, so `pos == prevpos` on
+      the first pass and the loop breaks immediately. Exactly that line goes and
+      nothing before it. The port's test wraps its fixture deliberately, so this
+      arm is not what it pins.
+
+Covered on the port by `PalWorldView.GagDeletesExactlyItsOwnBatchAndNothingBefore`
+(`tests/test_pal_worldview.cpp:2060`), whose fixture asserts the paragraph really
+wrapped — a single-line batch never reaches the step under test. The sibling loop
+that was given this same fix long ago, and carries a comment describing the
+hazard, is `DeleteLines` at `scripting/methods/methods_output_shared.cpp:92`.
 
 ### 4d. Everything else (smoke)
 

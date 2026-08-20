@@ -29,9 +29,16 @@ unless the change is listed as intended.
 > **One new defect was found in round-two code, and fixed: §10e** — the
 > subnegotiation cap was not one-shot, so one hostile stream raised eight modal
 > dialogs and put the attacker's filler in the output window.  It touches three
-> shared files, so **the macOS side must run `ctest` before that merges**;
-> §10i says why a Windows session cannot do that itself, and what it would
-> take.
+> shared files, so **the macOS side must run `ctest` before that merges**.
+>
+> **§10i is the one to read if you only read one.**  A spike measured what it
+> would take to run the suite on Windows, and the answer is *days, not the six
+> to ten engineer-weeks a survey of the tree predicted*: the tests already
+> include the real headers, so on Windows they compile against real MFC.  One
+> test file compiles with zero errors after four small fixes and links against
+> the app's own objects with **zero unresolved symbols**; what is left is MFC
+> console-host initialisation.  The prize is the **249 `#if*_WIN32` sites across
+> 70 TUs whose Windows arm has never been executed under test**.
 >
 > **§8 and §10 supersede anything above them that they contradict.**  §§1–7
 > keep their original wording so the predictions can be scored against what
@@ -4138,84 +4145,115 @@ Anything needing real typed input should follow §8v: drain every startup
 dialog, confirm with `GetGUIThreadInfo` that the edit has the focus, then use
 `keybd_event`.
 
-### 10i. Why `ctest` does not run on Windows, and what it would take
+
+### 10i. `ctest` on Windows: measured, not estimated
 
 Asked directly during this pass, because it is the one thing that would make a
-Windows session self-sufficient: every fix made here has to be handed to macOS
-for its regression check.  Surveyed rather than guessed, so the number below is
-worth arguing with.
+Windows session self-sufficient — every fix made here has to be handed to macOS
+for its regression check.
 
-**It is not a tooling problem.**  This machine has no WSL, no MSYS2, no
-gcc/clang and no Python — but Visual Studio Build Tools *does* ship CMake and
-Ninja, so a CMake configure is available.  Configuring is not the obstacle.
+**A survey of the tree said "six to ten engineer-weeks, write a third adapter
+set".  A four-hour spike says days.  The spike is right and the survey was
+wrong**, and the reason is worth more than the number: the survey reasoned about
+`mushcore_testsupport`, the *macOS* adapter set, and concluded you would have to
+rebuild it for Windows.  But the B-3 header flip means the tests include the
+**real** headers — `tests/test_telnet.cpp` includes `stdafx.h`, `MUSHclient.h`,
+`doc.h`, `pal/itransport.h` and nothing from `platform/` — and on Windows the
+real headers are **real MFC, which works**.  There is nothing to port.
 
-**It is not the POSIX includes either**, which is the answer that looks right
-and is wrong by an order of magnitude.  32 files include a POSIX-only header,
-but every one of those inside `platform/` and the port-only TUs is *already*
-inside `#ifndef _WIN32` — MSVC's preprocessor never reaches them.  The
-genuinely unguarded ones are **18 test files, about 30 include lines**, plus
-the calls behind them (`socketpair`, `dup2`, `getrusage`, `setrlimit`,
-`mkstemp`, `usleep`, `uname`; `tests/test_mxp.cpp:17` wants
-`<malloc/malloc.h>`, which is not even Linux-portable).  Compiler extensions
-are close to a non-issue: one `__attribute__`, already gated; four
-`#pragma GCC diagnostic` lines in three files that MSVC already compiles today
-as part of the app; zero statement expressions, `typeof`, computed goto or
-`__builtin_*`.  The CMake flags (`-Wall`, the `-Wno-*` set, the sanitizer and
-coverage options) are ~15 lines of `if(MSVC)`.  `tests/mc_test.h` is portable
-C++17 and already has its one POSIX touch (`SIGPIPE`) behind `#ifndef _WIN32`.
-All of that together is about a week of unglamorous work.
+This is the `nm` discipline the project already uses for stub adoption
+(CLAUDE.md: "measured with `nm`: adopting the four families leaves 5 / 1 / 0 / 2
+undefined symbols"), applied to the same question.  It corrected the estimate by
+an order of magnitude, in the same direction it did last time.
 
-**The obstacle is that `mushcore_testsupport` has no Windows counterpart, and
-cannot trivially get one.**  Of the 135 engine TUs the tests link, **117 (87%)
-are already in `MUSHclient.vcxproj` and already compile with MSVC** as part of
-the shipping app.  Only 18 are port-only — and 16 of those 18 (~6,400 lines)
-*evaporate entirely* under `_WIN32`, because their guard runs from near the top
-of the file to EOF: `windows_stubs.cpp`, `doc_port_glue.cpp`,
-`doc_flip_gui_stubs.cpp`, `gdi_headless.cpp`, `headless_app.cpp`,
-`headless_surface.cpp`, `mc_dispatch.cpp`, `posix_transport.cpp` and the rest.
+**What was measured.**
 
-That is the whole difficulty in one sentence: **the test suite runs headless on
-macOS because `platform/mfc_ui.h` (8,019 lines) hands the engine 108 fake MFC
-classes with no operating system behind them, and `gdi_headless.cpp` /
-`headless_app.cpp` / `windows_stubs.cpp` supply inert bodies for them.**  On
-MSVC, `stdafx.h:112-124` takes the real-MFC arm instead — `afxwin.h`,
-`afxext.h`, `afxsock.h` and friends — so every one of those classes is *real*
-MFC that wants a message pump, GDI handles and an `AfxWinInit`'d `CWinApp`,
-while every headless body that made them inert has been preprocessed away.
-There is no third arm in `stdafx.h`.
+1. **Compile.**  `cl.exe` on `tests/test_telnet.cpp`, with the vcxproj's own
+   Debug flags plus `/Itests`: **88 errors, which collapse to four causes.**
 
-And the guards cannot simply be deleted: the shims and real MFC would then
-genuinely collide, and `platform/windows_types.h` would redefine `BOOL`,
-`RECT` and `COLORREF` against `windows.h`.
+   | Cause | Errors | What it is |
+   |---|---|---|
+   | `CMUSHclientDoc`'s constructor is `protected` on Windows | **82** | `doc.h:721`, an **already-existing, already-documented** platform fork — off Windows it is made `public` because the wx layer `new`s the doc; on Windows `DECLARE_DYNCREATE` owns construction |
+   | `CLine` has no default constructor on Windows | 1 | `OtherTypes.h:360`, the identical shape |
+   | `g_debug` is a file-local `static const` on Windows | 3 | `telnet_phases.cpp:14`; `doc.h` declares it only off-Windows |
+   | `EXPECT_EQ(a,b) << "msg"` | 2 | **not a portability problem — a gtest idiom in the two tests §10e added, which would not have compiled on macOS either.**  Fixed. |
 
-So the real shape of the work is a **third configuration** —
-`mushcore_testsupport_win` — that stands MFC's `CDC` / `CWnd` / `CDocument` /
-`CAsyncSocket` up headlessly on Windows, or fakes them behind a fourth
-`stdafx.h` arm: roughly 6,400 lines of adapter replaced with a Windows-shaped
-equivalent.  Note that this is architecturally coherent rather than a hack — it
-is exactly how `mushcore_testsupport` and `mushgui_adapters` already relate —
-but it is not a weekend.  **Estimate: 6–10 focused engineer-weeks.**
+   Widen the two constructor guards to `#if !defined(_WIN32) || defined(MUSHCLIENT_TESTS)` — one token each, in the pattern already there — and give `g_debug` a Windows home, and it is **zero errors**.  No header conflicts.  No `windows.h` collisions.  No POSIX problem anywhere in the file.
 
-Two consequences worth knowing before anyone starts:
+2. **Link.**  `test_telnet.obj` against the app's own 285 `WinDebug/*.obj`,
+   `/SUBSYSTEM:CONSOLE`: 115 unresolved externals, of which **all but 28 were
+   simply two missing libraries** (`lua5.1.lib`, `winmm.lib`) and the remaining
+   28 were `CMUSHclientApp` members from the one object deliberately excluded.
+   Put `MUSHclient.obj` back, recompile the two TUs that see the widened
+   constructor guard (`doc.cpp`, `doc_construct.cpp`) so the mangled names
+   agree, and it is **zero unresolved symbols — a 9.4 MB test executable.**
 
-- **249 `#if*_WIN32` decision sites across 70 of the 135 TUs flip to arms the
-  test suite has never once exercised.**  That is the payoff *and* the risk: a
-  Windows ctest would be testing genuinely different code, which is the point,
-  but every one of those arms is currently unproven.
-- **About 10,000 lines and ~350 test cases become meaningless on Windows**,
-  because what they test does not exist there: `tests/test_mfc_ui.cpp` (6,267
-  lines, 192 tests — `:3462` literally asserts `App.platform ==
-  VER_PLATFORM_WIN32_NT` against the shim's *fabricated* OS info),
-  `test_posix_socket.cpp`, `test_gdi_headless.cpp`, `test_cstring.cpp`,
-  `test_collections.cpp`, `test_mc_dispatch.cpp`, `test_pal_transport.cpp`.  A
-  Windows ctest is therefore a *smaller* suite by design, not the same 75.
+3. **Run.**  This is where the remaining work is, and it is MFC *runtime
+   initialisation*, not architecture.  Entering through `main()` rather than
+   `WinMain()` means MFC never initialises: the first assertion is
+   `afxwin1.inl:21`, and `AfxWinInit (::GetModuleHandle (NULL), NULL,
+   ::GetCommandLine (), 0)` clears it — the documented "MFC in a console
+   application" fix.  The next is `oleunk.cpp:455`, the OLE/automation
+   reference counting, which `AfxOleInit` + `AfxSocketInit` did **not** clear.
+   `CMUSHclientDoc` is an automation object, so that is the thread to pull.
 
-**The cheap alternative, and what it does and does not buy.**  A Linux runner —
-WSL on this box, or CI — builds and runs the existing suite unchanged, because
-the code is kept Linux-clean.  That gives back the regression net for shared
-source, which is what a Windows session actually lacks: it would have caught
-anything §10e's fix broke.  What it does *not* give is MSVC's compilation of
-that source — but that half is already covered here, since `MUSHclient.vcxproj`
-builds every shared TU and this pass built it twice.  **For the specific gap a
-Windows session feels, a Linux runner is the high-value, low-cost answer and
-the third adapter set is not.**
+**So the recommended path, in order.**
+
+- **Add `MUSHclient_tests.vcxproj` to the existing solution**, not a CMake arm.
+  `/SUBSYSTEM:CONSOLE`, the same compile settings as `MUSHclient.vcxproj`,
+  `MUSHCLIENT_TESTS` defined **project-wide** (the spike proved that a
+  half-applied define changes a mangled name and breaks the link), the same
+  `<ClCompile>` list plus `tests/`, and the two extra libraries.
+
+  *Why MSBuild rather than extending CMake:* the vcxproj already holds the exact
+  settings that make this engine compile with MSVC — the `/D` set, MBCS,
+  `/std:c++14`, PCH off for the `pal/` files.  Re-deriving those in CMake means
+  two definitions of "how to compile this on Windows", and drift between two
+  definitions of the same thing is precisely the bug class this whole document
+  exists to catch (§10a is one).  The cost is that "ctest" becomes "run the exes
+  and check exit codes", which `mc_test.h` already supports — it is a five-line
+  script, and the word `ctest` in the request means the regression suite, not the
+  tool.
+
+- **Glob `tests/test_*.cpp` with an explicit exclusion list**, rather than an
+  inclusion list.  The default should be that a new test runs on Windows unless
+  someone says otherwise; an inclusion list silently rots the moment a test is
+  added on macOS.  This inverts the drift, and drift is the thing to design
+  against.
+
+- **Exclude the shim tests deliberately, and say so in the exclusion list.**
+  About 10,000 lines and ~350 cases test the *port's* substitutes for things
+  Windows has natively: `test_mfc_ui.cpp` (6,267 lines, 192 tests — `:3462`
+  asserts `App.platform == VER_PLATFORM_WIN32_NT` against the shim's
+  *fabricated* OS info), `test_cstring.cpp`, `test_collections.cpp`,
+  `test_posix_socket.cpp`, `test_gdi_headless.cpp`, `test_mc_dispatch.cpp`,
+  `test_pal_transport.cpp`.  On Windows `CString` is Microsoft's problem.  A
+  Windows suite is a **smaller** suite by design, and that is correct rather than
+  a compromise.
+
+- **Then work the MFC console-host initialisation** until a first test file runs
+  green, starting from `oleunk.cpp:455`.
+
+- **Last and least: the POSIX calls in the tests** — 18 files, ~30 include lines,
+  behind them `socketpair`, `dup2`, `getrusage`, `setrlimit`, `mkstemp`,
+  `usleep`, `uname`.  Nearly all are scaffolding (timing, temp files), not
+  assertions.  A small `tests/posix_compat.h` plus `MC_TEST_SKIP` for the few
+  that genuinely cannot work.  `tests/mc_test.h` itself is portable C++17 and
+  already guards its one POSIX touch.
+
+**What the payoff is, and the warning that comes with it.**  There are **249
+`#if*_WIN32` decision sites across 70 of the 135 TUs the tests link**, and the
+Windows arm of every one of them has never been executed under test.  That is
+the actual prize — far more than re-running what macOS already runs.  It is also
+the warning: expect the first green run to be preceded by a burst of failures
+that are *real Windows bugs*, not porting artefacts.  That is what happened the
+first time a sanitizer was pointed at this code — a use-after-free on every
+gagging trigger, after the code had already survived a 218-finding audit, four
+review rounds and 75 green tests.
+
+**And still do the cheap thing first.**  A Linux runner (WSL, or CI) builds and
+runs the existing suite unchanged, today, because the code is kept Linux-clean.
+It gives back the regression net for shared source — which is the gap a Windows
+session actually feels, and it would have covered §10e's fix.  It does not
+exercise the Windows arms; the vcxproj test target is what does that.  They are
+complements, and the runner is hours while the target is days.

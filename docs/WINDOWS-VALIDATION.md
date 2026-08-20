@@ -26,7 +26,12 @@ unless the change is listed as intended.
 > `FDICT`, the unbounded subnegotiation, the NAWS 255) are confirmed against
 > stock 5.06, as are ~25 more; **§4c-quaterquadragies' four font measurements
 > are answered (§10g)** and so is §4c-quintricies except its live-world item.
-> **One new defect was found, in round-two code: §10e.**
+> **One new defect was found in round-two code, and fixed: §10e** — the
+> subnegotiation cap was not one-shot, so one hostile stream raised eight modal
+> dialogs and put the attacker's filler in the output window.  It touches three
+> shared files, so **the macOS side must run `ctest` before that merges**;
+> §10i says why a Windows session cannot do that itself, and what it would
+> take.
 >
 > **§8 and §10 supersede anything above them that they contradict.**  §§1–7
 > keep their original wording so the predictions can be scored against what
@@ -3938,80 +3943,81 @@ like it had *stopped* matching plain black.  It had not.  Any probe that sets
 SGR state must reset it, and any "regression" seen in a colour probe should be
 re-run with the reset before it is written down.
 
-### 10e. FINDING — the subnegotiation cap is not one-shot (`71c6afd`)
+### 10e. FIXED — the subnegotiation cap was not one-shot (`71c6afd`)
 
-**This is new behaviour introduced by round two, and it is a defect.**  Stock
-5.06 has no cap at all, so there is nothing to compare against; the finding is
-against the fix's own intent.
+**Round two introduced this, and this pass found and fixed it.**  Stock 5.06 has
+no cap at all, so there is nothing to diff against; the finding is against the
+fix's own intent.
 
-Neither guard site resets `m_phase` or clears `m_IAC_subnegotiation_data`
-before returning (`telnet_phases.cpp:619` and `:641`), so **every subsequent
-byte of data already received re-enters the same branch**, and each one calls
-`OnConnectionDisconnect()` again and raises another modal `UMessageBox`.
-`m_phase` is only reset at *connection setup* (`doc_shared.cpp:1000`), never at
-disconnect.
+**What was wrong.**  Neither guard site reset `m_phase` or cleared
+`m_IAC_subnegotiation_data` before returning (`telnet_phases.cpp:619` and
+`:641`), and `DisplayMsg`'s byte loop calls both helpers as
+`Phase_SUBNEGOTIATION (c); continue;` — a `void` call that cannot stop the
+loop.  So **every remaining byte of data already received re-entered the same
+branch**, each one calling `OnConnectionDisconnect()` again and raising another
+modal `UMessageBox`.  `m_phase` is only reset at *connection setup*
+(`doc_shared.cpp:1000`), never at disconnect.
 
-Measured with `--scenario subneg_overflow_inject` (the cap plus 16 bytes, then
-a marker), counting **distinct** dialog handles:
+Measured with `tests/mud_stub.py --scenario subneg_overflow_inject` (the cap
+plus 16 bytes, then a marker), counting **distinct** dialog handles:
 
 ```
-distinct modal dialogs raised: 8
-   x8  Telnet subnegotiation too long - closing connection
+before:  distinct modal dialogs raised: 8      x8  Telnet subnegotiation too long - closing connection
+after:   distinct modal dialogs raised: 1      x1  Telnet subnegotiation too long - closing connection
 ```
 
-Eight modal boxes from one hostile stream, each of which a user must dismiss by
-hand.  In a run with megabytes still in flight, the remaining bytes were also
-**rendered into the output window as ordinary MUD text** (31 lines of the
-attacker's filler), because once the disconnect has run the phase machine is no
-longer in a subnegotiation.
+And with megabytes still in flight, the bytes after the cap were **rendered into
+the output window as ordinary MUD text** — 31 lines of the attacker's filler,
+after the client had announced it was closing.  After the fix: none.
 
-Both symptoms have one cause and one shape of fix: make the abort path leave
-the subnegotiation and forget the accumulated data before returning.  The
-sibling MCCP guard in `doc_shared.cpp` (`759d778`) has the identical structure
-and should be looked at with it — `--scenario mccp_fdict` raised 2 boxes rather
-than 1.
+**The fix, in three parts.**
 
-**Not fixed here, deliberately.**  It is shared source, the fix is a behaviour
-change rather than a syntax one (§2's rule), and the test suite cannot be built
-on Windows (`NOT WIN32` gates every test target), so a fix landed from here
-would be unverifiable.  §7 says behaviour changes are findings for Wade.
+1. `CMUSHclientDoc::AbandonSubnegotiation()` (new, `telnet_phases.cpp`) does the
+   reset *before* the disconnect: erase the collected data, clear
+   `m_subnegotiation_type`, `m_phase = NONE`, then `OnConnectionDisconnect()`
+   and the message box.  Order matters twice over — it makes the guard
+   unreachable a second time, and `UMessageBox` pumps messages, so a re-entrant
+   `ReceiveMsg` during that pump would otherwise find the phase machine still
+   inside a subnegotiation the client had already abandoned.
+2. Both guard sites call it instead of open-coding the disconnect.
+3. `doc_shared.cpp`'s two `HAVE_SUBNEGOTIATION` dispatch arms now watch for the
+   disconnect and `return`, abandoning the rest of the packet — which is
+   precisely what the two MCCP arms beside them already do.  The test is
+   before/after (`bWasConnected`), not a bare "are we connected?", because
+   `world.Simulate` feeds this loop on a world that is legitimately
+   disconnected.
 
-**The unit test that should pin it** — and note *why* the existing one cannot.
-`tests/test_telnet.cpp:458` `Phase_SUBNEG_UnterminatedSubnegotiationIsCappedAndDisconnects`
-`break`s out of its loop the moment the disconnect is seen, so it can never
-observe what the *next* byte does.  The gap is structural, not an oversight
-about this bug in particular: **a test that stops at the first sign of the
-behaviour it is checking cannot see whether that behaviour repeats.**
+Parts 1 and 3 are deliberately belt-and-braces: this is a hostile-input path
+and the two halves fail independently.
 
-```cpp
-// The abort must be one-shot.  Nothing on the abort path resets m_phase or
-// clears the accumulated data, so before this fix the very next byte re-entered
-// the guard: measured on Windows 2026-08-20, one hostile stream raised eight
-// modal message boxes, and the bytes after the cap reached the output window as
-// ordinary MUD text.
-TEST(TelnetTest, Phase_SUBNEG_CapAbortsOnceNotOncePerByte)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.m_iConnectPhase = eConnectConnectedToMud;
-    doc.Phase_SB(TELOPT_TERMINAL_TYPE);
+**Verified on Windows** (Debug and Release): the dialog count is 1, no filler
+reaches the output window, and the things that must still work do —
+`--scenario subneg_big_ok` (a properly terminated 200 KB GMCP payload) is still
+accepted, `ttype` and `naws` negotiate byte-for-byte as before, and the whole
+conformance set is unchanged.
 
-    for (size_t i = 0; i < kSubnegCap + 64; i++) {
-        doc.Phase_SUBNEGOTIATION('X');
-        if (doc.m_iConnectPhase == eConnectNotConnected) break;
-    }
-    ASSERT_EQ(eConnectNotConnected, doc.m_iConnectPhase);
+**Not verified headless**, and this matters: `add_subdirectory(tests)` sits
+inside `if(NOT WIN32)` (`CMakeLists.txt:1259`), so `ctest` cannot be built on
+Windows at all — see §10i.  **The macOS side must run `ctest` before this
+merges.**  Three shared files changed (`telnet_phases.cpp`, `doc_shared.cpp`,
+`doc.h`); `doc.h` gains a method declaration, not a member, so there is no
+`CMUSHclientDoc` layout change and no stale-archive hazard.
 
-    // Keep feeding the rest of the packet.  Re-arm the connect phase so a
-    // SECOND abort is detectable, and check it does not happen.
-    doc.m_iConnectPhase = eConnectConnectedToMud;
-    for (size_t j = 0; j < 4096; j++)
-        doc.Phase_SUBNEGOTIATION('X');
-    EXPECT_EQ(eConnectConnectedToMud, doc.m_iConnectPhase)
-        << "the cap re-aborts for every byte after the first";
-    EXPECT_NE(HAVE_SUBNEGOTIATION, doc.m_phase)
-        << "the abort left the phase machine inside the subnegotiation";
-}
-```
+**Two covering tests are added** to `tests/test_telnet.cpp`, and the reason the
+existing ones missed this is worth keeping.
+`Phase_SUBNEG_UnterminatedSubnegotiationIsCappedAndDisconnects` and its
+escaped-IAC sibling both `break` out of their loop the moment the disconnect
+appears, so neither ever asks what the *next* byte does.  **A test that stops at
+the first sign of the behaviour it is checking cannot tell whether that
+behaviour repeats.**  The new pair re-arm the connect phase after the abort and
+keep feeding, and assert that the phase machine really did leave the
+subnegotiation.
+
+**Worth a look with it, not done here:** the sibling MCCP guards in
+`doc_shared.cpp` have the same *shape* — `OnConnectionDisconnect()` then a
+message box — but they are inline in the loop and already `return`, so they are
+one-shot per packet by construction.  `--scenario mccp_fdict` nonetheless raised
+2 dialogs rather than 1, which is unexplained and is the next thing to pull on.
 
 ### 10f. Two things the differential method got wrong before it got them right
 
@@ -4127,3 +4133,85 @@ identically on both clients it is the instrument, not the build — §3's rule.
 Anything needing real typed input should follow §8v: drain every startup
 dialog, confirm with `GetGUIThreadInfo` that the edit has the focus, then use
 `keybd_event`.
+
+### 10i. Why `ctest` does not run on Windows, and what it would take
+
+Asked directly during this pass, because it is the one thing that would make a
+Windows session self-sufficient: every fix made here has to be handed to macOS
+for its regression check.  Surveyed rather than guessed, so the number below is
+worth arguing with.
+
+**It is not a tooling problem.**  This machine has no WSL, no MSYS2, no
+gcc/clang and no Python — but Visual Studio Build Tools *does* ship CMake and
+Ninja, so a CMake configure is available.  Configuring is not the obstacle.
+
+**It is not the POSIX includes either**, which is the answer that looks right
+and is wrong by an order of magnitude.  32 files include a POSIX-only header,
+but every one of those inside `platform/` and the port-only TUs is *already*
+inside `#ifndef _WIN32` — MSVC's preprocessor never reaches them.  The
+genuinely unguarded ones are **18 test files, about 30 include lines**, plus
+the calls behind them (`socketpair`, `dup2`, `getrusage`, `setrlimit`,
+`mkstemp`, `usleep`, `uname`; `tests/test_mxp.cpp:17` wants
+`<malloc/malloc.h>`, which is not even Linux-portable).  Compiler extensions
+are close to a non-issue: one `__attribute__`, already gated; four
+`#pragma GCC diagnostic` lines in three files that MSVC already compiles today
+as part of the app; zero statement expressions, `typeof`, computed goto or
+`__builtin_*`.  The CMake flags (`-Wall`, the `-Wno-*` set, the sanitizer and
+coverage options) are ~15 lines of `if(MSVC)`.  `tests/mc_test.h` is portable
+C++17 and already has its one POSIX touch (`SIGPIPE`) behind `#ifndef _WIN32`.
+All of that together is about a week of unglamorous work.
+
+**The obstacle is that `mushcore_testsupport` has no Windows counterpart, and
+cannot trivially get one.**  Of the 135 engine TUs the tests link, **117 (87%)
+are already in `MUSHclient.vcxproj` and already compile with MSVC** as part of
+the shipping app.  Only 18 are port-only — and 16 of those 18 (~6,400 lines)
+*evaporate entirely* under `_WIN32`, because their guard runs from near the top
+of the file to EOF: `windows_stubs.cpp`, `doc_port_glue.cpp`,
+`doc_flip_gui_stubs.cpp`, `gdi_headless.cpp`, `headless_app.cpp`,
+`headless_surface.cpp`, `mc_dispatch.cpp`, `posix_transport.cpp` and the rest.
+
+That is the whole difficulty in one sentence: **the test suite runs headless on
+macOS because `platform/mfc_ui.h` (8,019 lines) hands the engine 108 fake MFC
+classes with no operating system behind them, and `gdi_headless.cpp` /
+`headless_app.cpp` / `windows_stubs.cpp` supply inert bodies for them.**  On
+MSVC, `stdafx.h:112-124` takes the real-MFC arm instead — `afxwin.h`,
+`afxext.h`, `afxsock.h` and friends — so every one of those classes is *real*
+MFC that wants a message pump, GDI handles and an `AfxWinInit`'d `CWinApp`,
+while every headless body that made them inert has been preprocessed away.
+There is no third arm in `stdafx.h`.
+
+And the guards cannot simply be deleted: the shims and real MFC would then
+genuinely collide, and `platform/windows_types.h` would redefine `BOOL`,
+`RECT` and `COLORREF` against `windows.h`.
+
+So the real shape of the work is a **third configuration** —
+`mushcore_testsupport_win` — that stands MFC's `CDC` / `CWnd` / `CDocument` /
+`CAsyncSocket` up headlessly on Windows, or fakes them behind a fourth
+`stdafx.h` arm: roughly 6,400 lines of adapter replaced with a Windows-shaped
+equivalent.  Note that this is architecturally coherent rather than a hack — it
+is exactly how `mushcore_testsupport` and `mushgui_adapters` already relate —
+but it is not a weekend.  **Estimate: 6–10 focused engineer-weeks.**
+
+Two consequences worth knowing before anyone starts:
+
+- **249 `#if*_WIN32` decision sites across 70 of the 135 TUs flip to arms the
+  test suite has never once exercised.**  That is the payoff *and* the risk: a
+  Windows ctest would be testing genuinely different code, which is the point,
+  but every one of those arms is currently unproven.
+- **About 10,000 lines and ~350 test cases become meaningless on Windows**,
+  because what they test does not exist there: `tests/test_mfc_ui.cpp` (6,267
+  lines, 192 tests — `:3462` literally asserts `App.platform ==
+  VER_PLATFORM_WIN32_NT` against the shim's *fabricated* OS info),
+  `test_posix_socket.cpp`, `test_gdi_headless.cpp`, `test_cstring.cpp`,
+  `test_collections.cpp`, `test_mc_dispatch.cpp`, `test_pal_transport.cpp`.  A
+  Windows ctest is therefore a *smaller* suite by design, not the same 75.
+
+**The cheap alternative, and what it does and does not buy.**  A Linux runner —
+WSL on this box, or CI — builds and runs the existing suite unchanged, because
+the code is kept Linux-clean.  That gives back the regression net for shared
+source, which is what a Windows session actually lacks: it would have caught
+anything §10e's fix broke.  What it does *not* give is MSVC's compilation of
+that source — but that half is already covered here, since `MUSHclient.vcxproj`
+builds every shared TU and this pass built it twice.  **For the specific gap a
+Windows session feels, a Linux runner is the high-value, low-cost answer and
+the third adapter set is not.**

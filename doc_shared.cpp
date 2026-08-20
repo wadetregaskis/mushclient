@@ -3186,7 +3186,25 @@ CString strLine (lpszText, size);
         case HAVE_DO:             Phase_DO (c); continue;
         case HAVE_DONT:           Phase_DONT (c); continue;
         case HAVE_SB:             Phase_SB (c); continue;
-        case HAVE_SUBNEGOTIATION: Phase_SUBNEGOTIATION (c); continue;
+        case HAVE_SUBNEGOTIATION:
+            {
+            // A subnegotiation past MAX_SUBNEGOTIATION_LENGTH closes the world
+            // (telnet_phases.cpp AbandonSubnegotiation).  Abandon the rest of
+            // the packet when that happens, the same way the two MCCP arms
+            // below return rather than carrying on — otherwise the bytes after
+            // the cap are rendered as ordinary MUD output, which on a hostile
+            // stream means attacker-chosen text in the window after we have
+            // said we are closing.
+            //
+            // The before/after comparison, rather than a bare "are we
+            // connected?" test, because world.Simulate feeds this loop on a
+            // world that is legitimately disconnected.
+            bool bWasConnected = m_iConnectPhase != eConnectNotConnected;
+            Phase_SUBNEGOTIATION (c);
+            if (bWasConnected && m_iConnectPhase == eConnectNotConnected)
+              return;
+            }
+            continue;
         case HAVE_COMPRESS:       Phase_COMPRESS (c); continue;
         
         case HAVE_COMPRESS_WILL:  
@@ -3220,10 +3238,15 @@ CString strLine (lpszText, size);
             }
             continue;
             
-        case HAVE_SUBNEGOTIATION_IAC: 
+        case HAVE_SUBNEGOTIATION_IAC:
           {
             bool bWasCompressing = m_bCompress;
-            Phase_SUBNEGOTIATION_IAC (c); 
+            // The escaped-IAC path caps on the same bound; see the
+            // HAVE_SUBNEGOTIATION arm above for why the packet is abandoned.
+            bool bWasConnected = m_iConnectPhase != eConnectNotConnected;
+            Phase_SUBNEGOTIATION_IAC (c);
+            if (bWasConnected && m_iConnectPhase == eConnectNotConnected)
+              return;
             // just turned on compression?  special case, can't keep treating the
             // data as it it was not compressed
             if (!bWasCompressing && m_bCompress)

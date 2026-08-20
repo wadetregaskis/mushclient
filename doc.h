@@ -1956,6 +1956,7 @@ public:
   void Phase_SB (const unsigned char c); 
   void Phase_SUBNEGOTIATION (const unsigned char c); 
   void Phase_SUBNEGOTIATION_IAC (const unsigned char c); 
+  void AbandonSubnegotiation (void);   // past MAX_SUBNEGOTIATION_LENGTH: reset, then close
   void Phase_COMPRESS (const unsigned char c);    
   void Phase_COMPRESS_WILL (const unsigned char c);    
   bool Handle_Telnet_Request (const int iNumber, const string sType);

@@ -602,6 +602,34 @@ void CMUSHclientDoc::Phase_SB (const unsigned char c)
     }
   } // end of CMUSHclientDoc::Phase_SB 
 
+// Give up on a subnegotiation that has passed MAX_SUBNEGOTIATION_LENGTH and
+// close the world.
+//
+// The order matters, and so does the state reset.  These helpers are called
+// from DisplayMsg's byte loop as `Phase_SUBNEGOTIATION (c); continue;` — a
+// void call that cannot stop the loop — so if the phase and the collected data
+// were left alone, every REMAINING byte of the packet would re-enter the guard
+// and put up another modal box.  Measured on Windows 2026-08-20: eight boxes
+// from one hostile stream where one is correct.  Leaving the subnegotiation
+// before the disconnect also matters because UMessageBox pumps messages, and a
+// re-entrant ReceiveMsg during that pump would otherwise find the phase machine
+// still inside a subnegotiation that we have already abandoned.
+//
+// The caller stops as well (doc_shared.cpp's HAVE_SUBNEGOTIATION arms watch for
+// the disconnect, exactly as the MCCP arms beside them already do), so the rest
+// of the packet is discarded rather than rendered as MUD output.  That is
+// belt-and-braces on purpose: this is a hostile-input path, and the two halves
+// fail independently.
+void CMUSHclientDoc::AbandonSubnegotiation (void)
+  {
+  m_IAC_subnegotiation_data.erase ();
+  m_subnegotiation_type = 0;
+  m_phase = NONE;
+  OnConnectionDisconnect ();    // close the world
+  UMessageBox ("Telnet subnegotiation too long - closing connection",
+               MB_ICONEXCLAMATION);
+  } // end of CMUSHclientDoc::AbandonSubnegotiation
+
 // SUBNEGOTIATION - we have IAC SB c (data)
 // if we get an IAC remember it, because it may or may not be followed by IAC or SE
 void CMUSHclientDoc::Phase_SUBNEGOTIATION (const unsigned char c)
@@ -618,9 +646,7 @@ void CMUSHclientDoc::Phase_SUBNEGOTIATION (const unsigned char c)
     // just collect the data until IAC SE
     if (m_IAC_subnegotiation_data.size () >= MAX_SUBNEGOTIATION_LENGTH)
       {
-      OnConnectionDisconnect ();    // close the world
-      UMessageBox ("Telnet subnegotiation too long - closing connection",
-                   MB_ICONEXCLAMATION);
+      AbandonSubnegotiation ();
       return;
       }
     m_IAC_subnegotiation_data += c;
@@ -641,9 +667,7 @@ void CMUSHclientDoc::Phase_SUBNEGOTIATION_IAC (const unsigned char c)
     // store the single IAC
     if (m_IAC_subnegotiation_data.size () >= MAX_SUBNEGOTIATION_LENGTH)
       {
-      OnConnectionDisconnect ();    // close the world
-      UMessageBox ("Telnet subnegotiation too long - closing connection",
-                   MB_ICONEXCLAMATION);
+      AbandonSubnegotiation ();
       return;
       }
     m_IAC_subnegotiation_data += c;

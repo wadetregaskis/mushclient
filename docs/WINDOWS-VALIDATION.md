@@ -1,21 +1,60 @@
 # Windows validation handoff
 
-For the Claude instance on the Windows VM.  Your mission: build this repo's
-Windows client, validate the recent cross-platform refactor, and check for
-regressions against original/upstream MUSHclient behaviour.  Everything
-Windows-side described below was written **by reasoning only** — no MSVC
-compile or run has ever happened on it.  You are the first empirical check.
+For whoever next has a Windows build in front of them.  The job: build this
+repo's Windows client, and check that the cross-platform refactor — and the
+many fixes that have landed on top of it — did not perturb Windows
+behaviour.  The prime directive is §1's: **Windows behaviour must not change**
+unless the change is listed as intended.
 
-> **STATUS 2026-08-10 — this has now been built and run.  Read §8 (Results)
-> before working from anything below it**: every §4c question is answered, §6's
-> five deltas are measured (§8w), the four `sendvw.cpp` divergences have been
-> run (§8v), one prediction in §4b was wrong, and eight defects were found and
-> fixed (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`, `e4236e8` — a complete
-> zChat outage — `edc407e` and `ed60501`), with the build broken at HEAD until
-> the first of those.  Sections 1–7 are left exactly as written so the
-> predictions can be scored against what actually happened.  **§8z** is down to
-> one item (mapper redraw while playing); **§8-end** lists the files that still
-> need a macOS build.
+> ## STATUS — 2026-08-20 (later)
+>
+> **Round one is done.  Round two is half done: it now builds and its
+> scriptable half has been measured; its dialog-driven half has not.**
+>
+> **Round one (2026-08-08 … 2026-08-10)** compiled and ran this source on
+> Windows for the first time.  Its record is **§8**, and it is measurement
+> rather than reasoning: the build was broken at HEAD, and eight defects were
+> found and fixed (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`, `e4236e8` — a
+> complete zChat outage — `edc407e`, `ed60501`);
+> §6's five deltas were measured (§8w); the four `sendvw.cpp` divergences were
+> run (§8v); and most of §4 was answered differentially against stock 5.06.
+>
+> **Round two's first pass (2026-08-20)** is **§10**.  The build was broken at
+> HEAD again in two places — one of them exactly as §9b predicted, the other
+> not predicted at all — and both are fixed.  Debug and Release then build and
+> run clean and agree with each other.  The three highest-risk §9c rows (MCCP
+> `FDICT`, the unbounded subnegotiation, the NAWS 255) are confirmed against
+> stock 5.06, as are ~25 more; **§4c-quaterquadragies' four font measurements
+> are answered (§10g)** and so is §4c-quintricies except its live-world item.
+> **One new defect was found, in round-two code: §10e.**
+>
+> **§8 and §10 supersede anything above them that they contradict.**  §§1–7
+> keep their original wording so the predictions can be scored against what
+> happened, so check a §4 section's **ANSWERED** / **OUTSTANDING** tag before
+> working from its text.  One prediction in §4b was wrong; §4c-quater's premise
+> was wrong for both clients (§8g); §4c-terdecies carries a correction that was
+> itself re-opened (§8q); and §9c's `00f634e` row is right for the wrong-looking
+> reason (§10c).
+>
+> **What round two still owes is §10h**, and it is essentially §4's
+> dialog-driven half: the world-preferences walk (`44f0737`), the MXP veto
+> (§4c-duodequadragies), everything needing a plugin, and everything needing
+> real typed input.  §9 remains the inventory.
+
+## How to use this document
+
+1. **§10h** first — it is the shortest statement of what is left.
+2. **§2** to build, **§3** for the baselines, **§3b** for how to drive the GUI
+   without a human — round one worked that out and it is not obvious.
+   `tests/mud_stub.py` is the loopback server; do not write another.
+3. **§9** for round two's commit inventory, and **§10** for what the first
+   round-two pass measured against it.
+4. **§4** for the per-change checklists.  Each subsection is tagged with
+   whether round one answered it.  The untagged 2026-08-19 sections
+   (§4c-quintricies onward) are all round-two work.
+5. **§5** and **§6** list what is *supposed* to differ.  Read both before
+   filing anything.
+6. **§7** for how to report.
 
 ## 1. Context in three paragraphs
 
@@ -46,6 +85,14 @@ Three seams are live on every platform:
   (`appendLine`/repaint) has NOT been flipped — Windows still paints by pull
   (`UpdateAllViews` → `CMUSHView::OnDraw`), unchanged.
 
+**The IWorldView adapter has kept growing since**, and each addition is a
+place where a Windows body was relocated rather than reimplemented:
+`mouseMoveMiniWindow` (§4c-undevicies), `setBookmark` (§4c-vicies),
+`mainClientRect` and the world-child reading of "the main window"
+(§4c-unquadragies), and `setCommandWindowHeight` / `setOutputWidthPixels`
+(§4c-quinquadragies).  Two methods left §5's not-flipped list along the way —
+`SetInputFont` and `GetMainWindowPosition`.
+
 The macOS side is live-verified continuously and is NOT your concern except:
 if you must edit a **shared** file (anything not whole-file
 `#ifdef _WIN32`), flag it clearly in your report so the mac side gets
@@ -64,29 +111,34 @@ re-verified.  Prefer Windows-only fixes.
   and include `stdafx.h` as an ordinary header.  This is the established
   pattern (`pal/gdi_surface.cpp` builds this way).
 
-**Expect first-compile errors.**  Fixing them is part of your job.  Keep
-fixes minimal and semantics-preserving; if a fix changes behaviour rather
-than syntax, treat it as a finding (§7).  The riskiest constructs, in order:
+**It built clean at the end of round one, in both configurations.**  Debug|Win32
+and Release|Win32 both link with no warnings from our own code; what remains is
+`LNK4099` from OpenSSL's static libs (no PDB shipped), three pre-existing
+`C4244`s in vendored `scripting/lua_compress.c`, and two `GetVersionEx`
+deprecations in `sqlite3.c`.  The full account is §8a.
 
-1. `pal/win_transport.cpp` — MFC `CAsyncSocket` subclass, a message-only
-   window (`HWND_MESSAGE`, `GWLP_USERDATA`, `WM_APP+401..403`),
-   `WSAAsyncGetHostByName`, the local `tcp_keepalive`/`SIO_KEEPALIVE_VALS`
-   block, OpenSSL calls, `CertOpenSystemStore` import loop.
-2. `pal/win_worldview.cpp` — view loops over `CMUSHView`/`CSendView`,
-   `Frame.m_wndInfoBar` rich-edit operations (`CHARFORMAT`,
-   `SetBackgroundColor`), `CWindowPlacement`.
-3. `doc_shared.cpp` — newly MSVC-compiled sections: the transport events
-   bridge, `CreateTransport()` (`pal::CreateWinTransport` on `_WIN32`), the
-   connection lifecycle (`ConnectSocket`, `OnConnect`, `OnBytesReceived`,
-   `ConnectionEstablished`, `OnConnectionDisconnect`, `LookupHostName`/
-   `LookupHostNameComplete`, `SendPacket`, `StartSSLHandshake`,
-   `OnTls{Established,Failed}`), `GetSocketError`, `GetConnectionStatus`,
-   `OpenLog`.  One known near-miss was already fixed (`<ws2tcpip.h>` for
-   `getaddrinfo`); expect siblings.
-4. `doc.h` / `doc_construct.cpp` — new members `m_pTransport`,
-   `m_pTransportEvents`, `m_pWorldView` (+ NSDMIs), `ConnectionOpen()`.
-5. `mainfrm.cpp` — the `WM_USER_HOST_NAME_RESOLVED` dispatcher now serves
-   **only chat sockets** (world DNS lives inside the transport).
+**Expect first-compile errors again anyway.**  Round two is 93 commits of
+unverified canonical-source change (§9), so the same trap is open: fixing them
+is part of the job.  Keep fixes minimal and semantics-preserving; if a fix
+changes behaviour rather than syntax, treat it as a finding (§7).
+
+**Where round one's 59 errors actually were, because the shape recurs.**  All
+five sites were a declaration that had drifted into an `#ifndef _WIN32` arm
+while its definition or its use stayed unconditional — nothing on macOS can
+notice that, so it breaks Windows silently until somebody compiles.  The
+worst of them was a *member* whose type came from a guarded `#include`: the
+class body did not parse, and 55 of the 59 errors were that one omission
+cascading.  §8a has the table.  **A shared header's `#ifndef _WIN32` block is
+the most dangerous place in this tree to put an include.**
+
+**Running the built exe needs runtime assets staged beside it.**  MSVC writes
+`WinDebug\MUSHclient.exe`, but the app resolves `locale\en.dll`,
+`spellchecker.lua`, `lua5.1.dll`, `tips.txt`, `help.db` and friends relative to
+the executable.  A fresh `WinDebug` therefore gives, in order: a missing-DLL
+system error, "Failed to load resources file", then a scripting error about
+`spellchecker.lua`.  Copy the *data* files (not the exe) from an installed 5.06
+and it runs.  Worth knowing before diagnosing a "broken build" that is really a
+bare directory.
 
 If a fix belongs to a whole-file-`#ifdef _WIN32` TU, commit freely.  Repo
 commit discipline (binding): messages never mention Claude/the assistant, no
@@ -108,9 +160,119 @@ Two baselines, use both:
   adapter + wiring), `614ae7d`/`de9970b`/`a9061ce` (the WV-3/4/5 family
   flips), `fbea7a2..1101426` (T3 lifecycle single-sourcing).
 
+**Drive both clients with the same script rather than eyeballing them.**  Two
+Lua conformance scripts live in `tests/lua/` and run in *any* MUSHclient —
+paste into Game ▸ Immediate (Ctrl+I), or point a world's `script_filename` at a
+driver that `dofile`s them.  Because the same file runs against stock 5.06,
+"is this a regression?" becomes a diff instead of a judgement:
+
+- `tests/lua/miniwindow_conformance.lua` — §4b's checklist as 64 probes.
+- `tests/lua/api_conformance.lua` — the scriptable half of §4c as
+  `key = value` lines, for diffing two clients.
+
+They are deliberately **not** registered with ctest; they are comparison
+instruments, not unit tests.
+
+**And a server to point them at: `tests/mud_stub.py`** (added 2026-08-20;
+Python 3, stdlib only, no build step).  It has an interactive mode — a fixed
+banner and a deterministic command vocabulary, which is what
+`docs/GUI-DRIVE-PLAN.md` drives — and a `--scenario` mode carrying the scripted
+protocol sequences: `ttype`, `naws`, `mccp_normal`, `mccp_fdict`,
+`subneg_unbounded`, `subneg_overflow_inject`, `subneg_big_ok`, `plain`
+(`--list` prints them with what each is for).  Everything the client sends is
+logged as raw bytes *and* as a decoded telnet trace, so "did it double the
+255?" is answerable from a file.  **Extend it rather than writing another**: it
+is the third such server this project has had, and the other two were an inline
+copy in a doc and a PowerShell one written for round two.
+
+**Reach for a unit test first.**  Most of the telnet phase machine, MCCP, NAWS
+escaping and the subnegotiation cap is reachable headless from
+`tests/test_telnet.cpp` against the real `CMUSHclientDoc`, and a unit test is
+faster, deterministic and runs in `ctest`.  A live client is for what a unit
+test structurally cannot see — the window, the modal dialogs, and the
+Windows-only arms (`SendWindowSizes` derives its dimensions from `CMUSHView`,
+which no headless build constructs).  Round two's three genuinely new findings
+were all of that kind.
+
+Five things round one learned about this baseline, each of which cost time:
+
+- **Stock 5.06 has no TLS at all.**  Pointed at a `use_ssl="y"` world it
+  answers `Line 28: Attribute not used: use_ssl="y" (world)` and connects in
+  plain text.  So "upstream" in every TLS comparison means *this repo before
+  the PAL*, not Nick's shipped client, and no §4a TLS item can be diffed
+  against 5.06.
+- **Verify any loopback MUD stub against a stock client before believing it.**
+  A PowerShell `TcpListener` echo server produced a connection that established
+  and carried no data — which looked alarming until 5.06 behaved identically
+  against it.  The harness was wrong, not the client (§8d).
+- **Pin both windows to the same size before comparing any width-derived
+  value.**  The two clients restore different world-window placements, so a
+  wrap column read from each differed by one and looked like a real divergence
+  (§8s).
+- **Do not probe from `OnWorldOpen`.**  The MDI child is still being created,
+  so the view's client rect is an interim size (§8s).
+- **A saved world file is byte-identical to 5.06's** apart from the version
+  string and the timestamp — that is a strong, cheap whole-file check, and it
+  only became true once `ColourToName` was made deterministic (§8o).
+
+## 3b. Driving the app without a human
+
+Round one's biggest methodological finding was that almost none of this needs
+a person at the keyboard, and three items had been written off as unreachable
+on the strength of being unreachable *from Lua*.  Do not re-derive any of it:
+
+- **A script can run inside the view's message queue.**  `AcceleratorTo(key,
+  script, 12)` binds in the `ACCELERATOR_FIRST_COMMAND` range handled by
+  `CMUSHView`'s `ON_COMMAND_RANGE`, so posting `WM_MOUSEMOVE` and then
+  `WM_COMMAND 12000` in one burst runs the script before the queued
+  `WM_MOUSELEAVE` lands.  That is what makes mouse position testable (§8q).
+- **Menu commands must be posted to the *frame*.**  At the view they are
+  silently dropped (§8t).
+- **`GetWindowText` cannot read another process's controls** — it returns the
+  cached caption, empty for an `Edit`.  `WM_GETTEXT` works cross-process;
+  `WM_SETTEXT` always did (§8t).
+- **`WM_SETTEXT` does not raise `EN_CHANGE`**, so `m_bChanged` stays false and
+  every "remember what they were typing" arm skips.  Type with one posted
+  `WM_CHAR` per character (§8v).
+- **Injected keystrokes need the focus, and this VM stacks three dialogs at
+  startup.**  Until they are all dismissed the focus is the frame, not the
+  command bar.  `GetGUIThreadInfo` is how to check without perturbing it (§8v).
+- **`PrintWindow` with `PW_RENDERFULLCONTENT`** captures a window's own
+  rendering without focusing or unobscuring it — that is how the mapper was
+  looked at (§8p).
+- **`WindowGetPixel` sampled into a checksum** compares two *processes'*
+  rendering pixel-for-pixel, since it is computed in-process from the surface
+  (§8x).
+
+What stayed genuinely hard is (a) anything needing a real cursor position that
+outlives the next queued message, and (b) judging what something *looks* like.
+
 ## 4. What to validate, in priority order
 
+Every subsection written before round one now carries a tag saying whether
+round one answered it.  **§8 never mentions fifteen of the thirty-six
+subsections that predate it**, so the old 2026-08-10 status banner's claim that
+"every §4c question then written is answered" was not true.  Six of the fifteen
+are port-only or were answered in substance under another name; the other nine
+were simply not reached — §4c-bis, §4c-septies, §4c-undecies, §4c-unvicies,
+§4c-duovicies, §4c-septemvicies, §4c-octies-bis, and items 1–4 of
+§4c-duodevicies.  In summary:
+
+| Verdict | Sections |
+|---|---|
+| **Answered** | §4c, §4c-ter, §4c-quater, §4c-sexies, §4c-octies, §4c-duodecies, §4c-terdecies, §4c-quaterdecies, §4c-sexdecies, §4c-septendecies, §4c-undevicies, §4c-vicies, §4c-tervicies, §4c-quatervicies, §4c-quinvicies, §4c-sexvicies, §4c-duodetricies, §4c-undetricies, §4c-duodetricies-bis, §4c-tertricies, §4c-quatertricies |
+| **Partly answered** | §4a (keepalives, long idle), §4b (the workload ran; appearance under movement did not), §4c-quinquies (items 1, 3, 5), §4c-duodevicies (items 1–4), §4d |
+| **Outstanding** | §4c-bis, §4c-septies, §4c-undecies, §4c-unvicies, §4c-duovicies, §4c-septemvicies |
+| **Open question, never answered** | §4c-octies-bis |
+| **Nothing for Windows** | §4c-nonies, §4c-decies, §4c-quindecies |
+| **Round two — never built or run** | §4c-quintricies … §4c-undequinquagies (all 2026-08-19) |
+
 ### 4a. Connection lifecycle (highest risk — total rewrite of the plumbing)
+
+> **ANSWERED in part (round 1).**  Hostname DNS, connect, MOTD, send, IAC
+> GA, disconnect statistics and reconnect: §8d.  The whole TLS matrix: §8i.
+> SOCKS 4 and 5 at the byte level: §8p.  MCCP: §8l.  **Still outstanding:**
+> keepalives, and a long idle session.
 
 Test world: **Discworld — `discworld.starturtle.net`, port `4242`** (uses
 MCCP compression, so the inflate path gets exercised for free).  Wade's
@@ -139,6 +301,13 @@ existing characters.
 
 ### 4b. Miniwindows / drawing (GDI adapter, `world.Window*`)
 
+> **ANSWERED (round 1), with one prediction wrong.**  64/64 probes: §8c —
+> which also found a *fourth* platform difference this section had missed
+> (`tmMaxCharWidth` > `tmAveCharWidth` for a fixed-pitch face, fixed in
+> `50a1303`).  Quow's pack: §8o.  The mapper looked at: §8p.  400 redraws
+> checksum-identical to 5.06: §8x.  The Lua port of the checklist asked for
+> below **already exists** — `tests/lua/miniwindow_conformance.lua`, see §3.
+
 **Quow's Discworld plugin pack** is the acceptance workload (heavy mapper
 drawing, fonts, images, hotspots, drag).  Get it via
 `packaging/fetch-discworld-plugins.sh` semantics — it downloads Quow's
@@ -160,6 +329,11 @@ everywhere.
 
 ### 4c. The flipped IWorldView families (routes changed, behaviour must not)
 
+> **ANSWERED (round 1).**  Differentially against 5.06, §8e — identical
+> output for the whole command-bar family, history, bookmarks, accelerators
+> and printf handling; four differences found, all explained, none a
+> regression.
+
 Drive each through Lua (Immediate window) and the UI:
 
 - **Title**: `SetTitle`, `SetMainTitle` — child/main title bars update.
@@ -179,6 +353,8 @@ Drive each through Lua (Immediate window) and the UI:
   `SetBackgroundColour`.
 
 ### 4c-bis. Two small hoists out of `mushview.cpp` (2026-07-29)
+
+> **OUTSTANDING.**  Round one never reached either check.
 
 Both are meant to be behaviour-preserving refactors of code that the wx port
 had reimplemented differently; each replaced an inline body with a call into a
@@ -207,6 +383,9 @@ shared TU, so a Windows run is what confirms "behaviour-preserving".
   small font).
 
 ### 4c-ter. printf format attributes (2026-08-02, `73f30e7`)
+
+> **ANSWERED (round 1), §8e.**  It compiles, and `Note("literal percent:
+> 100% done %s")` comes out verbatim.
 
 Windows-shared headers gained `MC_PRINTF_FORMAT(...)` on TFormat, CFormat,
 CString::Format, CMUSHclientDoc::Trace, ThrowErrorException and CErrorException.
@@ -238,6 +417,12 @@ Also three casts deleted in `mxp/mxpOpenAtomic.cpp`: a `long` was cast to
 
 ### 4c-quater. Accelerators moved into the shared engine (2026-08-03)
 
+> **ANSWERED (round 1) — and its premise was wrong.**  §8g: an empty `Send`
+> does **not** un-bind, in either client.  §8j reads the code and explains
+> why, and the erase was hoisted to both platforms in `c24926f`; §8l re-ran
+> it.  A follow-up (`eb8c2fe`, §9) then fixed an id leak the hoist
+> introduced.
+
 Three edits, all meant to leave Windows byte-for-byte unchanged:
 
 1. `scripting/methods/methods_accelerators.cpp` — the HACCEL half of
@@ -263,6 +448,11 @@ Three edits, all meant to leave Windows byte-for-byte unchanged:
    always compiled it.
 
 ### 4c-quinquies. Scripting-engine seam (2026-08-03)
+
+> **PARTLY ANSWERED.**  Item 2's `#ifndef _WIN32` arm was restored (§8f) and
+> the build is clean (§8a); item 5's `SafeArrayGetElement` leak was later
+> found to have a second defect (`8ede7bf`, §9).  **Items 1, 3 and 5's
+> script checks are outstanding.**
 
 Two shared-source changes, both meant to be Windows no-ops:
 
@@ -322,6 +512,10 @@ clean compile.
 
 ### 4c-sexies. "Convert wildcards to lower case" reaches the embedded engines (2026-08-03)
 
+> **ANSWERED (round 1), §8e.**  Behaves identically in 5.06 and this build;
+> the Lua-vs-`GetTriggerInfo` asymmetry is upstream's and is preserved
+> exactly.
+
 The per-trigger option `CTrigger::bLowercaseWildcard` was applied on Windows but
 did nothing in five of the port's six languages, because `FixWildcard` applies it
 when `evaluate.cpp` fills `trigger_item->wildcards[]` — the array the **COM**
@@ -358,6 +552,8 @@ whole matching line at index 10. Neither should have changed.
 
 ### 4c-septies. Bad UTF-8 bytes are repaired, as Windows already did (2026-08-03)
 
+> **OUTSTANDING** — low priority: nothing is expected to differ on Windows.
+
 `OutputBadUTF8characters` (`telnet_phases.cpp`) re-encodes a byte that is not
 valid UTF-8 as if it were ANSI — `MultiByteToWideChar(CP_THREAD_ACP)` then
 `WideCharToMultiByte(CP_UTF8)`. **The `#ifdef _WIN32` arm is untouched.** The
@@ -382,6 +578,9 @@ already be true on Windows.
 
 ### 4c-octies. Command-bar selection offsets are bytes, not characters (2026-08-03)
 
+> **ANSWERED in substance (round 1), §8e.**  `GetInfo(236)`/`(237)` are
+> identical in both clients, including clamping past the end.
+
 `CWorldChildFrame::commandSelection` / `setCommandSelection` /
 `replaceCommandSelection` (`platform/wx_world_child.cpp`) used wxTextCtrl
 CHARACTER offsets, while `GetCommandText()` and every shared body that scans it
@@ -390,6 +589,10 @@ its ANSI buffer. The seam now converts, via the new `UTF8ByteToCharOffset` /
 `UTF8CharToByteOffset` in `utilities_shared.cpp` (**no Windows caller**).
 
 ### 4c-octies-bis. QUESTION TO ANSWER: what shape do wildcards reach a non-Lua callback in?
+
+> **STILL OPEN — nothing has answered this.**  It is the one question in
+> this document that needs a non-Lua ActiveScript engine installed, and no
+> round has had one.
 
 Not a regression check — an **open design question** that cannot be settled off
 Windows. The port's five embedded engines hand a trigger/alias callback a
@@ -425,6 +628,8 @@ is no output-pane/world-window in-app selftest yet.
 
 ### 4c-nonies. Text of unproven validity no longer decodes all-or-nothing (2026-08-03)
 
+> **Nothing for Windows.**  Port-only; listed for completeness.
+
 **Port-only files** (`platform/wx_notepad.cpp`, `wx_mfc_impl.cpp`,
 `wx_world_child.cpp`) — nothing for Windows to check, listed for completeness.
 Three more `wxString::FromUTF8` sites were handed bytes that are not guaranteed
@@ -448,6 +653,9 @@ global keystrokes — see the notepad note in CLAUDE.md's verification debt.
 
 ### 4c-decies. Connection menu update-UI now matches doc.cpp (2026-08-03)
 
+> **Nothing for Windows.**  Port-only; the predicates are pinned by
+> inspection against `doc.cpp`.
+
 **Port-only** (`platform/wx_mfc_impl.cpp`), listed because the predicates were
 copied from `doc.cpp` and should stay in step:
 
@@ -467,6 +675,10 @@ other commands) instead of restating the predicate — worth doing if a third
 divergence turns up here.
 
 ### 4c-undecies. Command-entry path: history ordering, Repeat, PasteCommand (2026-08-03)
+
+> **OUTSTANDING.**  Port-only code, but the four "where these could be
+> imperfect" questions at the end are about *Windows* and none has been
+> answered.
 
 **Port-only** (`platform/wx_world_child.cpp`, plus the `#ifndef _WIN32` arm of
 `scripting/methods/methods_commands.cpp`), but these were written by reading
@@ -512,6 +724,9 @@ is GUI-only here. Please try to break them.
 
 ### 4c-duodecies. world.SetScroll: pixels, and the Visible flag (2026-08-03)
 
+> **ANSWERED (round 1), §8e.**  `SetScroll`'s argument really is a
+> device-pixel Y and `GetInfo(296)` reports the same unit, in both clients.
+
 **Port-only.** Two defects in the same method:
 
 - `CWorldChildFrame::setScroll` treated its argument as a **1-based line**;
@@ -531,13 +746,16 @@ is GUI-only here. Please try to break them.
 is a no-op — i.e. that 296 and SetScroll really are the same unit there. The
 whole fix rests on that reading.
 
-**Note for future work:** `platform/doc_gui_method_stubs.cpp` carries a
-**duplicate** `SetScroll` for the headless test link, and the two had drifted —
-the stub dropped `Visible`, so the test suite could not observe the product's
-behaviour. They are aligned now, but that file is a standing twin-drift hazard;
-CLAUDE.md's endgame is to retire the family.
+**Note, since this was written:** the duplicate `SetScroll` this paragraph
+warned about lived in `platform/doc_gui_method_stubs.cpp`, and **that file no
+longer exists** — the whole stub family was adopted into `mushcore` during the
+2026-08 endgame, so the twin-drift hazard it described is gone.
 
 ### 4c-terdecies. Miniwindow mouse events + two drawing fixes (2026-08-03)
+
+> **ANSWERED (round 1), §8q** — every cited Windows reference behaviour
+> confirmed.  Note the correction inside §8q was itself **re-opened**: the
+> Ctrl+wheel flag question is not settled.
 
 **Port-only** (`platform/wx_outputpane.{h,cpp}`, `wx_world_child.cpp`). Quow's
 pack is the workload that exercises all of these — hotspots with mouse
@@ -582,6 +800,9 @@ Now per-cell, like `DrawRunChunk`.
 
 ### 4c-quaterdecies. DDV_MinMax* validators actually validate now (2026-08-03)
 
+> **ANSWERED (round 1), §8t** — and it turned up a wording defect in the
+> port (`edc407e`).
+
 **Port-only** (`platform/mfc_ui.h`), but with a **real regression risk worth
 watching for** — see below.
 
@@ -613,6 +834,9 @@ with a differently-configured world.
 
 ### 4c-quindecies. Two display/log corruption fixes (2026-08-03)
 
+> **Nothing for Windows.**  Port-only.  Item 2 remains a consistency fix
+> against a latent hazard, not a confirmed bug.
+
 **Port-only.**
 
 1. **A palette change re-appended the whole scrollback to an open session log.**
@@ -636,6 +860,10 @@ with a differently-configured world.
    place to look; equally, if it never does, the fix costs nothing.
 
 ### 4c-sexdecies. Mono pattern brushes keep their colours (2026-08-03)
+
+> **ANSWERED in substance (round 1), §8c** — mono pattern brushes 8–12 keep
+> *both* caller colours (288 red / 288 green in the checkerboard, no black
+> or white).
 
 **Port-only** (`platform/wx_surface.cpp`). GDI colours a 1-bpp pattern brush
 from the DC — 0 bits take the text colour, 1 bits the background — but wx's
@@ -663,6 +891,9 @@ pen and brush colours, so there is a reference to match.
 
 ### 4c-septendecies. HiDPI: BGR24 pixel READS are exact now (2026-08-03)
 
+> **ANSWERED in substance (round 1), §8c** — the `WindowFilter` identity
+> round-trip is lossless in both clients.
+
 **Port-only** (`platform/wx_surface.cpp`). `readPixels`' BGR24 path blitted the
 canvas into a temporary **unscaled 1x** DIB, and miniwindow canvases are created
 at the display scale (`CreateCanvasBitmap`) — so on a Retina display every read
@@ -681,6 +912,10 @@ identity brightness, and asserts both columns come back byte-identical; it fails
 when either half falls back to the BitBlt path.
 
 ### 4c-duodevicies. Four command-bar commands hoisted out of `CSendView` (2026-08-03)
+
+> **PARTLY ANSWERED.**  Item 5 (spell check on send) is §8u.  **Items 1–4 —
+> Recall Last Word, Global Change, the multi-line caret gate and the
+> line-ending promotion — are outstanding.**
 
 **Windows code changed** — `sendvw.cpp` (4 sites) and
 `pal/win_worldview.cpp` (1). New shared TU `doc_commandbar_shared.cpp`, added to
@@ -738,6 +973,10 @@ moved.
 
 ### 4c-undevicies. WindowAddHotspot's re-detect goes through IWorldView (2026-08-03)
 
+> **ANSWERED (round 1), §8p and §8q** — the re-detect fires synchronously
+> inside `WindowAddHotspot`, and the control holds.  A later fix (`47896a0`,
+> §9) added a capture guard.
+
 **Touches shared code AND Windows.** `CMUSHclientDoc::WindowAddHotspot`
 (`scripting/methods/methods_miniwindows.cpp`) ends with the
 "was the mouse already over the hotspot I just created?" arm. It used to walk
@@ -759,6 +998,9 @@ hotspot **away** from the resting pointer fires nothing.
 
 ### 4c-vicies. `world.Bookmark` relocated into the shared engine (2026-08-04)
 
+> **ANSWERED (round 1), §8e** — set, clear, `GetLineInfo(n,7)` agreeing both
+> ways, out-of-range doing nothing.
+
 **Windows code changed** — the body moved from
 `scripting/methods/methods_output.cpp` into `doc_shared.cpp`, and the
 "alter appearance of all output windows" `CMUSHView` walk at the end of it is
@@ -777,6 +1019,9 @@ still do nothing at all.
 
 ### 4c-unvicies. Unread-line accounting reads one predicate (2026-08-04)
 
+> **OUTSTANDING.**  The one observable — a background world's unread count —
+> was never checked.
+
 **Windows code changed, but provably equivalently** — `doc_shared.cpp`'s
 `StartNewLine` tested `m_pActiveCommandView == NULL && m_pActiveOutputView ==
 NULL` inline; it now calls `!IsWorldViewActive()`, and the Windows definition of
@@ -791,6 +1036,8 @@ clears the count. That is the only observable, and it must be exactly as before.
 
 ### 4c-duovicies. `CMiniWindow::Menu` gained a defaulted `pDoc` (2026-08-04)
 
+> **OUTSTANDING.**  The `~` anchor prefixes were never checked.
+
 **Signature change only on the Windows path.** `Menu(Left, Top, Items, pView)`
 became `Menu(Left, Top, Items, pView, pDoc = NULL)`; the new argument is read
 only inside `#ifndef _WIN32`, where there is no `CMUSHView` to convert the
@@ -804,6 +1051,8 @@ from an alias/timer alike.
 
 ### 4c-tervicies. `SpellCheckString` gained an optional out-parameter (2026-08-04)
 
+> **ANSWERED (round 1), §8u.**
+
 **Windows-visible signature, no Windows caller.**
 `CMUSHclientApp::SpellCheckString(strText, bAll)` became
 `(strText, bAll, bool* pbCancelled = NULL)`. Nothing on Windows passes the third
@@ -816,6 +1065,9 @@ What to check on Windows: spell check on send still works, and Cancel in the
 suggestion dialog still aborts the send with the text left in the bar.
 
 ### 4c-quatervicies. Things I could NOT verify here at all (2026-08-04)
+
+> **ANSWERED — all four items.**  Item 1 by inspection (§8m); items 2, 3 and
+> 4 empirically (§8s).
 
 Recorded so a Windows run knows where to look rather than re-deriving it. All of
 these are macOS-side fixes whose *Windows* arm was read but never executed:
@@ -848,6 +1100,10 @@ these are macOS-side fixes whose *Windows* arm was read but never executed:
   column will differ by a character or two in that corner.
 
 ### 4c-quinvicies. Unbounded scrollback: the jump index and the 0 sentinel (2026-08-04)
+
+> **ANSWERED (round 1), §8i and §8o** — saves are byte-identical between two
+> runs, and byte-identical to 5.06's apart from the version string and
+> timestamp.
 
 **Substantial Windows-shared change** — `doc.h`, `doc.cpp`, `doc_shared.cpp`,
 `ProcessPreviousLine.cpp`, `methods_output.cpp`, `methods_noting.cpp`,
@@ -919,6 +1175,9 @@ that is expected and is not what this change is claiming to fix.
 
 ### 4c-sexvicies. Two latent MXP-entity hazards, deliberately untested (2026-08-04)
 
+> **ANSWERED (round 1), §8i** — neither hazard fires, and the first provably
+> cannot: modern MFC explicitly permits indexing the terminator.
+
 Both found while writing coverage for `mxp/mxpEntities.cpp`. Neither is fixed
 and neither has a test, for reasons that matter:
 
@@ -946,6 +1205,10 @@ and neither has a test, for reasons that matter:
    behaviour and the undefined one look identical when the platform is lenient.
 
 ### 4c-septemvicies. A new `CLine::flags` bit, and the trigger grouping test (2026-08-04)
+
+> **OUTSTANDING**, and it is the highest-value of the unanswered pre-§8
+> items: it is about trigger grouping, the hottest user-visible path in the
+> app.
 
 The macOS "Clear to Start" command needs to know which line is the server's
 prompt, so `MarkPromptLine` (`telnet_phases.cpp`, called from the IAC GA and
@@ -985,6 +1248,9 @@ be unchanged from today.
 
 ### 4c-duodetricies. DBCS wrap with "indent paragraphs" off (2026-08-05)
 
+> **ANSWERED (round 1), §8l** — 5 torn characters in 5.06, 0 here, and the
+> ASCII control byte-for-byte identical between the clients.
+
 `docs/UPSTREAM-BUGS.md` #10, fixed rather than merely recorded — **this one
 deliberately changes what Windows draws.**
 
@@ -1008,6 +1274,9 @@ line, exactly as before. If continuation lines start showing a leading space,
 the gate is wrong in the other direction.
 
 ### 4c-undetricies. The TLS failure recovery is now one body (2026-08-05)
+
+> **ANSWERED (round 1), §8i** — the whole 2×2 confirmed, including that
+> answering Yes to an unverified certificate stays **encrypted**.
 
 **`mainfrm.cpp` is edited here** — one of the few Windows-only files this port
 has touched — so it needs a compile before anything else.
@@ -1045,6 +1314,9 @@ that fails if both arms are ever made to do the same thing.
 
 ### 4c-duodetricies-bis. The command queue has one drain now (2026-08-05)
 
+> **ANSWERED (round 1), §8l** — both deliberate changes confirmed with exact
+> counts (4→2 logged, 1→3 echoed).
+
 **`TimerWnd.cpp` is edited** — needs a compile.
 
 `CTimerWnd::OnTimer`, `CTimerWnd::ChangeTimerRate`'s flush arm and the port's
@@ -1077,6 +1349,10 @@ Covered headlessly by the ten `QueueDrain.*` tests, including the eight-code
 flag table and the pacing/carry-over arithmetic.
 
 ### 4c-tertricies. The chat handshake's decisions moved to a shared header (2026-08-05)
+
+> **ANSWERED (round 1), §8i, §8p and §8r** — handshake, veto, zChat
+> negotiation, and eight byte-exact file transfers.  §8p also found
+> `e4236e8`, a complete zChat outage caused by modern ATL.
 
 **`chatsock.cpp` is edited, and it IS compiled on Windows** (`MUSHclient.vcxproj:231`)
 — so this needs a compile before anything else. The new `pal/chat_protocol.h`
@@ -1116,6 +1392,9 @@ against a faithful MFC `CString` model over 400,027 generated packets, with no
 mismatches, and the harness proved non-vacuous by seeding four differences.
 
 ### 4c-quatertricies. note_text_colour is validated as an index (2026-08-05)
+
+> **ANSWERED (round 1), §8e** — and it confirmed upstream really did accept
+> an out-of-range value.
 
 `docs/UPSTREAM-BUGS.md` #8. Shared code: `doc.h`, `doc_shared.cpp`,
 `scriptingoptions_numeric.inc`.
@@ -1722,7 +2001,66 @@ against it:
       either way — this only settles whether the port is *also* matching COM here or
       diverging from it.
 
+### 4c-undequinquagies. A gagging trigger's backwards walk (2026-08-19)
+
+`32d5597` changed `ProcessPreviousLine.cpp`, which `MUSHclient.vcxproj` builds
+(line 336) behind no platform ifdef, so **Windows compiles the new code**. The
+omit-from-output loop now captures its backward step and its stop condition
+*before* `RemoveTail`, where they used to be taken after it:
+
+    delete pLine;
+    m_LineList.RemoveTail ();     // unlinks and frees the node `pos` names
+    if (pos == prevpos) break;
+    m_LineList.GetPrev (pos);     // reads the freed node's prev pointer
+
+On the port that read comes back as whatever libmalloc left in the block —
+usually null — so the loop stopped after one line, and a gag on a **wrapped**
+paragraph left most of the paragraph on screen. It is the port's bug in effect,
+but it is not port-only code.
+
+**The claim this entry exists to check is that Windows was never affected.** It
+rests on `CList::FreeNode` pushing the node onto `m_pNodeFree` and leaving
+`pPrev` intact rather than returning it to the heap — so the stale read was of a
+correct pointer, in a block that is still allocated, which is also why the
+`ASSERT (AfxIsValidAddress (...))` inside `GetPrev` passes in a debug build and
+nothing upstream ever noticed. That is read out of the MFC sources, not run. If
+it holds, stock 5.06 and the new build behave identically and nothing is owed;
+if it does not, this is a **live** upstream bug and wants its own row in
+`docs/UPSTREAM-BUGS.md` instead of the "latent upstream" reading the commit
+message gives it.
+
+Note what that does *not* say. The two versions are not two different walks on
+Windows: the only dereference of a freed node was `GetPrev`, and the
+`pos == prevpos` test compares addresses without touching the block. So the
+checks below test the **premise** — that `pPrev` survived the free — and not the
+rewrite, which given that premise is the same traversal, one step earlier.
+
+- [ ] A trigger with **omit from output** set, matching a line long enough to
+      wrap into three or more screen rows (narrow the window, or have the MUD
+      send a long line). On **stock 5.06** the whole paragraph must vanish —
+      every wrapped row of it, not merely the last. Rows left behind mean the
+      bug is live on Windows too, and this entry's premise is wrong.
+- [ ] The same trigger on the new build: same result, and the lines *in front
+      of* the gag identical to stock's.
+- [ ] Fire it repeatedly — fifty gagged paragraphs — in a **debug** build, where
+      MFC's allocator diagnostics are live, and confirm no assertion, crash or
+      corrupted scrollback.
+- [ ] A gag whose batch is a **single, unwrapped** line, so `pos == prevpos` on
+      the first pass and the loop breaks immediately. Exactly that line goes and
+      nothing before it. The port's test wraps its fixture deliberately, so this
+      arm is not what it pins.
+
+Covered on the port by `PalWorldView.GagDeletesExactlyItsOwnBatchAndNothingBefore`
+(`tests/test_pal_worldview.cpp:2060`), whose fixture asserts the paragraph really
+wrapped — a single-line batch never reaches the step under test. The sibling loop
+that was given this same fix long ago, and carries a comment describing the
+hazard, is `DeleteLines` at `scripting/methods/methods_output_shared.cpp:92`.
+
 ### 4d. Everything else (smoke)
+
+> **PARTLY ANSWERED.**  Round one exercised world open/save, prefs dialogs,
+> triggers, logging, plugins and Lua at Quow's scale.  Round two adds ~93
+> commits of change to smoke over — see §9.
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,
 logging, notepads, plugins list, scripting languages you have available.
@@ -1730,6 +2068,14 @@ These paths were mostly untouched on Windows but the doc grew members and
 several TUs changed — a broad smoke matters.
 
 ## 5. Deliberately NOT flipped (don't report as missing/broken)
+
+> **Two entries have come off this list since it was written**, and the rest
+> was last re-derived on 2026-08-11.  `SetInputFont` was unforked (see the note
+> at the end of this section).  **`GetMainWindowPosition` was unforked on
+> 2026-08-19** by `6b13a53`, which routed it — and `GetInfo(249)`/`(250)` —
+> through `pal::IWorldView::mainClientRect`; its Windows checks are
+> §4c-unquadragies item 4, not this list.  Treat the remainder as accurate as
+> of 2026-08-11 and re-derive before relying on any single entry.
 
 These sites still run their original Windows code directly; each is a
 genuine semantic fork, documented in commits `de9970b`/`a9061ce`:
@@ -1795,9 +2141,20 @@ least to grip:
   selection math (1-based, clamped, `endcol + 1`) against
   `GetSelectionStartLine` et al. in official-client behaviour.
 
+> **Both were settled in round one — §8m.**  The selection math was diffed
+> against the four original getters and then confirmed empirically in §8e; the
+> message-only window resolved a real hostname (§8d) and survived dozens of
+> connect/disconnect cycles, TLS teardowns and an automatic reconnect.  One arm
+> stayed untested: `connect()`'s immediate-success path, which MFC can take
+> inline on loopback.
+
 ---
 
-## 8. Results of the first empirical pass (2026-08-08)
+## 8. Round one — results of the first empirical pass (2026-08-08 … 08-10)
+
+> This section is the **record of what was measured**, and it supersedes any
+> §§1–7 prediction it contradicts.  It answers nothing added after 2026-08-10;
+> for that, see §9.
 
 Environment: Windows 11 Pro 26200, VS 2022 Build Tools (MSVC 14.44, v143,
 Windows SDK 10.0.26100), Debug|Win32.  Baseline for every comparison: the
@@ -2113,7 +2470,7 @@ eyeballed:
 |---|---|---|
 | Big5, even offset | **5 torn characters** — every wrap strands a lead byte at end of line | **0**, every line 18 bytes, all breaks on a character boundary |
 | Big5, odd ASCII prefix | **5 torn** | **0** |
-| ASCII control (wraps at a space) | byte-for-byte identical between the two clients — the space stays at the END of the old line, no continuation begins with one |
+| ASCII control (wraps at a space) | byte-for-byte identical between the two clients — the space stays at the END of the old line, no continuation begins with one | *(same)* |
 
 So `UPSTREAM-BUGS.md` #10 reproduces exactly on stock 5.06 and is gone here,
 the wrap does fall up to a byte earlier as predicted (18 vs 19), and the gate
@@ -2989,6 +3346,194 @@ compile there, so nothing is owed. But the same numbers are worth having —
 if real GDI reports Times New Roman with `max == average`, the strict assertion
 is wrong on that side and the check should stay macOS-only.
 
+## 9. Round two — everything since the first pass
+
+Round one ended on 2026-08-10.  Since then **93 commits have changed lines that
+MSVC compiles**, and none of them has been built or run on Windows.  They come
+from three campaigns: a whole-tree audit and its fix waves, the 32-item decision
+queue, and a memory-safety sweep under a sanitizer.  Most are fixes to *upstream*
+defects in canonical source, so they change Windows behaviour by design.
+
+### 9a. How this list was built, and how far to trust it
+
+Mechanically, so that nothing was missed by memory:
+
+1. Take every commit from the last round-one commit (`b621be9`) to HEAD.
+2. Keep those touching a file listed as `<ClCompile>` in `MUSHclient.vcxproj`
+   — that, not the file's directory, is what decides whether Windows builds it.
+3. For each changed file, walk its `#if`/`#else`/`#endif` structure and keep
+   only commits with at least one added line that MSVC actually reaches (i.e.
+   not inside an `#ifndef _WIN32` arm).
+
+**That yields candidates, not verdicts.**  Two ways it over-counts, both real
+here: a commit that *deletes* a fork whose two arms agreed leaves new
+unconditional lines that are Windows-live and Windows-identical (`00f634e`);
+and a file can be in the project yet unreachable on Windows because the only
+thing that includes it is guarded (`platform/output_types.h`).  Each row below
+therefore carries a judgement, and the judgement is the part to argue with.
+
+Rows are marked:
+
+- **RUN** — Windows behaviour moves; the check is stated.
+- **COMPILE** — Windows behaviour is unchanged by construction, with the
+  reason; only the build matters.
+- **§…** — already has its own section in this document; go there.
+
+The rows marked COMPILE are *reasoning*, and round one falsified reasoning five
+times in one afternoon (§8a).  If a COMPILE row is cheap to check, check it.
+
+### 9b. Predicted build break — `bmp_load_shared.cpp` defines `LoadImage`
+
+> **CONFIRMED 2026-08-20, exactly as written — §10a.**  MSVC gave `C2373`
+> ("redefinition; different type modifiers") and `C2491` ("definition of
+> dllimport function not allowed") at `:208`, and the `#ifndef _WIN32` around
+> that one function is the fix that was applied.  A **second**, unpredicted
+> break sat behind it in `pal/win_transport.cpp`; the generalisation is in
+> §10a.
+
+Read out of the tree, **not observed**, and offered in that spirit.  `90fc274`
+added `bmp_load_shared.cpp` to `MUSHclient.vcxproj` (`:211`) and the file
+carries **no `_WIN32` guard anywhere**.  At `:208` it defines
+
+    HANDLE LoadImage (HINSTANCE hInst, LPCTSTR name, UINT type, int, int, UINT flags)
+
+which is the port's stand-in for the Win32 API of that name — it exists because
+`::LoadImage` does not, off Windows.  On Windows `winuser.h` both `#define`s
+`LoadImage` to `LoadImageA` *and* declares `LoadImageA` as `WINAPI`
+(`__stdcall`).  `bmp_load_shared.cpp` includes `stdafx.h`, so the macro is in
+scope: the definition should expand to a `__cdecl` redefinition of `LoadImageA`
+and fail to compile.
+
+If that is right, the fix is a `#ifndef _WIN32` around that one function (not
+around `LoadBmp`, which is harmless dead code there) — and it is worth
+recording as the mirror image of §8a's lesson: **a port-only *definition* in a
+file the Windows project compiles is as dangerous as a Windows-needed
+*declaration* inside an `#ifndef _WIN32` arm.**  Nothing on macOS can see
+either.  The other two files added to the project in the same period
+(`doc_aliasmenu_shared.cpp`, `scripting/db_int64.h`) define nothing that
+collides.
+
+### 9c. The inventory
+
+#### Output, display and logging
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `4639762` | `ProcessPreviousLine`'s note-logging and output-logging blocks (two ~35-line near-clones: preamble/postamble, `%n` substitution, `FormatTime`, HTML-vs-plain dispatch) funnel through one `LogFormattedLine` helper. Claimed behaviour-identical. | **RUN** — log a session from a world with a note preamble/postamble containing `%n`, in both HTML and plain modes, and diff the file against 5.06's byte for byte. A dedupe of two hand-synced clones is exactly where a silent divergence hides. |
+| `6491c97` | `strnrchr` ignored its length bound (`while (*s && n < count++)` never terminates on `n`), so it scanned to the first NUL. Both callers pass a `CLine::text` that is exactly `len` bytes **with no terminator**. | **RUN** — a long line with no space, in MXP `<P>` mode. Windows carried the same over-read; the visible symptom would be a wrong reflow point or a crash on a line ending at a page boundary. |
+| `cb903af` | `world.WriteLog`'s trailing-newline guard compared two characters against a one-character literal, so it never matched and every write appended a newline. `UPSTREAM-DIVERGENCES.md` §10. | **RUN** — `world.WriteLog("x\n")` must now put one newline in the log, not two. Any script that relied on the doubling changes. |
+| `8dd87e5`, `6e67cb0` | Status-bar text is now attributed to the world that produced it rather than to the frontmost one — "Connecting to…", the server-closed notice, the queued-command count, `DrawMappingStatusLine`'s "Mapper: …" and `CheckTimers`' "Reconnecting …". | **RUN** — on Windows these all go to the single app-scoped main-frame bar. Confirm the same strings still land there, in the same order, with two worlds open and only one connecting. |
+| `88b26eb`, `c511148`, `ee3586a` | Output fade, the nine `timestamp_*` options, and an MXP link with a legacy-charset byte — all in `platform/output_types.h`. | **COMPILE** — the header is a `ClInclude` but `doc.h` includes it only off Windows, so nothing on Windows reaches it. |
+| `0656d24`, `aad9e22` | Bold reaching white; tab stops in a UTF-8 world. | §9, *Engine-core upstream bugs* below. |
+
+#### Telnet, MCCP and hostile input
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `759d778` | Three security defects in the shared MCCP path, all upstream: an `FDICT` zlib header makes `inflate` return `Z_NEED_DICT`, which consumes nothing and produces nothing, and the loop only tested `< 0` — an endless spin; plus two more. | **RUN** — highest priority in this table. Point the client at a server that sends an MCCP stream with `FDICT` set and confirm it disconnects rather than freezing. Then a normal MCCP world (Discworld) to confirm nothing ordinary regressed. |
+| `71c6afd` | `Phase_SUBNEGOTIATION` appended every byte with no bound, so `IAC SB <type>` never followed by `IAC SE` grew a string forever — memory exhaustion, and on the 32-bit Windows build a `terminate()` at ~2 GB. | **RUN** — a stub server that opens a subnegotiation and never closes it. Confirm the client abandons it. Confirm ordinary MCCP/NAWS/TTYPE negotiation is untouched. |
+| `f878ff5` | `SendWindowSizes` wrote the four NAWS payload bytes raw; RFC 854 requires a data 255 to be doubled, so a width or height with a 255 byte emitted a bare `IAC` mid-subnegotiation. | **RUN** — set the world so a NAWS dimension is exactly 255 (a wrap column of 255 is an ordinary value) and confirm the MUD's echo of the size is right and the session stays in step. 256 was always fine, which is why only that one value tripped it. |
+| `5ee518e`, `0dae192` | Six MXP early-return paths leaked their `CArgumentList` — including a stack-local list that nothing ever reclaimed, reachable from any server. | **RUN** (leak only) — feed malformed MXP tags in a loop and watch the process's private bytes. |
+| `00f634e` | Deleted the `#ifdef _WIN32` fork on the TTYPE reply and the MTTS bitvector. | **COMPILE** — the *Windows* arm is the one that survived: it already answered `ANSI` and `MTTS 265`. Cheap to confirm with a TTYPE-logging stub. **Confirmed §10c — but stock 5.06 answers `MTTS 9`, from upstream `d9d45b3` (2025-02-15), which post-dates the 5.06 binary. Do not file that difference.** |
+
+#### Triggers, aliases and timers
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `856fa00` | Three upstream logic errors: `GetTrigger` OR'd `eOmitFromOutput` for **both** `bOmitFromOutput` and `omit_from_log`; `GetUdpPort` mishandled single-port ranges; two `InfoTypes` get/lose-focus codes were wrong. | **RUN** — the first is the one that bites: `AddTriggerEx` a trigger with `omit_from_log`, read it back with `GetTrigger`, and confirm the round trip no longer converts it to `omit_from_output`. |
+| `30df30b` | `ExecuteAliasMenuItem`'s `%`-substitution computed the `%<digit>` subscript and never read it, so a menu alias always sent `%1` empty. `UPSTREAM-BUGS.md` #14 — upstream's, sitting in `mushview.cpp` before the hoist. | **RUN** — an alias flagged *menu* whose Send is `say %1`, fired from the Ctrl+click word menu and from an MXP action menu. It must send the clicked word. |
+| `0a8d1a4` | `CmcDateTime::operator-`'s **`_WIN32` arm** returned a null/invalid span as a bare `double`, which the return type reconstructed as unconditionally valid. | **RUN** — a script subtracting two dates where one is null/invalid must now see the span report invalid. This is one of very few commits whose changed code is Windows-only. |
+| `a53232d` | Unlabelled timers report their internal `*timerN` name to scripts and to `Debug("timerlist")`; the port's `SortTimers` was a no-op stub. | **COMPILE** — Windows always built the reverse map. Confirm `*timerN` naming and the Debug listing are unchanged. |
+| `a098a70` | Reset All Timers walks `m_PluginList` and resets each enabled plugin's timers; the port had substituted a one-liner that reset only the world map. | **COMPILE** — the canonical body is what Windows already ran. Worth confirming a plugin heartbeat really is reset. |
+| `1ad3349`, `ef5466f`, `d2f67e3` | Fractional `at_time`; the colour-trigger matcher. | §9 *Engine-core…* / §4c-quintricies. |
+
+#### Miniwindows and images
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `1e03119` | Four upstream image defects that produced wrong output while returning `eOK`: greyscale and palettised PNGs decoded as coloured noise a third of the width, saved `.bmp` files were malformed, and two blend modes were wrong. | **RUN** — `world.WindowLoadImage` on an 8-bit greyscale PNG and on a palettised one; `WindowWrite` a `.bmp` and reopen it in Paint; the two blend modes against 5.06 side by side. |
+| `ab0336d`, `70ad82e` | A miniwindow no layout pass has placed reads as occupying the pane's top-left corner and swallowed clicks meant for the text there; and `m_bLaidOut` was set before the "not if hidden" skip, so a hidden-then-shown window hit-tested at that corner. `UPSTREAM-DIVERGENCES.md` §9. | **RUN** — create a miniwindow and add a hotspot before any paint; clicks at the pane's top-left must reach the text. Then `WindowShow` a hidden window and confirm its hotspots respond where it is drawn. |
+| `6caf24a` | `WindowAddHotspot`'s re-entrancy guard was a function-local `static`, so it was one flag per **process** rather than per document. | **RUN** — two worlds open; a hotspot `MouseOver` in world A that adds a hotspot to world B. It must now succeed. |
+| `ca2fba1` | `SetBackgroundImage` and `SetForegroundImage` were byte-identical 66-line bodies; both now call one `SetFrameImage`. | **RUN** (identity) — both still load PNG and BMP, both still report the same error codes for a missing and an unreadable file. |
+| `f807984` | Four bitmap-lifecycle defects in the port's `CBitmap`; `png_load_shared.cpp` gained 10 Windows-compiled lines. | **COMPILE**, believed — the ownership token is the port's shim. Confirm the PNG loader still works. |
+| `47896a0` | `WindowAddHotspot` skips its re-detect while the mouse is captured; the guard asked `::GetCapture()` directly, a permanent null stub off Windows. | **COMPILE** — `::GetCapture()` is real on Windows, so the guard already worked there; the change routes it through a seam. |
+| `90fc274` | A shared `.bmp` decoder, added to the project. | **See §9b — predicted build break.** |
+| `e288d7e`, `1d45c28` | Hotspot self-deletion; cross-window hotspot use-after-free. | §9 *Two miniwindow-layout corrections* / §4c-quadragies. |
+
+#### Scripting API and the Lua binding
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `3f6e164` | Five upstream defects in `scripting/lua_methods.cpp` (upstream bugs 36–40). `world.ArrayImport` checked that the *key* was a string then built the value with `lua_tostring` regardless of type — NULL for a boolean, table, function or nil, and a `CString` constructed from NULL. | **RUN** — `world.ArrayImport` with a table holding a boolean value must fail cleanly rather than crash. Lua only; the other four are in the same file. |
+| `8d7ab33` | `ArrayExport` escapes a delimiter after a doubled backslash; `ArrayImport`'s un-escape pass matched the wrong half of that pair and ate the real separator. One such field fails the import, two corrupt it silently. | **RUN** — export and re-import an array whose value ends in a literal backslash. |
+| `3f3e8ac` | The one-argument `CPlugin::ExecutePluginScript` returned an **uninitialised** local as the plugin's veto, and `ExecuteLua` returns from its "function not found" and error arms without writing it. | **RUN** — a plugin whose `OnPluginSend` raises a run-time error. Whether the line was sent, displayed or suppressed was previously whatever the stack held. |
+| `d4112c4` | `world.GetRecentLines` with a `Count` larger than the buffer wrapped an unsigned subtraction into a positive `int`, so the `< 0` clamp never fired and it read past the buffer. | **RUN** — `world.GetRecentLines(3000000000)` with three lines held. |
+| `89ee850` | Both `ExecuteLua` overloads saved `m_iNoteStyle`, forced NORMAL, then returned from the "function not found" arm without restoring it. Also restores the script-error log's context block. | **RUN** — a Lua callback naming a routine that does not exist, from inside a handler that had set a note style. |
+| `2e54bba` | `world.Help`'s fallback bound `bLua` to the *second* parameter (`nStartChar`, an `int`) instead of the fourth, so the Function List never showed Lua's functions and the bogus offset blanked the filter. `CMainFrame::OnGameFunctionslist` had the identical mistake. | **RUN** — `world.Help` and Game ▸ Function List on a Lua world must list Lua's own functions. |
+| `4a0de8f` | The Lua `error_code`/`error_desc` tables keyed `ePluginCouldNotSaveState` on 30037 instead of its own 30038, so `error_desc[30038]` was nil. | **RUN** — provoke a failed `world.SaveState` and confirm a script can name the error. |
+| `fbc4161` | `catch (CArchiveException*)` had no parameter name, so `e->Delete()` could never be called. | **RUN** (leak only) — a malformed `world.ImportXML` in a loop. |
+| `5c53c3e` | `world.Debug("summary")`'s OS name moved out of `world_debug.cpp` into `OSVersionString()` in `utilities_shared.cpp`. | **RUN** (identity) — the OS line in the Debug summary must be the same string as before on the same machine. |
+| `4874426`, `69155bd`, `1537f41` | `world.Debug` listed 0 commands always (it walked for a `CSendView`); `/triggerlist` and friends printed a bare `"..."` at a narrow wrap column; and the truncation clamped its compare width and cut width independently, so a value came back *wider* than its budget. | **RUN** — `world.Debug("commands")` with history, and the four list commands at a wrap column of 30 and of 200. |
+| `fc77994` | `GUID::Data1` was `unsigned long` and formatted `%08lX` — a minimum width — so `world.CreateGUID` returned 44 characters on LP64. The member is now a fixed 32-bit type. Also a metaphone stack overflow. | **RUN** — the member's *declared type* changed, which Windows compiles. `world.CreateGUID` must still be 36 characters and the same shape as 5.06's. |
+| `daf8a95`, `c05001a` | `Get_XML_number`'s magnitude guard and Insert Unicode Character's range check both used the native `LONG_MAX`. | **COMPILE** — `LONG` is already 32 bits on Windows, so both guards are unchanged there. The XML one is worth a look anyway: it now uses a literal, and it decides which world files load. |
+| `47af881`, `33ee87d`, `bb7fa0a` | `world.SpellCheckCommand`, `utils.directorypicker`, `utils.menufontsize` — each dead on the port because a Win32 API is a stub there. | **COMPILE** — all three take the real API on Windows and are unchanged; the edits are in the port's arm. |
+| `203c0fe`, `092c1f4`, `43e27b8`, `648622c`, `e24ab4b`, `fbb6695` | The Lua binding trio; the SQLite widening. | §4c-sextricies, §4c-septentricies, §4c-sexquadragies. |
+
+#### Plugins
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `28ca804` | `Screendraw` and `PluginListChanged` guarded recursion with a function-local `static`, so the flag was one per **process**. `Screendraw` runs for every completed line, note and command — so one world's callbacks silenced another's. | **RUN** — two worlds, both with a plugin implementing `OnPluginScreendraw`, both receiving output. Both must be called. This is the most user-visible plugin change in the list. |
+| `43c4545` | In the plugin wizard's four "remove the exported items" loops, the `SortTriggers()` + `SetModifiedFlag()` block sat **inside** the loop, so a full sort ran once per surviving entry. | **RUN** — run the wizard on a world with a few hundred triggers and confirm it finishes promptly and the world is still marked modified exactly once. |
+| `aca2478` | `OnUpdateNeedDescription` read the selected row's `CPlugin*` off the list control with no liveness check, unlike its five sibling handlers. | **RUN** — open the Plugins dialog, remove a plugin from outside it, then hover Show Info. |
+| `66e6606` | The plugin language whitelist now gates `jscript`/`perlscript`/`python` on the engine being present, as it already did for Tcl and Ruby. | **COMPILE** — every new arm is `defined(_WIN32) \|\| …`, so Windows accepts exactly what it accepted before. Confirm a VBScript and a JScript plugin still load. |
+| `b5d85fb` | Four `#ifdef USE_PYTHON` / `USE_TCL` / `USE_RUBY` gates became `#if defined(USE_X) \|\| !defined(_WIN32)`. | **COMPILE** — the Windows condition is unchanged by construction. |
+
+#### Dialogs and preferences
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `44f0737` | **Eight** defects in the world- and global-preferences pages, all the same shape: a value that round-trips through the dialog but is compared, applied or seeded against the wrong thing — so edits were discarded, or changes invented. 79 lines in `prefspropertypages.cpp` alone. | **RUN** — the largest dialog change in the list. Walk every world-prefs page: make one edit per page, OK, reopen, and confirm it stuck; then open and OK with no edit and confirm the world is *not* marked modified. |
+| `c605461` | Seven file dialogs tested `App.platform` to decide whether to suggest a filename; off Windows it was never assigned. Also a long-name overrun guard. | **RUN** in part — `App.platform` **is** assigned on Windows (`MUSHclient.cpp:940`), so the suggestion behaviour is unchanged there; what is new on Windows is the bound on a long name. Try File ▸ Log Session with a 300-character world name. |
+| `283124f` | Eight `catch (CMemoryException*)` arms could not match the `std::bad_alloc` a non-MFC `operator new` throws. | **COMPILE**, believed — MFC's `operator new` still throws `CMemoryException*` on Windows and those arms still match. Confirm nothing in the new `catch` ordering shadows the MFC one. |
+| `9139076` | `ReadNames` accepted a names file whose section markers are adjacent, leaving an empty array; `GenerateName` then did `rand () % 0`. | **RUN** — a names file with an empty `[middle]` section must be refused, not divide by zero. |
+| `3c58886` | Inside `CMUSHclientDoc`, unqualified `GetUniqueID()` resolved to the automation member, which returns an `AllocSysString`'d BSTR the caller owns — leaked once per document since the 2010 import. | **RUN** (leak only) — open and close a hundred worlds. Same string either way. |
+| `c3936f4` | `m_iNoteColourFore`/`Back` were never initialised, yet `Tell`'s deferred arm (taken inside a telnet negotiation or a plugin callback) pushes them into `m_OutstandingLines`. | **RUN** — a plugin calling `world.Tell` from `OnPluginTelnetRequest`; the note must come out in real colours. |
+| `0b70de7`, `41eb7bd`, `c1a3990` | A compiled regexp leaked on every regexp Recall; a failed `sqlite3_open_v2` leaked the handle it had already been given; a rejected duplicate-label trigger/alias left a freed pointer in the map. | **RUN** — the third is the one with teeth: load a world file with two triggers sharing a label and confirm nothing later dereferences the rejected one. |
+| `0e4a775` | `CDocument::SaveModified`/`DoFileSave` were `return TRUE` in the port's shim; six canonical dialog TUs each swapped a raw `SendMessage(WM_SETFONT/EM_LIMITTEXT)` for the MFC wrapper (`SetFont`, `LimitText`); `winplace.cpp`'s body was wrapped in `#ifdef _WIN32`. | **COMPILE** — the wrappers are what MFC does anyway and `winplace.cpp`'s Windows arm is the original. The behavioural half is port-only. |
+| `e14c216`, `c13d73a` | Tip of the Day's stack smash; six world-prefs and mapper defects. | §9 *World-prefs dialog bugs* below. |
+
+#### Chat
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `364ecd0` | `GetStamp` rebuilt the 4-byte wire stamp through `int` arithmetic, so a top-bit-set stamp sign-extended on LP64 and a genuine self-collision compared unequal about half the time. | **COMPILE** — `long` is 32 bits on Windows, so the sign extension never happened there. |
+| `52db0b6` | `ChatNote`'s truncation loop read `p[1]` after `ReleaseBuffer(-1)`. | **COMPILE** — on Windows `p` targets the string's real buffer, which survives the release. |
+
+#### Command bar, accelerators and sound
+
+| Commit | What changed | Verdict |
+|---|---|---|
+| `eb8c2fe` | **A regression round one introduced.** `c24926f` (§8j) hoisted the accelerator-map erase to both platforms; the erase destroys the entry a later re-bind of the same key looks up, so every unbind/rebind cycle consumed one of the 1000 command ids permanently, and at exhaustion `AcceleratorTo` answered `eBadParameter` for **every** key in that world. Fixed with a free list. | **RUN** — bind and un-bind the same key 1200 times through `AcceleratorTo`, then bind a fresh key. It must still work. A plugin that binds in `OnPluginInstall` and clears in `OnPluginClose` reaches this by being reloaded enough times. |
+| `5359254` | `CSendView::OnMacroCommand`'s 52-case `switch` mapping macro command ids to slots moved into `utilities_shared.cpp`; `sendvw.cpp` now calls it. | **RUN** — F2…F12 and the Ctrl/Shift variants must still fire the right macro, from the key, from a menu item, and from `world.DoCommand("MacroF1")`. |
+| `bc4d149` | Display ▸ Stop Sound Playing stopped two unrelated things at once (the world's MCI voice and the script's ten buffers); each half gained a command of its own, in `doc.cpp` and `accelerators.cpp`. | **RUN** — new commands in canonical source. Confirm the original combined command still stops both, that the two new ones each stop only their half, and that the menu and accelerator tables are intact. |
+| `8468a76` | `ApplyAutoSay` went from `bool` to a tri-state, because "auto-say consumed it" and "auto-say refused it, nothing was sent" must be told apart — a command that was never sent does not belong in the history. Six more command-bar defects alongside. | **RUN** — with auto-say on and the world **disconnected**, type a line: nothing is sent, and it must not enter the command history. Windows' `SendCommand` exits before its history tail in that case, which is the behaviour being matched. |
+| `f198bea` | The port's ten sound buffers were process-global; on Windows they are a `CMUSHclientDoc` member. | **COMPILE** — Windows was already per-world. Confirm `world.StopSound(0)` in one world leaves another's sounds playing. |
+| `353f7e8` | `world.SetInputFont` unforked. | §5. |
+
+#### Comments and internal-only
+
+`e88ddaf`, `3547525`, `9d0462e` correct stale in-tree comments (`genprint.cpp`,
+`platform/gdi_headless.cpp`, `chatsock.cpp`, `scripting/db_int64.h`).  Nothing
+to check beyond the build.
+
+### 9d. The dated round-two sections
+
+What follows are the round-two changes that were written up individually when
+they landed.  They are the detailed half of the table above; the 2026-08-19
+decision-campaign entries live in §4 instead, from §4c-quintricies to
+§4c-undequinquagies.
+
 ### The Ctrl+click alias-menu hoist (doc_aliasmenu_shared.cpp, 2026-08-13)
 
 CMUSHView::AliasMenu's word scan and menu-list build, and OnMXPMenu's
@@ -3187,3 +3732,398 @@ is the real property sheet and the real common dialogs.
   Paste and press OK.  The sheet must close; stock 5.06 puts up "Please enter an
   integer between 0 and 10000." and refuses.  Confirm 100001 is still refused
   and that the neighbouring *delay per lines* field (1..100000) is unchanged.
+
+---
+
+## 10. Round two — results of the second empirical pass (2026-08-20)
+
+> This section is the **record of what was measured** on the second Windows
+> pass, and it supersedes any §9 *prediction* it contradicts.  It does not
+> finish round two: §10h lists what is still owed, and it is most of §4's
+> dialog-driven half.
+
+**Environment.**  Windows 11 Pro 26200, Visual Studio **Build Tools** 2022
+17.14 (MSVC 14.44.35207), Win32/MBCS, OpenSSL under `openssl\`.  Baseline: the
+stock **5.06** installer copy at `C:\Program Files (x86)\MUSHclient` (compiled
+Mar 29 2019).  New build: `WinDebug\MUSHclient.exe`, reports **5.07**.  Both
+configurations were built and both were exercised (§10b).
+
+**Method.**  The same differential discipline §3 sets out: one Lua file, run in
+*both* clients, printing `key = value` lines, so "is this a regression?" is a
+diff.  Two new probe scripts were written alongside the two the repo already
+had, plus a scripted loopback MUD for the protocol work.  **The MUD stub is now
+committed** — `tests/mud_stub.py`, Python 3, stdlib only — because this was the
+third time one had been written from scratch (`docs/GUI-DRIVE-PLAN.md` §3.1
+used to carry an inline copy; that section now points at the committed file).
+
+**A note on what this pass is for.**  Driving the real client found three
+things no headless test could have (§10e, §10f), which is what end-to-end
+testing is good at.  It is *not* the regression net: everything it found that a
+unit test could pin is called out below with the test that should pin it.
+
+### 10a. Build — broken at HEAD again, in two places
+
+**Round two did not compile**, and the two failures are the same shape §8a
+warned about: something the macOS build structurally cannot see.
+
+| Site | Error | Predicted? |
+|---|---|---|
+| `bmp_load_shared.cpp:208` | `C2373` + `C2491` — `LoadImageA` redefinition | **Yes**, §9b, exactly as written |
+| `pal/win_transport.cpp:407` | `C2065` ×2 then `C1903` — `COMPRESS_BUFFER_LENGTH` undeclared | No |
+
+**1. `bmp_load_shared.cpp`.**  §9b called this precisely: `winuser.h` both
+`#define`s `LoadImage` to `LoadImageA` and declares it `WINAPI` (`__stdcall`)
+dllimport, so the port's stand-in expands to a `__cdecl` redefinition of a
+dllimport function.  Fixed with `#ifndef _WIN32` around that one function;
+`LoadBmp` stays unconditional (dead but harmless on Windows — its only caller
+is the guarded shim).
+
+**2. `pal/win_transport.cpp`.**  Not predicted, and the more interesting of the
+two.  `759d778` replaced the literal `9000` with `COMPRESS_BUFFER_LENGTH` in
+the Windows transport adapter — but that macro lives in `doc.h`, and a
+transport adapter does not include `doc.h`.  The **posix twin does the same
+thing with the literal `10000` and a comment naming the macro**
+(`platform/posix_transport.cpp:355`), so the two arms had drifted apart in the
+one direction only Windows can notice.  Fixed by matching the twin.
+
+**The lesson generalises §8a's, and is worth carrying.**  §8a's rule was "a
+shared header's `#ifndef _WIN32` block is the most dangerous place in this tree
+to put an include".  The mirror image is now measured too: **a Windows-*only*
+file is exactly as invisible to macOS as an `#ifndef _WIN32` arm.**  The
+complete set is `pal/win_transport.cpp`, `pal/win_worldview.cpp` and
+`pal/gdi_surface.cpp`; five round-two commits touched two of them (`759d778`,
+`47896a0`, `4e4ce04`, `b29469d`, `6b13a53`), and one of the five broke the
+build.  A cheap standing check for the mac side: after editing any
+`pal/win_*.cpp`, grep the identifiers you introduced for a definition that only
+`doc.h` supplies.
+
+### 10b. Both configurations build and run clean
+
+After those two fixes, **Debug|Win32 and Release|Win32 both link with no
+warnings from our own code** — the remaining warnings are exactly the
+pre-existing set §8a recorded (`LNK4099` from OpenSSL's static libs, three
+`C4244`s in vendored `scripting/lua_compress.c`, two `GetVersionEx`
+deprecations in `sqlite3.c`).
+
+Release was checked against Debug on the whole probe set: **identical output**
+for `miniwindow_conformance` (64/64 in both), `round2_conformance` and
+`round2b_conformance`, apart from a wall-clock second in a timer readback.  So
+nothing below depends on `_DEBUG` or on being unoptimised.
+
+`WinRel` needs the same runtime assets staged beside it that `WinDebug` does
+(§2) — worth saying because the first Release run looked like a hang and was a
+bare directory.
+
+### 10c. The three §9c rows with the highest stated risk — all confirmed
+
+Driven by `tests/mud_stub.py --scenario …`, each run against **both** clients,
+which is what §3 requires of any loopback stub.
+
+**`759d778` MCCP with `FDICT` set — the top of the table, and the worst.**
+Sampling CPU, private bytes and `Responding` every 2 s:
+
+| | stock 5.06 | this build |
+|---|---|---|
+| responding | **False from the first sample and never again** | True throughout |
+| CPU over 24 s | 0.03 → **22.25 s** (a full core, pegged) | 0.00 → 1.11 s |
+| private bytes | flat at 14 MB | flat at 20 MB |
+| outcome | frozen; killed | disconnects, prints the full statistics block, stays usable |
+
+`inflate` answering `Z_NEED_DICT` consumes nothing and produces nothing, and
+the old loop only tested `< 0`.  Stock is unusable after one such packet.
+
+**`71c6afd` unterminated subnegotiation.**  Server opens `IAC SB 200` and
+streams without ever sending `IAC SE`:
+
+| | stock 5.06 | this build |
+|---|---|---|
+| bytes accepted | **1,430,841 and still climbing** when the run ended | **269,973** — the 256 KB cap plus what was in flight |
+| private bytes | 15.1 → 17.2 MB, climbing monotonically | flat |
+| CPU | pegged (the `CString` append is O(n) per byte) | 1.1 s over 24 s |
+| outcome | grows until memory is gone (32-bit: `terminate()` at ~2 GB) | drops the connection |
+
+The cap clears legitimate traffic: `--scenario subneg_big_ok` (a properly
+terminated 200 KB GMCP payload) is accepted by both clients.  That answers
+`docs/UPSTREAM-BUGS.md` row 74's open question.
+
+**But the abort is not one-shot — see §10e, which is a finding.**
+
+**`f878ff5` NAWS and the doubled 255.**  With the world's wrap column at 255,
+the server sends `IAC DO NAWS` and logs the reply byte for byte:
+
+```
+stock 5.06 :  IAC SB NAWS  0 255      0 26  IAC SE     <- bare IAC mid-subnegotiation
+this build :  IAC SB NAWS  0 255 255  0 25  IAC SE     <- doubled, per RFC 854
+```
+
+Exactly the defect and exactly the fix, measured on the wire.  (The row counts
+differ by one because the two clients restored different window sizes — §3's
+"pin both windows" note; both later report 34 rows after `MoveWorldWindow`.)
+
+**`00f634e` TTYPE / MTTS — §9c's COMPILE verdict stands, but read this before
+diffing against 5.06.**  Four `IAC SB TTYPE SEND` cycles:
+
+```
+both       :  mushclient  /  ANSI
+stock 5.06 :  MTTS 9
+this build :  MTTS 265
+```
+
+That difference is **not** from `00f634e`, whose surviving arm is the Windows
+one.  It comes from upstream `d9d45b3` (2025-02-15, "MTTS: mark MushClient as
+supporting TRUECOLOR codes"), which post-dates the 5.06 binary.  Anyone
+comparing this tree against 5.06 will see it; it is not a finding.
+
+### 10d. The rest of the §9c inventory, measured
+
+Every row below is a differential against stock 5.06 unless it says otherwise.
+"same" means the two clients printed the identical line, which for a COMPILE
+row is the whole check.
+
+| Commit | What was measured | Verdict |
+|---|---|---|
+| `cb903af` | `WriteLog("alpha\n")` then `WriteLog("beta")`: stock writes `alpha␍␊␍␊beta␍␊`, this build `alpha␍␊beta␍␊` | fixed as intended (DIVERGENCES §10) |
+| `4639762` | A session logged with file/line preamble+postamble carrying `%n`, over notes, output and a direct write, in plain and HTML mode: the two log files are **byte-identical** apart from that one `WriteLog` newline | **dedupe is behaviour-identical** |
+| `856fa00` | a trigger with only `omit_from_log` set: `GetTrigger` reports flags **5** on stock (`eEnabled|eOmitFromOutput`) and **3** here (`eEnabled|eOmitFromLog`); the control, a trigger with `omit_from_output`, reports 5 on both | fixed; round trip no longer converts one to the other |
+| `856fa00` | `GetUdpPort(5555,5555)`: stock **0**, here **5555**; the multi-port and inverted cases identical | fixed |
+| `8d7ab33` | export an array whose value ends in a literal backslash, then re-import: stock `30057` and an empty array, here `0` and both keys byte-exact | fixed |
+| `4a0de8f` | `error_desc[30038]`: stock `nil`, here the real text; `error_code.ePluginCouldNotSaveState` 30037 → 30038 | fixed |
+| `3f6e164` | `SetRemoveMapReverses(true)`: stock raises "number expected, got boolean", here accepted.  `world:StripANSI(...)` through the `other:Method` form: stock raises "string expected, got userdata", here returns `"red"` | fixed (upstream bugs 38, 40) |
+| `203c0fe` | `ReplaceNotepad` from Lua: stock returns `nil`, here a **boolean** | fixed (DIVERGENCES §13).  Both arms answer `true` — a missing title is *created*, which is `AppendToTheNotepad` in replace mode, so that is correct |
+| `648622c`, `e24ab4b` | `DatabaseColumnValue` on 2³¹, 2⁵³, 2⁵³+1, 2⁶⁰, `INT64_MAX`, `INT64_MIN`: stock returns `-2147483648`, `0`, `1`, `0`, `-1`, `0` — all wrong; here `2147483648`, the exact double, the decimal **string** `9007199254740993`, the exact double, the string `9223372036854775807`, the exact double | fixed, and **`INT64_MAX` is the row §4c-sexquadragies item 4 said needed an x86-64 Windows machine.  It answers a string.** |
+| `fbb6695` | the same values through the bundled Lua `sqlite3` module: stock returns rounded doubles for 2⁵³+1 and `INT64_MAX`, here the same decimal strings the `world.Database*` surface gives | fixed, **and the two surfaces now agree value for value** |
+| `fa694a4` | `script_strict_arguments`: stock `GetOption` −1 and `SetOption` 30025; here reads 0, sets to 1, reads back 1, and appears in `GetOptionList` | round-trips, and is inert (no consumer on Windows) |
+| `d8de347` | `WindowFilter` blur over a 21×21 window: on stock the **top row of the region is unfiltered** and the rightmost pixel column keeps a different value (`0x333333` vs `0x141414` beside it); here every row including the first is filtered and the right column matches its neighbours | both defects fixed (upstream 78, 79) |
+| `ef5466f` | colour-matching triggers — the table below | fixed, with one deliberate removal |
+| `f06e369` | `ESC[91m`: stock leaves the colour at the default (`0xC0C0C0`), here it is bright red (`0x0000FF`); `ESC[101m` background 0 → 255.  `ESC ] 0 ; title BEL` prints `0;a window titleOSCBEL` on stock and `OSCBEL` here, same for the `ESC \` terminator | fixed (DIVERGENCES §15, §16) |
+| `0656d24` | with *custom 16 as default output colour*, `ESC[37m`+`ESC[1m`: stock stays on the normal white swatch (`0xC0C0C0`), here it reaches bold white (`0xFFFFFF`).  Red and cyan, normal and bold, identical on both | fixed; the other colours did not move |
+| `aad9e22` | a tab after `café` and after two CJK characters, UTF-8 world: stock puts the marker at byte 9 both times (tab stop computed in bytes), here at 10 and 13 (computed in characters).  **The ASCII world is byte-identical on both** | fixed |
+| `1e03119` | `WindowWrite` a `.bmp`, then reopen it: the two files differ in **exactly one byte** — `biSize` at offset 14, **44 on stock, 40 here** (`sizeof(BITMAPINFOHEADER)`).  Stock's own loader refuses its own file (`30067`); this build's reloads as 16×16.  GDI+ (`System.Drawing`) agrees: it refuses stock's and accepts this build's as `Format24bppRgb` | fixed, root cause measured to the byte |
+| `28ca804` | two worlds, both with a plugin implementing `OnPluginScreendraw`; world A's callback writes a note into world B.  **Stock never calls B's callback** for that note; this build does | fixed — see §10f for why the obvious probe misses it |
+| `a53232d` | unlabelled timers list as `*timer0000000000`, `*timer0000000001` | same on both, as the COMPILE row predicted |
+| `fc77994` | `CreateGUID` is 36 characters, `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` | same on both |
+| `d4112c4` | `GetRecentLines(3000000000)` with a short buffer | same on both, no crash |
+| `43e27b8` | `GetLineInfo(n).time` is a positive number matching `os.time()` | same on both (the 2038 arm is not reachable today) |
+| `eb8c2fe` | bind and un-bind one key through `AcceleratorTo` 1200 times, then bind a fresh key | every return code `eOK`, fresh bind works — the id pool is not consumed |
+| `5c53c3e` | the Debug summary's OS line | identical string on both |
+| `32d5597` | a gagging trigger over a paragraph that wraps to **6** rows: net line change **0** on stock and here, i.e. the whole paragraph goes on both | **§4c-undequinquagies' premise confirmed: the upstream bug is latent on Windows, not live.**  MFC's `CList::FreeNode` really does leave `pPrev` intact |
+
+**The colour matcher (`ef5466f`), in full**, because §4c-quintricies calls it
+the highest-regression-risk item in the campaign.  Two triggers, "match text
+colour = red" and "= black", both *keep evaluating*; the resolved RGB of each
+probe line is read back so a non-match can be explained rather than guessed at:
+
+| line | resolves to | stock | this build | |
+|---|---|---|---|---|
+| `ESC[31m` | 0x000080 | red | red | regression guard holds |
+| `ESC[38;5;1m` | 0x000080 | red | red | index < 8 matched by coincidence before, by appearance now |
+| `ESC[38;5;9m`, `ESC[38;5;196m` | 0x0000FF | — | — | correctly neither: this world's *red* is 0x000080 |
+| **`ESC[38;2;128;0;0m`** | 0x000080 | **—** | **red** | **the fix**: a 24-bit run that displays as the world's red now matches |
+| `ESC[38;2;170;0;0m` | 0x0000AA | — | — | correctly neither |
+| `ESC[1;31m` | 0x0000FF | red | red | bold red still matches (HILITE carried into the resolve) |
+| `ESC[7;31m` | inverse | black | black | identical, and identical again with `alternative_inverse` on |
+| `ESC[30m`, `ESC[38;2;0;0;0m` | 0x000000 | black | black | both still match |
+| no SGR | 0xC0C0C0 | — | — | identical |
+| **`ESC[38;2;1;0;0m`** | 0x000001 | **red** | **—** | **the one removal**: a near-black red whose COLORREF *is* the integer 1 no longer satisfies a "red" condition |
+
+Nothing that matched before stopped matching except that last row, which is the
+coincidence the fix exists to remove.  **Do not read this as a clean bill for
+item 6** — a real xterm-256 world with a large existing trigger set for a
+session is still owed (§10h).
+
+**One methodological warning, because it nearly produced a false report.**  The
+first version of this probe did not send `ESC[0m` between lines, so an earlier
+`ESC[7m` was still in force when the "black" probes ran and this build looked
+like it had *stopped* matching plain black.  It had not.  Any probe that sets
+SGR state must reset it, and any "regression" seen in a colour probe should be
+re-run with the reset before it is written down.
+
+### 10e. FINDING — the subnegotiation cap is not one-shot (`71c6afd`)
+
+**This is new behaviour introduced by round two, and it is a defect.**  Stock
+5.06 has no cap at all, so there is nothing to compare against; the finding is
+against the fix's own intent.
+
+Neither guard site resets `m_phase` or clears `m_IAC_subnegotiation_data`
+before returning (`telnet_phases.cpp:619` and `:641`), so **every subsequent
+byte of data already received re-enters the same branch**, and each one calls
+`OnConnectionDisconnect()` again and raises another modal `UMessageBox`.
+`m_phase` is only reset at *connection setup* (`doc_shared.cpp:1000`), never at
+disconnect.
+
+Measured with `--scenario subneg_overflow_inject` (the cap plus 16 bytes, then
+a marker), counting **distinct** dialog handles:
+
+```
+distinct modal dialogs raised: 8
+   x8  Telnet subnegotiation too long - closing connection
+```
+
+Eight modal boxes from one hostile stream, each of which a user must dismiss by
+hand.  In a run with megabytes still in flight, the remaining bytes were also
+**rendered into the output window as ordinary MUD text** (31 lines of the
+attacker's filler), because once the disconnect has run the phase machine is no
+longer in a subnegotiation.
+
+Both symptoms have one cause and one shape of fix: make the abort path leave
+the subnegotiation and forget the accumulated data before returning.  The
+sibling MCCP guard in `doc_shared.cpp` (`759d778`) has the identical structure
+and should be looked at with it — `--scenario mccp_fdict` raised 2 boxes rather
+than 1.
+
+**Not fixed here, deliberately.**  It is shared source, the fix is a behaviour
+change rather than a syntax one (§2's rule), and the test suite cannot be built
+on Windows (`NOT WIN32` gates every test target), so a fix landed from here
+would be unverifiable.  §7 says behaviour changes are findings for Wade.
+
+**The unit test that should pin it** — and note *why* the existing one cannot.
+`tests/test_telnet.cpp:458` `Phase_SUBNEG_UnterminatedSubnegotiationIsCappedAndDisconnects`
+`break`s out of its loop the moment the disconnect is seen, so it can never
+observe what the *next* byte does.  The gap is structural, not an oversight
+about this bug in particular: **a test that stops at the first sign of the
+behaviour it is checking cannot see whether that behaviour repeats.**
+
+```cpp
+// The abort must be one-shot.  Nothing on the abort path resets m_phase or
+// clears the accumulated data, so before this fix the very next byte re-entered
+// the guard: measured on Windows 2026-08-20, one hostile stream raised eight
+// modal message boxes, and the bytes after the cap reached the output window as
+// ordinary MUD text.
+TEST(TelnetTest, Phase_SUBNEG_CapAbortsOnceNotOncePerByte)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.Phase_SB(TELOPT_TERMINAL_TYPE);
+
+    for (size_t i = 0; i < kSubnegCap + 64; i++) {
+        doc.Phase_SUBNEGOTIATION('X');
+        if (doc.m_iConnectPhase == eConnectNotConnected) break;
+    }
+    ASSERT_EQ(eConnectNotConnected, doc.m_iConnectPhase);
+
+    // Keep feeding the rest of the packet.  Re-arm the connect phase so a
+    // SECOND abort is detectable, and check it does not happen.
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    for (size_t j = 0; j < 4096; j++)
+        doc.Phase_SUBNEGOTIATION('X');
+    EXPECT_EQ(eConnectConnectedToMud, doc.m_iConnectPhase)
+        << "the cap re-aborts for every byte after the first";
+    EXPECT_NE(HAVE_SUBNEGOTIATION, doc.m_phase)
+        << "the abort left the phase machine inside the subnegotiation";
+}
+```
+
+### 10f. Two things the differential method got wrong before it got them right
+
+Both cost a re-run, and both are worth carrying because the mistake is
+reusable.
+
+**A count is not a measurement of *which*.**  The first two-world Screendraw
+probe made each world print something in turn and reported a call count.  Both
+clients answered 2 and 2, and it looked like `28ca804` changed nothing on
+Windows.  It changes nothing *there* because the guard only bites on
+**re-entrancy** — what the process-global static broke is one world producing
+output from **inside** another world's callback, which is what a relay or
+chat-bridge plugin does.  Rewritten so world A's `OnPluginScreendraw` writes a
+note into world B, and so that the plugin logs the *text* of every callback
+rather than a total, the answer is unambiguous:
+
+```
+stock 5.06:  TwoWorldA #1 : sequential screendraw probe
+             TwoWorldA #2 : armed relay, this note triggers A's Screendraw
+             TwoWorldB #1 : sequential screendraw probe
+this build:  … same three, plus
+             TwoWorldB #2 : relayed from A's Screendraw 1
+```
+
+**Ask what the API actually takes.**  Three probes were silently vacuous on the
+first run and had to be rewritten: `omit_from_log` has no bit in the
+`AddTriggerEx` flags word (it is a trigger *option*), the log preamble strings
+are **alpha** options that `SetOption`'s `VTS_I4` signature ignores, and
+`GetLineInfo`'s timestamp is type code **9**, not 5.  Each produced a
+plausible-looking "identical on both clients" line.  A differential probe that
+sets nothing compares nothing, so **every probe that configures something should
+read it back** — the rewritten versions all do.
+
+### 10g. §4c-quaterquadragies — the four font measurements, answered
+
+These were gating the remaining miniwindow-font work on macOS.  Measured with
+`docs/FONT-PARITY-2026-08.md` §5's script.
+
+**1. Dina.**  A bare `Dina` request realises as **Arial** — MUSHclient does not
+register `Dina.fon` at startup; the only caller of `AddFontResourceEx` is
+`world.AddFont` (`doc.cpp:3846`).  After `world.AddFont("Dina.fon")` (which
+returns `eOK` on Windows) the same request realises as **Dina**.  So Dina *is*
+available here, and the bitmap-strike line of enquiry is live — but note what
+the unregistered case shows: with `pitchAndFamily` = `FF_DONTCARE`, GDI
+substitutes a **proportional** face for a monospace request.  That is direct
+corroboration, on the platform whose mapper is the reference, of the
+`CFont::CreateFont` gap already commented at its site.
+
+**2. Dina 8 pt.**  `tmHeight` **13**, ascent 10, descent 3, **`tmInternalLeading`
+3**, ave/max char width 7/7, pitch 48.  Not the ~0 internal leading a pure
+raster strike was expected to show — though it does snap like one: Dina at 10
+and 12 pt both report `tmHeight` 16, and 14 pt jumps to 26.
+
+**3. Courier New, the control.**
+
+| pt | Windows `tmHeight` | macOS | Δ |
+|---|---|---|---|
+| 8 | 14 | 13 | +1 |
+| 9 | 15 | 14 | +1 |
+| 10 | 16 | 15 | +1 |
+| 12 | 18 | 19 | −1 |
+| 14 | 21 | 22 | −1 |
+
+Every size within ±1 px.  **The size pipeline is exact — there is no residual
+scale factor, and none should be added.**
+
+**4.** `WindowTextWidth("MMMMMMMMMM")` for Courier New 10 pt is **80** on
+Windows; the port produces ~79.  Within 1 px.
+
+Full table for six faces × five sizes is in the run artefacts; the four rows
+above are the ones the analysis turned on.
+
+### 10h. What round two still owes
+
+Not reached.  All of it is §4's dialog-driven half plus the items needing a
+real MUD or a second machine.
+
+- **§4c-duodequadragies** — the MXP atomic-tag veto (`3095c2a`), all six checks.
+  Needs a plugin implementing `OnPluginMXPopenTag`; the plugin was not written.
+- **`44f0737`** — the eight world- and global-preferences defects.  This is the
+  largest dialog change in the inventory and the whole page-by-page walk is
+  outstanding.
+- **`2e54bba`** — `world.Help` and Game ▸ Function List listing Lua's own
+  functions.  Both are modal.
+- **`8dd87e5`, `6e67cb0`** — status-bar attribution with two worlds open.
+- **`30df30b`** — the Ctrl+click alias menu's `%1`.
+- **`5359254`, `8468a76`, `bc4d149`** — the macro `switch`, the auto-say
+  tri-state, and the split Stop-Sound commands.  All three need real typed
+  input or menu clicks.
+- **`43c4545`, `aca2478`, `c605461`, `9139076`** — plugin wizard, plugins
+  dialog liveness, long-name file dialogs, the names file with an empty section.
+- **`3f3e8ac`, `89ee850`, `c3936f4`** — the plugin-veto uninitialised return,
+  the note-style restore, and `m_iNoteColourFore`.  All three need a plugin.
+- **`0b70de7`, `41eb7bd`, `c1a3990`, `fbc4161`, `3c58886`, `5ee518e`,
+  `0dae192`** — the leak and use-after-free rows; none was exercised.
+- **§4c-quintricies item 6** — a real xterm-256 world, live, for a session.
+- **§4a's outstanding half** — keepalives and a long idle session.
+- **`world.Debug("commands")`** — reports `0 commands.` on **both** clients
+  after `world.PushCommand`.  `4874426`'s Windows arm is untouched by
+  construction (`#ifndef _WIN32`), so this is not a round-two question, but
+  `docs/UPSTREAM-BUGS.md` row 41 asks whether the Windows arm lists anything
+  and this does not answer it: only *typed* input fills `CSendView::m_msgList`,
+  and injected typing did not send (below).
+
+**One instrument limitation, recorded so it is not re-derived.**  Posting
+`WM_CHAR` per character into the command bar works — the text accumulates and
+reads back correctly — but a posted plain `WM_KEYDOWN VK_RETURN` **did not
+send the command**, on stock 5.06 and on this build alike.  §8v reports that a
+posted plain Return *did* send; whatever the difference is (§8v's run drained
+the startup dialogs and got real focus first, and used `keybd_event` for the
+chorded cases), the posted-Return route did not work here.  Because it failed
+identically on both clients it is the instrument, not the build — §3's rule.
+Anything needing real typed input should follow §8v: drain every startup
+dialog, confirm with `GetGUIThreadInfo` that the edit has the focus, then use
+`keybd_event`.

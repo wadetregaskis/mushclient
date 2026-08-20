@@ -400,12 +400,15 @@ private:
             stepTls();
             return;
         }
-        // Must be at least COMPRESS_BUFFER_LENGTH: OnBytesReceived's MCCP
-        // Z_STREAM_END path copies the post-stream residue (up to avail_in,
-        // capped there at COMPRESS_BUFFER_LENGTH) back into this buffer, so a
-        // smaller one overflows the stack on a crafted two-packet stream.
-        char buff[COMPRESS_BUFFER_LENGTH];
-        static_assert (sizeof buff >= COMPRESS_BUFFER_LENGTH,
+        // Sized at COMPRESS_BUFFER_LENGTH (doc.h == 10000): OnBytesReceived's
+        // MCCP Z_STREAM_END path copies the post-stream residue (up to
+        // avail_in, capped there at COMPRESS_BUFFER_LENGTH) back into this
+        // buffer, so a smaller one overflows the stack on a crafted stream.
+        // The literal, not the macro: a transport adapter does not include
+        // doc.h, which is why platform/posix_transport.cpp spells it this way
+        // too.
+        char buff[10000];
+        static_assert (sizeof buff >= 10000,
                        "receive buffer must hold the MCCP Z_STREAM_END residue");
         int count;
         std::shared_ptr<bool> alive = m_alive;

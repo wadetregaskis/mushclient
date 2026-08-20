@@ -199,6 +199,11 @@ long LoadBmp (LPCTSTR FileName, HBITMAP & hbmp)
 }   // end of LoadBmp
 
 // ── ::LoadImage ────────────────────────────────────────────────────────────
+// Windows has the real one: winuser.h #defines LoadImage to LoadImageA and
+// declares it __stdcall dllimport, so a definition of it here is a redefinition
+// that does not compile.  Only the port needs the stand-in below.
+#ifndef _WIN32
+
 // Declared in platform/mfc_ui.h.  Only the shape MUSHclient actually uses is
 // served: a .bmp FILE loaded into a DIB section, which is what
 // world.WindowLoadImage, world.SetBackgroundImage and world.SetForegroundImage
@@ -227,3 +232,5 @@ HANDLE LoadImage (HINSTANCE hInst, LPCTSTR name, UINT type, int, int, UINT flags
     SetLastError ((rc == eFileNotFound) ? 2 : 0);
     return nullptr;
 }
+
+#endif // _WIN32

@@ -3990,11 +3990,15 @@ after the client had announced it was closing.  After the fix: none.
 Parts 1 and 3 are deliberately belt-and-braces: this is a hostile-input path
 and the two halves fail independently.
 
-**Verified on Windows** (Debug and Release): the dialog count is 1, no filler
-reaches the output window, and the things that must still work do —
-`--scenario subneg_big_ok` (a properly terminated 200 KB GMCP payload) is still
-accepted, `ttype` and `naws` negotiate byte-for-byte as before, and the whole
-conformance set is unchanged.
+**Verified on Windows.**  In **Debug**: the dialog count is 1 (was 8), no filler
+reaches the output window (was 31 lines), `--scenario subneg_big_ok` — a
+properly terminated 200 KB GMCP payload — is still accepted, `ttype`, `naws`
+and `mccp_normal` are byte-for-byte as before, and the whole conformance set
+differs from stock 5.06 in **exactly the same set of keys** as it did before the
+change: nothing new appeared and nothing stopped differing.  In **Release**:
+builds clean, dialog count 1, `subneg_big_ok` accepted.  The remaining Release
+checks were run before the fix, where Release and Debug already agreed
+key-for-key (§10b), rather than repeated after it.
 
 **Not verified headless**, and this matters: `add_subdirectory(tests)` sits
 inside `if(NOT WIN32)` (`CMakeLists.txt:1259`), so `ctest` cannot be built on

@@ -677,6 +677,378 @@ void TestAutoPauseOffLeavesTheFreezeAlone()
     }
 }
 
+// ── 4d. EnsureSelectionVisible: the ONE rule Find / Go To Line / Go To
+//        Bookmark share (mushview.cpp:5002) ───────────────────────
+// Windows has exactly one function for all three.  Go To Line
+// (OnDisplayGotoline, mushview.cpp:5577) and Go To Bookmark
+// (OnDisplayGotobookmark, :4920) reach it through SelectLine (:5595); Find
+// calls it directly as the last thing CSendView::DoFind does (sendvw.cpp:1475).
+// The port had grown three DIFFERENT behaviours instead -- Find centred the
+// match and always froze, Go To Line had a visibility guard (the wrong one) and
+// no clamp, Go To Bookmark had neither -- so the same jump to the same line left
+// the pane in a different state depending on which menu item you used.
+//
+// Two pieces of arithmetic carry the whole behaviour:
+//
+//  (a) the visible band is shrunk by a row at EACH end --
+//        startline = (pt.y - m_iPixelOffset) / m_FontHeight + 1
+//        endline   = ((pt.y + GetOutputWindowHeight ()) / m_FontHeight) - 1
+//      -- so a row only PARTLY on screen counts as NOT visible.  The pane's own
+//      IsLineVisible is the any-pixel rule and answers the opposite, which is
+//      what these tests use as the discriminator: each case is asserted against
+//      the rule that would pass if the guard were merely "is it on screen".
+//
+//  (b) the clamp thaws.  When centring the target would scroll past the end of
+//      the buffer the position is clamped instead and the `m_freeze = true` is
+//      SKIPPED, after which ScrollToPosition's own `m_freeze = pt.y < bottom`
+//      evaluates false.  So a jump near the end parks there with output RUNNING.
+//
+// Every case asserts the viewport POSITION as well as the freeze flag, so that
+// "it froze but did not scroll" cannot pass for "it did nothing".
+
+enum NavKind { kGotoLine = 0, kBookmark = 1, kFind = 2 };
+
+const char* NavName(int k)
+{
+    return k == kGotoLine ? "Go To Line"
+         : k == kBookmark ? "Go To Bookmark"
+                          : "Find";
+}
+
+struct NavResult { long parked = 0; long pos = 0; bool frozen = false; };
+
+// A pane whose viewport is deliberately NOT a whole number of rows, so that a
+// row can be genuinely HALF on screen -- the case guard (a) exists for, and one
+// an exact-fit viewport cannot express at the bottom edge at all.  The
+// constructor's own assertion (below) is what stops the fixture degenerating
+// silently if the default font ever changes.
+struct NavFixture {
+    Harness h;
+    int lineH = 0, clientH = 0, page = 0, lines = 0;
+
+    NavFixture() : h(800, 400)
+    {
+        h.Feed(400, "nav");
+        lineH = h.pane->LineHeight();
+        for (int extra = 0; extra < 64 && lineH > 0; ++extra) {
+            h.pane->SetSize(0, 0, 800, 400 + extra);
+            h.frame->Layout();
+            h.pane->SendSizeEvent();
+            h.pane->GetClientSize(nullptr, &clientH);
+            if (clientH % lineH != 0) break;
+        }
+        page  = (lineH > 0) ? clientH / lineH : 0;
+        lines = h.pane->LineCount();
+    }
+};
+
+// Park the viewport at visual row `parkRow` in the given freeze state, then run
+// one of the three navigations to logical line `target`.
+//
+// Parking goes through wxScrolled::Scroll, which fires no scroll event on
+// wxOSX -- precisely why the navigation sites have to write the freeze flag
+// themselves -- so it is a viewport setter with no side effect on the flag
+// under test.
+NavResult Navigate(NavFixture& f, int nav, int target, int parkRow, bool startFrozen)
+{
+    f.h.pane->SetSelectionRange(0, 0, 0, 0);   // no selection left from before
+    f.h.pane->SetBookmark(target, false);      // ...and no bookmark either
+    f.h.pane->ScrollToBottom();                // a known, thawed starting point
+    f.h.pane->Scroll(0, parkRow);
+    if (startFrozen) f.h.pane->SetPaused(true);
+
+    NavResult r;
+    r.parked = f.h.pane->GetScrollPositionY();
+
+    if (nav == kGotoLine) {
+        f.h.pane->SelectLine(target);
+    } else if (nav == kBookmark) {
+        f.h.pane->SetBookmark(target, true);
+        f.h.pane->GotoNextBookmark();
+    } else {
+        char term[64];
+        snprintf(term, sizeof term, "nav %04d", target);   // unique per line
+        int ml = -1, ord = 0, tot = 0;
+        f.h.pane->FindNext(term, true, &ml, &ord, &tot, false);
+    }
+
+    r.pos    = f.h.pane->GetScrollPositionY();
+    r.frozen = f.h.pane->IsPaused();
+    return r;
+}
+
+// Run one scenario through all three navigations and require the same answer
+// from each -- the assertion the shared helper exists for.
+void NavCase(NavFixture& f, const char* what, int target, int parkRow,
+             bool startFrozen, bool wantMoved, bool wantFrozen)
+{
+    long firstPos = 0;
+    char msg[300];
+    for (int nav = kGotoLine; nav <= kFind; ++nav) {
+        const NavResult r = Navigate(f, nav, target, parkRow, startFrozen);
+
+        snprintf(msg, sizeof msg, "%s [%s]: %s", what, NavName(nav),
+                 wantMoved ? "scrolls" : "does NOT scroll");
+        opCheck(wantMoved ? (r.pos != r.parked) : (r.pos == r.parked), msg);
+
+        snprintf(msg, sizeof msg, "%s [%s]: %s", what, NavName(nav),
+                 wantFrozen ? "freezes" : "leaves output running");
+        opCheck(r.frozen == wantFrozen, msg);
+
+        if (nav == kGotoLine) {
+            firstPos = r.pos;
+        } else {
+            snprintf(msg, sizeof msg,
+                     "%s [%s]: lands in exactly the same place as Go To Line",
+                     what, NavName(nav));
+            opCheck(r.pos == firstPos, msg);
+        }
+    }
+}
+
+void TestEnsureSelectionVisible()
+{
+    printf("EnsureSelectionVisible: one rule for Find / Go To Line / "
+           "Go To Bookmark (mushview.cpp:5002)\n");
+
+    NavFixture f;
+    opCheck(f.lineH > 0 && f.page > 4 && f.lines == 400,
+            "fixture: a real pane, several screens deep");
+    opCheck(f.clientH % f.lineH != 0,
+            "fixture: the viewport is NOT a whole number of rows, so a row CAN "
+            "be half on screen");
+    opCheck(f.h.pane->VisualRowsForLine(0) == 1,
+            "fixture: these lines do not wrap, so row == line for these cases");
+    opCheck(f.h.pane->TextPixelOffset() == 0,
+            "fixture: no pixel offset, so the band is scrollY/lineH +1 .. -1");
+
+    const int K = 100;                      // the row the viewport is parked at
+
+    // The discriminator.  Both of the rows the cases below jump to are
+    // "visible" by the pane's any-pixel rule -- which is what Go To Line used to
+    // be guarded by -- and NOT visible by Windows' shrunk band.
+    {
+        f.h.pane->ScrollToBottom();
+        f.h.pane->Scroll(0, K);
+        opCheck(f.h.pane->IsLineVisible(K),
+                "guard (a) control: the TOP row is on screen by the any-pixel rule");
+        opCheck(f.h.pane->IsLineVisible(K + f.page),
+                "guard (a) control: ...and so is the half-shown row at the bottom");
+    }
+
+    // (a) a target already FULLY inside the band: no scroll, no freeze.
+    NavCase(f, "(a) already fully visible", K + f.page / 2, K,
+            /*startFrozen*/ false, /*moved*/ false, /*frozen*/ false);
+
+    // ...and the early return writes NOTHING, so a pane that was already frozen
+    // stays frozen rather than being thawed by a jump that moved nothing.
+    NavCase(f, "(a) already visible, pane frozen", K + f.page / 2, K,
+            /*startFrozen*/ true, /*moved*/ false, /*frozen*/ true);
+
+    // ...and the LAST fully visible row is the far edge of the band.  Without a
+    // case ON that edge, an endline shrunk by two rows instead of one passes
+    // everything above: the targets are all comfortably inside.
+    NavCase(f, "(a) the last fully visible row", K + f.page - 1, K,
+            false, /*moved*/ false, /*frozen*/ false);
+
+    // (b) PARTLY visible counts as hidden: the row at the bottom of the
+    // viewport with only a few pixels of it showing.  This is the arithmetic
+    // nobody would get right by accident, and the control above says "visible".
+    NavCase(f, "(b) half-visible bottom row", K + f.page, K,
+            false, /*moved*/ true, /*frozen*/ true);
+
+    // (c) plainly off screen -- the parity control.  Without it a helper that
+    // never freezes would pass (a), and (b) alone would not catch it either.
+    NavCase(f, "(c) off screen", K + 200, K, false, /*moved*/ true, /*frozen*/ true);
+
+    // (d) the clamp thaws: centring the LAST line would scroll past the end of
+    // the buffer, so the position is clamped and the freeze SKIPPED.
+    NavCase(f, "(d) clamped to the buffer end", f.lines - 1, 0, false,
+            /*moved*/ true, /*frozen*/ false);
+
+    // ...and it really did CLAMP rather than centre.  A pure centring lands
+    // further down the buffer than the clamp allows, so this separates "clamped"
+    // from "scrolled somewhere and happened not to freeze".
+    {
+        const NavResult r = Navigate(f, kGotoLine, f.lines - 1, 0, false);
+        const long centre = (long) (f.lines - 1) * f.lineH - f.clientH / 2;
+        opCheck(r.pos > 0 && r.pos < centre,
+                "(d) the position is the buffer END, not the centring target");
+        opCheck(f.h.pane->IsLineVisible(f.lines - 1),
+                "(d) ...and the target line is on screen");
+    }
+
+    // ...and the clamp's THAW, in the form where it is a transition rather than
+    // a flag that was already false: an explicitly frozen pane, jumped to the
+    // end of the buffer, comes back RUNNING.  This is the case that pins the
+    // `if (m_allowAutoFreeze)` gate the right way round -- skip the tail here
+    // and the pane would stay frozen.
+    NavCase(f, "(d) clamped, pane already frozen", f.lines - 1, 0,
+            /*startFrozen*/ true, /*moved*/ true, /*frozen*/ false);
+
+    // ...unless keep_pause_at_bottom is on, which turns ScrollToPosition's
+    // assignment into a LATCH (`m_freeze = m_freeze || …`, mushview.cpp:4680).
+    // Same jump, same clamp, opposite answer -- and the pair is what stops the
+    // latch being mistaken for a plain assignment.
+    {
+        NavFixture k;
+        k.h.pane->SetKeepPauseAtBottom(true);
+        NavCase(k, "(d) clamped, keep_pause_at_bottom ON", k.lines - 1, 0,
+                /*startFrozen*/ true, /*moved*/ true, /*frozen*/ true);
+    }
+
+    // (e) the top row: the one place Windows itself does NOT make the three
+    // agree, and reproducing that is the whole point of routing them through one
+    // function rather than making them "consistent".  CMUSHView::SelectLine sets
+    // m_selend_line = iLine + 1, so Go To Line's selection SPANS
+    // [iLine, iLine + 1] while a Find match sits inside a single line.
+    // startline is the first FULLY visible row, so at the top edge a Find match
+    // ON that row is out of band and scrolls, while Go To Line's span reaches
+    // one row further down, stays in band, and does not.
+    {
+        const NavResult g = Navigate(f, kGotoLine, K, K, false);
+        opCheck(g.pos == g.parked && !g.frozen,
+                "(e) top row: Go To Line's [iLine, iLine+1] span is still in "
+                "band, so it does not scroll");
+        const NavResult b = Navigate(f, kBookmark, K, K, false);
+        opCheck(b.pos == g.pos && b.frozen == g.frozen,
+                "(e) top row: ...Go To Bookmark is the same SelectLine, so it "
+                "agrees with Go To Line exactly");
+        const NavResult n = Navigate(f, kFind, K, K, false);
+        opCheck(n.pos != n.parked && n.frozen,
+                "(e) top row: ...while a Find match on that row IS out of band, "
+                "so it scrolls and freezes");
+    }
+
+    // (g) the boundary that is easy to lose once both rules live in one
+    // function: EnsureSelectionVisible's `m_freeze = true` is NOT gated on
+    // auto_pause, while ScrollToPosition's tail is entirely inside
+    // `if (pDoc->m_bAutoFreeze)`.
+    {
+        NavFixture g;
+        g.h.pane->SetAllowAutoFreeze(false);
+        NavCase(g, "(g) auto_pause OFF, off-screen target", K + 200, K,
+                false, /*moved*/ true, /*frozen*/ true);
+        // ...and the clamp still declines to freeze, from a thawed start: with
+        // the tail skipped the flag simply keeps the value it came in with.
+        NavCase(g, "(g) auto_pause OFF, clamped to the end", g.lines - 1, 0,
+                false, /*moved*/ true, /*frozen*/ false);
+        // ...which cuts the other way too, and this is the half that pins the
+        // gate: the SAME clamp that thaws a frozen pane in a world with
+        // auto_pause ON must leave it frozen here, because the assignment that
+        // would have thawed it never runs.
+        NavCase(g, "(g) auto_pause OFF, clamped, pane frozen", g.lines - 1, 0,
+                /*startFrozen*/ true, /*moved*/ true, /*frozen*/ true);
+    }
+
+    // The row axis is NOT the line axis.  Every case above uses short lines,
+    // where visual row == logical line and the conversion inside
+    // EnsureSelectionVisible is an identity -- exactly the degenerate fixture
+    // that lets a line-indexed implementation pass.  Here every line wraps, so a
+    // jump computed in LINES lands hundreds of rows above the target.
+    {
+        Harness w(400, 400);
+        for (int i = 0; i < 200; ++i) {
+            char head[32];
+            snprintf(head, sizeof head, "wrap %04d ", i);
+            std::string s(head);
+            s.append(300, 'x');
+            w.pane->AppendLine(MakeLine(s.c_str()));
+        }
+        opCheck(w.pane->VisualRowsForLine(5) > 1,
+                "wrapped fixture: a line really does span several rows");
+        const int target = w.pane->LineCount() - 20;
+        w.pane->ScrollToBottom();
+        w.pane->Scroll(0, 0);
+        w.pane->SelectLine(target);
+        opCheck(w.pane->IsLineVisible(target),
+                "wrapped: Go To Line puts the target on screen (a scroll "
+                "computed in lines would stop far above it)");
+        opCheck(w.pane->IsPaused(),
+                "wrapped: ...and freezes, the target having been off screen");
+    }
+}
+
+// ── 4e. A plain scroll obeys auto_pause; the selection jumps do not ──────
+// Windows reaches every plain scroll through ScrollToPosition, whose ENTIRE
+// freeze assignment sits inside `if (pDoc->m_bAutoFreeze)` (mushview.cpp:4600).
+// ScrollToTop (Ctrl+Home, and world.SetScroll(0)) and ScrollToPixelY
+// (world.SetScroll's pixel form) each wrote a flat `m_autoScroll = false`
+// instead, so in a world with auto_pause OFF they froze the output that option
+// says must never stop -- and a script asking to scroll past the end froze the
+// world at the very bottom, where Windows leaves it running.
+void TestPlainScrollsObeyAutoPause()
+{
+    printf("Ctrl+Home / world.SetScroll take ScrollToPosition's gate "
+           "(mushview.cpp:4600)\n");
+
+    {
+        Harness h; h.Feed(400);
+        h.pane->ScrollToTop();
+        opCheckEq((int) h.pane->GetScrollPositionY(), 0,
+                  "scroll-to-top: the view really is at the top");
+        opCheck(h.pane->IsPaused(),
+                "scroll-to-top: ...and with auto_pause ON it freezes");
+    }
+    {
+        Harness h; h.Feed(400);
+        h.pane->SetAllowAutoFreeze(false);
+        h.pane->ScrollToTop();
+        opCheckEq((int) h.pane->GetScrollPositionY(), 0,
+                  "scroll-to-top: the view still PARKS with auto_pause off");
+        opCheck(!h.pane->IsPaused(),
+                "scroll-to-top: ...but does NOT freeze (it used to stop the "
+                "output of the world whose option says it never should)");
+    }
+    {
+        Harness h; h.Feed(400);
+        const int lh = h.pane->LineHeight();
+        h.pane->ScrollToPixelY(50L * lh);
+        opCheck(h.pane->GetScrollPositionY() == 50L * lh,
+                "world.SetScroll: parks at the requested pixel");
+        opCheck(h.pane->IsPaused(),
+                "world.SetScroll: ...and freezes with auto_pause ON");
+    }
+    {
+        Harness h; h.Feed(400);
+        h.pane->SetAllowAutoFreeze(false);
+        const int lh = h.pane->LineHeight();
+        h.pane->ScrollToPixelY(50L * lh);
+        opCheck(h.pane->GetScrollPositionY() == 50L * lh,
+                "world.SetScroll: still parks with auto_pause off");
+        opCheck(!h.pane->IsPaused(),
+                "world.SetScroll: ...and does NOT freeze");
+    }
+    {
+        // Past the end: Windows' `m_freeze = pt.y < bottom` is FALSE there, so
+        // the view parks at the buffer end with output running.  Starting from
+        // an explicitly frozen, scrolled-back pane makes this a real transition
+        // rather than a flag that merely never changed.
+        Harness h; h.Feed(400);
+        h.pane->ScrollToTop();
+        opCheck(h.pane->IsPaused(), "control: parked at the top and frozen");
+        h.pane->ScrollToPixelY(100000L);
+        opCheck(h.pane->IsAtBufferEnd(),
+                "world.SetScroll past the end clamps to the buffer end");
+        opCheck(!h.pane->IsPaused(),
+                "...and THAWS, because the clamped position is not < bottom");
+    }
+    {
+        // (h) None of this touches the explicit freeze.
+        Harness h; h.Feed(400);
+        h.pane->SetPaused(true);
+        opCheck(h.pane->IsPaused(), "Display > Freeze Output still freezes");
+        opCheck(h.pane->IsAtBufferEnd(),
+                "...without moving the viewport (PAUSE, not MORE)");
+        h.Feed(40, "more");
+        opCheck(h.pane->IsPaused() && !h.pane->IsAtBufferEnd(),
+                "...and output arriving underneath makes it MORE, still frozen");
+        h.pane->SetPaused(false);
+        opCheck(!h.pane->IsPaused(), "...while an explicit unfreeze resumes");
+    }
+}
+
+
 // ── 5. world.TextRectangle's offset-from-edge form ──────────────────────────
 void TestTextRectangleOffsetForm()
 {
@@ -2988,6 +3360,8 @@ int RunOutputPaneSelfTest()
     TestKeepPauseAtBottom();
     TestFrozenVersusAtBufferEnd();
     TestAutoPauseOffLeavesTheFreezeAlone();
+    TestEnsureSelectionVisible();
+    TestPlainScrollsObeyAutoPause();
     TestTextRectangleOffsetForm();
     TestLeaveWindowCancelsMouseOver();
     TestFindNext();

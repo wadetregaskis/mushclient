@@ -3011,21 +3011,17 @@ void CWorldChildFrame::GotoLineTo(long line)
 
     if (m_doc) m_doc->m_lastGoTo = (int) line;
 
-    // CMUSHView::SelectLine is m_selstart_line = iLine, m_selend_line =
-    // iLine + 1, both columns 0 -- from the start of the line to the start of
-    // the next.  SetSelectionRange is 1-based and reads column 0 as "the whole
-    // line", so column 1 is the start-of-line those two want.  The last line
-    // has no next one, so it takes the whole-line form directly.
-    if (line < total)
-        m_output->SetSelectionRange((int) line, (int) line + 1, 1, 1);
-    else
-        m_output->SetSelectionRange((int) line, (int) line, 1, 0);
-
-    // ...and only then scroll, and only if it is not already on screen —
-    // EnsureSelectionVisible's contract.  Scrolling unconditionally moved the
-    // view for a line the user could already see.
-    if (!m_output->IsLineVisible((int) line - 1))
-        m_output->ScrollToLine((int) line - 1);
+    // CMUSHView::OnDisplayGotoline ends `SelectLine (dlg.m_iLineNumber - 1)`
+    // (mushview.cpp:5577), and SelectLine ends in EnsureSelectionVisible — both
+    // of which the pane now owns, so Go To Line, Go To Bookmark and Find share
+    // one rule instead of the three that had grown here.
+    //
+    // What this replaced was the selection setup (moved into
+    // COutputPane::SelectLine unchanged) plus a scroll guarded by
+    // IsLineVisible, which is the ANY-pixel-showing rule: Windows shrinks the
+    // visible band by a row at each end, so it scrolls to a half-visible line
+    // where this left it half-visible, and it never had the clamp arm at all.
+    m_output->SelectLine((int) line - 1);
 }
 
 // ── ApplyNoEcho ───────────────────────────────────────────────────────────

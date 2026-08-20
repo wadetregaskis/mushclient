@@ -3235,6 +3235,118 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── Display ▸ Go To Bookmark takes the same route as Go To Line ─────────
+    // Windows' OnDisplayGotobookmark ends `SelectLine (nNewLine)`
+    // (mushview.cpp:4920) -- the very call OnDisplayGotoline makes -- so the two
+    // land in the same place and leave the pane in the same state.  The port's
+    // Go To Bookmark was a bare COutputPane::ScrollToLine: no selection, no
+    // visibility guard and an unconditional freeze, so it agreed with Go To Line
+    // on none of the three.  The arithmetic itself is pinned at pane level in
+    // --outputpane-selftest; this is the wiring above it, driven through the real
+    // frame commands on a doc-fed buffer.
+    {
+        doc->ClearOutput();
+        for (int i = 0; i < 300; ++i)
+            doc->Note(("bookmark fixture line " + std::to_string(i + 1)).c_str());
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int total = pane->LineCount();
+        check(total > 200, "goto-bookmark: a multi-screen buffer (control)");
+        const int target = total / 2;                  // 1-based, mid-buffer
+
+        // Go To Line first, and remember exactly where it left things.
+        pane->ScrollToBottom();
+        pane->Scroll(0, 0);
+        child->GotoLineTo(target);
+        wxYield();
+        const long gotoPos    = pane->GetScrollPositionY();
+        const bool gotoFrozen = pane->IsPaused();
+        check(gotoPos > 0, "goto-bookmark: Go To Line moved the view (control)");
+        check(gotoFrozen,
+              "goto-bookmark: ...and froze, the target having been off screen");
+
+        // Now reach the same line as a bookmark, through the real commands:
+        // the selection picks the line, Bookmark Selection sets the engine's
+        // CLine flag, and Go To Bookmark jumps to it.
+        pane->SetSelectionRange(target, target, 1, 0);
+        child->BookmarkSelection();
+        wxYield();
+        pane->SetSelectionRange(0, 0, 0, 0);
+        pane->ScrollToBottom();
+        pane->Scroll(0, 0);
+        child->GotoBookmark();
+        wxYield();
+
+        check(pane->GetScrollPositionY() == gotoPos,
+              "goto-bookmark: lands in exactly the same place as Go To Line");
+        check(pane->IsPaused() == gotoFrozen,
+              "goto-bookmark: ...and leaves the freeze in the same state");
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        check(pane->GetSelectionInfo(sl, sc, el, ec) && sl == target,
+              "goto-bookmark: ...and SELECTS the line, which it never used to");
+        // NOT the freeze PANE's text: this world is not connected yet, and
+        // CLOSED beats a freeze in that table (asserted in full below).  What
+        // matters here is that the freeze the new path took is the same freeze
+        // the status bar reads -- the frame's own accessor.
+        check(child->isPaused(),
+              "goto-bookmark: ...and the frame agrees the output is frozen");
+        doc->ClearOutput();
+    }
+
+    // ── world.SetScroll obeys auto_pause; a selection jump does not ─────────
+    // The two freezes come from different places on Windows and only one of them
+    // is gated: ScrollToPosition's assignment sits entirely inside
+    // `if (pDoc->m_bAutoFreeze)` (mushview.cpp:4600), while
+    // EnsureSelectionVisible's `m_freeze = true` (:5052) runs regardless.  Now
+    // that both rules live in one function that boundary is the easiest thing in
+    // this change to lose, so it is asserted from the frame as well.
+    {
+        doc->ClearOutput();
+        for (int i = 0; i < 300; ++i)
+            doc->Note(("scroll fixture line " + std::to_string(i + 1)).c_str());
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const long lh = (long) pane->LineHeight();
+        check(lh > 0, "setScroll gate: the pane has real metrics (control)");
+
+        doc->m_bAutoFreeze = 1;
+        pane->SetAllowAutoFreeze(true);
+        child->setScroll(50L * lh);
+        wxYield();
+        check(pane->GetScrollPositionY() == 50L * lh,
+              "setScroll gate: parks at the requested pixel (control)");
+        check(pane->IsPaused(),
+              "setScroll gate: ...and freezes with auto_pause ON");
+
+        pane->ScrollToBottom();
+        doc->m_bAutoFreeze = 0;
+        pane->SetAllowAutoFreeze(false);
+        child->setScroll(50L * lh);
+        wxYield();
+        check(pane->GetScrollPositionY() == 50L * lh,
+              "setScroll gate: still PARKS with auto_pause off");
+        check(!pane->IsPaused(),
+              "setScroll gate: ...but does NOT freeze the world whose option "
+              "says it never should");
+
+        // ...while a selection jump in that SAME world still freezes.
+        pane->ScrollToBottom();
+        child->GotoLineTo(30);
+        wxYield();
+        check(pane->GetScrollPositionY() >= 0 && pane->FirstVisibleLine() < 60,
+              "selection freeze: Go To Line moved the view to the target");
+        check(pane->IsPaused(),
+              "selection freeze: ...and froze even with auto_pause OFF -- the "
+              "one freeze Windows does not gate");
+
+        doc->m_bAutoFreeze = 1;
+        pane->SetAllowAutoFreeze(true);
+        pane->ScrollToBottom();
+        doc->ClearOutput();
+    }
+
     // ── "is logging active?" is ONE question with ONE answer ───────────────
     // The frame used to keep a session log of its own -- its own FILE*, its own
     // format, opened only from the output pane's context menu -- so the status

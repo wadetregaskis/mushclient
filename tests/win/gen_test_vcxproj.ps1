@@ -1,4 +1,4 @@
-# tests/win/gen_test_vcxproj.ps1 — regenerate MUSHclient_tests.vcxproj from
+﻿# tests/win/gen_test_vcxproj.ps1 â€” regenerate MUSHclient_tests.vcxproj from
 # MUSHclient.vcxproj.
 #
 # The test target has to compile the same 286 engine TUs the app does, because
@@ -11,7 +11,7 @@
 # definitions of "how this builds on Windows" is the bug class
 # docs/WINDOWS-VALIDATION.md exists to catch.  Two things guard it: this
 # generator, and tests/check_win_test_sources.py, which fails the suite if the
-# two projects' <ClCompile> lists ever differ.  The lint is the real guard —
+# two projects' <ClCompile> lists ever differ.  The lint is the real guard â€”
 # regenerating is just the convenient way to fix it.
 #
 #   pwsh tests/win/gen_test_vcxproj.ps1        (from the repo root)
@@ -33,7 +33,7 @@ $sources = $sourceNodes | ForEach-Object { $_.Include }
 
 # Test files that are meaningless on Windows: they test the port's SUBSTITUTES
 # for things Windows has natively, so running them here would assert against a
-# shim that is not present.  This is an EXCLUSION list on purpose — a new test
+# shim that is not present.  This is an EXCLUSION list on purpose â€” a new test
 # file is compiled into the Windows target by default, and has to be argued out
 # rather than argued in.  Add a reason to every entry.
 $excluded = [ordered]@{
@@ -119,7 +119,7 @@ foreach ($cfg in @('Debug','Release')) {
   $dbg = ($cfg -eq 'Debug')
   W "  <ItemDefinitionGroup Condition=`"'`$(Configuration)|`$(Platform)'=='$cfg|Win32'`">"
   W '    <ClCompile>'
-  # NOT $(SolutionDir)platform\ — and not scripting\ either, though that one is
+  # NOT $(SolutionDir)platform\ â€” and not scripting\ either, though that one is
   # merely unnecessary.  tests/CMakeLists.txt puts both on the path, which is
   # safe when platform/ IS the platform; on Windows it is a trap.  platform/
   # holds direct.h, windows_types.h and friends, whose whole purpose is to
@@ -155,7 +155,7 @@ foreach ($cfg in @('Debug','Release')) {
   # The app is /std:c++14 (MUSHclient.vcxproj sets no LanguageStandard, so it
   # takes the MSVC default).  The TESTS need C++17: mc_test.h:149 uses
   # `if constexpr` for its value-rendering SFINAE.  Raising it here rather than
-  # in the app keeps docs/WINDOWS-VALIDATION.md §2's "no C++17 anywhere in code
+  # in the app keeps docs/WINDOWS-VALIDATION.md Â§2's "no C++17 anywhere in code
   # MSVC compiles" rule true where it matters -- the shipping client -- while
   # letting the harness use the language the harness is written in.
   W '      <LanguageStandard>stdcpp17</LanguageStandard>'
@@ -228,6 +228,7 @@ W '    <ClCompile Include="tests\win\all_tests.cpp" />'
 # pages are mushgui_adapters TUs there -- so the tests\test_*.cpp glob above
 # must not pick them up.  Listed by hand, one line each.
 W '    <ClCompile Include="tests\win\test_prefs_pages.cpp" />'
+W '    <ClCompile Include="tests\win\test_gap_coverage.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'
@@ -237,4 +238,4 @@ W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />'
 W '</Project>'
 
 Set-Content -Path 'MUSHclient_tests.vcxproj' -Value $sb.ToString().TrimEnd() -Encoding UTF8
-"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 1 Windows-only, $($excluded.Count) excluded"
+"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 2 Windows-only, $($excluded.Count) excluded"

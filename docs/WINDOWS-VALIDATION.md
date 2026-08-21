@@ -4973,3 +4973,64 @@ list had drifted from the test list without anything saying so.  The check
 takes one grep per row — `git show <commit> --stat | grep tests/` — and it is
 worth doing before writing any new test, because two of the four rows attempted
 this way turned out to need nothing at all.
+
+### 10r. `test_plugins.cpp` was never undiagnosed — it was diagnosed wrongly
+
+The exclusion reason read: *"UNDIAGNOSED — the file preprocesses oddly under
+MSVC (a `#define` at :125 reads as undeclared at :1736)."*  Seventy-nine tests
+sat out on the strength of it.
+
+There is no preprocessor oddity, and `IDA` at :125 is not involved.  Compiling
+the file takes one build and gives five ordinary causes, four of them already
+familiar from the suites re-entered in §10l and §10m:
+
+| Cause | Sites |
+|---|---|
+| `mkdir(path, mode)` — Windows `_mkdir` takes one argument | 4 |
+| a `BSTR` in a `? :` against `""` — no common type when `BSTR` is `wchar_t*` | 3 |
+| `g_wxhook_directorypicker`, port-only | 1 test |
+| the plugin state folder | 4 tests (below) |
+| **`const double small = …`** | 1 |
+
+That last one is the whole mystery.  The Windows SDK's `rpcndr.h` contains
+
+```c
+#define small char
+```
+
+so `const double small = run(400);` becomes `const double char = …`, and MSVC
+reports **"'double' followed by 'char' is illegal"** — an error that names
+neither the macro nor the header nor the variable.  An SDK macro silently
+changing what an identifier means is *exactly* what the old note was trying to
+describe; it simply attached the description to the wrong identifier and the
+wrong line, and once written down it was never re-checked.  **"Undiagnosed" in a
+note means "nobody has looked recently", not "this cannot be diagnosed."**
+
+**The state folder is the interesting half, and it is a real divergence.**
+`plugins.cpp` auto-creates a missing plugin-state folder — `mkdir -p`, with a
+comment saying it is there "rather than blocking with a modal on a fresh setup"
+— and that whole block is `#ifndef _WIN32`.  On Windows the upstream behaviour
+stands: warn, then open a real `::SHBrowseForFolder`.
+
+That is a **third** way to raise a modal box, and unlike the other two it cannot
+be intercepted at all: `CMUSHclientApp::DoMessageBox` catches `AfxMessageBox`
+and `UMessageBox` has its own arm (§10k), but `SHBrowseForFolder` is a Shell
+dialog, not a message box.  The run stops dead behind an invisible window — the
+same failure mode as §10j's first wedged run, reached a different way.  Four
+tests touch it: two now create their folder as their siblings already did, and
+two are guarded because they assert the port's non-blocking behaviour.
+
+**Where it stands.**  The file compiles and **420 tests run**, then the process
+exits without printing its summary — a crash rather than a block, since the
+runner's `WaitForExit` returns on its own.  That is one more thing to chase, and
+it is left for its own pass; the fixes above are committed either way, so the
+next attempt starts from 420 rather than from zero.  The exclusion reason now
+records all of that instead of the word "UNDIAGNOSED".
+
+**Two tests were fixed rather than guarded, and the distinction matters.**
+`ReentrantSaveStateRejected` and two others never created the state folder they
+named — the other state tests in the same file always did.  On the port the
+absence is benign, so the omission was invisible; the folder was never part of
+what any of those tests was about.  Creating it is a fix, not an accommodation.
+Guarding is reserved for the two that genuinely assert behaviour Windows does
+not have.

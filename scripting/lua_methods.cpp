@@ -5198,7 +5198,14 @@ static int L_Save (lua_State *L)
     lua_pushboolean (L, pDoc->Save (my_checkstring (L, 1)));
   else
     lua_pushboolean (L, pDoc->Save (my_optstring (L, 1, "")));
-  if (bSaveAs)
+  // Only if there was a name to go back to.  CDocument::SetPathName ("")
+  // does not quietly do nothing: AfxFullPath fails on an empty string, so it
+  // asserts and throws CFileException::badPath (doccore.cpp:293).  A world
+  // that has never been saved has no path name, so world.Save (name, true) on
+  // one threw an MFC exception out of this binding instead of returning --
+  // see docs/UPSTREAM-BUGS.md.  With no previous name to restore, keep the one
+  // just written, which is what File > Save As does for an untitled document.
+  if (bSaveAs && !strOldName.IsEmpty ())
     pDoc->SetPathName (strOldName, FALSE);
   return 1;  // number of result fields
   } // end of L_Save

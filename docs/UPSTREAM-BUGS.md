@@ -2284,3 +2284,58 @@ arm) and `ruby_engine.cpp:512` (`Qnil` → `true`). Each needs one line: set
 Verification is `--engines-selftest`, which needs a macOS GUI build, so it is not
 part of this commit. Windows is unaffected either way — all five are
 `#ifndef _WIN32`.
+
+## 91 — `world.Save (name, true)` on a never-saved world throws instead of saving (this commit)
+
+`L_Save` (`scripting/lua_methods.cpp`) implements the Save-**As** flag by
+remembering the document's path name, saving under the new one, and putting the
+old one back:
+
+```cpp
+CString strOldName = pDoc->GetPathName ();
+...
+lua_pushboolean (L, pDoc->Save (my_checkstring (L, 1)));
+if (bSaveAs)
+  pDoc->SetPathName (strOldName, FALSE);
+```
+
+For a world that has never been saved, `GetPathName ()` is `""` — and
+`CDocument::SetPathName ("")` is not a quiet no-op. MFC fully qualifies the name
+before storing it, `AfxFullPath` fails on an empty string, and the failure
+branch is:
+
+```cpp
+if (AfxFullPath (szFullPath, lpszPathName) == FALSE)
+  {
+  ASSERT(FALSE);
+  AfxThrowFileException (CFileException::badPath, -1, lpszPathName);
+  }
+```
+
+(`doccore.cpp:291-297` in MFC 14.44.) So the restore raises
+`CFileException::badPath` **out of a Lua C function**, past `lua_pcall`'s C
+frames. The file on disk is written correctly first — the throw is in the
+book-keeping after it — which is what makes this look like an intermittent
+"scripting error" rather than a save failure.
+
+Reachable in the product: File ▸ New World, then any plugin or script line that
+calls `world.Save (filename, true)`. A world opened from a file has a path name
+and is unaffected, which is why it has survived.
+
+**Fix:** only restore a name there is one to restore.
+
+```cpp
+if (bSaveAs && !strOldName.IsEmpty ())
+  pDoc->SetPathName (strOldName, FALSE);
+```
+
+With nothing to go back to the document keeps the name just written, which is
+what File ▸ Save As does for an untitled document.
+
+**Found by** the Windows unit-test target: `LuaMarshal.SaveWritesWorldFile` and
+`SweepR4.WorldSaveRoundTripWithEverything` both call `world.Save (path, true)`
+on a fresh `CMUSHclientDoc`. The port never saw it because its `CDocument` shim
+accepts an empty path name. The frame came from the assertion-stack hook
+described in `docs/WINDOWS-VALIDATION.md` §10z; before that the run reported
+only `doccore.cpp(293) : Assertion failed!`, which names a line in MFC and
+nothing about the caller.

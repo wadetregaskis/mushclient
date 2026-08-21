@@ -528,6 +528,13 @@ TEST(PluginState, ReentrantSaveStateRejected)
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d_reent/", (int)getpid());
+    // Create it, as the other state tests in this file do.  A MISSING state
+    // folder is not benign on Windows: plugins.cpp warns and then opens a real
+    // ::SHBrowseForFolder, a Shell dialog no message-box hook can intercept, so
+    // the run stops dead with an invisible window nothing can answer.  The port
+    // tolerates the absence, which is why this went unnoticed -- the folder was
+    // never part of what this test is about.
+    mkdir(dir, 0755);
     App.m_strDefaultStateFilesDirectory = dir;
 
     ASSERT_TRUE(load_plugin(doc, write_plugin("reent", IDA, "ReentPlugin",
@@ -548,6 +555,7 @@ TEST(PluginState, ReentrantSaveStateRejected)
 // plugins.cpp: "Auto-create the plugin-state folder (mkdir -p) rather than
 // blocking with a modal on a fresh setup" — and the state file is named
 // exactly <worldID>-<pluginID>-state.xml (the ecosystem contract).
+#ifndef _WIN32   // the mkdir -p auto-create is a PORT addition (plugins.cpp is #ifndef _WIN32 there, with the comment saying so); on Windows a missing state folder warns and opens a real ::SHBrowseForFolder, which no message-box hook can intercept and which stops the run dead
 TEST(PluginState, SaveStateAutoCreatesFolderAndNamesFile)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -572,6 +580,7 @@ TEST(PluginState, SaveStateAutoCreatesFolderAndNamesFile)
 
     App.m_strDefaultStateFilesDirectory.Empty();
 }
+#endif  // !_WIN32
 
 // plugins.cpp SendToAll/SendToFirst dispatchers: "ignore disabled plugins" —
 // every dispatch variant must skip a disabled plugin, and run it again once
@@ -814,6 +823,7 @@ TEST(PluginState, SaveStateSkippedWithoutWorldID)
 
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_noworld_%d/", (int)getpid());
+    mkdir(dir, 0755);   // Windows does not auto-create it (plugins.cpp is #ifndef _WIN32)
     App.m_strDefaultStateFilesDirectory = dir;
     CPlugin* p = doc.GetPlugin(IDA);
     ASSERT_NE(nullptr, p);
@@ -832,6 +842,7 @@ TEST(PluginState, OnPluginSaveStateRunsBeforeSerialization)
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_cborder_%d/", (int)getpid());
+    mkdir(dir, 0755);   // ditto
     App.m_strDefaultStateFilesDirectory = dir;
 
     ASSERT_TRUE(load_plugin(doc, write_plugin("cborder", IDA, "CbOrderPlugin",
@@ -864,6 +875,7 @@ TEST(PluginState, OnPluginSaveStateRunsBeforeSerialization)
 // directory raises the error path; headless there is no directory picker,
 // so the save proceeds with the unchanged (file) prefix — the state file
 // lands beside it with the concatenated name.
+#ifndef _WIN32   // same reason: the "is not a directory" arm reaches the same ::SHBrowseForFolder on Windows
 TEST(PluginState, SaveStateFolderNotADirectoryStillSavesBesideIt)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -894,6 +906,7 @@ TEST(PluginState, SaveStateFolderNotADirectoryStillSavesBesideIt)
 
     App.m_strDefaultStateFilesDirectory.Empty();
 }
+#endif  // !_WIN32
 
 // plugins.cpp ~CPlugin: "delete our arrays" — an array created inside a
 // plugin lives in that plugin's own m_Arrays map (not the world's), and is
@@ -1159,12 +1172,12 @@ TEST(MxpWorldScript, OpenTagHandlerGetsTagArgumentsAndTable)
 
     VARIANT v;
     v = doc.GetVariable("tag");
-    EXPECT_TRUE(CString(v.bstrVal ? v.bstrVal : "").Find("font") == 0);
+    EXPECT_TRUE((v.bstrVal ? CString(v.bstrVal) : CString("")).Find("font") == 0);
     v = doc.GetVariable("args");
-    EXPECT_TRUE(CString(v.bstrVal ? v.bstrVal : "").Find("color") >= 0);
+    EXPECT_TRUE((v.bstrVal ? CString(v.bstrVal) : CString("")).Find("color") >= 0);
     // The third argument is the tell: the COM arm cannot deliver it.
     v = doc.GetVariable("ttype");
-    EXPECT_STREQ("table", v.bstrVal ? v.bstrVal : "");
+    EXPECT_STREQ("table", v.bstrVal ? (const char*) CString(v.bstrVal) : "");
 }
 
 // The other half: a plugin with no MXP callbacks must leave the flags alone.
@@ -1249,6 +1262,7 @@ TEST(PluginState, SaveStateSkippedWithoutStateFolderOrWorldId)
 
 static char* s_pickedDir;
 
+#ifndef _WIN32   // g_wxhook_directorypicker is port-only: on Windows the fallback opens a real SHBrowseForFolder, which a test host must never do
 TEST(PluginState, MissingStateFolderFallsBackToDirectoryPicker)
 {
     char dir[128];
@@ -1283,6 +1297,7 @@ TEST(PluginState, MissingStateFolderFallsBackToDirectoryPicker)
     App.m_strDefaultStateFilesDirectory = savedDir;
     rmdir(dir);
 }
+#endif  // !_WIN32
 
 // ═══ Round-4 coverage: CallPlugin marshalling arms, disabled-plugin skip
 //     arms, SaveState folder errors, the wizard's headless prefix ═══════════
@@ -2189,15 +2204,21 @@ TEST(WizardTest, RemovingSelectedItemsSortsOncePerCategory)
     };
 
     run(200);                              // warm
-    const double small = run(400);
-    const double big   = run(2400);        // 6x the items
+    // NOT `small`: the Windows SDK's rpcndr.h has `#define small char`, so
+    // `const double small = ...` becomes `const double char = ...` and the
+    // compiler reports "'double' followed by 'char' is illegal" -- an error
+    // that names neither the macro nor the header.  This one line is why the
+    // whole suite sat excluded as "preprocesses oddly under MSVC"
+    // (docs/WINDOWS-VALIDATION.md §10r).
+    const double smallRun = run(400);
+    const double big      = run(2400);        // 6x the items
 
     // one sort each: ~6x the work.  One per surviving entry: ~36x, and the
     // ratio keeps climbing with the size.  Twice as loose as the measured
     // 6x, so ordinary machine noise cannot fail it.
-    EXPECT_TRUE(big <= small * 12 + 25.0);
-    if (big > small * 12 + 25.0)
-        printf("    400 items %.3fms vs 2400 items %.3fms\n", small, big);
+    EXPECT_TRUE(big <= smallRun * 12 + 25.0);
+    if (big > smallRun * 12 + 25.0)
+        printf("    400 items %.3fms vs 2400 items %.3fms\n", smallRun, big);
 }
 
 MC_TEST_MAIN()

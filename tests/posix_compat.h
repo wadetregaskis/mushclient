@@ -44,6 +44,14 @@
 #define getcwd _getcwd
 #endif
 
+// mkdir with a mode, which Windows _mkdir does not take.  The mode is dropped
+// rather than translated: these are scratch directories under /tmp, the tests
+// only ever pass 0755, and Windows ACLs are not a thing 0755 maps onto.
+inline int mkdir(const char* path, int /*mode*/)
+{
+    return ::_mkdir(path);
+}
+
 // usleep: microseconds, and Sleep takes milliseconds.  Round UP, so a test
 // that sleeps 500 us to let something settle does not get 0.
 inline void usleep(unsigned long usec)

@@ -4736,3 +4736,60 @@ the glibc arm returns bytes where the other two return counts.  And `zlib\` and
 project does not inherit; both directories were checked first for a header that
 would mask a CRT or SDK one, which is exactly how `platform\direct.h` once
 turned a 36-error build into 36,810.
+
+### 10n. The document templates: one of the three predictions held
+
+```
+TEST() declared: 697    664 passed, 0 failed    exit 0
+```
+
+The host now builds `App.m_pNormalDocTemplate` and `App.m_pWorldDocTemplate`,
+the two of InitInstance's four that code with nothing to do with windows walks.
+Constructing a `CMultiDocTemplate` creates no window — it stores three runtime
+classes and loads a string resource — and `AddDocTemplate` is deliberately not
+called, because that hands the template to the app's document manager and makes
+File ▸ New and the OLE server reachable, which this host has no business doing.
+
+**§10m predicted this would unblock roughly 400 tests. It unblocked 103.**  The
+measurement is worth more than the prediction, so here is what each of the three
+actually did:
+
+| Predicted | Measured |
+|---|---|
+| `test_mxp` (131) | **Right.**  The access violation is gone; `doc.cpp:3043` now walks a real, empty list.  103 of its tests run. |
+| `test_accelerators` (17) | **Wrong, and §10k already said so.**  All 11 failures are unchanged.  `AcceleratorTo` returns `eBadParameter` at `GetFirstViewPosition()`, and a view is a *window*, not a registry entry.  §10m read "two NULL pointers" as "one fix" and generalised past its own evidence. |
+| `test_connection` (154) | **Wrong for a second reason.**  Still an access violation at the same place, and the template was never the cause: `CMainFrame::OnUpdateBtnWorlds` walks the template *and then* calls `m_wndActivityToolBar.GetButtonInfo` unconditionally (`mainfrm.cpp:712`) on a `CToolBar` that only exists after `CMainFrame::OnCreate`.  This one needs a created main frame, which a console host cannot have. |
+
+The general form of the mistake: **two symptoms with the same-looking NULL are
+not the same defect**, and the way to tell is to fix one and re-measure rather
+than to reason from the shape.  That is the settings audit's lesson for the
+third time in this document — a shared symptom is not evidence of a shared
+cause — arrived at from the opposite direction, by assuming a shared cause and
+being shown two.
+
+**And the guarding in `test_mxp` is the reverse of what it looks like.**  MXP
+writes its errors and debug output to a notepad, so on Windows a test that
+produces debug output performs real MDI window creation:
+`CMDIChildWnd::Create` looks up `AfxGetThread()->m_pMainWnd` and `ENSURE_VALID`s
+it (`winmdi.cpp:490`).  So two disjoint sets are guarded there, for opposite
+reasons:
+
+- the 16 cases that install `MxpDebugCapture`, because `NotepadCapture` hooks
+  `g_wxhook_create_text_window` and that hook exists only off Windows;
+- the 12 that produce debug output **without** installing a capture, because
+  nothing intercepts the creation and the framework really tries.
+
+Intercepting the notepad is what makes a test safe, so it was the tests
+*without* the harness that broke — which is not the half anyone would guard
+first.
+
+Those 12 also show the runner change from §10l earning its keep a second time:
+`ENSURE_VALID` throws, so what was an access violation before the template
+became twelve clean `[FAIL]` lines naming themselves, in a run that reached its
+own summary.
+
+**The count reconciles exactly.**  697 `TEST(` declared across the 16 enabled
+files, 33 guarded off Windows — 28 in `test_mxp`, 2 each in `test_timers` and
+`test_triggers`, 1 in `test_aliases`, and 0 in `test_telnet`, whose one guard is
+*inside* a test body rather than around it — and 664 executed.  Nothing
+disappeared silently, which is the only reason the number is worth quoting.

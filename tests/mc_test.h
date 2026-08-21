@@ -457,8 +457,53 @@ void Generate256colours(void);
         MC_TEST_WIN_MAKE_TMP(); \
         MC_TEST_WIN_APP_STATE(); \
     } while(0)
+
+// ── what the tests leaked, as against what the host still owns ─────────────
+// The debug CRT dumps every unfreed block at exit, and MFC asks it to
+// (_AFX_DEBUG_STATE's destructor).  In this host that dump is 2,684 lines and
+// almost none of it is a leak: App outlives the dump and still owns the MXP
+// element/entity/colour tables MC_TEST_WIN_APP_STATE loaded, so its ~500
+// CObjects and their collection plexes are reported as leaked while being
+// perfectly alive.  Measured: adding MC_TEST_WIN_APP_STATE grew the dump from
+// 1,618 lines to 2,684 without leaking anything.
+//
+// A dump that large buries the summary line and cannot be read, which is worse
+// than no dump at all -- so take a checkpoint once the host has finished
+// setting itself up, diff against it after the last test, and report THAT.
+// What survives the diff was allocated by a test and not freed by it, which is
+// the only question this binary can usefully answer about memory.
+//
+// Statistics rather than the object list, because the list is long when it is
+// non-empty and this line runs on every green run.  _CrtMemDumpAllObjectsSince
+// (&McTestLeakBaseline()) is the one-line escalation when the number moves.
+//
+// This is NOT a substitute for a sanitizer: it sees blocks that were never
+// freed, and says nothing about use-after-free, overruns, or double frees.
+// docs/SANITIZERS.md is still the instrument for those, on the macOS side.
+inline _CrtMemState& McTestLeakBaseline()
+{
+    static _CrtMemState s;
+    return s;
+}
+
+#define MC_TEST_WIN_LEAK_BASELINE()  _CrtMemCheckpoint(&McTestLeakBaseline())
+
+#define MC_TEST_WIN_LEAK_REPORT() \
+    do { \
+        _CrtMemState after_, diff_; \
+        _CrtMemCheckpoint(&after_); \
+        if (_CrtMemDifference(&diff_, &McTestLeakBaseline(), &after_)) { \
+            fprintf(stderr, "\nstill allocated after the last test " \
+                            "(host setup excluded):\n"); \
+            _CrtMemDumpStatistics(&diff_); \
+        } \
+        /* and stop the exit dump reporting App's live tables as leaks */ \
+        AfxEnableMemoryLeakDump(FALSE); \
+    } while(0)
 #else
-#define MC_TEST_WIN_HOST_INIT() ((void)0)
+#define MC_TEST_WIN_HOST_INIT()     ((void)0)
+#define MC_TEST_WIN_LEAK_BASELINE() ((void)0)
+#define MC_TEST_WIN_LEAK_REPORT()   ((void)0)
 #endif
 
 // MC_TEST_COMBINED links many suites into ONE executable, which is what the
@@ -476,7 +521,10 @@ void Generate256colours(void);
         MC_TEST_WIN_HOST_INIT(); \
         MC_TEST_IGNORE_SIGPIPE(); \
         Generate256colours(); \
-        return mc_test::run_all(); \
+        MC_TEST_WIN_LEAK_BASELINE();  /* host setup done; measure from here */ \
+        int rc_ = mc_test::run_all(); \
+        MC_TEST_WIN_LEAK_REPORT(); \
+        return rc_; \
     }
 
 #ifdef MC_TEST_COMBINED

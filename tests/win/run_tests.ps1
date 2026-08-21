@@ -35,7 +35,7 @@ if (-not $NoBuild) {
   $bat = Join-Path $env:TEMP "mc_build_tests_$PID.bat"
   @"
 @echo off
-call "$vcvars" x86 >nul
+call "$vcvars" x86 >nul 2>&1
 cd /d "$root"
 msbuild MUSHclient_tests.vcxproj /p:Configuration=$Config /p:Platform=Win32 /p:SolutionDir=$root\ /m /nologo /v:minimal
 "@ | Set-Content $bat -Encoding ascii

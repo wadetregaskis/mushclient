@@ -1228,6 +1228,8 @@
     <ClCompile Include="tests\test_speedwalk.cpp" />
     <ClCompile Include="tests\test_tabcomplete.cpp" />
     <ClCompile Include="tests\test_telnet.cpp" />
+    <ClCompile Include="tests\test_timers.cpp" />
+    <ClCompile Include="tests\test_triggers.cpp" />
     <ClCompile Include="tests\test_xmlparse.cpp" />
   </ItemGroup>
   <ItemGroup>

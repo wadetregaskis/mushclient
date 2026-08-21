@@ -186,6 +186,14 @@ TEST(TimerTest, TimersDisabledGlobally)
 // immediately before ConnectSocket().  m_server is "0.0.0.0", which
 // ConnectSocket refuses on its first line (doc_shared.cpp:1258), so the attempt
 // is recorded without resolving a name or opening a socket.
+// Port-only observation seam.  Both tests below watch the reconnect through
+// g_wxhook_set_status / _set_status_for, and those hooks exist only off
+// Windows -- the real client writes the status bar through MFC's message map,
+// so there is no function pointer to substitute.  The BEHAVIOUR they pin
+// (CheckTimers' three reconnect conditions, and which world's status bar the
+// message lands on) is shared, and re-entering it on Windows means finding a
+// Windows-side observable for the status text rather than deleting the guard.
+#ifndef _WIN32
 static std::string g_lastStatus;
 static void capture_status(const char* msg) { g_lastStatus = msg ? msg : ""; }
 
@@ -290,6 +298,7 @@ TEST(TimerTest, ReconnectStatusIsAttributedToTheWorldThatDropped)
     g_wxhook_set_status           = savedHook;
     App.m_bReconnectOnLinkFailure = savedPref;
 }
+#endif  // !_WIN32
 
 TEST(TimerTest, ActiveWhenClosedFiresWhileDisconnected)
 {

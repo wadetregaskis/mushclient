@@ -51,8 +51,6 @@ $excluded = [ordered]@{
   'test_world_load.cpp'      = 'notepad_fixture.h, as above'
   'test_lua_surface.cpp'     = 'notepad_fixture.h, as above'
   'test_notepad_methods.cpp' = 'notepad_fixture.h, as above'
-  'test_timers.cpp'          = 'g_wxhook_set_status: the wx status-bar hook has no Windows counterpart'
-  'test_triggers.cpp'        = 'g_wxhook_get_clipboard_text: the wx clipboard hook has no Windows counterpart'
   'test_sound.cpp'           = 'drives the miniaudio backend, which is the non-Windows sound path'
   'test_chat_sockets.cpp'    = 'builds real AF_UNIX/loopback pairs with socketpair, which Windows does not have'
   'test_display.cpp'         = 'socketpair, for the chat-snoop test'
@@ -71,8 +69,12 @@ $excluded = [ordered]@{
 # Everything above is opted OUT with a reason.  The last block is the interesting
 # one: those suites are not Windows-hostile, they just reach a seam the port
 # owns.  Guarding the handful of test cases that touch it -- the way
-# test_telnet.cpp guards its one g_debug case -- would bring each of them back,
-# and test_triggers and test_timers are core enough to be worth it.
+# test_telnet.cpp guards its one g_debug case -- brings each of them back, and
+# that is how test_triggers and test_timers got here: two cases each, the wx
+# clipboard hooks and the wx status-bar hooks, with the guard carrying a note on
+# what a Windows-side observable would have to be.  The same route is open for
+# most of what is left; test_lua_scripting is the biggest prize and the one that
+# needs real work, since it wants a Windows world-load path rather than a guard.
 
 $tests = Get-ChildItem 'tests\test_*.cpp' | Where-Object { -not $excluded.Contains($_.Name) } |
          ForEach-Object { 'tests\' + $_.Name }

@@ -52,10 +52,72 @@ static CTrigger* add_trigger(CMUSHclientDoc& doc,
     return t;
 }
 
+// Compile any trigger this file built by hand and left with a null regexp.
+//
+// Windows compiles a trigger's regexp when the trigger is ADDED -- AddTriggerEx
+// and the trigger dialog both do -- and add_trigger above adds one directly, so
+// it never happens.  The port survives that because evaluate.cpp compiles
+// lazily on first use, but the whole of that arm is #ifndef _WIN32: on Windows
+// every hand-built trigger reached EvaluateTrigger with a null regexp and was
+// skipped before the match was even attempted.  37 of this file's tests failed
+// on the first Windows run, all of them for that one reason.
+//
+// Done lazily, here, rather than inside add_trigger, because four tests set
+// bRegexp or ignore_case AFTER adding and those change what the pattern
+// compiles to; doing it at feed time is order-independent, which an add-time
+// compile plus a "remember to recompile" rule would not be.  Only null regexps
+// are touched, so a trigger added through AddTriggerEx keeps exactly the
+// program the engine gave it, and on the port this merely gets there first --
+// the lazy arm then finds its work already done.
+//
+// The pattern conversion and the option bits are evaluate.cpp's, deliberately
+// copied rather than approximated: a fixture that compiles the pattern
+// differently from the engine is testing its own regexp, not the client's.
+static void compile_trigger_array(CTriggerArray& arr, bool bUtf8)
+{
+    for (int i = 0; i < arr.GetSize(); ++i)
+    {
+        CTrigger* t = arr[i];
+        if (!t || t->regexp)
+            continue;
+        CString pattern = t->bRegexp
+                          ? t->trigger
+                          : ConvertToRegularExpression(t->trigger,
+                                                       true,   // whole line
+                                                       true);  // * are wildcards
+        try
+        {
+            t->regexp = regcomp(pattern,
+                                (t->ignore_case ? PCRE_CASELESS  : 0) |
+                                (t->bMultiLine  ? PCRE_MULTILINE : 0) |
+                                (bUtf8          ? PCRE_UTF8      : 0));
+        }
+        catch (CException* e)
+        {
+            e->Delete();   // an invalid pattern stays null, as the engine leaves it
+        }
+    }
+}
+
+static void compile_pending_triggers(CMUSHclientDoc& doc)
+{
+    compile_trigger_array(doc.m_TriggerArray, doc.m_bUTF_8 != 0);
+    // Plugins keep their own array and are evaluated from it, so a plugin
+    // trigger built by hand needs the same treatment -- missing this left
+    // exactly one test failing (the plugin/world sequence ordering one) after
+    // the other 36 went green, which is a good reminder that "the trigger list"
+    // is not one list.
+    for (PluginListIterator pit = doc.m_PluginList.begin();
+         pit != doc.m_PluginList.end(); ++pit)
+        if (*pit)
+            compile_trigger_array((*pit)->m_TriggerArray, doc.m_bUTF_8 != 0);
+}
+
 // Feed a line of plain text to the doc as if it arrived from the MUD.
 // Appends \n so DisplayMsg finalises the line and calls ProcessPreviousLine.
 static void feed_line(CMUSHclientDoc& doc, const char* text)
 {
+    compile_pending_triggers(doc);
     std::string s(text);
     s += '\n';
     doc.DisplayMsg(s.c_str(), (int)s.size(), 0);
@@ -382,7 +444,11 @@ TEST(TriggerScript, LowercaseWildcardFoldsTheStoredArrayButNotTheLuaCallback)
     EXPECT_EQ(std::string("gandalf"), t->wildcards[1]);
     VARIANT vi = doc.GetTriggerInfo("shout_trigger", 101);
     ASSERT_EQ(VT_BSTR, vi.vt);
-    EXPECT_EQ(std::string("gandalf"), std::string(vi.bstrVal ? vi.bstrVal : ""));
+    // Through CString, not a raw cast: on Windows a BSTR is wchar_t*, so the
+    // ternary's two arms have no common type and this does not even compile,
+    // and a plain (const char*) would compare only the first character.
+    EXPECT_EQ(std::string("gandalf"),
+              std::string(vi.bstrVal ? (const char*) CString(vi.bstrVal) : ""));
 
     // Route 2 -- the Lua callback's table: NOT folded, on Windows either.
     // Asserting the ORIGINAL case is the point: if someone "fixes" Lua to match
@@ -502,6 +568,7 @@ TEST(TriggerTest, NoteLinesDoNotFireTriggers)
     doc.Note("you have died");            // a note line — must NOT fire
     EXPECT_EQ(0L, t->nMatched);
 
+    compile_pending_triggers(doc);
     doc.DisplayMsg("you have died\n", 14, USER_INPUT);   // user input — ditto
     EXPECT_EQ(0L, t->nMatched);
 
@@ -545,6 +612,7 @@ TEST(TriggerTest, ColourMatchTriggerRequiresMatchingStyle)
     feed_line(doc, "alert");              // white text — text matches, colour no
     EXPECT_EQ(0L, t->nMatched);
 
+    compile_pending_triggers(doc);
     doc.DisplayMsg("\033[31m", 5, 0);     // MUD sets red
     feed_line(doc, "alert");              // red text — fires
     EXPECT_EQ(1L, t->nMatched);
@@ -977,6 +1045,13 @@ TEST(TriggerR5, ColourAndStyleMatchConditions)
     }
 }
 
+// Port-only observation seam: the clipboard hooks
+// (g_wxhook_get_clipboard_text / _set_) exist only off Windows, where the
+// real client goes straight to the Win32 clipboard through CWnd.  The
+// behaviour is shared -- re-entering these on Windows means opening the real
+// clipboard in the test rather than deleting the guard, which is a heavier
+// thing to do to a developer's machine than it looks.
+#ifndef _WIN32
 // clipboard_arg copies the selected wildcard to the clipboard on match.
 TEST(TriggerR5, ClipboardArgCopiesWildcard)
 {
@@ -998,6 +1073,7 @@ TEST(TriggerR5, ClipboardArgCopiesWildcard)
     EXPECT_EQ(t->wildcards[1], s_clip);       // exactly the captured wildcard
     EXPECT_STREQ("50 ", s_clip.c_str());       // ... which is "50 "
 }
+#endif  // !_WIN32
 
 // Foreground-only colour change forces the style to RGB and keeps the
 // original background (TRIGGER_COLOUR_CHANGE_FOREGROUND arm).
@@ -1097,6 +1173,7 @@ TEST(TriggerR5, WrappedPromptMatchesAsOneLogicalLineDespiteThePromptFlag)
     CTrigger* straddle = add_trigger(doc, "*100 MP*");   // plain => whole-line
     whole->bKeepEvaluating = TRUE;   // or the first match stops the sequence
 
+    compile_pending_triggers(doc);
     doc.DisplayMsg("HP:100 MP:50 EXP:25 >", 21, 0);
     unsigned char c = GO_AHEAD;
     doc.Phase_IAC(c);                 // stamps PROMPT, substitutes '\n'
@@ -1132,6 +1209,7 @@ TEST(TriggerR5, OmittedLineReplaysInterleavedNote)
     CTrigger* t = add_trigger(doc, "*secret*");
     t->bOmitFromOutput = TRUE;
 
+    compile_pending_triggers(doc);
     doc.DisplayMsg("abc", 3, 0);      // partial MUD line
     doc.Tell("interleaved");          // note forces the line change
     feed_line(doc, "the secret text");
@@ -1325,6 +1403,13 @@ TEST(SendTextR5, WildcardZeroIsWholeMatch)
     EXPECT_TRUE(sawWhole);
 }
 
+// Port-only observation seam: the clipboard hooks
+// (g_wxhook_get_clipboard_text / _set_) exist only off Windows, where the
+// real client goes straight to the Win32 clipboard through CWnd.  The
+// behaviour is shared -- re-entering these on Windows means opening the real
+// clipboard in the test rather than deleting the guard, which is a heavier
+// thing to do to a developer's machine than it looks.
+#ifndef _WIN32
 // %C expands to the clipboard contents (empty clipboard: nothing inserted).
 // GetClipboardContents is a no-op headless unless the seam hook is installed,
 // so seed it via g_wxhook_get_clipboard_text and assert the substituted output.
@@ -1364,6 +1449,7 @@ TEST(SendTextR5, ClipboardSubstitution)
 
     g_wxhook_get_clipboard_text = saved_get;
 }
+#endif  // !_WIN32
 
 // A send routed to the log file with HTML logging on runs wildcards through
 // FixHTMLString.
@@ -1563,6 +1649,7 @@ static CTrigger* add_colour_trigger(CMUSHclientDoc& doc, unsigned short iMatch)
 
 static void emit(CMUSHclientDoc& doc, const char* text)
 {
+    compile_pending_triggers(doc);
     doc.DisplayMsg(text, (int)strlen(text), 0);
 }
 

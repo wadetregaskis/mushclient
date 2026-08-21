@@ -643,6 +643,7 @@ TEST(GlobalOptions, PerturbAutoExpandBeforeDatabaseReset)
     App.m_bAutoExpand = 0;   // compiled default (AutoExpandConfig) is 1
 }
 
+#ifndef _WIN32   // g_pWinApp is the port-only app pointer (platform/); Windows has AfxGetApp
 TEST(GlobalOptions, FreshDatabaseSeedAndReadShareDirectoryDefaults)
 {
     const char* dbPath = "/tmp/mc_test_prefs_seed.sqlite";
@@ -673,6 +674,7 @@ TEST(GlobalOptions, FreshDatabaseSeedAndReadShareDirectoryDefaults)
 
     remove(dbPath);
 }
+#endif  // !_WIN32
 
 // See PerturbAutoExpandBeforeDatabaseReset above: the perturbed value must
 // have survived FreshDatabaseSeedAndReadShareDirectoryDefaults running in
@@ -763,6 +765,7 @@ TEST(GetInfoR4, SelectionAndScrollThroughWorldView)
 }
 
 // Virtual-key state bitmask (294) through the key-state hook.
+#ifndef _WIN32   // g_wxhook_get_key_state is port-only; Windows calls ::GetKeyState directly, so there is no hook to substitute
 TEST(GetInfoR4, KeyStateBitmaskThroughHook)
 {
     g_wxhook_get_key_state = [](int vk) -> short {
@@ -783,6 +786,7 @@ TEST(GetInfoR4, KeyStateBitmaskThroughHook)
     EXPECT_EQ(0x7EFFF & ~0x1000, (int)(v.lVal & 0x7FFFF));
     g_wxhook_get_key_state = nullptr;
 }
+#endif  // !_WIN32
 
 // Date codes 302/303 answer VT_DATE once the timestamps are non-zero.
 TEST(GetInfoR4, FlushAndScriptModDates)
@@ -950,6 +954,7 @@ TEST(InfoTest, FormatTimeTranslatesTheWindowsNoLeadingZeroFlag)
 // CTimeSpan&) -- which real MFC's CTime does have (it cost an earlier agent a
 // compile). Pin its semantics: CTime - CTimeSpan == CTime, moved earlier by
 // exactly the span's total seconds, and it inverts CTime + CTimeSpan.
+#ifndef _WIN32   // this tests the PORT CTime shim by name. On Windows CTime is MFC own, which has BOTH operator-(CTimeSpan) and operator-(CTime), so the LONGLONG from GetTotalSeconds() is ambiguous rather than missing -- the mirror image of the shim gap recorded in CLAUDE.md verification debt
 TEST(CTimeShim, MinusCTimeSpanSubtractsTotalSeconds)
 {
     const CTime t(2026, 7, 16, 5, 4, 30);
@@ -975,6 +980,7 @@ TEST(CTimeShim, MinusCTimeSpanSubtractsTotalSeconds)
     // A zero span is a no-op.
     EXPECT_TRUE((t - CTimeSpan(0)) == t);
 }
+#endif  // !_WIN32
 
 // headless_app.cpp's App ctor comment claims its printer margin defaults are
 // "the Windows table defaults" (globalregistryoptions.cpp: PrinterLeftMargin /
@@ -986,6 +992,7 @@ TEST(CTimeShim, MinusCTimeSpanSubtractsTotalSeconds)
 // them off the live App here would pass regardless of what the ctor itself
 // seeds.  See the comment above FreshDatabaseSeedAndReadShareDirectoryDefaults
 // for the g_pWinApp save/restore this pattern requires.
+#ifndef _WIN32   // g_pWinApp, as above
 TEST(AppDefaults, PrinterMarginsMatchTheGlobalOptionsTable)
 {
     CWinApp* savedWinApp = g_pWinApp;
@@ -995,6 +1002,7 @@ TEST(AppDefaults, PrinterMarginsMatchTheGlobalOptionsTable)
     EXPECT_EQ(15, scratch.m_nPrinterLeftMargin);
     EXPECT_EQ(15, scratch.m_nPrinterTopMargin);
 }
+#endif  // !_WIN32
 
 // GetUniqueString is supposed to share ONE uniqueness sequence with
 // GetUniqueNumber()/m_nUniqueNumber (world.GetUniqueNumber, trigger/alias/timer
@@ -1005,6 +1013,7 @@ TEST(AppDefaults, PrinterMarginsMatchTheGlobalOptionsTable)
 // throwaway `scratch` object (see the test above) so the sequence starts
 // from the ctor's own m_nUniqueNumber = 0 instead of whatever the live App's
 // counter happens to be after earlier tests.
+#ifndef _WIN32   // g_pWinApp, as above
 TEST(AppDefaults, GetUniqueStringSharesTheGetUniqueNumberSequence)
 {
     CWinApp* savedWinApp = g_pWinApp;
@@ -1020,6 +1029,7 @@ TEST(AppDefaults, GetUniqueStringSharesTheGetUniqueNumberSequence)
     EXPECT_STREQ(expected, (LPCTSTR) s);
     EXPECT_EQ(n + 2, n2);
 }
+#endif  // !_WIN32
 
 // InfoTypes[] (the descriptive table behind GetInfoTypesList and friends,
 // methods_info.cpp) must have a unique iInfoType per row and cover every

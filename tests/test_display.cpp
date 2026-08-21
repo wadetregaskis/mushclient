@@ -17,9 +17,11 @@
 #include <cstring>
 #include <cstdio>
 #include <string>
-#include <unistd.h>
+#include "posix_compat.h"
+#ifndef _WIN32
 #include <sys/socket.h>   // socketpair (chat snoop test)
 #include <fcntl.h>
+#endif
 
 #include "flags.h"   // eEnabled / eOmitFromOutput / ... (AddTriggerEx flags)
 #include "pal/itransport.h"
@@ -2075,6 +2077,7 @@ TEST(PrevLineArms, MappingFailureRegexpVariant)
 // SendChatMessage was an empty stub in platform/windows_stubs.cpp.  chatsock.cpp
 // is in mushcore now, SendData -> OnSend -> CAsyncSocket::Send reaches ::send
 // for real, and the bytes ARE readable off the other end of a socketpair.
+#ifndef _WIN32   // socketpair(AF_UNIX) has no Windows equivalent; a loopback pair would need a listener, an accept and a port, which is a different fixture rather than a guard
 TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -2127,6 +2130,7 @@ TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
     ::close(fds[0]);
     ::close(fds[1]);
 }
+#endif  // !_WIN32
 
 // LogLineInHTMLcolour called DIRECTLY on an explicit head POSITION (the public
 // entry point). Trimmed (audit §3): the full <font>/<span>/<u> golden now lives in

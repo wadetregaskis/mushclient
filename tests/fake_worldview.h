@@ -73,8 +73,8 @@ struct FakeWorldView : pal::IWorldView {
     // string, not a crash.
     void replaceCommandSelection(long start, long end, const char* text) override {
         long len = (long)cmd.size();
-        long s = std::max(0L, std::min(start, len));
-        long e = std::max(s,   std::min(end,   len));
+        long s = (std::max)(0L, (std::min)(start, len));
+        long e = (std::max)(s, (std::min)(end, len));
         std::string ins(text ? text : "");
         cmd = cmd.substr(0, (size_t)s) + ins + cmd.substr((size_t)e);
         cmdSel.start = cmdSel.end = (int)(s + (long)ins.size());
@@ -89,7 +89,7 @@ struct FakeWorldView : pal::IWorldView {
     std::vector<std::string> commandList(long count) const override {
         std::vector<std::string> out;
         long total = (long)history.size();
-        long n = (count <= 0) ? total : std::min(count, total);
+        long n = (count <= 0) ? total : (std::min)(count, total);
         for (long i = total - 1; i >= total - n; --i)
             out.push_back(history[(size_t)i]);
         return out;

@@ -22,7 +22,7 @@
 #include <cstdio>
 #include <set>
 #include <string>
-#include <unistd.h>
+#include "posix_compat.h"
 
 static void make_doc(CMUSHclientDoc& doc)
 {

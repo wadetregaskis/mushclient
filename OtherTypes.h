@@ -357,8 +357,10 @@ class CLine : public CObject
          const COLORREF       iBackColour,
          const bool bUnicode
          );   // constructor
-#ifndef _WIN32
-  // Default constructor for non-Windows scratch/stub lines (doc_portable.cpp).
+#if !defined(_WIN32) || defined(MUSHCLIENT_TESTS)
+  // Default constructor for non-Windows scratch/stub lines (doc_portable.cpp),
+  // and for test fixtures on every platform — several of them want a blank
+  // line to hang a document off without inventing a wrap column and a palette.
   CLine() : hard_return(false), flags(0), len(0), text(nullptr),
             iMemoryAllocated(0), m_nLineNumber(0), m_iPreambleOffset(0)
   { m_lineHighPerformanceTime.QuadPart = 0; }

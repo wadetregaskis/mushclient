@@ -17,7 +17,9 @@
                                  // encodeBase64, decodeBase64
 #include <cstring>
 #include <set>
-#include <sys/utsname.h>       // OSVersionString's oracle (tests never build on Windows)
+#ifndef _WIN32
+#include <sys/utsname.h>       // the uname oracle below; Windows has no uname
+#endif
 
 extern CString OSVersionString (void);   // utilities_shared.cpp
 
@@ -2202,6 +2204,8 @@ TEST(Utf8NextCharTest, CharacterCountMatchesLeadByteCountWhenWellFormed) {
 // / major 10 — so running the Windows version switch over it answered
 // "Windows 10" on macOS.  The answer has to come from the kernel instead, and
 // pinning it against uname is what makes a fall-back to that switch fail.
+#ifndef _WIN32   // pins OSVersionString against uname; on Windows it IS the
+                 // GetVersionEx switch, so there is nothing to contrast with
 TEST(Utilities, OSVersionString_ReportsThisKernelNotWindows) {
     struct utsname u;
     ASSERT_EQ(0, uname(&u));
@@ -2215,6 +2219,7 @@ TEST(Utilities, OSVersionString_ReportsThisKernelNotWindows) {
     EXPECT_TRUE(strstr((const char*) sVersion, "Windows") == NULL);
     EXPECT_TRUE(strstr((const char*) sVersion, "Unknown (Platform") == NULL);
 }
+#endif   // !_WIN32
 
 // methods_utilities.cpp CMUSHclientDoc::Help: on a Lua-enabled world, a filter
 // that isn't an exact function match falls through to

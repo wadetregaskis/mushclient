@@ -17,7 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <unistd.h>
+#include "posix_compat.h"
 
 // ── helpers ───────────────────────────────────────────────────────────────
 

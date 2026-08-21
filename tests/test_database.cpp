@@ -30,7 +30,7 @@ extern "C" {
 #include <cstring>
 #include <cstdio>
 #include <string>
-#include <sys/resource.h>   // getrusage (RSS leak check)
+#include "posix_compat.h"
 
 lua_State* MakeLuaState();
 int RegisterLuaRoutines(lua_State*);

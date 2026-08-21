@@ -718,9 +718,15 @@ class CMUSHclientDoc : public CDocument
   friend class CScriptEngine;
   
   protected: // create from serialization only
-#ifndef _WIN32
+#if !defined(_WIN32) || defined(MUSHCLIENT_TESTS)
   // On non-Windows there is no MFC doc/view factory; the wx layer creates
   // CMUSHclientDoc directly with `new`.  Make the constructor public for it.
+  // A Windows TEST build needs the same thing for the same reason — the tests
+  // construct documents directly, not through DECLARE_DYNCREATE.  Note that
+  // MUSHCLIENT_TESTS must be defined for the WHOLE build, not just the test
+  // TU: access is part of the mangled name, so a half-applied define makes
+  // doc.obj reference the protected ctor and doc_construct.obj define the
+  // public one, and the link fails on a symbol that looks identical.
   public:
 #endif
 	CMUSHclientDoc();

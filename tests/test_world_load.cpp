@@ -21,7 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <unistd.h>   // getpid/unlink (temp world files)
+#include "posix_compat.h"
 #include <sys/stat.h> // mkdir (plugin state dir)
 
 #ifdef MUSHCLIENT_LUA_SCRIPTING

@@ -19,7 +19,7 @@
 #ifdef MUSHCLIENT_LUA_SCRIPTING
 
 #include "mc_test.h"
-#include <sys/resource.h>
+#include "posix_compat.h"
 // B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
 #include "stdafx.h"
 #include "MUSHclient.h"

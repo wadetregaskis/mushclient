@@ -25,7 +25,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#include "scripting.h"
+#include "scripting/scripting.h"
 #include "scripting/errors.h"
 
 #include <list>

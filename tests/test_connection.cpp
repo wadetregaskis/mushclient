@@ -32,7 +32,7 @@
 
 #include <cstring>
 #include <string>
-#include <unistd.h>
+#include "posix_compat.h"
 
 // telnet bytes (numeric to avoid macro clashes)
 static const unsigned char T_IAC = 255, T_WILL = 251, T_SB = 250, T_SE = 240;

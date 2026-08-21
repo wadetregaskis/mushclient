@@ -2,8 +2,6 @@
 // Unit tests for the PCRE regex wrapper (regexp.h / regexp.cpp).
 
 #include "mc_test.h"
-#include "platform/compat.h"
-#include "regexp.h"
 
 // Real doc.h layout (matches mushcore / mushcore_testsupport -- see the
 // WIN32/_NOSOUND/MUSHCLIENT_FULL_BUILD comment in tests/CMakeLists.txt) is
@@ -11,8 +9,9 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "regexp.h"   // after the MFC headers: it uses CString and ASSERT
 
-#include <sys/resource.h>   // getrusage (RSS leak check)
+#include "posix_compat.h"
 
 // RAII compile+free wrapper (audit §4): compile in the ctor, delete in the dtor,
 // so the repeated `t_regexp* r = regcomp(...); ...; delete r;` boilerplate collapses

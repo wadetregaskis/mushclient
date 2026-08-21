@@ -4,7 +4,7 @@
 #include "mc_test.h"
 #include <set>
 #include <ctime>
-#include "platform/compat.h"
+#include "stdafx.h"
 #include "mcdatetime.h"
 #include "pal/iclock.h"        // pal::g_clock — must be null for the real path
 

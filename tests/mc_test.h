@@ -341,9 +341,60 @@ struct HookGuard {
 // every suite starts from the same state the product does.
 void Generate256colours(void);
 
-#define MC_TEST_MAIN() \
+#ifdef _WIN32
+// ── The Windows host ─────────────────────────────────────────────────────
+// On Windows the engine compiles against REAL MFC — stdafx.h takes the
+// afxwin.h arm, not platform/compat.h — so a test binary is an "MFC in a
+// console application" host and has to do what WinMain would have done:
+//
+//   AfxWinInit    without it the first AfxGetApp() asserts in afxwin1.inl
+//   AfxOleInit    CMUSHclientDoc is a CCmdTarget with EnableAutomation, and
+//                 ~CCmdTarget calls CoDisconnectObject, which asserts in
+//                 oleunk.cpp when COM is not initialised on the thread
+//   AfxSocketInit CAsyncSocket, for the chat and transport suites
+//
+// And it must not pop dialogs.  A failed ASSERT in a test process is a test
+// result, not something to wait for a human on: routed to stderr a run that
+// trips one keeps going and says so, where the default modal box blocks the
+// whole suite until somebody clicks it.  That is not hypothetical — it is how
+// the first Windows run of this harness was found to be wedged.
+#include <crtdbg.h>
+#define MC_TEST_WIN_HOST_INIT() \
+    do { \
+        for (int rt_ = 0; rt_ < 3; rt_++) { \
+            _CrtSetReportMode(rt_, _CRTDBG_MODE_FILE); \
+            _CrtSetReportFile(rt_, _CRTDBG_FILE_STDERR); \
+        } \
+        if (!AfxWinInit(::GetModuleHandle(NULL), NULL, ::GetCommandLine(), 0)) \
+            { fprintf(stderr, "FATAL: AfxWinInit failed\n"); return 2; } \
+        if (!AfxOleInit()) \
+            { fprintf(stderr, "FATAL: AfxOleInit failed\n"); return 2; } \
+        AfxSocketInit(); \
+    } while(0)
+#else
+#define MC_TEST_WIN_HOST_INIT() ((void)0)
+#endif
+
+// MC_TEST_COMBINED links many suites into ONE executable, which is what the
+// Windows target does: an MFC test binary costs ~9 MB and a full link, so 40 of
+// them is minutes per build where one is seconds.  Every test .cpp still writes
+// MC_TEST_MAIN() and needs no edit — the macro simply stops producing a main,
+// and tests/win/all_tests.cpp provides the single one.  TEST() registers into a
+// global registry either way, so nothing else changes.
+// The real thing.  It has to stay a MACRO rather than becoming an inline
+// function, because MC_TEST_WIN_HOST_INIT calls AfxWinInit: on Windows the test
+// files include mc_test.h BEFORE stdafx.h, so afxwin.h is not in scope here and
+// is in scope at the MC_TEST_MAIN() call site at the foot of the file.
+#define MC_TEST_MAIN_ALWAYS() \
     int main(int, char**) { \
+        MC_TEST_WIN_HOST_INIT(); \
         MC_TEST_IGNORE_SIGPIPE(); \
         Generate256colours(); \
         return mc_test::run_all(); \
     }
+
+#ifdef MC_TEST_COMBINED
+#define MC_TEST_MAIN()   /* tests/win/all_tests.cpp owns main */
+#else
+#define MC_TEST_MAIN() MC_TEST_MAIN_ALWAYS()
+#endif

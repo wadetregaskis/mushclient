@@ -1227,13 +1227,20 @@ TEST(TelnetR4, TeloptNameTableAndDebugTracing)
     EXPECT_STREQ("ZMP",            telopt_name(93));
     EXPECT_STREQ("GMCP",           telopt_name(201));
 
-    // with g_debug on, the negotiation dbg() lines print (stderr)
+#ifndef _WIN32
+    // with g_debug on, the negotiation dbg() lines print (stderr).
+    //
+    // Windows has nothing to exercise here: telnet_phases.cpp defines dbg() as
+    // ((void)0) and g_debug as a file-local `static const bool false` for the
+    // full build (:8-15), so the tracing is compiled out and g_debug is not a
+    // variable anything can set.  doc.h declares g_debug only off Windows.
     bool saved = g_debug;
     g_debug = true;
     CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(TELOPT_MXP);
     doc.Phase_DO(1 /* echo */);
     g_debug = saved;
+#endif
 }
 
 // ── round 5: RFC 854 resend suppression, unnegotiated MCCP, UTF-8 errors ──

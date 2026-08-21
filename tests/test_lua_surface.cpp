@@ -30,7 +30,7 @@ extern "C" {
 #include <cstring>
 #include <string>
 #include <vector>
-#include <unistd.h>
+#include "posix_compat.h"
 #include <png.h>       // the image-family tests emit a real RGBA PNG
 
 // make_lua()/run()/run_ret()/LuaDoc/EXPECT_LUA_OK are shared with

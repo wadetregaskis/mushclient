@@ -83,8 +83,8 @@ struct FakeNotepad {
             selEnd   = (b < 0) ? (int) text.size() : b;
         };
         doc->m_fn_replace_sel     = [this](const std::string& s) {
-            const int a = std::max(0, std::min(selStart, (int) text.size()));
-            const int b = std::max(a,  std::min(selEnd,   (int) text.size()));
+            const int a = (std::max)(0, (std::min)(selStart, (int) text.size()));
+            const int b = (std::max)(a, (std::min)(selEnd, (int) text.size()));
             text.replace((size_t) a, (size_t) (b - a), s);
             selStart = selEnd = a + (int) s.size();
         };

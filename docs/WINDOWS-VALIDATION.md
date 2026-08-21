@@ -4106,15 +4106,20 @@ above are the ones the analysis turned on.
 Not reached.  All of it is §4's dialog-driven half plus the items needing a
 real MUD or a second machine.
 
-- **§4c-duodequadragies** — the MXP atomic-tag veto (`3095c2a`), all six checks.
-  Needs a plugin implementing `OnPluginMXPopenTag`; the plugin was not written.
+- **§4c-duodequadragies** — the MXP atomic-tag veto (`3095c2a`).  **Two of the
+  six are now tests (§10q)**, revert-checked; no plugin was needed, since the
+  veto is reachable from the world's own OnMXP_OpenTag routine.  Four remain:
+  the outstanding-tag warning marker, the close-tag callback, the
+  <send>-inside-<a> substitution, and OnPluginMXPopenTag specifically.
 - **`44f0737`** — the eight world- and global-preferences defects.  This is the
   largest dialog change in the inventory and the whole page-by-page walk is
   outstanding.
 - **`2e54bba`** — `world.Help` and Game ▸ Function List listing Lua's own
   functions.  Both are modal.
 - **`8dd87e5`, `6e67cb0`** — status-bar attribution with two worlds open.
-- **`30df30b`** — the Ctrl+click alias menu's `%1`.
+- ~~**`30df30b`** — the Ctrl+click alias menu's `%1`.~~  **Done**: covered by
+  AliasMenu.ExecuteSubstitutesWordUnderMenuIntoPercentOne in test_aliases.cpp,
+  which has been passing on Windows since that suite was enabled (§10q).
 - **`5359254`, `8468a76`, `bc4d149`** — the macro `switch`, the auto-say
   tri-state, and the split Stop-Sound commands.  All three need real typed
   input or menu clicks.
@@ -4919,3 +4924,52 @@ Two things to carry out of that:
   the test, because the obvious "simplification" is to hoist the document out of
   the loop, and doing so would make the test fail for a reason that is not a
   defect.
+
+### 10q. The MXP atomic-tag veto (`3095c2a`) — and two more rows already answered
+
+§10h says this one "needs a plugin implementing `OnPluginMXPopenTag`; the
+plugin was not written."  **No plugin is needed.**  The veto is equally
+reachable from a world's own `OnMXP_OpenTag` script routine, and `test_mxp.cpp`
+has been installing one a few tests above since `0dae192`.  The barrier was in
+the note, not in the code.
+
+Two checks of the six are now tests, both revert-checked by disabling the
+`if (bVetoed)` unwind in `mxpStart.cpp` and confirming they go red:
+
+| Check | Test |
+|---|---|
+| the active-tag record itself — the fix's subject | `MxpVetoR5.VetoedBuiltInTagLeavesNoActiveTagEntry` |
+| the spurious `StartNewLine` from `</p>` finding the suppressed `<p>` | `MxpVetoR5.VetoedParagraphCloseDoesNotBreakTheLine` |
+
+The **built-in vs custom** distinction is what makes these worth having, and it
+is why the veto test that was already there does not cover this:
+`MxpR4.OpenTagVetoDoesNotLeakTheArgumentList` vetoes a *custom* `<mytag>`,
+which returns before any bookkeeping exists — the path that always worked.
+`MXP_StartTag` records a built-in tag as open *before* calling
+`MXP_OpenAtomicTag`, which is where the veto is asked, and it cannot be asked
+earlier because the argument list handed to the handler is only rebuilt inside
+`MXP_OpenAtomicTag`.
+
+The first test puts its control **first**, deliberately: an un-vetoed `<b>`
+really does record itself, so a gutted "always empty" would not pass.  The
+second compares the vetoed line count against the un-vetoed one rather than
+against a literal, so it does not encode how many lines `<p>` makes.
+
+Four of the six remain: the outstanding-tag warning marker, the close-tag
+callback for a suppressed open, the `<send>`-inside-`<a>` action substitution,
+and `OnPluginMXPopenTag` specifically (as against the world's own routine).
+
+**And two more §10h rows were already answered**, found the same way as §10p's
+four — by checking where each fix's test actually lives rather than trusting
+the note:
+
+- `30df30b`, the Ctrl+click alias menu's own `%1` —
+  `AliasMenu.ExecuteSubstitutesWordUnderMenuIntoPercentOne`, in
+  `test_aliases.cpp`, passing here since that suite was enabled.
+- `0dae192`'s second test, as recorded in §10p.
+
+That is now **three** separate occasions in this document where an owed-work
+list had drifted from the test list without anything saying so.  The check
+takes one grep per row — `git show <commit> --stat | grep tests/` — and it is
+worth doing before writing any new test, because two of the four rows attempted
+this way turned out to need nothing at all.

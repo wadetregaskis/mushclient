@@ -4122,8 +4122,10 @@ real MUD or a second machine.
   dialog liveness, long-name file dialogs, the names file with an empty section.
 - **`3f3e8ac`, `89ee850`, `c3936f4`** — the plugin-veto uninitialised return,
   the note-style restore, and `m_iNoteColourFore`.  All three need a plugin.
-- **`0b70de7`, `41eb7bd`, `c1a3990`, `fbc4161`, `3c58886`, `5ee518e`,
-  `0dae192`** — the leak and use-after-free rows; none was exercised.
+- ~~**`0b70de7`, `41eb7bd`, `c1a3990`, `fbc4161`, `3c58886`, `5ee518e`,
+  `0dae192`** — the leak and use-after-free rows; none was exercised.~~
+  **All seven are now exercised on Windows (§10p)**: four by tests in suites
+  this target already compiles, three by `tests/win/test_gap_coverage.cpp`.
 - **§4c-quintricies item 6** — a real xterm-256 world, live, for a session.
 - **§4a's outstanding half** — keepalives and a long idle session.
 - **`world.Debug("commands")`** — reports `0 commands.` on **both** clients
@@ -4864,3 +4866,56 @@ which calls `UpdateData` on a page with no window; the two assignments the fix
 is about have already happened by then, so the test is sound, but it is
 deliberately the last in the file so that if that chained call ever becomes more
 than an assertion on stderr, this is the test that says so first.
+
+### 10p. §10h's leak rows: four were already answered, three more now are
+
+§10h lists seven leak / use-after-free fixes and says "none was exercised".
+That was true when it was written and had quietly stopped being true, because
+**four of the seven are covered by tests in suites this target compiles**, and
+those tests have been passing in every run since:
+
+| Fix | Test | |
+|---|---|---|
+| `0b70de7` recall leaks its compiled regexp | `RegexpTest.RecallTextDoesNotLeakItsCompiledRegexp` | PASS |
+| `41eb7bd` failed database open leaks the handle | `DatabaseTest.OpenFailureClosesTheHandleSqliteAllocated` | PASS |
+| `5ee518e` malformed MXP tag leaks its argument list | `MxpR4.CustomElementArgumentAbortDoesNotLeakTheBuiltList` | PASS |
+| `0dae192` three more MXP early returns | `MXPDefs.RedefinitionEarlyReturnsDoNotLeakTheArgumentList`, `MxpR4.OpenTagVetoDoesNotLeakTheArgumentList` | PASS |
+
+The lesson is small and boring and worth writing down: **an owed-work list and a
+test list drift apart silently.**  Nothing announced that re-entering
+`test_mxp` had answered two rows of §10h; the connection had to be looked for.
+
+The other three had no Windows coverage because their tests live in
+`test_world_load` and `test_lua_scripting`, both excluded for reasons that have
+nothing to do with the fix under test — an artefact of where an assertion
+happens to live, not of what the Windows build can reach.
+`tests/win/test_gap_coverage.cpp` closes that by driving the same engine code
+through `world.ImportXML`, which reaches `Load_World_XML` with `XML_OVERWRITE`
+set — the same arm `LoadWorldFromFile` reaches.  All three pass; **672 passed,
+0 failed.**
+
+**And one of them was nearly written up as a new bug.**  The first version of
+the `ImportXML` test measured live heap blocks across twenty malformed imports
+and found **246 blocks per batch, twice running** — 12.3 per call, perfectly
+steady, which is exactly the signature of a per-call leak, in a path whose
+exception leak `fbc4161` had supposedly fixed.
+
+It is not a leak.  `_CrtMemDumpAllObjectsSince` named the blocks: 80-byte and
+20-byte `CObject`s with `plex.cpp` map blocks and a string reading
+`"Line    1: Unexp…"`.  Those are `CLine` and `CStyle`.  A failed import is not
+silent — `LoadError` writes `[WARNING] <file>` and the detail into the world's
+scrollback through `ColourNote` — so a document that survives the loop
+accumulates two output lines and their styles per call, **by design**.
+
+Two things to carry out of that:
+
+- **The instrument was right and the interpretation was wrong.**  "Steady growth
+  per call" is necessary for a leak and nowhere near sufficient; the object dump
+  is what distinguishes a leak from a buffer doing its job, and it cost one
+  build to get an answer that no amount of re-reading the code would have given.
+- The corrected test constructs the document **inside** the loop, so its output
+  dies with it and anything still allocated afterwards is allocated outside the
+  document — which is what `fbc4161` is actually about.  That is now written at
+  the test, because the obvious "simplification" is to hoist the document out of
+  the loop, and doing so would make the test fail for a reason that is not a
+  defect.

@@ -1216,7 +1216,6 @@
   </ItemGroup>
   <ItemGroup Label="tests">
     <ClCompile Include="tests\win\all_tests.cpp" />
-    <ClCompile Include="tests\test_accelerators.cpp" />
     <ClCompile Include="tests\test_aliases.cpp" />
     <ClCompile Include="tests\test_ansi.cpp" />
     <ClCompile Include="tests\test_chat_protocol.cpp" />

@@ -547,9 +547,17 @@ TEST(XmlAttrR5, ColourArms)
 TEST(XmlAttrR5, IsNumberEdges)
 {
     EXPECT_FALSE(IsNumber(CString(""), true));            // empty
+#ifdef _WIN32
+    // Win32: long is 32 bits, so the "> LONG_MAX" reject arm IS reachable and
+    // fires here.  The LP64 comment below predicted exactly that ("it is
+    // Win32-only") and the first Windows run of this suite confirmed it -- an
+    // intent comment that turned out to be a testable claim.
+    EXPECT_FALSE(IsNumber(CString("99999999999999999999"), false));
+#else
     // LP64: long == __int64, and _atoi64 (strtoll) clamps on overflow, so
     // the "> LONG_MAX" reject arm can never fire here (it is Win32-only).
     EXPECT_TRUE(IsNumber(CString("99999999999999999999"), false));
+#endif
     EXPECT_TRUE(IsNumber(CString("-3"), true));
     EXPECT_FALSE(IsNumber(CString("3x"), false));
 }

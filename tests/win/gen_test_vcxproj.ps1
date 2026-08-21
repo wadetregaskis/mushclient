@@ -65,6 +65,7 @@ $excluded = [ordered]@{
   'test_lua_scripting.cpp'   = 'CMUSHclientDoc::LoadWorldFromFile is port-only (Windows loads worlds through the MFC doc/view framework), plus <utime.h>. A 5000-line suite: worth re-entering by giving the fixture a Windows world-load path'
   'test_menu_rules.cpp'      = 'needs platform/menu_ui_rules.cpp, the port menu-rule table; the app drives menus from MFC message maps and does not link it'
   'test_pal_surface.cpp'     = 'asserts on pal::CpuRaster, the port software rasteriser; Windows draws through pal/gdi_surface.cpp and never instantiates it'
+  'test_accelerators.cpp'    = 'AcceleratorTo opens with GetFirstViewPosition and returns eBadParameter when the walk finds nothing -- the HACCEL table lives on the world MDI child frame, and this host has no view. The map bookkeeping the suite asserts on IS shared; re-entering it means giving the host a doc template and a view, or splitting registration from bookkeeping'
   'test_scriptengine.cpp'    = 'passes "" where a BSTR is wanted: the port typedefs BSTR to char*, Windows has wchar_t*. A real type difference, not a wiring one'
 }
 # Everything above is opted OUT with a reason.  The last block is the interesting

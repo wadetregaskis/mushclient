@@ -4655,3 +4655,84 @@ the top of the log and was read as the failure — the real cause was a
 now redirects vcvarsall's stderr as well as its stdout, so the line is gone.
 The general form: **a message that appears in a passing run cannot be the reason
 a run failed** — check it against a green log before believing it.
+
+### 10m. Five suites were behind one `#include`, and behind that, one NULL
+
+`tests/notepad_fixture.h` was not `_WIN32`-guarded, so **five** suites that use
+it — `test_connection` (154 tests), `test_mxp` (131), `test_world_load` (105),
+`test_lua_surface` (94) and `test_notepad_methods` (18) — could not be compiled
+into the Windows target at all.  Four of them use it in **one or two places**.
+That is ~480 tests kept off Windows by an `#include`, and the exclusion list
+recorded the cause for each as "notepad_fixture.h, as above" without ever
+saying how little of the file depended on it.
+
+The header is guarded now, so including it on Windows costs nothing and a use
+site that forgets its own guard gets an undeclared-identifier error naming
+`FakeNotepad` or `NotepadCapture` — which is the right failure.  The 21 cases
+that really do use it are guarded individually, each saying what a Windows-side
+observable would have to be.  A notepad on Windows **is** a real `CEditView`
+created through the MFC doc/view framework: there is no callback seam to
+substitute, and this host has no document template to make one with.
+
+**And then none of them landed.**  Every one hit a *second* blocker, larger
+than the recorded one and behind it:
+
+| Suite | What the list said | What was actually in the way |
+|---|---|---|
+| `test_world_load` | "notepad_fixture.h, as above" | **98 uses of `CMUSHclientDoc::LoadWorldFromFile`**, which `doc.h` declares `#ifndef _WIN32`.  The suite *is* that entry point.  Same shape as `test_lua_scripting`, and the same fix would serve both. |
+| `test_connection` | "notepad_fixture.h drives `CTextDocument`'s `m_fn_*`" | **An access violation.**  207 tests pass, then `Tls.CertVerifyFailureBlocksAndRecordsReason` dies: `ConnectionClosed` calls `Frame.OnUpdateBtnWorlds`, which opens with `App.m_pWorldDocTemplate->GetFirstDocPosition()` — and that pointer is NULL because `InitInstance` never ran. |
+| `test_lua_surface` | "notepad_fixture.h, as above" | Three failures in the POSIX-shaped and sound arms (`ChangeDirRoundTrip`, `SoundFamilyHeadless`, `UtilityMiscArms`), then an access violation in `LuaSurface.UdpFamily`. |
+| `test_mxp` | "notepad_fixture.h, as above; also includes `<malloc/malloc.h>`" | **345 passes, 0 failures, then an access violation.**  Any MXP error or debug message reaches `AppendToTheNotepad`, and `doc.cpp:3043` walks `App.m_pNormalDocTemplate->GetFirstDocPosition()` -- the same NULL again. |
+
+**The lesson, and it cost two build cycles to learn twice: a recorded exclusion
+reason that names one blocker is not a promise that there is only one.**  Both
+notes were written from the first compile error the author saw, which is the
+same trap as reading a build failure off the first error-looking line (§10l).
+Every reason in the generator now says what was *measured*, not what was first
+noticed.
+
+**The next move is two objects.**  Three of those four rows are the SAME defect:
+`App.m_pWorldDocTemplate` and `App.m_pNormalDocTemplate` are NULL because
+`InitInstance` never ran, and two engine sites walk them without checking --
+`mainfrm.cpp:687` (world) and `doc.cpp:3043` (notepad).  `test_accelerators`
+(§10k) is a fourth: its `eBadParameter` comes from the same world template.
+Worth noting on its own that `doc.cpp:3043`'s twin at
+`notepad_app_shared.cpp:115` DOES guard the same pointer -- two walkers of one
+template, one careful and one not.  In the shipping app neither can be NULL
+after InitInstance, so it is latent there rather than a live bug.
+
+`platform/headless_app.cpp` answers this off Windows with two file-scope
+`CMultiDocTemplate`s.  On Windows the class is real MFC and its constructor
+stores runtime classes and loads a string resource without creating any window,
+so the same answer should work.  That single change is what stands between this
+target and roughly 400 more tests -- `test_connection` (154), `test_mxp` (131),
+`test_accelerators` (11) and whatever of `test_lua_surface` is not sound- and
+chdir-shaped -- and it is the obvious next task.  It was deliberately not
+started in this pass: it is a host feature, not a guard, and it deserves a clean
+start rather than being bolted on at the end of a long one.
+
+**A finding that has nothing to do with the notepad.**  `test_connection.cpp`
+had a helper returning a `CStyle` by value.  `CStyle` derives from `CObject`,
+and **MFC's real `CObject` declares its copy constructor private with no
+implementation** — a `CObject` is deliberately not copyable.  The port's shim
+(`platform/mfc_object.h`) declares no such thing and so gets an implicit copy
+constructor, which is why the helper compiled on macOS for months and does not
+compile on Windows at all.
+
+That generalises past this one helper: **any port-authored code that copies a
+`CObject` subclass builds on macOS and breaks the Windows build**, and nothing
+but a Windows build finds it.  The helper is now fill-in-place; the shim is
+*not* changed, because deleting its copy constructor could break the macOS
+build in ways that cannot be tested from here.  It is a good candidate for the
+macOS side: make the shim match MFC and see what falls out.
+
+**Three smaller things fixed along the way.**  `getcwd` joined
+`tests/posix_compat.h` (`_getcwd`).  `live_heap_blocks()` in `test_mxp.cpp` had
+an Apple arm and a glibc arm and now has a Windows one over the debug CRT's own
+accounting — with a comment noting the three are *not* interchangeable, since
+the glibc arm returns bytes where the other two return counts.  And `zlib\` and
+`png\` are on the test project's include path, because two test files include
+`<zlib.h>` / `<png.h>` and the app reaches those through per-file settings this
+project does not inherit; both directories were checked first for a header that
+would mask a CRT or SDK one, which is exactly how `platform\direct.h` once
+turned a 36-error build into 36,810.

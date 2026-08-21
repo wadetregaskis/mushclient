@@ -5078,3 +5078,63 @@ remains, and the suite stays excluded with a reason that says exactly that.
 Leaving a suite enabled-but-crashing would take the whole target red for one
 file; leaving the reason as it was would waste the diagnosis.  **The unit of
 progress is the recorded reason, not the enabled flag.**
+
+### 10t. Six suites, one wall: the combined runner's stated trade, now due
+
+`test_plugins`, `test_utilities`, `test_display`, `test_info`, `test_mcdatetime`
+and `test_scriptengine` have all now been made to **compile and link** on
+Windows.  Between them that is roughly **370 tests**, and none of them is
+enabled, because every one of them ends the same way: a handful of small
+portability fixes, a clean build, and then the process **dies partway through
+the run** — usually mid-`printf`, in a suite that passes when the file is
+absent.
+
+Three attempts is a pattern rather than three coincidences, and the pattern was
+predicted in writing.  `tests/win/all_tests.cpp` says of the one-executable
+design:
+
+> The trade is that all the suites share one process. … it does mean one suite
+> that calls abort() takes the rest down with it, and that suites are no longer
+> isolated from each other's global state.  Both are acceptable for a target
+> whose purpose is to exercise the Windows arms of shared code; **if a suite
+> ever needs isolation, give it its own vcxproj.**
+
+**That trade has come due.**  The suites that fail are exactly the ones that
+manipulate process-wide state — `App.*` globals, document templates, the
+`m_strDefaultStateFilesDirectory`, hook pointers — and the crash lands in a
+*later, unrelated* suite.  On macOS this cannot happen: each suite is its own
+executable, so a leaked global dies with the process that leaked it.
+
+**So the next move is architectural, not another guard.**  Two options, and the
+choice wants a decision rather than a default:
+
+1. **Per-suite isolation** — a second vcxproj, or one binary invoked with a
+   `--suite=` filter and run once per suite by `run_tests.ps1`.  Restores the
+   macOS property exactly.  Costs link time (an MFC test binary is ~19 MB) or a
+   process launch per suite.
+2. **Find the global.** Cheaper if it is one thing, and the bisect is
+   mechanical: enable one suite, note where it crashes, and use the fact that
+   the crash is *always in a different suite from the one added*.
+
+What is committed either way is the compile work: every one of the six now has
+its Windows blockers fixed or guarded, each guard carrying a reason, so
+whichever route is taken starts from a clean build rather than from a compiler
+error.  The exclusion reasons say "COMPILES AND LINKS now" and point here.
+
+**Two old reasons were wrong or incomplete, in the §10r shape.**
+
+- `test_display` — "socketpair, for the chat-snoop test."  The compiler never
+  reaches socketpair: `#include <unistd.h>` at line 20 stops it first.  The
+  socketpair use is real but it is *one test*, and 135 others were held behind
+  a missing include.
+- `test_info` — "g_pWinApp … plus getcwd."  `getcwd` was fixed in §10p; there
+  were five tests to guard, not two, and one of them is `CTimeShim`, which
+  tests the port's `CTime` **by name**.
+
+That last one is worth its own line, because it is the mirror of a known gap.
+`CLAUDE.md`'s verification debt records that the port's `CTime` shim *lacks*
+`operator-(const CTimeSpan&)`.  On Windows the problem is the opposite: MFC's
+real `CTime` has **both** `operator-(CTimeSpan)` and `operator-(CTime)`, so the
+`LONGLONG` from `GetTotalSeconds()` matches both and the call is **ambiguous**.
+A shim can diverge by having too few overloads *or* too many, and only building
+both sides finds either.

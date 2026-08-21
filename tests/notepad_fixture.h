@@ -28,6 +28,20 @@
 // when the real thing would not be, and every "not found" arm silently stops
 // being tested.
 
+// ── Not available on Windows ───────────────────────────────────────────────
+// Everything below rests on two seams the port owns and Windows does not: the
+// m_fn_* callbacks (TextDocument.h declares them #ifndef _WIN32) and the
+// g_wxhook_create_text_window hook.  On Windows a notepad IS a real CEditView,
+// created through the MFC doc/view framework from App.m_pNormalDocTemplate --
+// there is no function pointer to substitute, and the unit-test host has no
+// document template and no frame to make one with.
+//
+// The header stays includable there so the five suites that use it for a
+// handful of cases can be compiled into the Windows target and simply guard
+// those cases; without this, one `#include` kept ~480 unrelated tests off
+// Windows.  A use site that forgets its guard gets an undeclared-identifier
+// error naming FakeNotepad or NotepadCapture, which is the right failure.
+#ifndef _WIN32
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
@@ -211,5 +225,7 @@ private:
         return static_cast<void*>(p->doc);
     }
 };
+
+#endif  // !_WIN32
 
 #endif // MUSHCLIENT_TESTS_NOTEPAD_FIXTURE_H

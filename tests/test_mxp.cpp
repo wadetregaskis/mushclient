@@ -33,6 +33,17 @@ static size_t live_heap_blocks()
     malloc_statistics_t st;
     malloc_zone_statistics(malloc_default_zone(), &st);
     return (size_t) st.blocks_in_use;
+#elif defined(_WIN32)
+    // The debug CRT's own accounting, which is the Windows equivalent of asking
+    // the allocator rather than the OS.  Counts, matching the Apple arm --
+    // note the glibc arm below returns uordblks, which is BYTES, so the three
+    // are not interchangeable and only the delta is ever compared.
+    _CrtMemState st;
+    _CrtMemCheckpoint(&st);
+    size_t n = 0;
+    for (int i = 0; i < _MAX_BLOCKS; ++i)
+        n += (size_t) st.lCounts[i];
+    return n;
 #else
     struct mallinfo2 mi = mallinfo2();
     return (size_t) mi.uordblks;
@@ -336,6 +347,11 @@ TEST(GetWordTest, UnclosedQuoteEmptyContentLeavesEmptyRemainder)
 #include "pal/itransport.h"
 #include "fake_transport.h"
 #include <string>
+// The notepad fixture is #ifndef _WIN32 (see its own header): a notepad on
+// Windows is a real CEditView from the MFC doc/view framework, with no
+// callback seam to substitute and no doc template in this host.  The cases
+// below that use it are guarded one by one so the other 115 tests in this file
+// still run there.
 #include "notepad_fixture.h"
 
 using MxpFakeTransport = RecordingTransport;
@@ -1056,10 +1072,12 @@ TEST(MXPOpenAtomic, SecureTagRejectedInOpenMode)
 // g_wxhook_create_text_window instead, which is the seam the product actually
 // uses, and hands the engine a real registered CTextDocument so the append path
 // runs for real too.
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 struct MxpDebugCapture {
     NotepadCapture cap;
     bool contains(const char* s) const { return cap.contains(s); }
 };
+#endif  // !_WIN32
 
 // A doc wired for full-stream MXP: secure mode, all debug levels captured.
 static void make_stream_doc(CMUSHclientDoc& doc)
@@ -1082,6 +1100,7 @@ static std::string current_line(CMUSHclientDoc& doc)
         : std::string();
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, ElementDefinitionRegistersCustomElement)
 {
     MxpDebugCapture dbg;
@@ -1098,6 +1117,7 @@ TEST(MXPDefs, ElementDefinitionRegistersCustomElement)
     EXPECT_TRUE(dbg.contains("Got Definition"));
     EXPECT_EQ(0LL, (long long)doc.m_iMXPerrors);
 }
+#endif  // !_WIN32
 
 TEST(MXPDefs, EmptyKeywordMakesCommandElement)
 {
@@ -1118,6 +1138,7 @@ TEST(MXPDefs, TagNumberOutOfRangeIsIgnored)
     EXPECT_EQ(0, el->iTag);   // 150 outside 20..99
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
 {
     MxpDebugCapture dbg;
@@ -1132,6 +1153,7 @@ TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
     EXPECT_TRUE(el->strFlag.IsEmpty());            // rejected by name check
     EXPECT_TRUE(dbg.contains("Bad variable name"));
 }
+#endif  // !_WIN32
 
 TEST(MXPDefs, DeleteRemovesCustomElement)
 {
@@ -1143,6 +1165,7 @@ TEST(MXPDefs, DeleteRemovesCustomElement)
     EXPECT_FALSE(doc.m_CustomElementMap.Lookup("deleteme", el));
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, CannotRedefineBuiltinElement)
 {
     MxpDebugCapture dbg;
@@ -1152,6 +1175,7 @@ TEST(MXPDefs, CannotRedefineBuiltinElement)
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
     EXPECT_TRUE(dbg.contains("Cannot redefine built-in MXP element"));
 }
+#endif  // !_WIN32
 
 // mxpDefs.cpp: MXP_Element's function-static ArgumentList used to leak on
 // two of its early returns -- "cannot redefine built-in element" (the arm
@@ -1195,6 +1219,7 @@ TEST(MXPDefs, RedefinitionEarlyReturnsDoNotLeakTheArgumentList)
     EXPECT_EQ(before2, after2);
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, DefinitionRefusedOutsideSecureMode)
 {
     MxpDebugCapture dbg;
@@ -1205,7 +1230,9 @@ TEST(MXPDefs, DefinitionRefusedOutsideSecureMode)
     EXPECT_FALSE(doc.m_CustomElementMap.Lookup("sneaky", el));
     EXPECT_TRUE(dbg.contains("MXP definition ignored when not in secure mode"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, UnknownDefinitionTypeAndBadNames)
 {
     MxpDebugCapture dbg;
@@ -1215,6 +1242,7 @@ TEST(MXPDefs, UnknownDefinitionTypeAndBadNames)
     stream(doc, "<!ELEMENT 1bad '<B>'>");
     EXPECT_TRUE(dbg.contains("Invalid MXP element/entity name"));
 }
+#endif  // !_WIN32
 
 TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
 {
@@ -1229,6 +1257,7 @@ TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
     EXPECT_STREQ("<x>", (LPCTSTR)v);
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, EntityErrorsAndDeletion)
 {
     MxpDebugCapture dbg;
@@ -1243,6 +1272,7 @@ TEST(MXPDefs, EntityErrorsAndDeletion)
     stream(doc, "<!ENTITY gone>");           // blank contents deletes
     EXPECT_FALSE(doc.m_CustomEntityMap.Lookup("gone", v));
 }
+#endif  // !_WIN32
 
 TEST(MXPDefs, CustomEntityExpandsInStreamText)
 {
@@ -1252,6 +1282,7 @@ TEST(MXPDefs, CustomEntityExpandsInStreamText)
     EXPECT_TRUE(current_line(doc).find("greet Gandalf!") != std::string::npos);
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
 {
     MxpDebugCapture dbg;
@@ -1265,6 +1296,7 @@ TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
     stream(doc, "<!ATTLIST missingel x=1>");
     EXPECT_TRUE(dbg.contains("Cannot add attributes to undefined MXP element"));
 }
+#endif  // !_WIN32
 
 TEST(MXPDefs, SecureOnceModeRestoredAfterDefinition)
 {
@@ -1311,6 +1343,7 @@ TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
 // debug notepad and (b) leaves the surrounding literal text on the line untouched.
 // Formerly split across MXPCustom.CloseWithoutOpenWarns (warning text) and
 // MxpR4.CloseWithoutOpenWarns (text passthrough).
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, CloseWithoutOpenWarns)
 {
     MxpDebugCapture dbg;
@@ -1323,7 +1356,9 @@ TEST(MXPCustom, CloseWithoutOpenWarns)
     // raw onto the line, e.g. "text</b>").
     EXPECT_EQ(std::string("text"), current_line(doc));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, UnterminatedElementAtNewlineIsAnError)
 {
     MxpDebugCapture dbg;
@@ -1333,7 +1368,9 @@ TEST(MXPCustom, UnterminatedElementAtNewlineIsAnError)
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
     EXPECT_TRUE(dbg.contains("Unterminated MXP element"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, UnknownTagIsAnError)
 {
     MxpDebugCapture dbg;
@@ -1342,6 +1379,7 @@ TEST(MXPCustom, UnknownTagIsAnError)
     stream(doc, "<nosuchtag>");
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
 }
+#endif  // !_WIN32
 
 TEST(MXPCustom, AttributeSubstitutionSuppliedNamed)
 {
@@ -1374,6 +1412,7 @@ TEST(MXPCustom, AttributeSubstitutionDefault)
     EXPECT_EQ(RGB(255, 0, 0), s->iForeColour);   // ATT default used
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, MissingNonDefaultArgumentWarns)
 {
     MxpDebugCapture dbg;
@@ -1382,7 +1421,9 @@ TEST(MXPCustom, MissingNonDefaultArgumentWarns)
     stream(doc, "<needy>x");
     EXPECT_TRUE(dbg.contains("Non-default argument \"c\" not supplied to <needy>"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, UnterminatedEntityInElementArgument)
 {
     MxpDebugCapture dbg;
@@ -1391,7 +1432,9 @@ TEST(MXPCustom, UnterminatedEntityInElementArgument)
     stream(doc, "<brokearg>x");
     EXPECT_TRUE(dbg.contains("No closing \";\" in MXP element argument"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, DebugLevelFiltersNotepadOutput)
 {
     // Info-level messages are suppressed when the level only admits errors.
@@ -1403,6 +1446,7 @@ TEST(MXPCustom, DebugLevelFiltersNotepadOutput)
     stream(doc, "<!WOTSIT bad>");
     EXPECT_TRUE(dbg.contains("Unknown definition type"));   // errors shown
 }
+#endif  // !_WIN32
 
 // ═══ Round-4 coverage: element-name validation, tag script callbacks,
 //     definition error arms, colour errors, headers, AFK ═══════════════════
@@ -2183,6 +2227,7 @@ TEST(MXPEntity, UnknownEntityRejected)
 // mxpEntities.cpp MXP_GetEntity: the hex arm's 'iResult & 0xF0' guard rejects a
 // third hex digit with the distinctive "maximum of 2 hex digits" message (which
 // separates this arm from the later "Disallowed number" > 255 check).
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPEntity, HexNumericEntityTooManyDigitsRejected)
 {
     MxpDebugCapture dbg;
@@ -2191,6 +2236,7 @@ TEST(MXPEntity, HexNumericEntityTooManyDigitsRejected)
     EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(big));
     EXPECT_TRUE(dbg.contains("maximum of 2 hex digits"));
 }
+#endif  // !_WIN32
 
 // mxpEntities.cpp:89-91 -- the hex arm folds a letter digit with toupper()
 // and then `iNewDigit -= 7`, so BOTH cases must decode alike.  The existing
@@ -2259,6 +2305,7 @@ TEST(MXPEntity, HexNumericEntityDecodesInTheByteStream)
 // invalid-name wording IS present and the unknown-entity wording is NOT.
 // (The guard is an &&: simply DELETING the operand leaves `Left (1) != "#"`,
 // still true for "9bad", so that mutation is not the one this test catches.)
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPEntity, InvalidEntityNameShortCircuitsBeforeLookup)
 {
     MxpDebugCapture dbg;
@@ -2277,6 +2324,7 @@ TEST(MXPEntity, InvalidEntityNameShortCircuitsBeforeLookup)
     // "&9bad;" leaked onto the line).
     EXPECT_EQ(std::string("xy"), current_line(doc));
 }
+#endif  // !_WIN32
 
 // mxpEntities.cpp:92-99 and :116-124 -- where the hex arm's two guards actually
 // sit, and where each edge is:
@@ -2295,6 +2343,7 @@ TEST(MXPEntity, InvalidEntityNameShortCircuitsBeforeLookup)
 //   0x1F -- the hex arm falling THROUGH to the shared :116-124 range check (the
 //     check itself is already covered on the decimal side at line 507); the
 //     paired message assertions pin which of the two error arms fired.
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPEntity, HexNumericEntityValueBoundaries)
 {
     MxpDebugCapture dbg;
@@ -2321,5 +2370,6 @@ TEST(MXPEntity, HexNumericEntityValueBoundaries)
     // ...and it is the RANGE check that rejected it, not the hex guard
     EXPECT_FALSE(dbg.contains("maximum of 2 hex digits"));
 }
+#endif  // !_WIN32
 
 MC_TEST_MAIN()

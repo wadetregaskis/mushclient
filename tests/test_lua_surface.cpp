@@ -36,6 +36,11 @@ extern "C" {
 // make_lua()/run()/run_ret()/LuaDoc/EXPECT_LUA_OK are shared with
 // test_lua_scripting.cpp (audit §2/§4).
 #include "lua_test_helpers.h"
+// The notepad fixture is #ifndef _WIN32 (see its own header): a notepad on
+// Windows is a real CEditView from the MFC doc/view framework, with no
+// callback seam to substitute and no doc template in this host.  The few cases
+// below that use it are guarded individually so the rest of the file still
+// runs there.
 #include "notepad_fixture.h"
 #include "fake_worldview.h"
 
@@ -4502,6 +4507,14 @@ TEST(LuaSurface, AcceleratorFamilyBindsThroughLua)
 // The Lua-level tests here cover the marshalling.  tests/test_notepad_methods.cpp
 // covers the semantics against a real CTextDocument.
 
+// Port-only observation seam.  The notepad fixture drives CTextDocument's
+// m_fn_* callbacks and hooks g_wxhook_create_text_window, and both are
+// #ifndef _WIN32: on Windows a notepad IS a real CEditView created through the
+// MFC doc/view framework, so there is no function pointer to substitute and no
+// window for this host to make.  Re-entering it means giving the test host a
+// document template and a frame -- the same thing test_accelerators.cpp needs
+// (docs/WINDOWS-VALIDATION.md 10k) -- not deleting the guard.
+#ifndef _WIN32
 TEST(LuaSurface, NotepadFamilyWithNoNotepadOpen)
 {
     ClearAllNotepads();
@@ -4534,10 +4547,19 @@ TEST(LuaSurface, NotepadFamilyWithNoNotepadOpen)
         "assert(world.SaveNotepad('t', '/tmp/np.txt', true) == 0)\n"
     ));
 }
+#endif  // !_WIN32
 
 // The other arm.  Without this the whole family would still only ever be tested
 // in its "there is no notepad" state — which is exactly the hole the stub left,
 // and every assertion above would pass against a body that did nothing at all.
+// Port-only observation seam.  The notepad fixture drives CTextDocument's
+// m_fn_* callbacks and hooks g_wxhook_create_text_window, and both are
+// #ifndef _WIN32: on Windows a notepad IS a real CEditView created through the
+// MFC doc/view framework, so there is no function pointer to substitute and no
+// window for this host to make.  Re-entering it means giving the test host a
+// document template and a frame -- the same thing test_accelerators.cpp needs
+// (docs/WINDOWS-VALIDATION.md 10k) -- not deleting the guard.
+#ifndef _WIN32
 TEST(LuaSurface, NotepadFamilyWithANotepadOpen)
 {
     ClearAllNotepads();
@@ -4572,6 +4594,7 @@ TEST(LuaSurface, NotepadFamilyWithANotepadOpen)
     EXPECT_TRUE(pad.readOnly);
     EXPECT_EQ(1, pad.moveCalls);
 }
+#endif  // !_WIN32
 
 // ── chat family — REAL bodies now, not stubs ──────────────────────────────
 //
@@ -5063,6 +5086,14 @@ TEST(LuaSurface, UtilsXmlRead)
 // anything — so on this platform utils.appendtonotepad to a new title silently
 // did nothing where Windows opens a notepad.  They call the same App methods
 // Windows calls now (notepad_app_shared.cpp).
+// Port-only observation seam.  The notepad fixture drives CTextDocument's
+// m_fn_* callbacks and hooks g_wxhook_create_text_window, and both are
+// #ifndef _WIN32: on Windows a notepad IS a real CEditView created through the
+// MFC doc/view framework, so there is no function pointer to substitute and no
+// window for this host to make.  Re-entering it means giving the test host a
+// document template and a frame -- the same thing test_accelerators.cpp needs
+// (docs/WINDOWS-VALIDATION.md 10k) -- not deleting the guard.
+#ifndef _WIN32
 TEST(LuaSurface, UtilsNotepadReachesTheAppLevelNotepads)
 {
     NotepadCapture cap;
@@ -5095,6 +5126,7 @@ TEST(LuaSurface, UtilsNotepadReachesTheAppLevelNotepads)
     EXPECT_TRUE(run(f.L, "assert(utils.activatenotepad('nosuch') == false)\n"));
     EXPECT_EQ(1, cap.pads[0]->activateCalls);
 }
+#endif  // !_WIN32
 
 // ChatNote's line cap sampled p[1] AFTER ReleaseBuffer -- on the port's
 // CString shim, GetBuffer hands out a scratch that ReleaseBuffer clears, so

@@ -46,11 +46,9 @@ $excluded = [ordered]@{
   'test_pal_transport.cpp' = 'drives platform/posix_transport.cpp; the Windows adapter is pal/win_transport.cpp'
   'test_mc_test_framework.cpp' = 'uses dup2 to capture the harness own output'
   # --- needs a port-only seam; re-enterable once that seam has a Windows half
-  'test_connection.cpp'      = 'notepad_fixture.h drives CTextDocument m_fn_* function pointers, which exist only off Windows'
-  'test_mxp.cpp'             = 'notepad_fixture.h, as above; also includes <malloc/malloc.h>'
-  'test_world_load.cpp'      = 'notepad_fixture.h, as above'
-  'test_lua_surface.cpp'     = 'notepad_fixture.h, as above'
-  'test_notepad_methods.cpp' = 'notepad_fixture.h, as above'
+  'test_lua_surface.cpp'     = 'ACCESS VIOLATION in LuaSurface.UdpFamily, after 3 failures in the arms before it (UtilityMiscArms, ChangeDirRoundTrip, SoundFamilyHeadless -- chdir/getcwd shapes and the miniaudio backend, which is the non-Windows sound path). The notepad_fixture dependency it used to be excluded for is guarded now and was not the blocker; this suite drives a lot of port-only surface and wants its own pass'
+  'test_mxp.cpp'             = 'ACCESS VIOLATION after 345 passes and 0 failures: any MXP error or debug message reaches AppendToTheNotepad, and doc.cpp:3043 walks App.m_pNormalDocTemplate->GetFirstDocPosition() WITHOUT the NULL check its twin at notepad_app_shared.cpp:115 has -- and the pointer is NULL because InitInstance never ran. Its 16 MxpDebugCapture cases are already guarded; ironically those were the SAFE ones, since NotepadCapture intercepts the creation. Give the host a doc template and this suite is one of four that comes back'
+  'test_notepad_methods.cpp' = 'every one of its 18 tests IS the notepad: notepad_fixture.h is #ifndef _WIN32 because a notepad on Windows is a real CEditView from the MFC doc/view framework, so guarding the users would leave an empty file'
   'test_sound.cpp'           = 'drives the miniaudio backend, which is the non-Windows sound path'
   'test_chat_sockets.cpp'    = 'builds real AF_UNIX/loopback pairs with socketpair, which Windows does not have'
   'test_display.cpp'         = 'socketpair, for the chat-snoop test'
@@ -60,6 +58,8 @@ $excluded = [ordered]@{
   'test_pal_worldview.cpp'   = 'platform/activity_refresh.h includes <strings.h>; drives the port worldview'
   'test_plugins.cpp'         = 'UNDIAGNOSED - the file preprocesses oddly under MSVC (a #define at :125 reads as undeclared at :1736). Worth a look: it is a valuable suite'
   'test_utilities.cpp'       = 'the g_wxhook_*sound* seam and AllocateLinePositions, both port-only. ~10 test cases; guarding those would bring the rest of a large suite back'
+  'test_connection.cpp'      = 'ACCESS VIOLATION, not a failure: ConnectionClosed calls Frame.OnUpdateBtnWorlds, which opens with App.m_pWorldDocTemplate->GetFirstDocPosition() and that pointer is NULL because InitInstance never ran. Measured: 207 pass, then Tls.CertVerifyFailureBlocksAndRecordsReason dies there. Giving the host a CMultiDocTemplate would unblock this AND test_accelerators -- the same NULL -- and is the obvious next move. Its notepad/log-session/status/SetWorldViewActive cases are already guarded and its two strerror tests assert the POSIX spelling, which WSAECONNREFUSED does not have'
+  'test_world_load.cpp'      = 'built on CMUSHclientDoc::LoadWorldFromFile, which is port-only (doc.h declares it #ifndef _WIN32; Windows loads worlds through the MFC doc/view framework) -- 98 uses, i.e. the suite IS that entry point. The notepad_fixture dependency it used to be excluded for was real but incidental; this is the blocker. Same shape as test_lua_scripting, and the same fix would serve both'
   'test_lua_scripting.cpp'   = 'CMUSHclientDoc::LoadWorldFromFile is port-only (Windows loads worlds through the MFC doc/view framework), plus <utime.h>. A 5000-line suite: worth re-entering by giving the fixture a Windows world-load path'
   'test_menu_rules.cpp'      = 'needs platform/menu_ui_rules.cpp, the port menu-rule table; the app drives menus from MFC message maps and does not link it'
   'test_pal_surface.cpp'     = 'asserts on pal::CpuRaster, the port software rasteriser; Windows draws through pal/gdi_surface.cpp and never instantiates it'
@@ -126,9 +126,14 @@ foreach ($cfg in @('Debug','Release')) {
   # holds direct.h, windows_types.h and friends, whose whole purpose is to
   # stand in for headers the Windows SDK really has, so putting that directory
   # ahead of the SDK makes `#include <direct.h>` find the shim.  Measured: it
-  # turns a 36-error build into a 36,810-error one, almost all of them inside
   # the SDK.  Tests that want a port header spell the directory.
-  W '      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)luacom\;$(SolutionDir)openssl\include\;$(SolutionDir)tests\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>'
+  # zlib\ and png\ are on the path because two test files include <zlib.h> and
+  # <png.h>, which the app reaches through per-file settings this project does
+  # not inherit.  Safe to add, unlike the port's own directories: neither holds
+  # a header that masks a CRT or SDK one, and platform\direct.h masking
+  # <direct.h> is what once turned a 36-error build into 36,810
+  # (docs/WINDOWS-VALIDATION.md section 10j).
+  W '      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)luacom\;$(SolutionDir)openssl\include\;$(SolutionDir)tests\;$(SolutionDir)zlib\;$(SolutionDir)png\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>'
   # _HAS_AUTO_PTR_ETC=1 goes with LanguageStandard stdcpp17 below: C++17
   # removed std::unary_function / std::binary_function / std::auto_ptr, and
   # stdafx.h derives a comparator from std::binary_function.  The app never

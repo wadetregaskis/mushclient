@@ -28,6 +28,8 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <io.h>
+#include <direct.h>   // _getcwd (this file is never compiled with platform/ on
+                     // the include path, so this is the CRT header, not the shim)
 #include <process.h>
 #include <psapi.h>
 #pragma comment(lib, "psapi.lib")
@@ -37,6 +39,9 @@
 #endif
 #ifndef unlink
 #define unlink _unlink
+#endif
+#ifndef getcwd
+#define getcwd _getcwd
 #endif
 
 // usleep: microseconds, and Sleep takes milliseconds.  Round UP, so a test

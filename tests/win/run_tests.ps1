@@ -71,7 +71,7 @@ if (-not (Test-Path (Join-Path $assets 'lua5.1.dll'))) {
 # that section 10k had to fix with setvbuf.
 $declared = 0
 foreach ($m in (Select-String -Path 'MUSHclient_tests.vcxproj' `
-                              -Pattern 'ClCompile Include="(tests\\test_[^"]+)"' -AllMatches)) {
+                              -Pattern 'ClCompile Include="(tests.[^"]*test_[^"]+)"' -AllMatches)) {
   foreach ($g in $m.Matches) {
     $f = Join-Path $root $g.Groups[1].Value
     if (Test-Path $f) { $declared += (Select-String -Path $f -Pattern '^TEST\(').Count }

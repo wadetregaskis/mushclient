@@ -223,6 +223,11 @@ foreach ($s in $testSupport) {
 W '  </ItemGroup>'
 W '  <ItemGroup Label="tests">'
 W '    <ClCompile Include="tests\win\all_tests.cpp" />'
+# Windows-ONLY test files.  They live under tests\win\ rather than tests\
+# because they drive code the macOS test executables cannot link -- the prefs
+# pages are mushgui_adapters TUs there -- so the tests\test_*.cpp glob above
+# must not pick them up.  Listed by hand, one line each.
+W '    <ClCompile Include="tests\win\test_prefs_pages.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'
@@ -232,4 +237,4 @@ W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />'
 W '</Project>'
 
 Set-Content -Path 'MUSHclient_tests.vcxproj' -Value $sb.ToString().TrimEnd() -Encoding UTF8
-"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files, $($excluded.Count) excluded"
+"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 1 Windows-only, $($excluded.Count) excluded"

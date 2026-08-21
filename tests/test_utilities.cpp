@@ -37,11 +37,20 @@ lua_State* MakeLuaState();   // scripting/lua_utils_portable.cpp
 
 // Recorder installed in the headless ShowFunctionslist stub
 // (platform/doc_headless_stubs.cpp) purely for this test.
+// Port-only observation globals.  platform/doc_headless_stubs.cpp records what
+// ShowFunctionslist was asked for, because headless there is no dialog to open.
+// On Windows ShowFunctionslist IS the real modal Function List dialog
+// (scripting/functionlist.cpp), so there is nothing to record and nothing a
+// console host may open -- re-entering the test below needs a Windows-side
+// observable, not a guard.  This is docs/WINDOWS-VALIDATION.md §10h's 2e54bba
+// row, and it stays owed.
+#ifndef _WIN32
 extern int  g_ShowFunctionslistCallCount;
 extern int  g_ShowFunctionslistLastStartChar;
 extern int  g_ShowFunctionslistLastEndChar;
 extern bool g_ShowFunctionslistLastBLua;
 extern CString g_ShowFunctionslistLastFilter;
+#endif  // !_WIN32
 #endif
 
 // ── encodeBase64 / decodeBase64 ─────────────────────────────────────────────
@@ -635,6 +644,7 @@ TEST(Utilities, CommandIDLookupIsCaseInsensitiveRoundTrip)
 // doc_portable.cpp AllocateLinePositions: "Trim FIRST so the index can never
 // be smaller than the list it indexes" — after lowering m_maxlines the list
 // is trimmed before the new index is built, so entries never point past it.
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, AllocateLinePositionsTrimsListBeforeRebuildingIndex)
 {
     CMUSHclientDoc doc;
@@ -662,6 +672,7 @@ TEST(Utilities, AllocateLinePositionsTrimsListBeforeRebuildingIndex)
     EXPECT_STREQ("line 350", (const char*)CString(v.bstrVal));
     VariantClear(&v);
 }
+#endif  // !_WIN32
 
 // The eviction path, which is what DropFirstChunk replaced.  RemoveChunk drops
 // JUMP_SIZE lines off the head, so chunk 1 becomes chunk 0 and so on; the array
@@ -669,6 +680,7 @@ TEST(Utilities, AllocateLinePositionsTrimsListBeforeRebuildingIndex)
 // renumbering error here would not crash — GetLinePosition would start from the
 // WRONG chunk head and walk forward, silently returning a line off by a
 // multiple of 100, which world.GetLineInfo and every Recall/Find would inherit.
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, LinePositionsSurviveRepeatedEviction)
 {
     CMUSHclientDoc doc;
@@ -705,6 +717,7 @@ TEST(Utilities, LinePositionsSurviveRepeatedEviction)
     }
     EXPECT_EQ(500L, firstNum + committed - 1);   // ...and the last is the newest
 }
+#endif  // !_WIN32
 
 // ── Unlimited scrollback actually keeps everything ──────────────────────────
 //
@@ -712,6 +725,7 @@ TEST(Utilities, LinePositionsSurviveRepeatedEviction)
 // is the only thing that discards lines, so this pins that it is skipped — and,
 // with the counterpart below, that a real cap still evicts.  Without both arms
 // a build that never trims, or one that always does, passes half of this.
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, UnlimitedScrollbackNeverEvicts)
 {
     CMUSHclientDoc doc;
@@ -740,7 +754,9 @@ TEST(Utilities, UnlimitedScrollbackNeverEvicts)
     EXPECT_STREQ(buf, (const char*)CString(v.bstrVal));
     VariantClear(&v);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, ABoundedCapStillEvicts)
 {
     // The control for the test above.
@@ -756,7 +772,9 @@ TEST(Utilities, ABoundedCapStillEvicts)
     }
     EXPECT_TRUE((long)doc.m_LineList.GetCount() <= 301);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, UnlimitedScrollbackAppendRateStaysFlat)
 {
     // A complexity pin.  With the old fixed index, "unlimited" was unreachable;
@@ -791,6 +809,7 @@ TEST(Utilities, UnlimitedScrollbackAppendRateStaysFlat)
         printf("    append of 5000 lines: at start %.1fms, at 50k %.1fms\n",
                first, later);
 }
+#endif  // !_WIN32
 
 // ── Coverage gaps from the 2026-07 test audit, section 1 ──────────────────
 //
@@ -881,6 +900,7 @@ TEST(Utilities, ConvertToRegularExpressionPassesHighBytesThrough)
 // input) are both that operation with different cut points, and both are the
 // only clear that genuinely returns memory on a long unlimited session --
 // Clear Output Buffer frees everything, Clear Screen frees nothing.
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, DeleteHeadLinesDropsTheOldestAndRenumbers)
 {
     CMUSHclientDoc doc;
@@ -910,7 +930,9 @@ TEST(Utilities, DeleteHeadLinesDropsTheOldestAndRenumbers)
     EXPECT_STREQ("line 500", (const char*)CString(v.bstrVal));
     VariantClear(&v);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, DeleteHeadLinesNeverTakesTheInProgressLine)
 {
     // The in-progress line is the list's tail and the drain has not emitted it,
@@ -937,6 +959,7 @@ TEST(Utilities, DeleteHeadLinesNeverTakesTheInProgressLine)
     doc.DeleteHeadLines(-1);
     EXPECT_EQ(1, (int)doc.m_LineList.GetCount());
 }
+#endif  // !_WIN32
 
 // ── CountLinesBeforePromptBlock: the cut point for "Clear to Start" ────────
 //
@@ -950,7 +973,15 @@ static void make_buffer_doc(CMUSHclientDoc& doc)
 {
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_maxlines = 0;                      // unlimited: nothing else may trim
+#ifndef _WIN32
+    // Apply the new cap.  Port-only, and only needed there: this is the port's
+    // unbounded-scrollback entry point (platform/doc_port_glue.cpp), and what
+    // it does for m_maxlines == 0 is "trim nothing", which is also what Windows
+    // does by not having it.  The index itself is already allocated on both --
+    // headless in doc_construct.cpp's ctor arm, on Windows in the same file's
+    // MUSHCLIENT_TESTS arm.
     doc.AllocateLinePositions();
+#endif
 }
 
 static void mud_text(CMUSHclientDoc& doc, const char* s)
@@ -1575,6 +1606,15 @@ TEST(MacroCommandIds, EveryMacroCommandIdMapsToItsOwnSlot)
     EXPECT_EQ(-1, MacroCommandIdToSlot(0));
 }
 
+// ── Port-only from here to the end of the Sounds family ───────────────────
+// The whole g_wxhook_sound_* / g_wxhook_play_sound seam exists only off
+// Windows: it is the miniaudio backend the port substituted for DirectSound,
+// and platform/wx_mfc_hooks.h declares those pointers inside #ifndef _WIN32.
+// On Windows methods_sounds.cpp talks to the real thing, so there is no
+// function pointer to fake and no way for a console host to observe a call.
+// Re-entering these means a Windows-side observable for "a sound was asked
+// for", which is a different piece of work from a guard.
+#ifndef _WIN32
 // ═══ world.Sound / PlaySound / StopSound / GetSoundStatus ══════════════════
 // The _NOSOUND fork of methods_sounds.cpp: the Lua sound API drives the
 // g_wxhook_sound_* seam (miniaudio in the product).  Fakes here record the
@@ -1868,6 +1908,7 @@ TEST(Sounds, SoundRoutesThroughPlaySoundFile)
     EXPECT_EQ((long)eCannotPlaySound, doc.Sound("/tmp/beep.wav"));
     g_wxhook_play_sound = nullptr;
 }
+#endif  // !_WIN32
 
 
 TEST(Utilities, FixupEscapeSequences_SimpleAndHexLetter)
@@ -2229,6 +2270,7 @@ TEST(Utilities, OSVersionString_ReportsThisKernelNotWindows) {
 // list) and fed GetSelectedFunction a bogus 1/0 start/end pair that blanked
 // the filter.
 #ifdef MUSHCLIENT_LUA_SCRIPTING
+#ifndef _WIN32   // the g_ShowFunctionslist* observation globals are port-only -- see the note at their declaration
 TEST(Utilities, HelpPassesBLuaAndZeroOffsetsToShowFunctionslist) {
     CMUSHclientDoc doc;
 
@@ -2257,6 +2299,7 @@ TEST(Utilities, HelpPassesBLuaAndZeroOffsetsToShowFunctionslist) {
     doc.m_ScriptEngine = nullptr;
     delete engine;   // ~CScriptEngine -> DisableScripting -> CloseLua
 }
+#endif  // !_WIN32
 #endif
 
 // strnrchr must honour its length bound: the historical body wrote `n < count++`,

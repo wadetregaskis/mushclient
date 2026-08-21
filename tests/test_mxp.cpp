@@ -2041,6 +2041,88 @@ TEST(MxpR4, OpenTagVetoDoesNotLeakTheArgumentList)
 
     EXPECT_EQ(before, after);
 }
+
+// ═══ 3095c2a: vetoing a BUILT-IN MXP tag must undo its bookkeeping ═════════
+//
+// docs/WINDOWS-VALIDATION.md §10h listed this as needing "a plugin implementing
+// OnPluginMXPopenTag; the plugin was not written" — but the veto is equally
+// reachable from a world's own OnMXP_OpenTag script routine, which the suite
+// already installs a few tests above.  No plugin required.
+//
+// MXP_StartTag records a tag as open — an m_ActiveTagList entry plus a
+// START_TAG marker style — BEFORE calling MXP_OpenAtomicTag, which is where a
+// built-in tag's veto is asked.  It cannot be asked earlier: the argument list
+// handed to the handler is only rebuilt inside MXP_OpenAtomicTag.  A CUSTOM
+// element's veto returns before that bookkeeping exists, so the two paths
+// disagreed and a vetoed BUILT-IN tag stayed on the active list.
+//
+// That is what makes the built-in/custom distinction load-bearing here, and why
+// MxpR4.OpenTagVetoDoesNotLeakTheArgumentList above does not cover it: that one
+// vetoes a custom <mytag>, i.e. the path that always worked.
+
+namespace {
+
+// A doc whose OnMXP_OpenTag vetoes every tag whose name is in `vetoNames`.
+// Returns the engine so the caller can keep it alive; the doc owns it after.
+CScriptEngine* install_veto(CMUSHclientDoc& doc, const char* luaBody)
+{
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    if (engine->CreateScriptEngine())  return NULL;
+    if (engine->Parse(CString(luaBody), "<veto>"))  return NULL;
+    doc.m_ScriptEngine     = engine;
+    doc.m_strOnMXP_OpenTag = "OnOpen";
+    doc.FindAllEntryPoints();
+    return engine;
+}
+
+}   // namespace
+
+// Check 1 of six: the active-tag record itself.  This is the fix's subject —
+// everything else in the commit message is a consequence of the entry being
+// left behind.
+TEST(MxpVetoR5, VetoedBuiltInTagLeavesNoActiveTagEntry)
+{
+    {   // the control, FIRST: an un-vetoed <b> really does record itself, so a
+        // gutted "always empty" would not pass the assertion below.
+        CMUSHclientDoc doc; make_pipe_doc(doc);
+        mud(doc, "<b>bold");
+        EXPECT_EQ(1, (int) doc.m_ActiveTagList.GetCount());
+    }
+
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    ASSERT_TRUE(install_veto(doc, "function OnOpen(name, a) return true end\n") != NULL);
+
+    mud(doc, "<b>bold");
+    EXPECT_EQ(0, (int) doc.m_ActiveTagList.GetCount());   // was: 1, left dangling
+}
+
+// Check 2 of six: the spurious line break.  With the <p> still on the active
+// list, </p> found it and ran MXP_CloseAtomicTag's MXP_ACTION_P arm, which
+// calls StartNewLine — so a vetoed paragraph still broke the line.
+TEST(MxpVetoR5, VetoedParagraphCloseDoesNotBreakTheLine)
+{
+    int linesWithVeto = 0, linesWithout = 0;
+
+    {   // control: no veto, so <p>…</p> behaves normally
+        CMUSHclientDoc doc; make_pipe_doc(doc);
+        mud(doc, "one<p>two</p>three");
+        linesWithout = (int) doc.m_LineList.GetCount();
+    }
+
+    {
+        CMUSHclientDoc doc; make_pipe_doc(doc);
+        ASSERT_TRUE(install_veto(doc,
+            "function OnOpen(name, a) return name == 'p' end\n") != NULL);
+        mud(doc, "one<p>two</p>three");
+        linesWithVeto = (int) doc.m_LineList.GetCount();
+    }
+
+    // Vetoing the open must suppress the close's line break too: the vetoed
+    // run can only produce FEWER lines than the un-vetoed one, never the same
+    // or more.  Asserted as a strict inequality against the control rather
+    // than against a literal, so it does not encode how many lines <p> makes.
+    EXPECT_TRUE(linesWithVeto < linesWithout);
+}
 #endif
 
 // mxpStart.cpp: MXP_StartTag's custom-element expansion path builds a LOCAL

@@ -3505,7 +3505,7 @@ collides.
 
 | Commit | What changed | Verdict |
 |---|---|---|
-| `44f0737` | **Eight** defects in the world- and global-preferences pages, all the same shape: a value that round-trips through the dialog but is compared, applied or seeded against the wrong thing — so edits were discarded, or changes invented. 79 lines in `prefspropertypages.cpp` alone. | **RUN** — the largest dialog change in the list. Walk every world-prefs page: make one edit per page, OK, reopen, and confirm it stuck; then open and OK with no edit and confirm the world is *not* marked modified. |
+| `44f0737` | **Eight** defects in the world- and global-preferences pages, all the same shape: a value that round-trips through the dialog but is compared, applied or seeded against the wrong thing — so edits were discarded, or changes invented. 79 lines in `prefspropertypages.cpp` alone. | **MOSTLY DONE (§10o)** — four of its five families are now unit tests on Windows (`tests/win/test_prefs_pages.cpp`), each revert-checked. What is left needs the GUI: the printer-font picker (modal `CFontDialog`), the two `CListCtrl` column items, and the end-to-end press-OK confirmation this row originally asked for. |
 | `c605461` | Seven file dialogs tested `App.platform` to decide whether to suggest a filename; off Windows it was never assigned. Also a long-name overrun guard. | **RUN** in part — `App.platform` **is** assigned on Windows (`MUSHclient.cpp:940`), so the suggestion behaviour is unchanged there; what is new on Windows is the bound on a long name. Try File ▸ Log Session with a 300-character world name. |
 | `283124f` | Eight `catch (CMemoryException*)` arms could not match the `std::bad_alloc` a non-MFC `operator new` throws. | **COMPILE**, believed — MFC's `operator new` still throws `CMemoryException*` on Windows and those arms still match. Confirm nothing in the new `catch` ordering shadows the MFC one. |
 | `9139076` | `ReadNames` accepted a names file whose section markers are adjacent, leaving an empty array; `GenerateName` then did `rand () % 0`. | **RUN** — a names file with an empty `[middle]` section must be refused, not divide by zero. |
@@ -4793,3 +4793,74 @@ files, 33 guarded off Windows — 28 in `test_mxp`, 2 each in `test_timers` and
 `test_triggers`, 1 in `test_aliases`, and 0 in `test_telnet`, whose one guard is
 *inside* a test body rather than around it — and 664 executed.  Nothing
 disappeared silently, which is the only reason the number is worth quoting.
+
+### 10o. `44f0737` — the biggest **RUN** row, mostly answered without a walk
+
+§9c marked `44f0737` **RUN** and said to walk every world-prefs page by hand:
+"the largest dialog change in the list", eight defects, 79 lines in
+`prefspropertypages.cpp` alone.  §10h then reported it not reached.
+
+Most of it did not need a walk.  The commit says its five families are
+reachable only from inside the running app, "because configuration.cpp,
+prefspropertypages.cpp and GlobalPrefs.cpp are all `mushgui_adapters` TUs" —
+and that is true **on macOS**.  On Windows all three are ordinary members of
+the 286 engine sources this target already compiles, so four of the five are an
+ordinary unit test.  `tests/win/test_prefs_pages.cpp` is that test, and it
+lives under `tests/win/` precisely because the macOS executables cannot link
+what it drives.
+
+```
+669 passed, 0 failed
+[PASS] PrefsP8.TriggerMultiLineIsAChange
+[PASS] PrefsChange.DefaultColoursAreNotASpuriousChange
+[PASS] PrefsP16.TimerListSortsByContents
+[PASS] AdjustWidth.WithNoOutputWindowNothingIsInvented
+[PASS] PrefsP9.CommandColoursSurviveAPageChange
+```
+
+**All five passing first time is exactly when to distrust them**, so three were
+checked the way the original commit checked its own: by reverting the fix
+underneath and confirming the test goes red.
+
+| Fix reverted | Test |
+|---|---|
+| the `bMultiLine` term in `CPrefsP8::CheckIfChanged` | `PrefsP8` → **FAIL** ✓ |
+| the `eColumnContents` case in `CPrefsP16::CompareObjects` | `PrefsP16` → **FAIL** ✓ |
+| `ChangedPrefsP9`'s encoding comparison | `PrefsChange` → **FAIL** ✓ |
+
+The third one took two attempts, and the first attempt is the instructive part.
+Reverting it as
+
+```cpp
+(m_echo_colour == SAMECOLOUR ? SAMECOLOUR : m_echo_colour) != (unsigned short)(page9.m_echo_colour - 1)
+```
+
+left the test **passing** — because that cast makes `-1` wrap to 65535 and
+therefore *fixes* the very bug it was meant to reintroduce.  The real original
+is `m_echo_colour != page9.m_echo_colour - 1`, where the `unsigned short` is
+promoted to `int` and compared against a genuine `-1`.  **A revert-check has to
+reproduce the actual defect, not something the same shape**; a plausible-looking
+variant that quietly repairs it reports the test as vacuous when it is not.
+
+**What still needs the GUI, and it is now three things rather than eight:**
+
+- `CGlobalPrefsP4::OnFont` seeding the printer-font picker from the page rather
+  than from `App`.  The port substitutes `g_wxhook_font_dialog`; on Windows
+  `OnFont` opens a real modal `CFontDialog`, and a test host must never do that
+  — §10k's first lesson was a run wedged behind an invisible modal box.
+- The fitted last-column width on the alias/timer/variable pages, and
+  `LoadPrefsP7`'s wrong-enum indexing.  Both need a created `CListCtrl`.
+- The end-to-end confirmation §9c actually asked for: edit one field per page,
+  OK, reopen, confirm it stuck; then OK with no edit and confirm the world is
+  not marked modified.  The unit tests pin the arithmetic each of those rests
+  on, which is the part that was wrong — but they do not press OK.
+
+**Two of the five are weaker than they look, and say so at their sites.**
+`AdjustWidth` can only assert that a host with no `CMUSHView` gets 0 and that
+nothing is invented from a window that is not there — the port's half of that
+fix is in `tests/test_mfc_ui.cpp`, which does not compile here.  And
+`PrefsP9`'s `OnKillActive` chains into real MFC's `CPropertyPage::OnKillActive`,
+which calls `UpdateData` on a page with no window; the two assignments the fix
+is about have already happened by then, so the test is sound, but it is
+deliberately the last in the file so that if that chained call ever becomes more
+than an assertion on stderr, this is the test that says so first.

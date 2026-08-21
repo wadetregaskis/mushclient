@@ -4362,9 +4362,10 @@ a stale `test_lua_scripting.obj` kept the old "Lua unavailable" `main` for a
 whole cycle.  After changing the defines, delete `WinTest\obj`.
 
 **Superseded by §10k, which triaged all 18.**  The counts above moved with it --
-the target now compiles **13** test files with **29** excluded, `test_accelerators.cpp`
-having joined the list for the reason below -- and two claims above are wrong,
-corrected here rather than edited away:
+as of §10k the target compiled **13** test files with **29** excluded,
+`test_accelerators.cpp` having joined the list for the reason below, and §10l
+moved them again -- and two claims above are wrong, corrected here rather than
+edited away:
 
 - "this host has no main window" — it is no **view**, and the distinction
   matters because it changes the fix.  `AcceleratorTo` walks
@@ -4550,3 +4551,107 @@ and to the shipping client.
 **Still owed.**  The run ends with an MFC leak dump (`Detected memory leaks!`,
 ~80 lines).  Some of it is documents the tests deliberately leak; none of it has
 been read yet.  Noise today, possibly a finding tomorrow.
+
+### 10l. Two suites re-entered, and the leak dump made readable
+
+```
+TEST() declared by the enabled files: 566
+561 passed, 0 failed          exit 0
+```
+
+`test_timers.cpp` and `test_triggers.cpp` are in the Windows target: 15 test
+files now, 27 excluded, and the suite went from 459 tests to 561.  The gap of
+five between declared and executed is the five tests guarded off Windows — one
+in `test_aliases`, two in each of the two new arrivals — which is why the runner
+prints both numbers.
+
+**Getting in cost two guards each, as §10j predicted, and then one thing it did
+not.**  The guards were the easy half: `test_timers` watches a reconnect through
+`g_wxhook_set_status` / `_set_status_for` and `test_triggers` drives the
+clipboard through `g_wxhook_get_clipboard_text` / `_set_`, and none of those
+hooks exists on Windows because the real client writes the status bar through
+MFC's message map and talks to the real clipboard.  Two tests each, guarded,
+with a note at the guard saying what a Windows-side observable would have to be.
+
+`test_timers` was then green on its first run.  `test_triggers` failed **37 of
+its 69**, and all 37 had one cause — in the *fixture*, not in any test:
+
+```cpp
+static CTrigger* add_trigger(CMUSHclientDoc& doc, const char* match, ...)
+{
+    CTrigger* t = new CTrigger();
+    t->trigger  = CString(match);
+    ...                        // and nothing ever compiles t->regexp
+```
+
+Windows compiles a trigger's regexp when the trigger is **added** —
+`AddTriggerEx` and the trigger dialog both do — and a `CTrigger` built by hand
+never passes through either.  The port survives that because `evaluate.cpp`
+compiles lazily on first use, and **that whole arm is `#ifndef _WIN32`**.  So on
+Windows every hand-built trigger arrived at `EvaluateTrigger` with a null
+regexp and was skipped before a match was even attempted.
+
+**This corrects something §10k got right for the wrong reason.**  §10k guarded
+`EvaluateArms.VariableExpandingTriggerRecompileArms` off Windows and called it a
+test whose *premise* was port-only.  That is true of that test, but the
+diagnosis stopped one level too high: the same dependency is not one test's
+premise, it is the shape of every by-hand trigger in the suite, and 37 more
+tests were sitting on it.  The signal was there to read — a whole file's worth
+of triggers built the same way as the one test already identified — and it was
+not read until the build made it unavoidable.
+
+The fix is in the fixture and it compiles the pattern **the way the engine
+does**, copied from `evaluate.cpp` rather than approximated, because a fixture
+that compiles the pattern differently is testing its own regexp and not the
+client's.  It runs at feed time rather than add time — four tests set `bRegexp`
+or `ignore_case` *after* adding, and those change what the pattern compiles to,
+so add-time compilation would need a "remember to recompile" rule that the next
+test to be written would forget.  Only null regexps are touched, so a trigger
+added through `AddTriggerEx` keeps exactly the program the engine gave it, and
+on the port this simply gets there before the lazy arm does.
+
+That took 37 failures to 1.  The last one was
+`NegativeSequencePluginTriggersEvaluateBeforeWorld`, and it is worth its own
+line: **"the trigger list" is not one list.**  Plugins keep their own
+`m_TriggerArray` and are evaluated from it, so the sweep has to walk
+`m_PluginList` as well as the document.  One test out of 561 was the difference
+between noticing that and not.
+
+**The leak dump is now a number instead of a wall.**
+
+§10k said the run ends with an "~80-line" MFC leak dump.  It was **2,684
+lines** — the estimate was made from the first forty and never checked, which is
+the same shape of mistake as reading a build failure off the first error-looking
+line (below).  Nearly none of it was a leak: `App` outlives the dump and still
+owns the MXP element / entity / colour tables `MC_TEST_WIN_APP_STATE` loads, so
+its ~500 `CObject`s and their collection plexes are reported as leaked while
+being perfectly alive.  Measured: adding `MC_TEST_WIN_APP_STATE` grew the dump
+from 1,618 lines to 2,684 **without leaking anything**, which is what proved it.
+
+So the host takes a `_CrtMemCheckpoint` once its own setup is finished, diffs
+against it after the last test, and reports that instead —
+`AfxEnableMemoryLeakDump(FALSE)` suppresses the exit dump that made the summary
+line unreadable.  What survives the diff was allocated by a test and not freed
+by it, which is the only question this binary can usefully answer about memory.
+Today that is:
+
+```
+80,711 bytes in 2,038 Normal Blocks
+27,848 bytes in   556 Client Blocks
+```
+
+Not chased.  It is now a number that can move, which it was not before; and it
+is emphatically **not** a substitute for a sanitizer, since it sees only blocks
+that were never freed and says nothing about use-after-free or overruns.
+`docs/SANITIZERS.md` is still the instrument for those, on the macOS side.
+
+**One trap, and it cost a wrong diagnosis.**  `vcvarsall.bat` writes
+`'vswhere.exe' is not recognized as an internal or external command` to stderr
+and carries on regardless; it is in every run, **including the green ones**.
+When the build first failed after re-entering the two suites, that line was at
+the top of the log and was read as the failure — the real cause was a
+`test_triggers.cpp` compile error 10 lines further down, and the first
+"diagnosis" was of a message that had been there all along.  `run_tests.ps1`
+now redirects vcvarsall's stderr as well as its stdout, so the line is gone.
+The general form: **a message that appears in a passing run cannot be the reason
+a run failed** — check it against a green log before believing it.

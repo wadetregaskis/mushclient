@@ -42,6 +42,34 @@
 // telnet bytes (numeric to avoid macro clashes)
 static const unsigned char T_IAC = 255, T_WILL = 251, T_SB = 250, T_SE = 240;
 
+// ── the line ending a LOG FILE actually gets ────────────────────────────────
+// The log is a stdio stream opened in TEXT mode (doc_shared.cpp:940, fopen with
+// "w" / "a+"), so on Windows every '\n' the engine writes lands in the file as
+// CRLF -- and these tests read the bytes back in binary, which is the only way
+// to see that.  The difference is real and deliberate: logs are LF on the port
+// and CRLF on Windows (CLAUDE.md, macOS notes), a cosmetic parity gap left
+// alone on purpose.  So the expected separator follows the platform instead of
+// the assertion being weakened to ignore the bytes between the two halves.
+#ifdef _WIN32
+#define MC_LOG_NL "\r\n"
+#else
+#define MC_LOG_NL "\n"
+#endif
+
+// ── where the NAWS row count comes from ─────────────────────────────────────
+// SendWindowSizes (doc_shared.cpp) is forked, and the fork is not cosmetic:
+// Windows walks the view list for a CMUSHView and measures its text rectangle,
+// the port reads m_gui_rows (which its wx frame keeps up to date).  A console
+// host has no views, so on Windows the loop finds nothing and the function
+// returns having sent NOTHING -- which is the right answer for a world with no
+// window, and the only NAWS assertion this host can make.  The tests below
+// drive m_gui_rows, so each says so and stops.
+#ifdef _WIN32
+static const bool kNawsNeedsAView = true;
+#else
+static const bool kNawsNeedsAView = false;
+#endif
+
 // ── recording transport ─────────────────────────────────────────────────────
 // Derives from the shared RecordingTransport (tests/fake_transport.h) for the
 // send()/close()/lastErrorString() boilerplate and the sent/closed/tlsStarted/
@@ -316,11 +344,26 @@ TEST(ConnectStatus, AllPhasesHaveNames)
     EXPECT_STREQ("<unknown>", (LPCTSTR)GetConnectionStatus(999));
 }
 
+// The two platforms answer this from different tables, and neither is a
+// fallback for the other: Windows switches on the WSAE* codes its sockets
+// actually report and returns translated prose, while the port hands the POSIX
+// errno to strerror.  Passing a POSIX errno on Windows is not a near miss, it is
+// a different number space -- ECONNREFUSED is 107 there and WSAECONNREFUSED is
+// 10061 -- so it falls through to "Unknown error code".  Each arm asks its own
+// platform for a code that platform can actually deliver.
 TEST(ConnectStatus, SocketErrorUsesStrerror)
 {
     CMUSHclientDoc* doc = make_doc();
+#ifdef _WIN32
+    EXPECT_STREQ("Connection refused", (LPCTSTR)doc->GetSocketError(WSAECONNREFUSED));
+    EXPECT_STREQ("Connection timed out", (LPCTSTR)doc->GetSocketError(WSAETIMEDOUT));
+    // and a code from the OTHER space really is unknown, which is what makes
+    // the two assertions above mean something
+    EXPECT_STREQ("Unknown error code", (LPCTSTR)doc->GetSocketError(ECONNREFUSED));
+#else
     EXPECT_STREQ(strerror(ECONNREFUSED), (LPCTSTR)doc->GetSocketError(ECONNREFUSED));
     EXPECT_STREQ(strerror(ETIMEDOUT), (LPCTSTR)doc->GetSocketError(ETIMEDOUT));
+#endif
     delete doc;
 }
 
@@ -332,10 +375,20 @@ TEST(ConnectFail, NotifiesWithPhaseAndAddress)
     CMUSHclientDoc* doc = make_doc();
     doc->m_iConnectPhase = eConnectConnectingToMud;
     doc->m_sockAddr.sin_addr.s_addr = inet_addr("10.11.12.13");
+    // The refusal code from the platform's OWN space -- see
+    // ConnectStatus.SocketErrorUsesStrerror for why they are not interchangeable.
+#ifdef _WIN32
+    doc->OnConnect(WSAECONNREFUSED);
+#else
     doc->OnConnect(ECONNREFUSED);
+#endif
     EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
     EXPECT_TRUE(saw(doc, "Unable to connect to \"TestWorld\""));
+#ifdef _WIN32
+    EXPECT_TRUE(saw(doc, "Connection refused"));
+#else
     EXPECT_TRUE(saw(doc, strerror(ECONNREFUSED)));
+#endif
     EXPECT_TRUE(saw(doc, "Connecting to world"));
     EXPECT_TRUE(saw(doc, "10.11.12.13"));
     EXPECT_TRUE(saw(doc, "port 4000"));
@@ -698,7 +751,7 @@ TEST(Login, AutoLogWritesPreambleAndWorldName)
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
     std::string log = buf;
-    EXPECT_TRUE(log.find("PREAMBLE\nLINE2") != std::string::npos);
+    EXPECT_TRUE(log.find("PREAMBLE" MC_LOG_NL "LINE2") != std::string::npos);
     EXPECT_TRUE(log.find("TestWorld - ") != std::string::npos);
     EXPECT_TRUE(log.find("----") != std::string::npos);   // hyphen underline
     unlink(path);
@@ -936,7 +989,7 @@ TEST(Logging, ClosePostambleAndDoubleCloseCode)
     char buf[512] = {};
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
-    EXPECT_TRUE(strstr(buf, "END\nOF LOG") != nullptr);
+    EXPECT_TRUE(strstr(buf, "END" MC_LOG_NL "OF LOG") != nullptr);
     unlink(path);
     delete doc;
 }
@@ -957,7 +1010,7 @@ TEST(Logging, LogCommandStripsEndlineAndAppliesPreamble)
     char buf[512] = {};
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
-    EXPECT_TRUE(strstr(buf, ">> look <<\n") != nullptr);
+    EXPECT_TRUE(strstr(buf, ">> look <<" MC_LOG_NL) != nullptr);
     unlink(path);
     delete doc;
 }
@@ -1335,7 +1388,7 @@ TEST(SendToTest, OutputStatusVariableAndLog)
     char buf[128] = {};
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
-    EXPECT_TRUE(strstr(buf, "logged line\n") != nullptr);
+    EXPECT_TRUE(strstr(buf, "logged line" MC_LOG_NL) != nullptr);
     unlink(path);
     delete doc;
 }
@@ -1914,7 +1967,7 @@ TEST(LoggingArms, ClosePostambleFormatted)
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
     unlink(path);
-    EXPECT_TRUE(strstr(buf, "end\nyear=2") != nullptr);   // %n and %Y expanded
+    EXPECT_TRUE(strstr(buf, "end" MC_LOG_NL "year=2") != nullptr);   // %n and %Y expanded
     delete doc;
 }
 
@@ -2027,7 +2080,7 @@ TEST(LifecycleArms, EstablishAutoLogWritesPreambleAndBanner)
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
     unlink(path);
-    EXPECT_TRUE(strstr(buf, "PRE\nAMBLE") != nullptr);
+    EXPECT_TRUE(strstr(buf, "PRE" MC_LOG_NL "AMBLE") != nullptr);
     EXPECT_TRUE(strstr(buf, "BannerWorld - ") != nullptr);
     EXPECT_TRUE(strstr(buf, "----") != nullptr);   // hyphen banner line
     delete doc;
@@ -2142,13 +2195,31 @@ TEST(SendToTest, CommandDestinationFillsEmptyBarOnly)
 {
     CMUSHclientDoc* doc = make_doc();
     FakeWorldView view;
+    // Save and restore by hand rather than with mc_test::ScopedWorldView: the
+    // document here is on the HEAP and is deleted inside this scope, so a guard
+    // declared after it would still be holding the fake when ~CMUSHclientDoc
+    // ran -- and that destructor DELETES m_pWorldView, over a stack object.
+    // (Nulling it instead, as this test used to, merely leaks the adapter the
+    // document built for itself.)
+    auto savedView = doc->m_pWorldView;
     doc->m_pWorldView = &view;
     CString out;
     doc->SendTo(eSendToCommand, "go north", false, false, "d", "", out);
+#ifdef _WIN32
+    // "through the world-view seam" is the PORT's route.  On Windows the
+    // command bar is a CSendView reached from the document's view list, so a
+    // world view -- fake or real -- is not what this destination consults, and
+    // a host with no views has nowhere to put the text.  Assert that it goes
+    // nowhere rather than somewhere wrong, and that nothing reached the MUD
+    // either: eSendToCommand must never fall back to sending.
+    EXPECT_STREQ("", view.cmd.c_str());
+    EXPECT_TRUE(wire(doc).sent.empty());
+#else
     EXPECT_STREQ("go north", view.cmd.c_str());
     doc->SendTo(eSendToCommand, "go south", false, false, "d", "", out);
     EXPECT_STREQ("go north", view.cmd.c_str());   // bar not empty: unchanged
-    doc->m_pWorldView = nullptr;
+#endif
+    doc->m_pWorldView = savedView;
     delete doc;
 }
 
@@ -2230,6 +2301,20 @@ TEST(SmallArms, IncomingPacketDebugArm)
 TEST(SmallArms, SendWindowSizesEmitsNaws)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_nWrapColumn = 80;
     doc->m_gui_rows = 30;
@@ -2255,6 +2340,20 @@ TEST(SmallArms, SendWindowSizesEmitsNaws)
 TEST(SmallArms, NawsEscapesADimensionByteOfExactly255)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_gui_rows = 30;
 
@@ -2306,6 +2405,20 @@ TEST(SmallArms, NawsEscapesADimensionByteOfExactly255)
 TEST(SmallArms, TextRectangleRenegotiatesTheWindowSize)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_nWrapColumn = 80;
     doc->m_gui_rows = 30;
@@ -2388,6 +2501,20 @@ TEST(AutoWrap, ClampWrapColumnPassesLegalValuesThrough)
 TEST(AutoWrap, NawsReportsTheConfiguredColumnWhenAutoWrapIsOff)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_bAutoWrapWindowWidth = FALSE;
     doc->m_nWrapColumn = 100;
@@ -2406,6 +2533,20 @@ TEST(AutoWrap, NawsReportsTheConfiguredColumnWhenAutoWrapIsOff)
 TEST(AutoWrap, NawsReportsTheWidthItWasGivenNotTheStoredOne)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_nWrapColumn = 80;        // what the world is still configured for
     doc->m_gui_rows = 25;
@@ -2419,6 +2560,20 @@ TEST(AutoWrap, NawsReportsTheWidthItWasGivenNotTheStoredOne)
 TEST(AutoWrap, NawsSplitsWideDimensionsAcrossBothBytes)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_nWrapColumn = 80;                      // deliberately not the width
     doc->m_gui_rows = 300;                        // 0x012C

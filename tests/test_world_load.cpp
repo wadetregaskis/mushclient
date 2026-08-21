@@ -952,8 +952,16 @@ TEST(PluginLoad, SourcePathRecorded)
     ASSERT_TRUE(TryLoadPlugin(doc, path.c_str()));
 
     CPlugin* p = doc.m_PluginList.front();
-    // m_strSource should equal the path we passed in
-    EXPECT_STREQ(path.c_str(), (const char*)p->m_strSource);
+    // m_strSource is the path the loader OPENED, not the string it was handed:
+    // it comes from CFile::GetFilePath, which fully qualifies.  On the port
+    // "/tmp/x.xml" already IS the full path so the two are equal; on Windows
+    // the same file is "C:\tmp\x.xml".  Assert what is true of both -- the
+    // file is named, and the recorded path is one that opens.
+    CString src = p->m_strSource;
+    EXPECT_TRUE(src.Find("srcpath.xml") != -1);
+    FILE* reopened = fopen((const char*)src, "rb");
+    EXPECT_TRUE(reopened != nullptr);
+    if (reopened) fclose(reopened);
 }
 
 TEST(PluginLoad, TriggersLandInPluginMap)
@@ -2802,8 +2810,24 @@ TEST(WorldLoadR5, WorldOnlyTagsRejectedInsidePlugin)
 }
 
 // Plugin header validation arms, one throw each.
+//
+// The two `language=` cases are platform-dependent and deliberately kept rather
+// than deleted.  stdafx.h defines USE_PYTHON / USE_TCL / USE_PHP / USE_RUBY
+// unconditionally inside its `#ifdef _WIN32` block, and the whitelist in
+// xml_load_world.cpp:2538 also lets perlscript and jscript through on `_WIN32`
+// alone -- so on Windows all of them are ACCEPTED, and the port accepts only
+// the engines it actually built.  Asserting the accept is worth as much as
+// asserting the refusal: it is the same fork read from the other side.
 TEST(WorldLoadR5, PluginHeaderValidationArms)
 {
+    // The languages Windows whitelists unconditionally and this port build does
+    // not: the expectation flips rather than the case disappearing.
+#ifdef _WIN32
+    const bool kExtraLanguagesLoad = true;
+#else
+    const bool kExtraLanguagesLoad = false;
+#endif
+
     struct { const char* name; const char* header; } cases[] = {
         { "p_req.xml",     "name=\"P\" id=\"0123456789abcdef012345dd\" requires=\"99.99\"" },
         { "p_badname.xml", "name=\"9bad\" id=\"0123456789abcdef012345dd\"" },
@@ -2815,9 +2839,6 @@ TEST(WorldLoadR5, PluginHeaderValidationArms)
           "name=\"P\" purpose=\"a123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789x\" id=\"0123456789abcdef012345dd\"" },
         { "p_shortid.xml", "name=\"P\" id=\"abc\"" },
         { "p_hexid.xml",   "name=\"P\" id=\"zzzzzzzzzzzzzzzzzzzzzzzz\"" },
-        { "p_lang.xml",    "name=\"P\" id=\"0123456789abcdef012345dd\" language=\"rubyscript\"" },
-        { "p_lang_perl.xml",
-          "name=\"P\" id=\"0123456789abcdef012345de\" language=\"perlscript\"" },
     };
 
     for (auto& c : cases) {
@@ -2825,7 +2846,30 @@ TEST(WorldLoadR5, PluginHeaderValidationArms)
             "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
             "<plugin " + std::string(c.header) + ">\n</plugin>\n</muclient>\n";
         CMUSHclientDoc doc;
-        EXPECT_FALSE(TryLoadPlugin(doc, write_temp_named(c.name, xml.c_str()).c_str()));
+        bool loaded = TryLoadPlugin(doc, write_temp_named(c.name, xml.c_str()).c_str());
+        // Name the case: they share one source line, so a bare EXPECT_FALSE
+        // says only that one of seven did the wrong thing.
+        if (loaded)
+            fprintf(stderr, "  header case %s LOADED and should not have\n", c.name);
+        EXPECT_FALSE(loaded);
+    }
+
+    struct { const char* name; const char* header; } languages[] = {
+        { "p_lang.xml",    "name=\"P\" id=\"0123456789abcdef012345dd\" language=\"rubyscript\"" },
+        { "p_lang_perl.xml",
+          "name=\"P\" id=\"0123456789abcdef012345de\" language=\"perlscript\"" },
+    };
+
+    for (auto& c : languages) {
+        std::string xml =
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+            "<plugin " + std::string(c.header) + ">\n</plugin>\n</muclient>\n";
+        CMUSHclientDoc doc;
+        bool loaded = TryLoadPlugin(doc, write_temp_named(c.name, xml.c_str()).c_str());
+        if (loaded != kExtraLanguagesLoad)
+            fprintf(stderr, "  language case %s %s and should not have\n",
+                    c.name, loaded ? "LOADED" : "was REFUSED");
+        EXPECT_EQ(kExtraLanguagesLoad, loaded);
     }
 }
 

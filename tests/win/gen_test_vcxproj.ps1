@@ -53,9 +53,6 @@ $excluded = [ordered]@{
   'test_notepad_convert.cpp' = 'NotepadDetectLineEndings is non-Windows only: CEditView::SerializeRaw means the buffer IS the representation on Windows (CLAUDE.md, macOS notes)'
   'test_pal_worldview.cpp'   = 'platform/activity_refresh.h includes <strings.h>; drives the port worldview'
   'test_accelerators.cpp'    = 'AcceleratorTo returns eBadParameter at its first line: GetFirstViewPosition() is NULL and this host has no view. Giving the host the two document templates did NOT fix this -- measured, the 11 failures were unchanged -- because the walk wants a CView attached to the document, which is a window, not a registry entry'
-  'test_connection.cpp'      = 'ACCESS VIOLATION, and NOT the document template (the host has one now): ConnectionClosed -> Frame.OnUpdateBtnWorlds -> m_wndActivityToolBar.GetButtonInfo at mainfrm.cpp:712, unconditional, on a CToolBar that only exists after CMainFrame::OnCreate. 213 pass, then Tls.CertVerifyFailureBlocksAndRecordsReason dies there. This one needs a created main frame, which a console host cannot have. Its two strerror tests also assert the POSIX spelling, which WSAECONNREFUSED does not have'
-  'test_lua_scripting.cpp'   = 'COMPILES, LINKS AND MOSTLY RUNS now: the four blockers are fixed (LoadWorldFromFile is provided for this host in tests/win/all_tests.cpp, <utime.h> is picked per platform, two CString::c_str() calls became (LPCTSTR), and two port-only-seam tests are guarded). 174 tests, and MEASURED at 1102 passing overall with it in. What stops it is triage, not compilation: suite LuaScripting crashes, and LuaScripting.WorldVersion / ProgressDialogLibraryIsRegistered / GetLineInfoTimeUsesLockedLocalFormat / PaletteAccessorsRoundTripAndRejectOutOfRange / Utf8DecodeBadStringErrors / Utf8EncodeTableNonNumberErrors, LuaMarshal.SaveWritesWorldFile, SpellCheckTest.SpellCheckCommandAppliesCorrectionThroughView and LuaR5.HardenedStateDebugAndStandins fail, with suites SweepR4 and LuaR5 crashing. See docs/WINDOWS-VALIDATION.md 10y'
-  'test_world_load.cpp'      = 'COMPILES AND LINKS now, with ZERO source changes -- the whole suite was blocked on CMUSHclientDoc::LoadWorldFromFile, which this host now has (see test_lua_scripting above). 105 tests. What stops it is two suites that HANG: WorldLoad and WorldLoadR4 both hit the 60s per-suite clock, which on this host means a modal nothing can answer. WorldLoadR5.PluginHeaderValidationArms and PluginLoad.SourcePathRecorded also fail. Finding the modal is the first job. See docs/WINDOWS-VALIDATION.md 10y'
   'test_menu_rules.cpp'      = 'needs platform/menu_ui_rules.cpp, the port menu-rule table; the app drives menus from MFC message maps and does not link it'
   'test_pal_surface.cpp'     = 'asserts on pal::CpuRaster, the port software rasteriser; Windows draws through pal/gdi_surface.cpp and never instantiates it'
 }
@@ -66,8 +63,14 @@ $excluded = [ordered]@{
 # that is how test_triggers and test_timers got here: two cases each, the wx
 # clipboard hooks and the wx status-bar hooks, with the guard carrying a note on
 # what a Windows-side observable would have to be.  The same route is open for
-# most of what is left; test_lua_scripting is the biggest prize and the one that
-# needs real work, since it wants a Windows world-load path rather than a guard.
+# most of what is left.
+#
+# test_lua_scripting.cpp (174 tests) and test_world_load.cpp (105) were the two
+# biggest entries here and are IN now.  What they needed was not a guard: a
+# world-load entry point for this host (tests/win/all_tests.cpp), a CFileDialog
+# that declines instead of hanging (evaluate.cpp), and a CMainFrame OBJECT for
+# the `Frame` macro to dereference (mc_test.h MC_TEST_WIN_MAIN_FRAME).  See
+# docs/WINDOWS-VALIDATION.md 10z.
 
 $tests = Get-ChildItem 'tests\test_*.cpp' | Where-Object { -not $excluded.Contains($_.Name) } |
          ForEach-Object { 'tests\' + $_.Name }

@@ -5508,6 +5508,10 @@ three tests look redundant.
 
 ### 10y. The two biggest excluded suites, unblocked but not yet entered
 
+> **Superseded by §10z**, which enters both (and `test_connection.cpp` with
+> them). Everything below is the state as measured before that pass; the
+> "why they are still excluded" section at the end no longer holds.
+
 `test_world_load.cpp` (105 tests) and `test_lua_scripting.cpp` (174) were
 excluded for the same stated reason, and the generator said so: "Same shape as
 test_lua_scripting, and the same fix would serve both." Both were blocked on
@@ -5597,3 +5601,266 @@ end against real MFC and a real `CArchive`, assert that `SetPathName` happened
 `%WORLDFILEDIR%` and Save for all 279 tests), and assert that a non-world file
 is refused rather than half-loaded — without which the positive test would be
 satisfied by a driver that swallowed every error.
+
+### 10z. The three biggest excluded suites, entered — and what one macro was costing
+
+`test_world_load.cpp` (105 tests), `test_lua_scripting.cpp` (174) and
+`test_connection.cpp` (154) are all IN. The target went from **1,084 passing
+across 130 suites** to **1,508 across 175**, with nothing crashed, nothing
+blocked and nothing failing.
+
+Almost all of it came from one fact, stated four different ways in four
+different exclusion reasons before anyone noticed it was the same fact.
+
+#### `Frame` is a dereference
+
+```c
+#define Frame (*((CMainFrame*)App.m_pMainWnd))      // stdafx.h:271
+```
+
+`App.m_pMainWnd` is NULL in a console host, so **every** `Frame.Anything()` is a
+null dereference, not an inert call. That single line was behind:
+
+| symptom | where |
+|---|---|
+| `CRASHED` — `SweepR4.DebugListingsCoverEachAction` | `GetInfo` 249 → `GetMainClientRect` → `mainClientRect` → `Frame.GetClientRect` |
+| `CRASHED` — `LuaScripting.SetTraceFlushesAHalfBuiltLine` | `OnBytesReceived` → `Frame.CheckTimerFallback` → `ProcessTimers` |
+| `CRASHED` — `LuaR5.WindowPositionsWithWorldView` | `L_GetMainWindowPosition` → `Frame.GetWindowPlacement` |
+| `ACCESS VIOLATION` — `test_connection.cpp`, excluded for it | `ConnectionClosed` → `Frame.OnUpdateBtnWorlds` |
+| `GetInfo` codes 251–260, guarded off in `test_info.cpp` | `&Frame.m_wndToolBar` and friends |
+
+The fix is three lines in `mc_test.h`: **construct** a `CMainFrame` and never
+`Create()` it.
+
+```cpp
+if (App.m_pMainWnd == NULL)
+    App.m_pMainWnd = new CMainFrame;
+```
+
+Its constructor is fourteen assignments and a `ZeroMemory` — no window, no
+toolbars, no timers — so every embedded control has `m_hWnd == NULL`, which is
+exactly the state MFC's own guards (`if (pWnd->m_hWnd)`) are written for. The
+engine's existing checks start working instead of faulting one line before they
+are read.
+
+#### Why that was tried before and recorded as a failure
+
+§10v tried precisely this and measured a **regression**: 1053/1 → 1006/71, with
+`winocc.cpp:242` assertions and `CArchive badSchema` breaking plugin loading in
+suites that had nothing to do with the change. It was reverted undiagnosed, and
+the measurement was written down next to the exclusion — which is the only
+reason it was cheap to re-open.
+
+Re-measured here: 1206/4 → **1142/72**. Same regression, same shape.
+
+The cause is one guard that checks the wrong thing:
+
+```cpp
+void CMainFrame::SetStatusMessage (const CString & msg)
+  {
+  if (App.m_pMainWnd)              // <-- a frame OBJECT exists
+    {
+    m_wndStatusBar.SetWindowText (msg);   // <-- ...says nothing about the BAR
+```
+
+`m_pMainWnd` answers "is there a frame object", and the line beneath it needs
+"does the status bar have a window". Those were the same question for as long as
+the only way to get a frame object was to create one. Give the host a
+constructed-but-uncreated frame and they come apart: `CWnd::SetWindowText`
+asserts, and it does so **inside `Load_World_XML`**, which is why the visible
+damage was plugin loading rather than the status bar.
+
+Two callers, five lines apart, both fixed the same way — ask the control:
+
+```cpp
+if (m_wndStatusBar.m_hWnd == NULL)
+  return;
+```
+
+`SetStatusMessageNow` alone took the target from 1142/72 to **1346/14**.
+`SetStatusMessage` took `test_connection` from 37 failures to 15.
+
+**The generalisation is worth more than the fix.** A guard that has to
+dereference the thing it is guarding is not a guard. `pal/win_worldview.cpp` had
+six of them in a row — every infobar body opens with
+`if (!Frame.m_wndInfoBar.m_hWnd) return;`, and that read is itself through the
+null pointer. They all now go through one accessor that answers the real
+question:
+
+```cpp
+static CMainFrame * frame ()
+  {
+  CMainFrame * f = (CMainFrame *) App.m_pMainWnd;
+  return (f && f->m_hWnd) ? f : NULL;      // an OBJECT is not a WINDOW
+  }
+```
+
+That file's header comment used to end "CANNOT be compiled here (no MSVC) — by-
+reasoning parity". It can now, and the first thing compiling it found was this.
+
+#### The two hangs were one `CFileDialog`
+
+`WorldLoad` and `WorldLoadR4` both sat until the clock killed them. Enumerating
+the hung process's windows named it immediately: a visible `#32770` titled
+**"Trigger file name"**, i.e. `CMUSHclientDoc::Load_Set`'s file dialog
+(`evaluate.cpp:668`), raised by the one test in each suite that calls
+`Load_Set (TRIGGER, "", NULL)`.
+
+`::TMessageBox` and `::AfxMessageBox` already have an answer on this host
+(`McTestMessageBox`, two hooks because they do not funnel — see §10q). A common
+dialog cannot use it: a `CFileDialog` is a stack object whose `DoModal` the
+caller owns, so the decision has to be taken at the call site. One `#ifdef` per
+site, each naming the dialog it declines, answering `McTestCancelDialog`'s
+`IDCANCEL`.
+
+Cancel is the only answer that needs no file, no user and no state — and every
+caller of a file dialog already has a cancel path, because a user can always
+press Escape. What that leaves under test is the arm the two suites actually
+assert: `if (nResult != IDOK) return TRUE;`, the Windows cancel convention the
+port's headless `Load_Set` copies.
+
+There are 31 `CFileDialog` sites in the tree and exactly one was reachable.
+Finding that out took one run of a probe that closes every dialog the process
+raises and records the last `[PASS]` line at the moment each appears — cheaper
+than N build cycles, and it proved there was no second modal behind the first.
+
+#### A crash now names its frame
+
+The single highest-leverage thing added in this pass is not a fix. This target
+compiles `/EHsc`, where the runner's `catch (...)` does not see an SEH
+exception, so an access violation killed the process and `run_tests.ps1` could
+report only `CRASHED (no summary)`. The last `[PASS]` on stdout named the test
+*before* the one that died and nothing at all about where in the engine it went.
+
+`tests/win/all_tests.cpp` now installs an unhandled-exception filter that walks
+the stack from the faulting `CONTEXT` with `StackWalk64` + `SymFromAddr`,
+symbolised from the PDB the Debug build already writes. It prints the exception,
+the faulting address, the test name, and forty frames with file and line. Every
+crash above was diagnosed from its first output.
+
+The same walker is wired to `_CrtSetReportHook`, opt-in behind
+`MC_TEST_ASSERT_STACKS=1`, because an MFC assertion has the identical problem
+from the other direction: `winocc.cpp(242) : Assertion failed!` names a line
+inside MFC, which is never the interesting half. Off by default — one suite can
+raise fifty — and capped at twelve stacks per run. It is what turned
+`doccore.cpp(293)` into `docs/UPSTREAM-BUGS.md` 91.
+
+This is the Windows counterpart of the in-process
+`backtrace()`/`backtrace_symbols_fd` handler the macOS side reached for when
+`lldb` hung on the notepad crash, and it is worth having for the same reason:
+the instrument that is always installed beats the one that has to be attached to
+a reproduction.
+
+#### The finding that outlives this pass: two test-only reimplementations
+
+`scripting/lua_utils_portable.cpp` and `scripting/world_debug_portable.cpp` are
+in **`mushcore_testsupport` only** (`CMakeLists.txt:870-877`). The product — on
+both platforms — uses `scripting/lua_utils.cpp` and `world_debug.cpp`. So the
+macOS suite has been asserting the behaviour of bodies **nothing ships**, and
+the Windows target, which links the real ones, disagrees with them in at least
+five measured places:
+
+| what | fixture (`*_portable.cpp`) | shipping |
+|---|---|---|
+| `utils.utf8decode ('\255')` | raises `Bad UTF-8 string. Error at column 2` | returns **no results**, no error |
+| `utils.utf8encode ({72,'x'})` | `Index [2] of table arg #1 must be a number` | `Index [2] of table at argument #1 to 'utf8encode' is not a number` |
+| `world.Debug ('triggerlist')` | lists the triggers | prints the **help**: Windows' vocabulary is `triggers`, `aliases`, … and `triggerlist` belongs to `DebugHelper`, the hyperlink handler |
+| trigger-listing layout | `%-14s␠␠%s`, budget `wrap - 44` | `%*s␠%s`, budget `wrap - 42` — one column narrower |
+| the alias-count line | `PLURAL` → "2 alias**s**." | `PLURALES` → "2 alias**es**." |
+
+The `utf8decode` divergence is the sharpest: the fixture reimplemented a version
+of the function that is **commented out** in the shipping file, two definitions
+above the live one.
+
+None of this can reach a plugin, because none of it is in the product. What it
+reaches is the test suite's own credibility: a test that passes against a body
+nothing runs is the worst kind of green, which is the same lesson §10x recorded
+about `ReadNames`. Every affected test now carries **both** arms as positive
+assertions rather than one arm and a skip, so neither platform's behaviour is
+merely stepped over. The change that removes the fork — hoisting the
+pure-computation half of `lua_utils.cpp` into `mushcore` — is its own piece of
+work and is not attempted here.
+
+#### The rest of the triage, by cause
+
+Fourteen failures survived the frame fix in the two Lua/world-load suites, and
+fifteen in `test_connection`. Grouped:
+
+- **A `long` is 32 bits here.** `world.SetNormalColour (3, 0xFF123456)` masks to
+  `0x123456` on the 64-bit port and to **0** on Win32: the value is past
+  `LONG_MAX`, the double→long conversion saturates to `0x80000000`, and
+  `& 0x00FFFFFF` takes it to zero. Upstream MUSHclient is a 32-bit Windows app,
+  so Windows is the reference and the *test constant* was the problem. Now
+  `0x7F123456`, which is in range everywhere and still has a high byte for the
+  mask to drop.
+- **Locale.** `GetLineInfo(n).timestr` is zero-padded English 12-hour on the
+  port because `lua_utils_portable.cpp` renders `%m/%d/%Y %I:%M:%S %p` to lock
+  it; Windows renders through `COleDateTime::Format (0, 0)`, i.e.
+  `VarBstrFromDate` with the user's locale. The strict pattern is a port
+  assertion; Windows asserts a date and a time are both present.
+- **Text-mode log files.** The log is `fopen`ed `"w"`/`"a+"`, so on Windows every
+  `\n` the engine writes lands as CRLF, and six assertions read the bytes back
+  in binary. Already a recorded, deliberate parity gap (CLAUDE.md, macOS notes);
+  the expected separator is now `MC_LOG_NL`.
+- **Two error-code spaces.** `GetSocketError` switches on `WSAE*` on Windows and
+  calls `strerror` on the port. `ECONNREFUSED` is 107 and `WSAECONNREFUSED` is
+  10061 — not a near miss, a different space. Each arm now asks its own platform
+  for a code that platform can deliver, and the Windows arm additionally asserts
+  that a POSIX errno really is unknown, which is what makes the other two mean
+  something.
+- **Things that genuinely need a view.** `SendWindowSizes` (NAWS rows come from a
+  `CMUSHView`'s text rectangle), `SendTo (eSendToCommand)` and
+  `SpellCheckCommand` (the command bar is a `CSendView`),
+  `GetWorldWindowPositionX`. Each keeps a Windows arm asserting the *right*
+  answer for a world with no window — nothing announced, nothing typed, `-1`,
+  an empty string — rather than being skipped. Where the port has a second
+  reason for the same number, it is now visible: the NAWS guard sets
+  `m_bNAWS_wanted` and a non-zero `m_FontHeight` first, so the missing view is
+  the only remaining explanation for the silence.
+- **A path is fully qualified when it is stored.** `CPlugin::m_strSource` comes
+  from `CFile::GetFilePath`, so `/tmp/x.xml` is recorded as `C:\tmp\x.xml`. The
+  test now asserts the two things true of both platforms: the file is named, and
+  the recorded path reopens.
+- **Five languages Windows whitelists unconditionally.** `stdafx.h` defines
+  `USE_PYTHON` / `USE_TCL` / `USE_PHP` / `USE_RUBY` inside its `#ifdef _WIN32`
+  block, and `xml_load_world.cpp:2538` lets `perlscript` and `jscript` through
+  on `_WIN32` alone. So `rubyscript` and `perlscript` plugin headers **load**
+  here and are refused on a port build without those engines. The expectation
+  flips rather than the cases disappearing.
+- **One resource this target does not link.** `progress.new` creates a real
+  `CProgressDlg` from `IDD_PROGRESS`; the test binary compiles the engine
+  sources, not the `.rc`, so `_AfxCheckDialogTemplate` fails
+  (`dlgcore.cpp:210`). What the test is *named* for — the library being
+  registered at all, which was `#ifdef _WIN32` and therefore missing from the
+  port until 2026-08-12 — is asserted on both.
+- **`utils.menufontsize()`** reports `nil` on the port because
+  `SystemParametersInfo` is an unconditional `FALSE` there (D-25). Here the
+  metrics ARE readable, so the premise in the test's name does not hold and
+  `nil` would be the bug; the Windows arm asserts a real size instead. It is
+  deliberately **read-only**: `utils.menufontsize(n)` calls
+  `SPI_SETNONCLIENTMETRICS`, which changes the machine's menu font, and a unit
+  test has no business doing that even for the moment before it puts it back.
+
+#### And one defect in the tests themselves
+
+`SendToTest.CommandDestinationFillsEmptyBarOnly` deleted a heap `CMUSHclientDoc`
+while a stack `FakeWorldView` was still installed in `m_pWorldView`, and
+`~CMUSHclientDoc` **deletes** that pointer. The old code nulled it instead,
+which merely leaked the adapter the document had built for itself; putting
+`mc_test::ScopedWorldView` in turned the leak into `operator delete` over a
+stack object and a crash inside the debug heap's own reporting. `ScopedWorldView`
+is right when the document outlives the guard — a stack document declared
+first — and wrong when the document is deleted inside the guard's scope. Here it
+is a hand-written save/restore placed before the `delete`.
+
+Two more suites still assign `m_pWorldView` directly and are now guarded:
+`LuaR5.WindowPositionsWithWorldView` and
+`SpellCheckTest.SpellCheckCommandAppliesCorrectionThroughView`, both with stack
+documents, both correct with `ScopedWorldView`.
+
+#### Still out, with the reason re-measured
+
+`test_accelerators.cpp` is unaffected by the main frame: `AcceleratorTo` fails at
+its first line because `GetFirstViewPosition()` is NULL, and a `CView` attached
+to a document is a window, not a registry entry. The frame does not supply one.
+The other fifteen exclusions are unchanged.

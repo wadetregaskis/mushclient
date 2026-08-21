@@ -1223,11 +1223,13 @@
     <ClCompile Include="tests\test_chat_protocol.cpp" />
     <ClCompile Include="tests\test_colour.cpp" />
     <ClCompile Include="tests\test_commandbar.cpp" />
+    <ClCompile Include="tests\test_connection.cpp" />
     <ClCompile Include="tests\test_database.cpp" />
     <ClCompile Include="tests\test_display.cpp" />
     <ClCompile Include="tests\test_hashing.cpp" />
     <ClCompile Include="tests\test_hyperlink.cpp" />
     <ClCompile Include="tests\test_info.cpp" />
+    <ClCompile Include="tests\test_lua_scripting.cpp" />
     <ClCompile Include="tests\test_mcdatetime.cpp" />
     <ClCompile Include="tests\test_mxp.cpp" />
     <ClCompile Include="tests\test_plugins.cpp" />
@@ -1239,6 +1241,7 @@
     <ClCompile Include="tests\test_timers.cpp" />
     <ClCompile Include="tests\test_triggers.cpp" />
     <ClCompile Include="tests\test_utilities.cpp" />
+    <ClCompile Include="tests\test_world_load.cpp" />
     <ClCompile Include="tests\test_xmlparse.cpp" />
   </ItemGroup>
   <ItemGroup>

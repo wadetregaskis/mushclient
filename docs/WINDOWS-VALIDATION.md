@@ -5398,10 +5398,20 @@ is at the guard:
 | `6e67cb0` background-world status attribution | `TimerTest.ReconnectStatusIsAttributedToTheWorldThatDropped` | drives the port's status hook |
 | `bc4d149` the split Stop-Sound commands | `Sounds.TheTwoHalvesOfStopSoundPlayingActSeparately` | drives the `g_wxhook_sound_*` family |
 
-**Genuinely owed, with no test anywhere:** `8dd87e5` (a background world's status
-text stomping the foreground one), `aca2478` (the Plugins dialog reading a row's
-stale `CPlugin*`) and `9139076` (a names file with an empty section). All three
-are dialog- or two-window-bound.
+**Not applicable to Windows at all:** `8dd87e5`, the background world's status
+text. It reads as a shared-code fix because it touches `doc_shared.cpp`, but all
+three of its hunks there are `#ifdef _WIN32` / `#else` pairs whose Windows arm is
+byte-for-byte the original `Frame.SetStatusMessage (str)`; everything else it
+touches is under `platform/`. Windows has one app-scoped status bar, where these
+strings are unambiguous, and the attribution exists precisely because the port
+gives each world its own. Its coverage is `world_frame_selftest.cpp`, which is
+where it belongs. **Close the row rather than carrying it.**
+
+**Genuinely owed, with no test anywhere:** `aca2478`, the Plugins dialog reading
+a row's stale `CPlugin*`. That one IS in shared dialog code and does apply here,
+but reaching `OnUpdateNeedDescription` wants the dialog and its list control.
+
+**`9139076` was owed and is now done** — see §10x.
 
 **And the MXP atomic-tag veto row (`3095c2a`) was stale twice over.** §10h said
 four of its six checks remained; §10q repeated it. In fact `4f4b667` had already
@@ -5437,3 +5447,61 @@ twice and missed twice: `a39785e` initialised the result flag at three of
 `ExecutePluginScript`'s overloads, `3f3e8ac` did the fourth, and both passed over
 `mxpStart.cpp` and `mxpError.cpp`, where the identical bare `bool result;` was
 read after `ExecuteLua`'s four early returns.
+
+### 10x. The names file: the first row only Windows can close
+
+`9139076` fixed a crash — `ReadNames` checked that each of `[start]`,
+`[middle]`, `[end]` and `[stop]` was **present** but never that anything was
+collected between them, so a file whose markers are adjacent set
+`bNamesRead = true` with an empty `CStringArray`, and `GenerateName` then
+evaluated `rand () % FirstNames.GetSize ()`. Division by zero, followed by a
+subscript of an empty array. `world.ReadNamesFile` answered `eOK` for the file
+that caused it, which is what made the crash arrive later and somewhere else.
+It is `docs/UPSTREAM-BUGS.md` 42.
+
+Its own commit message closed with:
+
+> No headless coverage: `NameGeneration.cpp` is a `mushgui_adapters` TU, and the
+> test executables link `platform/windows_stubs.cpp`'s `ReadNames`, which always
+> throws — a test written against that stub would pass with and without this
+> change. Wants a GUI (or **Windows**) run against a hand-made names file.
+
+**That is the first row in this whole campaign that Windows can close and macOS
+structurally cannot.** Everything else the Windows target has found so far was
+either a shared-code defect the port happened to get right, or a test whose home
+suite was excluded. This one is different in kind: the macOS test executables
+cannot reach the code at all, because the real TU is not in `mushcore`, and the
+stub they get instead has the opposite behaviour from every input. A test there
+would be green either way — the worst kind of green.
+
+Three tests, in `tests/win/test_gap_coverage.cpp` because they are Windows-only
+by necessity rather than by exclusion:
+
+| test | what it pins |
+|---|---|
+| `NamesFileR5.WellFormedFileIsAcceptedAndGeneratesAName` | the control, first: a good file is accepted, and twenty draws all match one-of-each-section |
+| `NamesFileR5.AnEmptySectionIsRefusedAndLeavesNamesUnread` | all three empty-section shapes, each preceded by a known-good read |
+| `NamesFileR5.GenerateNameAfterABadFileAnswersNullInsteadOfDividingByZero` | the consequence: `VT_NULL`, not a fault |
+
+**Revert-checked**, by deleting the three `GetSize () == 0` checks and
+rebuilding: the control stays green, and the other two go red on the
+*precondition* — `ReadNamesFile` answers `eOK` (0) where `eCouldNotOpenFile`
+(30013) belongs, and `bNamesRead` comes back true — for all three sections.
+
+Two details worth keeping:
+
+- **Each empty-section case starts from a known-good read.** `bNamesRead`,
+  `FirstNames` and friends are file-scope statics, so "the flag is false" is
+  only evidence if this file is what made it false. Seeding it true first is
+  what turns the assertion from an observation into a measurement.
+- **The test deliberately stops at the precondition rather than at the fault.**
+  `ASSERT_FALSE (bNamesRead)` aborts the body before `GenerateName` when the
+  flag is wrong, so the reverted build reports a failure rather than taking the
+  process down. Per-suite isolation (§10u) means a crash there would only cost
+  this one suite — but a named failing expectation says more than
+  `CRASHED (no summary)`, and it says it in the same place either way.
+
+The doc method's own `if (!bNamesRead) return VT_NULL` is **not** the fix and
+never was: with the flag wrongly true it does not fire. Worth stating because it
+is the guard a reader notices first, and mistaking it for the fix would make all
+three tests look redundant.

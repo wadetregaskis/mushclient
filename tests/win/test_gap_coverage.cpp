@@ -23,8 +23,12 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "OtherTypes.h"
+#include "scripting/errors.h"   // eOK / eCouldNotOpenFile
+
+#include "posix_compat.h"   // getpid / unlink, for the names-file tests
 
 #include <crtdbg.h>
+#include <string>
 
 namespace {
 
@@ -182,3 +186,146 @@ TEST(DocCtorR5, ConstructingAndDestroyingDocumentsDoesNotGrowTheHeap)
 }
 
 MC_TEST_MAIN()
+
+// ═══ The names file (9139076 / docs/UPSTREAM-BUGS.md 42) ═══════════════════
+//
+// ReadNames checked that each of [start], [middle], [end] and [stop] was
+// PRESENT but not that anything was collected between them, so a file whose
+// markers are adjacent set bNamesRead = true with an empty CStringArray.
+// GenerateName then evaluated `rand () % FirstNames.GetSize ()` -- a division
+// by zero -- and subscripted the empty array.  world.ReadNamesFile answered
+// eOK for the file that caused it, which is what made the crash arrive later
+// and somewhere else.
+//
+// This is here rather than in tests/test_utilities.cpp because it is one of
+// the few things the Windows target can test that the headless one cannot at
+// all: NameGeneration.cpp is a mushgui_adapters TU, so the macOS test
+// executables link platform/windows_stubs.cpp's ReadNames instead -- and that
+// one always throws, so a test written against it would pass with and without
+// the fix.  9139076's own commit message asked for exactly this run.
+
+// Defined in NameGeneration.cpp and declared in no header; the doc's
+// GenerateName reads it to decide whether the arrays are safe to index, which
+// makes it the flag the whole defect turns on.
+extern bool bNamesRead;
+
+namespace {
+
+// Write a names file and hand back its path.  Sections are passed verbatim, so
+// a caller makes one empty simply by passing "".
+std::string write_names_file(const char* tag, const char* starts,
+                             const char* middles, const char* ends)
+{
+    static int s_seq = 0;
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_test_names_%d_%d_%s.txt",
+             (int)getpid(), ++s_seq, tag);
+    FILE* f = fopen(path, "wb");
+    if (!f) return "";
+    fprintf(f, "/* a names file */\n[start]\n%s[middle]\n%s[end]\n%s[stop]\n",
+            starts, middles, ends);
+    fclose(f);
+    return path;
+}
+
+}   // namespace
+
+// The control, and it comes first: a well-formed file really is accepted and
+// really does generate a name, so the refusals below cannot be passing because
+// ReadNames rejects everything handed to it.
+TEST(NamesFileR5, WellFormedFileIsAcceptedAndGeneratesAName)
+{
+    CMUSHclientDoc doc;
+    std::string p = write_names_file("ok", "Ael\nBor\n", "an\nir\n", "dun\nwyn\n");
+    ASSERT_TRUE(!p.empty());
+
+    EXPECT_EQ((long)eOK, doc.ReadNamesFile(p.c_str()));
+    EXPECT_TRUE(bNamesRead);
+
+    // Every generated name is one entry from each of the three sections, in
+    // order -- so assert the SHAPE rather than a literal, which would be a
+    // one-in-eight coin toss.  Twenty draws also means an off-by-one in the
+    // rand() % size indexing would have to be lucky twenty times running.
+    const char* firsts[] = { "Ael", "Bor" };
+    const char* mids[]   = { "an",  "ir"  };
+    const char* lasts[]  = { "dun", "wyn" };
+    for (int i = 0; i < 20; ++i) {
+        VARIANT v = doc.GenerateName();
+        ASSERT_EQ((int)VT_BSTR, (int)v.vt);
+        CString name = v.bstrVal;
+        EXPECT_TRUE(name.GetLength() > 0);
+        bool ok = false;
+        for (int a = 0; a < 2 && !ok; a++)
+          for (int b = 0; b < 2 && !ok; b++)
+            for (int c = 0; c < 2 && !ok; c++)
+              ok = (name == CString(firsts[a]) + mids[b] + lasts[c]);
+        EXPECT_TRUE(ok);
+    }
+    unlink(p.c_str());
+}
+
+// The defect itself, once per section, because the fix added one check per
+// section and a single case would leave two of them unexercised.
+//
+// Each iteration asserts both halves: the file is refused (eCouldNotOpenFile,
+// which is what world.ReadNamesFile turns the exception into) AND bNamesRead
+// is left false.  The second is the crash's actual precondition -- everything
+// downstream only touches the arrays when that flag says they are good.
+TEST(NamesFileR5, AnEmptySectionIsRefusedAndLeavesNamesUnread)
+{
+    CMUSHclientDoc doc;
+
+    struct { const char* tag; const char* s; const char* m; const char* e; }
+    cases[] = {
+        { "nostart",  "",      "an\n",  "dun\n" },
+        { "nomiddle", "Ael\n", "",      "dun\n" },
+        { "noend",    "Ael\n", "an\n",  ""      },
+    };
+
+    for (int i = 0; i < 3; ++i) {
+        // Start each case from a known-good read, so "bNamesRead is false"
+        // below is something THIS file did, not something inherited from an
+        // earlier test in the process.
+        std::string good = write_names_file("seed", "Ael\n", "an\n", "dun\n");
+        ASSERT_EQ((long)eOK, doc.ReadNamesFile(good.c_str()));
+        ASSERT_TRUE(bNamesRead);
+        unlink(good.c_str());
+
+        std::string p = write_names_file(cases[i].tag, cases[i].s,
+                                         cases[i].m, cases[i].e);
+        ASSERT_TRUE(!p.empty());
+
+        EXPECT_EQ((long)eCouldNotOpenFile, doc.ReadNamesFile(p.c_str()));
+        EXPECT_FALSE(bNamesRead);
+        unlink(p.c_str());
+    }
+}
+
+// ...and the consequence.  Before the fix the bad file above answered eOK and
+// set bNamesRead, so the very next world.GenerateName ran
+// `rand () % FirstNames.GetSize ()` over an empty array.  The doc method's own
+// `if (!bNamesRead) return VT_NULL` guard is not the fix and never was: with
+// the flag wrongly true it does not fire.
+//
+// The ASSERT below stops the test before GenerateName when the flag is wrong,
+// deliberately.  Measured by reverting the three GetSize checks: this test and
+// the one above both go red on the PRECONDITION -- eOK where
+// eCouldNotOpenFile belongs, and bNamesRead true -- while the control above
+// stays green.  That is the whole defect, and it is a better place to stop
+// than one instruction further on, where the answer is a fault rather than a
+// failure.
+TEST(NamesFileR5, GenerateNameAfterABadFileAnswersNullInsteadOfDividingByZero)
+{
+    CMUSHclientDoc doc;
+    std::string p = write_names_file("bad", "", "an\n", "dun\n");
+    ASSERT_TRUE(!p.empty());
+
+    EXPECT_EQ((long)eCouldNotOpenFile, doc.ReadNamesFile(p.c_str()));
+    ASSERT_FALSE(bNamesRead);
+
+    VARIANT v = doc.GenerateName();
+    EXPECT_EQ((int)VT_NULL, (int)v.vt);
+    EXPECT_FALSE(bNamesRead);
+
+    unlink(p.c_str());
+}

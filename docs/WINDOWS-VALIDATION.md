@@ -4360,3 +4360,193 @@ second is fixed the pass count is a floor rather than a total.
 notice a changed preprocessor definition across a regenerated project file, and
 a stale `test_lua_scripting.obj` kept the old "Lua unavailable" `main` for a
 whole cycle.  After changing the defines, delete `WinTest\obj`.
+
+**Superseded by §10k, which triaged all 18.**  The counts above moved with it --
+the target now compiles **13** test files with **29** excluded, `test_accelerators.cpp`
+having joined the list for the reason below -- and two claims above are wrong,
+corrected here rather than edited away:
+
+- "this host has no main window" — it is no **view**, and the distinction
+  matters because it changes the fix.  `AcceleratorTo` walks
+  `GetFirstViewPosition()`, not a window handle.
+- "Neither is understood yet" — both are.  `oleunk.cpp:455` is COM never being
+  initialised despite `AfxOleInit()` answering TRUE; `afxcoll.inl:384` is a
+  `CPtrList` walk of an empty `m_LineList`, which was empty because
+  `SetUpOutputWindow` never ran.  Fixed, and the pass count is now a total
+  rather than a floor.
+
+The reading that held up is the cautious one: the first question per failure was
+"does this need a window?" rather than "is Windows wrong?", and **none of the 18
+was a defect in the Windows product**.
+
+### 10k. Triage: 459 passing, 0 failing — and one real bug
+
+§10j reported 18 failures and an abort, and said the count was reported rather
+than celebrated because triage was owed.  Triage is done.
+
+```
+459 passed, 0 failed          exit 0
+```
+
+That is every test the target compiles: 460 `TEST(` across the 13 enabled files,
+one of them guarded out below, 459 executed.  The declared count is checked
+against the executed one on purpose — §10j's own lesson was two suites that fell
+through to a "Lua unavailable" stub and would have passed vacuously.
+
+**Not one of the 18 was a defect in the Windows product.**  There were five
+causes, and four of them are the same shape: *the test host is not the app, and
+the app does its setup in places a host with no window never reaches.*  The
+fifth was in the tests.  The one genuine product bug came from somewhere else
+entirely — a test that had been passing on macOS for months.
+
+**1 — `DisplayMsg` returned at its first line, silently, for every document.**
+This was the big one: four of the eighteen failures traced straight to it, and so
+did the abort that ended the run before ~220 further tests could be reached.
+
+```cpp
+// cannot go very far without this - must be called at world loadup ...
+if (!m_LinePositions.IsAllocated ())
+  return;
+```
+
+`m_LinePositions` is allocated in `SetUpOutputWindow`, which Windows runs at
+**view creation**, and this host has no view.  So every `Note`, every `Trace`,
+every echoed command and every line of MUD text was dropped on the floor and
+`m_LineList` stayed empty — and the first test to walk it from
+`GetHeadPosition()` took the process down inside `afxcoll.inl`, which is the
+`afxcoll.inl(384)` abort §10j could not explain: `CPtrList::GetAt` asserts on a
+NULL POSITION, then throws.
+
+The port has answered this since the B-3 flip — `doc_construct.cpp`'s
+`MUSHCLIENT_HEADLESS_APP` arm seeds the first line and the index, with a comment
+saying exactly why — so **macOS has never seen this and never will**.  The
+Windows test build now seeds the same two things under
+`_WIN32 && MUSHCLIENT_TESTS`, in `SetUpOutputWindow`'s order, and deliberately
+without the headless arm's two port-only choices (the world-doc registration, and
+`m_bNotesInRGB`, which is a *port* default — a Windows test that adopted it would
+be testing the wrong client).
+
+Measured, not reasoned: a probe printed `lines=0` for a trace, a `USER_INPUT`
+echo and a MUD line; after the seed, 2 lines each and the trigger's
+`nMatched=1`.
+
+**2 — the app's other InitInstance state was missing too**, and each gap failed
+tests that looked unrelated to each other:
+
+| Missing | Symptom |
+|---|---|
+| `MXP_LoadEntities` (`MUSHclient.cpp:751`) | the XML parser rejects any document containing `&amp;` — and a world's *custom* entity **shadows** a predefined one instead of losing to it |
+| `LoadGlobalsFromDatabase` (`:614`) | `App` is merely zero-filled, so every global option whose Windows default is 1 reads as 0.  `RegexpMatchEmpty` is one of them, and it quietly changed what every regexp in the suite matches |
+
+Both are now in the host, and the second is worth the detail: it calls the
+**real** loader with **no prefs database open**.  `db_simple_query` returns
+`SQLITE_CANTOPEN` and the caller's default when `App.db` is null
+(`MUSHclient.cpp:1947`), so all ~77 options take their table defaults from
+`globalregistryoptions.cpp` — the real function over the real table, not a
+hand-copied set of constants that would drift from it.  It also means the run
+*cannot* read the developer's installed preferences, so it is reproducible on any
+machine.  `platform/headless_app.cpp` reaches the same state by listing the
+non-zero defaults by hand; on Windows the loader itself is available, so use it.
+
+**3 — COM was never initialised, and `AfxOleInit` returning TRUE said otherwise.**
+§10j left the 69-per-run `oleunk.cpp(455)` assertion unexplained.  Measured:
+after a *successful* `AfxOleInit()`, `CoInitializeEx` returns **`S_OK`, not
+`S_FALSE`** — so COM was not up — and both `CoDisconnectObject` (which
+`~CCmdTarget` calls for every document) and a bare `CoCreateInstance` answered
+`CO_E_NOTINITIALIZED`.  One `CoInitializeEx` in the host took the assertion count
+from 69 to 0.  It is written as a hard failure rather than a hopeful extra call:
+if a future MFC does initialise COM there, this returns `S_FALSE`, which is not
+`FAILED`, and nothing changes.
+
+**4 — `/tmp`.**  15 test files build scratch paths as `/tmp/mc_test_<pid>…`, 120
+of them.  On Windows a leading slash means the root of the *current drive*, so
+they resolved to `C:\tmp\…` and failed to open; `OpenLog` then returned
+`eCouldNotOpenFile` and tests asserting on log **content** failed for a reason
+that had nothing to do with logging.  The host creates the directory.  That is
+deliberately not 120 edits to 15 files macOS also compiles: this is a property of
+the host, and the scaffolding is not what any of those tests is about.
+
+**5 — a BSTR read as `char*`.**  All seven `DatabaseTest` failures were
+`EXPECT_STREQ("alpha", (const char*) v.bstrVal)` answering `"a"`: on the port a
+`BSTR` **is** a `char*`, on Windows it is UTF-16, and the comparison then turns
+on the first character alone.  Routed through `CString`, which is the conversion
+on Windows and the identity on the port — the idiom
+`tests/variant_test_helpers.h` already used three lines away.
+
+**Two tests assert port-only behaviour and now say so.**
+
+- `EvaluateArms.VariableExpandingTriggerRecompileArms` hands `EvaluateTrigger`
+  three triggers with `regexp == nullptr`.  Windows compiles a trigger's regexp
+  when it is added, and the recompile arm the test aims at sits *inside*
+  `if (trigger_item->regexp)`; what lets a null-regexp trigger reach it is the
+  lazy-compile block above it, which is itself `#ifndef _WIN32`.  The test's
+  premise, not the product, is what does not hold there.  Guarded.
+- The three `RegexpTest` / `RegexpWildcardsTest` cases that force a PCRE runtime
+  error go through a new `regexec_erroring` helper.  `regexp.cpp:109` **throws**
+  on Windows where `:119` returns false off it — a deliberate, commented
+  divergence — and both mean the same thing to tests that are about what happens
+  *after* the error (program nulled, code recorded, second exec early-outs).
+  Normalising the report keeps the assertions shared; a spurious *match* still
+  fails, because that is returned rather than thrown.
+
+**`test_accelerators.cpp` is excluded, and §10j guessed its reason wrongly.**
+§10j said "this host has no main window".  It is no **view**, which is a
+different and more specific thing: `AcceleratorTo` opens with
+`GetFirstViewPosition()` and returns `eBadParameter` before touching the map,
+because the live accelerators are an `HACCEL` owned by the world's MDI child
+frame.  Giving the host a window would not fix it; giving the document a view
+would — and then `App.m_pWorldDocTemplate->m_hAccelTable` needs a doc template
+too, which is why this is an exclusion rather than a fixture change.  The map
+bookkeeping the suite asserts on **is** shared, and is worth re-entering later.
+
+**One real bug, and it is upstream** — `docs/UPSTREAM-BUGS.md` 88.
+`Get_XML_date` builds its result as `CTime (…, iSecond, 0)`, and that trailing
+`0` is `nDST`: it tells `mktime` that a wall-clock time recorded during daylight
+saving is *not* during daylight saving.  Reading the hour back through
+`localtime` then returns it one hour later.  Measured here: `"2020-05-06
+07:08:09"` parsed back as hour **8**, and every other hour in the suite was off
+by exactly one the same way.  The port never saw it because
+`platform/mfc_time.h`'s `CTime` ignores the argument and always passes `-1`, so
+the port's answer was right and Windows' was wrong.  Fixed by passing `-1`, which
+is a no-op on the port.
+
+This is the target earning its keep on its first green run: the test that caught
+it is not new, it had been passing on macOS for months, and nothing but running
+it against real MFC could have found the difference.  It is also the **third**
+bug in `Get_XML_date` — entries 5 and 6 are the other two.
+
+**Two host changes worth more than the bugs they fixed.**
+
+- **An exception that escapes a test is now a failed test, not a dead run**
+  (`mc_test.h`, every platform).  One bad walk was killing the process and taking
+  every suite after it down — silently, because the summary line prints after the
+  loop.  This single change took the run from 231 tests to 451.  It is
+  `catch (...)` rather than `catch (CException*)` because every test file
+  includes `mc_test.h` *before* `stdafx.h`, so the MFC exception classes are
+  incomplete there and a handler may not name a pointer to an incomplete type.
+- **`setvbuf(stdout, NULL, _IONBF, 0)`.**  `[PASS]` goes to buffered stdout and
+  MFC's traces to unbuffered stderr, so in a merged log the last line before an
+  abort was *not* the last test that ran.  Two rounds of triage were spent
+  looking at the wrong suite before that was noticed.
+
+**Method note.**  The 18 failures shared a symptom and had five causes; the three
+that looked most alike (`sawTyped`, `sawTrace`, `sawExec`) shared one, the two
+that looked identical to them (`OpenLog`) did not, and the two "the script did
+not run" ones split between the seeding gap and a port-only premise.  This is the
+settings audit's lesson in a new place: *a shared symptom is not evidence of a
+shared cause*.  What separated them was a probe printing actual values, not more
+reading.
+
+**Shared files changed — macOS must re-verify.**  `tests/mc_test.h` (the
+`catch` is unguarded and changes behaviour on both platforms),
+`tests/test_database.cpp`, `tests/test_regexp.cpp`, `tests/test_xmlparse.cpp`,
+`tests/test_aliases.cpp`, `xml/xmlparse.cpp` (a no-op there, but it is canonical
+code), and `platform/wx_mfc_hooks.h`, where `HeadlessMessageBoxAnswer` moved
+*outside* the `#ifndef _WIN32` guard so all three headless hosts share one
+answer.  Everything in `doc_construct.cpp`, `MUSHclient.h`, `MUSHclient.cpp` and
+`Utilities.cpp` is behind `_WIN32 && MUSHCLIENT_TESTS` and is invisible to macOS
+and to the shipping client.
+
+**Still owed.**  The run ends with an MFC leak dump (`Detected memory leaks!`,
+~80 lines).  Some of it is documents the tests deliberately leak; none of it has
+been read yet.  Noise today, possibly a finding tomorrow.

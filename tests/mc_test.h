@@ -20,6 +20,7 @@
 #include <type_traits>
 #include <utility>
 #include <functional>
+#include <exception>   // std::exception (run_all catches an escaping throw)
 
 namespace mc_test {
 
@@ -61,7 +62,28 @@ inline int run_all() {
         g().current_name   = tc.name;
         g().current_failed = false;
         g().current_skip   = nullptr;
-        tc.fn();
+        // An exception that escapes a test is a FAILED TEST, not a dead run.
+        // Without this the whole process dies at the first one and every suite
+        // after it is silently not run -- which is exactly what happened on
+        // Windows, where the engine throws MFC exceptions by design (a NULL
+        // POSITION into CPtrList::GetAt asserts and then throws
+        // CInvalidArgException*).  One such walk was costing this target ~220
+        // tests a run, silently: the summary line prints after the loop, so a
+        // dead run has no summary to notice the absence in.
+        //
+        // catch(...) rather than catch(CException*): mc_test.h is included
+        // BEFORE stdafx.h by every test file, so the MFC exception classes are
+        // incomplete here and a handler may not name a pointer to an incomplete
+        // type.  The name of the test is the diagnosis anyway.
+        try {
+            tc.fn();
+        } catch (const std::exception& e) {
+            g().current_failed = true;
+            fprintf(stderr, "  uncaught std::exception: %s\n", e.what());
+        } catch (...) {
+            g().current_failed = true;
+            fprintf(stderr, "  uncaught exception escaped the test body\n");
+        }
         if (g().current_failed) {
             ++g().failed;
             fprintf(stderr, "[FAIL] %s.%s\n", tc.suite, tc.name);
@@ -351,6 +373,16 @@ void Generate256colours(void);
 //   AfxOleInit    CMUSHclientDoc is a CCmdTarget with EnableAutomation, and
 //                 ~CCmdTarget calls CoDisconnectObject, which asserts in
 //                 oleunk.cpp when COM is not initialised on the thread
+//   CoInitializeEx  ...and AfxOleInit is NOT enough here.  Measured: after a
+//                 successful AfxOleInit, CoInitializeEx returns S_OK -- not
+//                 S_FALSE -- so COM was not in fact initialised on this
+//                 thread, and both CoDisconnectObject and a plain
+//                 CoCreateInstance answered CO_E_NOTINITIALIZED.  That was 69
+//                 oleunk assertions per run, one per document destroyed, and
+//                 they went to zero the moment this line was added.  Written
+//                 as a hard failure rather than a hopeful extra call: if a
+//                 future MFC does initialise COM here, this returns S_FALSE
+//                 (which is not FAILED) and nothing changes.
 //   AfxSocketInit CAsyncSocket, for the chat and transport suites
 //
 // And it must not pop dialogs.  A failed ASSERT in a test process is a test
@@ -359,8 +391,58 @@ void Generate256colours(void);
 // whole suite until somebody clicks it.  That is not hypothetical — it is how
 // the first Windows run of this harness was found to be wedged.
 #include <crtdbg.h>
+// ── /tmp on Windows ────────────────────────────────────────────────────────
+// 15 test files build scratch paths as "/tmp/mc_test_<pid>..." -- 120 of them.
+// That is POSIX scaffolding around the assertions, never the thing under test,
+// and on Windows a leading slash means "root of the current drive", so they all
+// resolve to <drive>:\tmp\... and fail to open if that directory is absent.
+// OpenLog then returns eCouldNotOpenFile and a test asserting on log CONTENT
+// fails for a reason that has nothing to do with logging.
+//
+// Make the directory rather than rewrite 120 call sites in 15 shared files:
+// this is a property of the host, and every one of those edits would be a
+// change to a file macOS also compiles, for scaffolding.  Announce a failure --
+// a run where every file-based test fails wants the reason at the top, not
+// inferred from the wreckage.
+#define MC_TEST_WIN_MAKE_TMP() \
+    do { \
+        if (!::CreateDirectoryA("/tmp", NULL) && \
+            ::GetLastError() != ERROR_ALREADY_EXISTS) \
+            fprintf(stderr, "WARNING: cannot create /tmp (error %lu); " \
+                            "tests that write scratch files will fail\n", \
+                    (unsigned long) ::GetLastError()); \
+    } while(0)
+
+// ── the InitInstance steps a headless host still needs ─────────────────────
+// CMUSHclientApp's constructor does almost nothing; InitInstance is where the
+// Windows app builds its global state, and InitInstance does not run here.
+// The macOS side answers this in platform/headless_app.cpp's ctor -- these are
+// the same two answers, in the same order, for the same reason.
+//
+//   * LoadGlobalsFromDatabase over NO open prefs database.  db_simple_query
+//     returns SQLITE_CANTOPEN and the caller's default when App.db is null
+//     (MUSHclient.cpp:1947), so every one of the ~77 global options takes its
+//     table default from globalregistryoptions.cpp -- the real function and the
+//     real table, not a hand-copied set of constants that would drift.  It also
+//     means the run CANNOT read the developer's installed prefs, so it is
+//     reproducible on any machine.  Without it App is merely zero-filled, and
+//     an option whose Windows default is 1 reads as 0: RegexpMatchEmpty is one,
+//     and it silently changed what every regexp in the suite matches.
+//   * The three MXP tables (MUSHclient.cpp:750-752).  The XML parser resolves
+//     &amp; and friends through App.m_EntityMap, so without this the parser
+//     rejects a document containing any predefined entity -- and a world file's
+//     custom entity would SHADOW a predefined one rather than lose to it.
+#define MC_TEST_WIN_APP_STATE() \
+    do { \
+        App.LoadGlobalsFromDatabase(); \
+        App.MXP_LoadElements(); \
+        App.MXP_LoadEntities(); \
+        App.MXP_LoadColours(); \
+    } while(0)
+
 #define MC_TEST_WIN_HOST_INIT() \
     do { \
+        setvbuf(stdout, NULL, _IONBF, 0); \
         for (int rt_ = 0; rt_ < 3; rt_++) { \
             _CrtSetReportMode(rt_, _CRTDBG_MODE_FILE); \
             _CrtSetReportFile(rt_, _CRTDBG_FILE_STDERR); \
@@ -369,7 +451,11 @@ void Generate256colours(void);
             { fprintf(stderr, "FATAL: AfxWinInit failed\n"); return 2; } \
         if (!AfxOleInit()) \
             { fprintf(stderr, "FATAL: AfxOleInit failed\n"); return 2; } \
+        if (FAILED(::CoInitializeEx(NULL, COINIT_APARTMENTTHREADED))) \
+            { fprintf(stderr, "FATAL: CoInitializeEx failed\n"); return 2; } \
         AfxSocketInit(); \
+        MC_TEST_WIN_MAKE_TMP(); \
+        MC_TEST_WIN_APP_STATE(); \
     } while(0)
 #else
 #define MC_TEST_WIN_HOST_INIT() ((void)0)

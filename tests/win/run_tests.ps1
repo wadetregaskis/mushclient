@@ -55,6 +55,31 @@ $assets = Join-Path $root 'WinDebug'
 if (-not (Test-Path (Join-Path $assets 'lua5.1.dll'))) {
   Write-Host "WARNING: $assets has no lua5.1.dll - stage the runtime assets there (see docs/WINDOWS-VALIDATION.md section 2)"
 }
+# How many TEST() the enabled files declare, printed just ahead of the run so it
+# sits beside the binary's own "N passed, M failed" summary.
+#
+# A suite that compiles to NOTHING still links, still runs, and still reports a
+# clean exit -- which is how two suites in this target once fell through to a
+# "Lua unavailable" stub and would have passed vacuously
+# (docs/WINDOWS-VALIDATION.md section 10j).  Registration happens at static-init
+# time, so whatever the preprocessor removed is simply not there to count, and
+# the gap between these two numbers is exactly the tests guarded off Windows.
+#
+# Printed rather than asserted, and deliberately NOT captured from the run: the
+# expected gap is a fact about the tree that a magic number here would only rot,
+# and piping the binary's output would reintroduce the stdout/stderr reordering
+# that section 10k had to fix with setvbuf.
+$declared = 0
+foreach ($m in (Select-String -Path 'MUSHclient_tests.vcxproj' `
+                              -Pattern 'ClCompile Include="(tests\\test_[^"]+)"' -AllMatches)) {
+  foreach ($g in $m.Matches) {
+    $f = Join-Path $root $g.Groups[1].Value
+    if (Test-Path $f) { $declared += (Select-String -Path $f -Pattern '^TEST\(').Count }
+  }
+}
+Write-Host "TEST() declared by the enabled files: $declared"
+Write-Host ""
+
 Copy-Item $exe $assets -Force
 Push-Location $assets
 try {

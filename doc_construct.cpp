@@ -541,6 +541,38 @@ int i;
   m_bNotesInRGB = true;
 #endif
 
+#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
+  // ── Windows unit-test host only ────────────────────────────────────────
+  // The test host (MUSHclient_tests.vcxproj) constructs bare documents with no
+  // view, so SetUpOutputWindow() -- which the framework runs at view creation,
+  // and which is where Windows defers this -- never runs.  Without it
+  // m_LinePositions is unallocated, and DisplayMsg returns at its very first
+  // guard ("cannot go very far without this", doc_shared.cpp): every Note,
+  // Trace, echo and MUD line is silently dropped, m_LineList stays empty, and
+  // the first test to walk it from GetHeadPosition() takes the whole process
+  // down inside afxcoll.inl -- CPtrList::GetAt asserts, then throws, from a
+  // NULL POSITION.  Four of the eighteen failures in this target's first run
+  // traced back to this one line, and so did the abort that hid the ~220 tests
+  // after it.
+  //
+  // Seed exactly what SetUpOutputWindow seeds, in its order, and NOTHING else:
+  // not the welcome banner (tests index m_LineList from the head), not the
+  // fonts, not ChatAcceptCalls.  It deliberately does NOT copy the two
+  // headless-only choices above it either -- the world-doc registration (this
+  // host has no doc template) and m_bNotesInRGB, which is a PORT default: a
+  // Windows test has to see the Windows one or it is testing the wrong client.
+  // Reset BEFORE the AddTail, as SetUpOutputWindow does, so chunk 0 is seeded
+  // from an empty list exactly as it is on Windows.  The headless arm above
+  // instead calls AllocateLinePositions AFTER, which records the real head; the
+  // difference is immaterial by the index's own contract (a NULL chunk is a
+  // hint miss that falls back to the list head, never a wrong answer), and
+  // matching Windows is the point of this host.
+  m_LinePositions.Reset (m_LineList.GetHeadPosition ());
+  m_total_lines = 0;
+  m_pCurrentLine = new CLine (++m_total_lines, m_nWrapColumn, 0, WHITE, BLACK, m_bUTF_8);
+  m_LineList.AddTail (m_pCurrentLine);
+#endif
+
 #ifndef _WIN32
   // Note this document as live, for the world proxies the embedded engines hand
   // to scripts.  There is no COM here, so a VT_DISPATCH is a bare pointer and

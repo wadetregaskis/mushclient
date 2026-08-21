@@ -17,6 +17,7 @@
 // shared code; if a suite ever needs isolation, give it its own vcxproj.
 
 #include "stdafx.h"
+#include "MUSHclient.h"   // the App global: MC_TEST_WIN_HOST_INIT primes its state
 #include "mc_test.h"
 
 MC_TEST_MAIN_ALWAYS()

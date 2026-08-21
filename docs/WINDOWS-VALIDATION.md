@@ -4955,9 +4955,11 @@ really does record itself, so a gutted "always empty" would not pass.  The
 second compares the vetoed line count against the un-vetoed one rather than
 against a literal, so it does not encode how many lines `<p>` makes.
 
-Four of the six remain: the outstanding-tag warning marker, the close-tag
-callback for a suppressed open, the `<send>`-inside-`<a>` action substitution,
-and `OnPluginMXPopenTag` specifically (as against the world's own routine).
+CORRECTION (see section 10w): this paragraph was wrong.  `4f4b667` had already
+written all six as `MxpD20.*`, and all eight of those have been green here since
+`test_mxp.cpp` was enabled.  What was genuinely missing was the PLUGIN route --
+`OnPluginMXPopenTag` -- which is now covered too, and whose control turned up
+`docs/UPSTREAM-BUGS.md` 90.
 
 **And two more §10h rows were already answered**, found the same way as §10p's
 four — by checking where each fix's test actually lives rather than trusting
@@ -5363,3 +5365,75 @@ not a fabricated outcome: a NULL `pidl` is exactly what pressing Cancel
 produces, and the code below already handles it by leaving the folder alone and
 letting the save fail — which is the arm the test asserts. Skipping the dialog
 keeps the assertion running on Windows instead of guarding it away.
+
+### 10w. §10h, re-checked row by row — and the bug the last row was hiding
+
+§10q recorded a rule and then did not apply it to the rest of the list: *check
+where a fix's test actually lives before writing a new one*, one grep per row,
+`git show <commit> --stat | grep tests/`. Running it over all of §10h's
+remaining rows takes about a minute and moves five of them.
+
+**Answered, by tests that are live and green on this target:**
+
+| §10h row | test |
+|---|---|
+| `5359254` the 52 macro command ids | `MacroCommandIds.EveryMacroCommandIdMapsToItsOwnSlot` |
+| `8468a76` the auto-say tri-state | `AutoSayTest.RefusedWhenNotConnectedIsDistinctFromSent` |
+| `43c4545` the plugin wizard's re-sort | `WizardTest.RemovingSelectedItemsSortsOncePerCategory` |
+| `c3936f4` `m_iNoteColourFore` on a deferred note | `NotingTest.DeferredSameColourNoteCarriesConstructedNoteColours` (+ the palette twin) |
+| `3f3e8ac` the plugin-veto uninitialised return | `PluginCallback.RuntimeErrorLatchesCallbackOff` |
+
+Every one of these was listed as needing typed input, a menu click or a plugin.
+None of them does. Three became reachable only because §10u let
+`test_plugins.cpp` and `test_utilities.cpp` into the target at all; the other
+two were reachable all along.
+
+**Answered on macOS, and correctly NOT on Windows** — recorded so they are not
+re-checked a third time. Each sits inside an `#ifndef _WIN32` block whose reason
+is at the guard:
+
+| §10h row | test | why it is port-only |
+|---|---|---|
+| `2e54bba` `world.Help` / Function List | `Utilities.HelpPassesBLuaAndZeroOffsets…` | the `g_ShowFunctionslist*` observation globals exist only in the port's headless stubs; on Windows this is a real modal |
+| `6e67cb0` background-world status attribution | `TimerTest.ReconnectStatusIsAttributedToTheWorldThatDropped` | drives the port's status hook |
+| `bc4d149` the split Stop-Sound commands | `Sounds.TheTwoHalvesOfStopSoundPlayingActSeparately` | drives the `g_wxhook_sound_*` family |
+
+**Genuinely owed, with no test anywhere:** `8dd87e5` (a background world's status
+text stomping the foreground one), `aca2478` (the Plugins dialog reading a row's
+stale `CPlugin*`) and `9139076` (a names file with an empty section). All three
+are dialog- or two-window-bound.
+
+**And the MXP atomic-tag veto row (`3095c2a`) was stale twice over.** §10h said
+four of its six checks remained; §10q repeated it. In fact `4f4b667` had already
+written **all six** as `MxpD20.*` — including the outstanding-tag warning marker,
+the close-tag callback and the `<send>`-inside-`<a>` substitution — and all eight
+of them have been green here since `test_mxp.cpp` was enabled.
+
+What was genuinely missing was the **plugin route**. All eight drive the world's
+own `OnMXP_OpenTag`; a plugin vetoes through a different call
+(`SendToAllPluginCallbacks(ON_PLUGIN_MXP_OPENTAG, …, bStopOnFalse)`) and with the
+opposite polarity — a world handler vetoes by returning **true**, a plugin by
+returning **false**. Two tests now cover it, and the second pins something
+neither side can observe alone: the plugin broadcast is asked **first** and
+short-circuits the world's handler entirely.
+
+> **Writing the missing test is what found the bug.** Building the control for
+> it — "the same two handlers, with the plugin declining to veto" — meant writing
+> a world handler that returns nothing, which no existing test had ever done.
+> Every test of these callbacks returns an explicit boolean. The control failed,
+> and `docs/UPSTREAM-BUGS.md` 90 is why: a Lua `OnMXP_OpenTag` that falls off the
+> end suppresses **every** tag, and a Lua `OnMXP_Error` that falls off the end
+> silences every plugin's error callback along with the display. The COM arms of
+> both functions get this right, because a handler that returns nothing leaves
+> them a `VT_EMPTY` they can recognise.
+>
+> The general form is worth keeping: **a control that has never been written is
+> a case that has never been run.** The controls in this suite are usually the
+> same call with one flag flipped; this one needed a handler shaped differently
+> from any that existed, and that is exactly why it found something.
+
+The same commit closes the third instance of a defect that has now been fixed
+twice and missed twice: `a39785e` initialised the result flag at three of
+`ExecutePluginScript`'s overloads, `3f3e8ac` did the fourth, and both passed over
+`mxpStart.cpp` and `mxpError.cpp`, where the identical bare `bool result;` was
+read after `ExecuteLua`'s four early returns.

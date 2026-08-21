@@ -2123,6 +2123,48 @@ TEST(MxpVetoR5, VetoedParagraphCloseDoesNotBreakTheLine)
     // than against a literal, so it does not encode how many lines <p> makes.
     EXPECT_TRUE(linesWithVeto < linesWithout);
 }
+
+// ── A handler that returns NOTHING ──────────────────────────────────────────
+//
+// Every other test of these callbacks returns an explicit boolean, so the case
+// a real script hits most often has never been exercised: the one-armed veto.
+//
+//     function OnOpen (name, args)
+//       if name == 'u' then return true end
+//     end
+//
+// That is the natural way to write "suppress <u>", and for every other tag it
+// falls off the end of the function and returns nothing at all.
+//
+// mxpStart.cpp's COM arm is explicit about what that should mean -- "if the
+// function returns a non-zero result, don't go ahead", and a VT_EMPTY result
+// falls through to `return false` -- but the Lua arm is `return result`, and
+// ExecuteLua writes `*result = true` before it looks at the stack.  So the
+// handler above suppressed EVERY tag, not just <u>, and the same handler
+// written in VBScript did not.  docs/UPSTREAM-BUGS.md 90.
+TEST(MxpVetoR5, OpenTagHandlerThatReturnsNothingDoesNotVetoTheTag)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnOpen(name, args)\n"
+        "  if name == 'u' then return true end\n"
+        "end\n"), "<noreturn>"));
+    doc.m_ScriptEngine     = engine;
+    doc.m_strOnMXP_OpenTag = "OnOpen";
+    doc.FindAllEntryPoints();
+
+    // The tag the handler says nothing about: it opens.
+    mud(doc, "<b>bold");
+    EXPECT_EQ(1, (int) doc.m_ActiveTagList.GetCount());
+
+    // The tag it explicitly vetoes: it does not.  Both halves in one test, so
+    // neither can be satisfied by a handler that is simply never consulted.
+    mud(doc, "<u>plain");
+    EXPECT_EQ(1, (int) doc.m_ActiveTagList.GetCount());
+    EXPECT_STREQ("b", (LPCTSTR) doc.m_ActiveTagList.GetTail()->strName);
+}
 #endif
 
 // mxpStart.cpp: MXP_StartTag's custom-element expansion path builds a LOCAL

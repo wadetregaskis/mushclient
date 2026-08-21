@@ -1135,6 +1135,173 @@ TEST(PluginCallback, MxpTagAndEntityCallbacksReachPlugins)
     EXPECT_TRUE(CString(plugin_var(p, "err")).Find("E,") == 0);
 }
 
+// ═══ The MXP open-tag veto, arriving from a PLUGIN ═════════════════════════
+//
+// 3095c2a ("vetoing an atomic MXP tag now also undoes the tag's bookkeeping")
+// listed six things to check, and five of them are MxpD20.* in test_mxp.cpp.
+// All five drive the WORLD's own OnMXP_OpenTag.  The sixth is this route, and
+// it is a different call: MXP_StartTagScript asks the plugins FIRST, through
+// SendToAllPluginCallbacks(ON_PLUGIN_MXP_OPENTAG, "name,args", bStopOnFalse),
+// and only then the world's handler.
+//
+// The two routes disagree about which answer means "no".  A world handler
+// vetoes by returning TRUE ("not wanted"); a plugin vetoes by returning FALSE,
+// because the plugin call is a stop-on-FALSE broadcast whose result is negated
+// into MXP_StartTagScript's "not wanted" return.  A test that got that
+// backwards would pass for the wrong reason -- the wrong value simply does not
+// veto, and a tag that was never vetoed opens normally -- so the control below
+// returns nothing at all, which is neither answer.
+
+TEST(PluginCallback, PluginVetoOfAnMxpOpenTagUnwindsTheTagBookkeeping)
+{
+    {   // Control FIRST, same plugin shape, handler returns nothing: <b> really
+        // does reach MXP_StartTag and record itself, so the assertion below
+        // cannot pass merely because the tag never got there.
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.m_bMXP = true;
+        doc.m_iUseMXP = eUseMXP;
+        doc.m_iMXP_mode = eMXP_secure;
+        ASSERT_TRUE(load_plugin(doc, write_plugin("mxpok", IDA, "MxpOk",
+            "function OnPluginMXPopenTag(text) world.SetVariable('saw', text) end\n")));
+        ASSERT_TRUE(doc.m_bPluginProcessesOpenTag);
+
+        const char* t = "<b>bold";
+        doc.DisplayMsg(t, (int)strlen(t), 0);
+
+        EXPECT_STREQ("b,", (const char*)plugin_var(doc.GetPlugin(IDA), "saw"));
+        EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());
+    }
+
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bMXP = true;
+    doc.m_iUseMXP = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+    ASSERT_TRUE(load_plugin(doc, write_plugin("mxpveto", IDA, "MxpVeto",
+        "function OnPluginMXPopenTag(text)\n"
+        "  world.SetVariable('saw', text)\n"
+        "  return false\n"
+        "end\n")));
+    ASSERT_TRUE(doc.m_bPluginProcessesOpenTag);
+
+    const char* t = "<b>bold";
+    doc.DisplayMsg(t, (int)strlen(t), 0);
+
+    // Assert the DECLINE and not merely the absence: the plugin was asked...
+    EXPECT_STREQ("b,", (const char*)plugin_var(doc.GetPlugin(IDA), "saw"));
+    // ...and the tag was unwound rather than left dangling on the active list,
+    // which is what 3095c2a fixed for the world route.
+    EXPECT_EQ(0, (int)doc.m_ActiveTagList.GetCount());
+}
+
+namespace {
+
+// Both halves of the test below, differing only in what the plugin returns.
+// Returns what the world's own handler saw; the active-tag count comes back
+// through `activeTags`.
+std::string mxp_world_handler_saw(const char* pluginTag, const char* pluginBody,
+                                  int& activeTags)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bMXP = true;
+    doc.m_iUseMXP = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+
+    doc.m_ScriptEngine = new CScriptEngine(&doc, "Lua");
+    EXPECT_FALSE(doc.m_ScriptEngine->CreateScriptEngine());
+    EXPECT_FALSE(doc.m_ScriptEngine->Parse(CString(
+        "worldSaw = 'never asked'\n"
+        "function OnMXPopenTag(name, args, t) worldSaw = tostring(name) return false end\n"),
+        "<t>"));
+    doc.m_strOnMXP_OpenTag = "OnMXPopenTag";
+    doc.FindAllEntryPoints();
+
+    EXPECT_TRUE(load_plugin(doc, write_plugin(pluginTag, IDA, "MxpOrder",
+                                              pluginBody)));
+    EXPECT_TRUE(doc.m_bPluginProcessesOpenTag);
+
+    const char* t = "<b>bold";
+    doc.DisplayMsg(t, (int)strlen(t), 0);
+
+    activeTags = (int) doc.m_ActiveTagList.GetCount();
+
+    lua_getglobal(doc.m_ScriptEngine->L, "worldSaw");
+    const char* saw = lua_tostring(doc.m_ScriptEngine->L, -1);
+    std::string out = saw ? saw : "(nil)";
+    lua_pop(doc.m_ScriptEngine->L, 1);
+    return out;
+}
+
+}   // namespace
+
+// A plugin's veto is asked BEFORE the world's own handler and short-circuits
+// it: MXP_StartTagScript returns as soon as the plugin broadcast says no, so
+// OnMXP_OpenTag never runs at all.  Worth pinning because it is invisible from
+// either side alone -- the plugin cannot tell it pre-empted anything, and the
+// world handler cannot tell it was skipped -- and because that ordering is what
+// lets a plugin suppress a tag the world was configured to handle.
+TEST(PluginCallback, PluginVetoShortCircuitsTheWorldsOwnOpenTagHandler)
+{
+    int tags = -1;
+
+    // Control: the same two handlers, with the plugin returning nothing.  The
+    // world handler IS reached and the tag DOES open, so neither half of the
+    // veto assertion below can pass vacuously.
+    EXPECT_EQ(std::string("b"),
+              mxp_world_handler_saw("mxporder1",
+                  "function OnPluginMXPopenTag(text) end\n", tags));
+    EXPECT_EQ(1, tags);
+
+    EXPECT_EQ(std::string("never asked"),
+              mxp_world_handler_saw("mxporder2",
+                  "function OnPluginMXPopenTag(text) return false end\n", tags));
+    EXPECT_EQ(0, tags);
+}
+
+// The same defect at the other MXP site, and here it swallows diagnostics
+// rather than markup.
+//
+// MXP_error asks the world's OnMXP_Error handler first and, if it says so,
+// returns early -- skipping BOTH the plugin ON_PLUGIN_MXP_ERROR broadcast and
+// the debug-window display.  The COM arm treats a VT_EMPTY result as "no
+// opinion" and carries on; the Lua arm is `if (result) return;` over a result
+// ExecuteLua has already set to true.  So a world that merely LOGS MXP errors
+// in Lua silenced every plugin's error callback as well as its own display.
+// docs/UPSTREAM-BUGS.md 90.
+TEST(PluginCallback, WorldErrorHandlerThatReturnsNothingStillTellsThePlugins)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bMXP = true;
+    doc.m_iUseMXP = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+
+    doc.m_ScriptEngine = new CScriptEngine(&doc, "Lua");
+    ASSERT_FALSE(doc.m_ScriptEngine->CreateScriptEngine());
+    ASSERT_FALSE(doc.m_ScriptEngine->Parse(CString(
+        // A handler that only records.  No return statement at all -- which is
+        // what a logging handler looks like.
+        "seen = 0\n"
+        "function OnMXPerror(num, line, level, msg) seen = seen + 1 end\n"),
+        "<err>"));
+    doc.m_strOnMXP_Error = "OnMXPerror";
+    doc.FindAllEntryPoints();
+
+    ASSERT_TRUE(load_plugin(doc, write_plugin("mxperr", IDA, "MxpErr",
+        "function OnPluginMXPerror(text) world.SetVariable('err', text) end\n")));
+    ASSERT_TRUE(doc.m_bPluginProcessesError);
+
+    const char* t = "<nosuchtag>";
+    doc.DisplayMsg(t, (int)strlen(t), 0);
+
+    // The world handler ran -- so the plugin's silence below cannot be because
+    // no error happened.
+    lua_getglobal(doc.m_ScriptEngine->L, "seen");
+    EXPECT_GT((int)lua_tonumber(doc.m_ScriptEngine->L, -1), 0);
+    lua_pop(doc.m_ScriptEngine->L, 1);
+
+    // ...and the plugin was told about it too.
+    EXPECT_TRUE(CString(plugin_var(doc.GetPlugin(IDA), "err")).Find("E,") == 0);
+}
+
 // The MXP open-tag CALL SITE, end to end: real plugin, real MUD text, real
 // mxpStart.cpp.  Everything else in the scripting suite calls CScriptEngine
 // directly, which leaves the code that BUILDS the callback's arguments

@@ -685,7 +685,32 @@ bool CMUSHclientDoc::MXP_StartTagScript  (const CString & strName,
       table [(LPCTSTR) strName] = pArgument->strValue;
       }      // end of looping through each argument
 
-    bool result;
+    // Two seeds, and both matter.
+    //
+    // `result` answers "keep processing?", whose documented default for a
+    // handler that falls off the end is TRUE ("returning nothing keeps
+    // processing", conformed to by all six languages -- see
+    // platform/engines_selftest.cpp).  THIS site reads the same value as "veto
+    // the tag", so that default suppressed all markup for anyone who wrote the
+    // natural one-armed handler:
+    //
+    //     function OnMXPopenTag (name, args)
+    //       if name == 'u' then return true end
+    //     end
+    //
+    // bReturnedAValue is what tells "said nothing" from "said true", which is
+    // exactly what the COM arm below gets for free from VT_EMPTY.  It is seeded
+    // TRUE so that the five embedded engines -- which return before Lua's own
+    // body and never set it -- behave precisely as they always have.
+    //
+    // `result` is seeded too, because ExecuteLua's four early returns (no Lua
+    // state, unknown dispid, handler name not found, run-time error in the
+    // handler) never reach the assignment: a handler that THREW used to leave
+    // this read uninitialised, so a broken handler vetoed tags at random.
+    //
+    // docs/UPSTREAM-BUGS.md 90.
+    bool result = false;
+    bool bReturnedAValue = true;
     GetScriptEngine ()->ExecuteLua (m_dispidOnMXP_OpenTag, 
                                    m_strOnMXP_OpenTag, 
                                    eWorldAction,
@@ -697,8 +722,10 @@ bool CMUSHclientDoc::MXP_StartTagScript  (const CString & strName,
                                    NULL,
                                    &table,
                                    NULL,
-                                   &result);
-    return result;
+                                   &result,
+                                   false,
+                                   &bReturnedAValue);
+    return bReturnedAValue ? result : false;
     }   // end of Lua
 
   COleSafeArray sa;   // for wildcard list

@@ -2189,3 +2189,98 @@ correctly by accident, because there the backslash *is* the later separator. The
 pair pins the rule rather than one example of it. The fourth assertion, the
 no-separator fallback, is the one genuinely platform-specific line and is the
 only part still under an `#ifdef`.
+
+
+## 90 — A Lua MXP handler that returns nothing suppresses every tag, and every error (this commit)
+
+`ExecuteLua` hands the handler's answer back through a `bool *`, and writes a
+default first:
+
+```cpp
+if (result)
+  {
+  *result = true;                  // <-- the default
+  if (lua_gettop (L) > 0)          //     only overwritten when the handler
+    ...                            //     actually returned something
+  }
+```
+
+That default is correct, and deliberate: the parameter answers **"keep
+processing?"**, and "a handler that returns nothing keeps processing" is a
+reference contract all six languages conform to, asserted for each of them in
+`platform/engines_selftest.cpp`.
+
+The defect is that **two call sites read that same value as a different
+question**:
+
+| call site | what it reads `true` as | COM arm, handler returned nothing | Lua arm |
+|---|---|---|---|
+| `mxpStart.cpp` `MXP_StartTagScript` | **veto the tag** | `VT_EMPTY` → `return false`, proceed | **veto** |
+| `mxpError.cpp` `MXP_error` | **suppress the error** | `VT_EMPTY` → carry on | **suppress** |
+
+Both COM arms can tell "said nothing" from "said true", because a handler that
+returns nothing leaves the `COleVariant` as `VT_EMPTY`; the comment at the first
+of them is explicit about the intent — "if the function returns a non-zero
+result, don't go ahead". The Lua arm has no such signal, so it acts on a default
+that was written to answer a different question.
+
+**Why it stayed hidden.** Every existing test of these callbacks returns an
+explicit boolean. The case that fails is the one a real script is most likely to
+contain — the one-armed veto:
+
+```lua
+function OnMXPopenTag (name, args)
+  if name == 'u' then return true end
+end
+```
+
+That is the natural way to write "suppress `<u>`", and for every *other* tag it
+falls off the end of the function. The result was that a world with such a
+handler suppressed **all** MXP markup, while the identical handler written in
+VBScript suppressed only `<u>`. At the other site a handler that merely logs —
+no `return` anywhere, which is what a logging handler looks like — silenced the
+`ON_PLUGIN_MXP_ERROR` broadcast to every loaded plugin as well as the
+debug-window display.
+
+**A second defect at the same two lines.** Both sites declared their flag as a
+bare `bool result;`. `ExecuteLua` has four early returns that never reach the
+assignment — no Lua state, unknown dispid, the handler's name not found, and a
+run-time error in the handler — so a handler that *threw* left the caller
+reading uninitialised stack. At `MXP_StartTagScript` that means a broken handler
+vetoed tags at random.
+
+**The fix is additive, and that is deliberate.** `*result` must not be changed
+to default false: that would break the six-language keep-processing contract
+above. What the two MXP sites actually lack is the ability to tell "said
+nothing" from "said true". So `ExecuteLua` gained an optional
+`bool * pbReturnedAValue`, set from `lua_gettop (L) > 0` in Lua's own body, and
+the two sites honour `result` only when it says the handler really answered —
+which is exactly what `VT_EMPTY` gives their COM arms.
+
+Nothing else moves: the six plugin call sites do not pass the new parameter, the
+keep-processing contract is untouched, and the five embedded engines return
+before Lua's body and never set it, so with the flag seeded `true` at the call
+sites their behaviour is bit-for-bit what it was. Both sites also seed `result`
+itself, which removes the uninitialised read.
+
+**Tests:** `MxpVetoR5.OpenTagHandlerThatReturnsNothingDoesNotVetoTheTag`
+(`tests/test_mxp.cpp`) uses the one-armed handler above and asserts both halves
+in one test — `<b>` opens, `<u>` does not — so neither can pass with a handler
+that is never consulted.
+`PluginCallback.WorldErrorHandlerThatReturnsNothingStillTellsThePlugins`
+(`tests/test_plugins.cpp`) checks that the world's own error handler running does
+not stop the plugins hearing about the error, and asserts the world handler ran
+so the plugin's silence cannot be blamed on there having been no error. Both
+were confirmed to fail before the fix.
+
+**Still open: the five embedded engines on the port.** They are unchanged by
+this commit and still wrong in the same way — a Python `OnMXP_OpenTag` returning
+`None` still vetoes every tag. Each writes its own default rather than reporting
+whether the handler answered: `py_engine.cpp:552,555` (`*result = true`, then
+`Py_None` → `true` under the comment "no explicit return → keep going"),
+`perl_engine.cpp:411`, `js_engine.cpp:579`, `tcl_engine.cpp:365` (the non-`TCL_OK`
+arm) and `ruby_engine.cpp:512` (`Qnil` → `true`). Each needs one line: set
+`pbReturnedAValue` from whatever it already uses to spot the no-return case.
+Verification is `--engines-selftest`, which needs a macOS GUI build, so it is not
+part of this commit. Windows is unaffected either way — all five are
+`#ifndef _WIN32`.

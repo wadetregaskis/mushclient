@@ -554,7 +554,8 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
                                 map<string, string> * table,   // map of other things
                                 CPaneLine * paneline,     // and the line (for triggers)
                                 bool * result,            // where to put result
-                                const bool bLowercaseWildcards) // lower-case the wildcards?
+                                const bool bLowercaseWildcards, // lower-case the wildcards?
+                                bool * pbReturnedAValue) // did the handler return anything?
 
 
   {
@@ -779,6 +780,19 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
     if (m_pDoc->m_CurrentPlugin)
       m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += finish.QuadPart - start.QuadPart;
     }
+
+  // Whether the handler returned ANYTHING, which `result` cannot express:
+  // its documented default for a handler that falls off the end is true
+  // ("returning nothing keeps processing"), and true is also what an
+  // explicit `return true` gives.  The two MXP call sites need the
+  // difference, because they read the value as "veto" rather than as "keep
+  // processing".  docs/UPSTREAM-BUGS.md 90.
+  //
+  // Set only here, in Lua's own body -- the five embedded engines return
+  // above, so a caller's `true` seed survives for them and their behaviour
+  // is untouched.
+  if (pbReturnedAValue)
+    *pbReturnedAValue = lua_gettop (L) > 0;
 
   if (result)
     {

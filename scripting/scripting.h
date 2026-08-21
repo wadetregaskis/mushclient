@@ -124,7 +124,21 @@ class CScriptEngine : public CObject
                    // the raw regexp too (see t_regexp::GetCallbackWildcards).
                    // Honoured by the five embedded engines, which stand in for
                    // the ActiveScript hosts that get FixWildcard'ed wildcards.
-                   const bool bLowercaseWildcards = false);
+                   const bool bLowercaseWildcards = false,
+                   // Set false when the handler returned NOTHING, so a caller
+                   // can tell "no opinion" from an explicit answer.  `result`
+                   // alone cannot: it answers "keep processing?", whose
+                   // documented default for a handler that falls off the end is
+                   // TRUE (engines_selftest.cpp: "returning nothing keeps
+                   // processing", conformed to by all six languages), and the
+                   // two MXP call sites read that same true as "veto the tag" or
+                   // "suppress the error".  docs/UPSTREAM-BUGS.md 90.
+                   //
+                   // LEFT ALONE by the five embedded engines, which return
+                   // before Lua's own body: seed it true and they behave exactly
+                   // as they always have.  Fixing them is one line each and
+                   // wants --engines-selftest to verify.
+                   bool * pbReturnedAValue = NULL);
 
   // returns true if script error
   bool ExecuteLua (DISPID & dispid,          // dispatch ID, will be set to DISPID_UNKNOWN on an error

@@ -2121,3 +2121,71 @@ been giving the correct answer all along, and this is one of the cases where
 Windows and the port genuinely differed and the *port* was right. It took the
 Windows unit-test target (`docs/WINDOWS-VALIDATION.md` §10j, §10k) to see it: the
 test that caught it is not new and had been green on macOS for months.
+
+
+## 89 — `ExtractDirectory` looks only for a backslash on Windows, so a plugin path with forward slashes resolves `$PLUGINDIR` to the current directory (this commit)
+
+`utilities_shared.cpp`'s `ExtractDirectory` had two arms. The POSIX one searched
+for **both** separators and took the later, with the comment "also accept `'\'`
+in case of cross-platform world files". The Windows one searched for a backslash
+only:
+
+```cpp
+int iSlash = str.ReverseFind ('\\');
+if (iSlash == -1)
+   str = ".\\";
+else
+  str = str.Left (iSlash + 1);
+```
+
+So `ExtractDirectory("plugins/images/x.png")` answered `".\"` on Windows and
+`"plugins/images/"` on the port.
+
+**Why it is a defect rather than a platform difference: the function's own
+caller already expects forward slashes.** `xml/xml_load_world.cpp` decides
+whether a plugin filename is relative by asking whether it contains **either**
+separator:
+
+```cpp
+if (strFileName.Find ("\\") == -1 &&
+    strFileName.Find ("/") == -1)
+  strFileName = CString (Make_Absolute_Path (App.m_strPluginsDirectory)) + strFileName;
+```
+
+Six lines later it hands that same string to `ExtractDirectory` to set
+`m_CurrentPlugin->m_strDirectory`. A path with forward slashes is therefore a
+shape the loader **expressly** anticipates, and the very next thing it does with
+it mis-parses it.
+
+**Where it shows:** `m_strDirectory` is what `$PLUGINDIR` expands to
+(`xml_load_world.cpp`, the `::Replace` block), so a plugin loaded from a path
+written with forward slashes had every `$PLUGINDIR` resolve to the *current
+directory* instead of its own. Files the plugin ships beside itself (sounds,
+images, `require`d Lua) are then looked for in the wrong place. Forward slashes
+get into world files the ordinary way: a world file authored or edited on macOS
+or Linux, one hand-written, or one produced by a script.
+
+**Fix:** use the POSIX arm's search on both platforms, looking for both
+separators and taking the later. The only thing left under `#ifdef` is the
+no-separator fallback, which still names the platform's own separator (`".\"`
+against `"./"`).
+
+The widening cannot break a path the old code got right: for any string with no
+`'/'` in it the two searches return the same index, and a string that *does*
+contain `'/'` is exactly the case that was wrong. Win32 has accepted `'/'` as a
+path separator since NT, so the answer is usable as a path either way.
+
+**Why the port never saw it:** the port only ever compiled the other arm. The
+divergence came from widening the POSIX side without carrying the reasoning back
+across the `#ifdef`, so the comment explaining *why* both separators matter
+ended up inside the one arm that no longer needed explaining.
+
+**Test:** `tests/test_utilities.cpp`'s
+`Utilities.ExtractDirectoryAcceptsBackslashSeparators`. It needed no new case to
+catch this; two of its four assertions failed the moment the suite was enabled
+on Windows. It now asserts **both** mixed orders instead of one. Only
+`a\b/c.png` distinguishes the arms: a backslash-only search answers `a/b\c.png`
+correctly by accident, because there the backslash *is* the later separator. The
+pair pins the rule rather than one example of it. The fourth assertion, the
+no-separator fallback, is the one genuinely platform-specific line and is the
+only part still under an `#ifdef`.

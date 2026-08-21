@@ -5505,3 +5505,95 @@ The doc method's own `if (!bNamesRead) return VT_NULL` is **not** the fix and
 never was: with the flag wrongly true it does not fire. Worth stating because it
 is the guard a reader notices first, and mistaking it for the fix would make all
 three tests look redundant.
+
+### 10y. The two biggest excluded suites, unblocked but not yet entered
+
+`test_world_load.cpp` (105 tests) and `test_lua_scripting.cpp` (174) were
+excluded for the same stated reason, and the generator said so: "Same shape as
+test_lua_scripting, and the same fix would serve both." Both were blocked on
+`CMUSHclientDoc::LoadWorldFromFile`, which `doc.h` declares `#ifndef _WIN32`.
+
+**The recorded reason was accurate for one of them and badly overstated for the
+other** — the §10r/§10s pattern again, now for the fourth time.
+`test_world_load.cpp` uses `LoadWorldFromFile` 105 times, once per test: that
+suite genuinely *is* the entry point. `test_lua_scripting.cpp` uses it **twice
+in 5,028 lines**. A reason that reads identically for both hides a hundredfold
+difference in how much it actually explains.
+
+#### What the entry point is, and what it is not
+
+The port's `LoadWorldFromFile` (`platform/doc_port_glue.cpp`) transcribes
+`CMUSHclientDoc::Serialize`'s loading branch, because the port has no
+CArchive-driven document framework to reach it through. Its own comment calls
+itself "the test suite's canonical loader **until the Stage-7 Serialize
+rewire**".
+
+On Windows that rewire is available today, so the host does not get a second
+copy of the body. It gets a dozen-line **driver** (`tests/win/all_tests.cpp`,
+declared in `doc.h` under `_WIN32 && MUSHCLIENT_TESTS`) that opens the file,
+hands `Serialize` a load archive, and then runs the OpenSession scripting steps
+`doc.cpp` performs once a world is open. The loading is the shipping loader.
+
+One engine line had to move: `Serialize` calls
+`Frame.SetStatusMessageNow (strMsg)`, and `Frame` is
+`*((CMainFrame*)App.m_pMainWnd)` — a null dereference in a host with no main
+frame (§10v). It is now `#ifndef MUSHCLIENT_TESTS`. The message is still built;
+nothing below reads it.
+
+Three portability fixes went with it, all in `test_lua_scripting.cpp`:
+`<utime.h>` is `<sys/utime.h>` here (and `utime`/`utimbuf` wear underscores, now
+aliased in `tests/posix_compat.h`), and two `CString::c_str ()` calls became
+`(LPCTSTR)` — `c_str` is the port shim's addition, not MFC's. Two tests are
+guarded: one drives `g_wxhook_message_box`, the port's seam for the reload
+prompt, and one reads `CArchiveException::s_iLiveCount`, an instrument the
+port's shim adds so a leaked exception can be counted at all.
+
+#### Measured, with both suites in
+
+**1,130 passing across 141 suites** — up from 1,082 — with:
+
+| suite | state |
+|---|---|
+| `WorldLoad`, `WorldLoadR4` | **BLOCKED** at the 60 s clock |
+| `LuaScripting`, `SweepR4`, `LuaR5` | **CRASHED** |
+| 10 individual tests | failed |
+
+The failures are `LuaScripting.WorldVersion`,
+`ProgressDialogLibraryIsRegistered`, `GetLineInfoTimeUsesLockedLocalFormat`,
+`PaletteAccessorsRoundTripAndRejectOutOfRange`, `Utf8DecodeBadStringErrors`,
+`Utf8EncodeTableNonNumberErrors`, `LuaMarshal.SaveWritesWorldFile`,
+`SpellCheckTest.SpellCheckCommandAppliesCorrectionThroughView`,
+`LuaR5.HardenedStateDebugAndStandins`, `WorldLoadR5.PluginHeaderValidationArms`
+and `PluginLoad.SourcePathRecorded`.
+
+One is already understood and fixed: **`world.Version ()` answered `""`**,
+because `MUSHCLIENT_VERSION` is a `CString` global that
+`CMUSHclientApp::InitInstance` assigns rather than a compile-time constant, and
+this host does not run `InitInstance`. `MC_TEST_WIN_APP_STATE` now sets it, for
+the same reason it loads the option table and the MXP tables.
+
+**Two hangs are the first job**, because a hang is the one state that costs more
+than it reports: `WorldLoad` and `WorldLoadR4` sit until the clock kills them,
+which on this host means a modal nothing can answer. §10r's `SHBrowseForFolder`
+and a `CFileDialog` from a missing plugin file are both plausible; neither is
+confirmed.
+
+#### Why they are still excluded
+
+The suites stay out and the infrastructure lands, which is the split this
+document has settled on before: **the unit of progress is the recorded reason.**
+Entering a suite that hangs would take the whole target red for one file, and
+triaging eleven failures across five suites is its own pass. Both exclusion
+reasons now carry the measured list rather than a guess, so the next pass starts
+from data.
+
+The infrastructure is **not** left without a caller, which is the failure mode
+that would otherwise follow: `tests/win/test_gap_coverage.cpp` gains
+`WorldLoadHost.RealSerializeLoadsAWorldFileEndToEnd` and
+`WorldLoadHost.ANonWorldFileIsRefused`. Between them they drive
+`Serialize` → `IsArchiveXML` → `Serialize_World_XML` → `Load_World_XML` end to
+end against real MFC and a real `CArchive`, assert that `SetPathName` happened
+(a driver that skipped it would pass everything else and then break
+`%WORLDFILEDIR%` and Save for all 279 tests), and assert that a non-world file
+is refused rather than half-loaded — without which the positive test would be
+satisfied by a driver that swallowed every error.

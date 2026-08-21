@@ -47,6 +47,18 @@
 #define rmdir _rmdir
 #endif
 
+// <utime.h> is <sys/utime.h> here, and both the function and the struct wear
+// the underscore.  The header is pulled in here so the two macros below have
+// something to alias; the one test that wants it picks the right header for
+// itself, because an <angle-bracket> include cannot be redirected from here.
+#include <sys/utime.h>
+#ifndef utimbuf
+#define utimbuf _utimbuf
+#endif
+#ifndef utime
+#define utime _utime
+#endif
+
 // mkdir with a mode, which Windows _mkdir does not take.  The mode is dropped
 // rather than translated: these are scratch directories under /tmp, the tests
 // only ever pass 0755, and Windows ACLs are not a thing 0755 maps onto.

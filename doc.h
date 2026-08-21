@@ -2120,6 +2120,22 @@ public:
   // uses, so the port no longer keeps a second mtime that nothing read.
 #endif
 
+#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
+  // The same entry point for the Windows unit-test host, and NOT a second copy
+  // of the body above.  On Windows the canonical loader is
+  // CMUSHclientDoc::Serialize's loading branch (serialize.cpp), which the
+  // framework reaches through CDocument::OnOpenDocument -- something a console
+  // host has no window to drive.  This is a dozen lines that open the file,
+  // hand Serialize a load archive, and then run the OpenSession scripting steps
+  // doc.cpp performs once a world is open.  Defined in tests/win/all_tests.cpp.
+  //
+  // The port's own body (platform/doc_port_glue.cpp) transcribes that same
+  // branch because it has no CArchive-driven framework at all; its comment
+  // calls itself "the test suite's canonical loader until the Stage-7 Serialize
+  // rewire", and this is that rewire arriving on one platform first.
+  BOOL LoadWorldFromFile (const char * path);
+#endif
+
   void StartNewLine (const bool hard_break, const int flags);
   bool ProcessPreviousLine (void);
   void SendLineToPlugin (void);

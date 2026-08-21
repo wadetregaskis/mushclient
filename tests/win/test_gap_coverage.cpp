@@ -329,3 +329,88 @@ TEST(NamesFileR5, GenerateNameAfterABadFileAnswersNullInsteadOfDividingByZero)
 
     unlink(p.c_str());
 }
+
+// ═══ LoadWorldFromFile, the host's world-load entry ════════════════════════
+//
+// The Windows framework opens a world through CDocument::OnOpenDocument, which
+// wants a window this host does not have, so doc.h gives the test host its own
+// LoadWorldFromFile under _WIN32 && MUSHCLIENT_TESTS (defined in
+// tests/win/all_tests.cpp).  It is a driver, not a loader: the body it drives
+// is CMUSHclientDoc::Serialize's loading branch in serialize.cpp, which IS the
+// Windows world loader.
+//
+// This test exists because that entry point is what unblocks
+// tests/test_world_load.cpp (105 uses) and tests/test_lua_scripting.cpp, and
+// those two are not enabled yet -- see their reasons in
+// tests/win/gen_test_vcxproj.ps1 and docs/WINDOWS-VALIDATION.md 10y.  Without
+// it the host entry would be code with no caller, which is exactly the shape
+// that rots.
+//
+// It also earns its keep alone: it is the only thing here that drives
+// Serialize -> IsArchiveXML -> Serialize_World_XML -> Load_World_XML end to
+// end against real MFC and a real CArchive.
+TEST(WorldLoadHost, RealSerializeLoadsAWorldFileEndToEnd)
+{
+    const char* xml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!DOCTYPE muclient>\n"
+        "<muclient>\n"
+        "<world site=\"example.org\" port=\"4321\" name=\"HostLoadWorld\" />\n"
+        "<triggers>\n"
+        "  <trigger match=\"you have died\" name=\"death\" enabled=\"y\""
+        " send_to=\"0\" sequence=\"100\">\n"
+        "    <send>say I died!</send>\n"
+        "  </trigger>\n"
+        "</triggers>\n"
+        "</muclient>\n";
+
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_test_hostworld_%d.mcl", (int)getpid());
+    FILE* f = fopen(path, "wb");
+    ASSERT_TRUE(f != nullptr);
+    fwrite(xml, 1, strlen(xml), f);
+    fclose(f);
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(path));
+
+    // The world header reached the document...
+    EXPECT_STREQ("HostLoadWorld", (const char*) doc.m_mush_name);
+    EXPECT_STREQ("example.org",   (const char*) doc.m_server);
+    EXPECT_EQ(4321, (int) doc.m_port);
+
+    // ...and so did a child collection, which is the half that proves
+    // Load_World_XML ran rather than just the header being parsed.
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("death", t));
+    ASSERT_NE(nullptr, t);
+    EXPECT_STREQ("you have died", (const char*) t->trigger);
+
+    // SetPathName is Serialize's, not the driver's: assert it, because a
+    // driver that skipped it would still pass everything above and would then
+    // break %WORLDFILEDIR% and Save for every test built on this entry point.
+    EXPECT_TRUE(CString(doc.GetPathName()).Find("mc_test_hostworld") != -1);
+
+    unlink(path);
+}
+
+// The other half of the contract: a file that is not a MUSHclient world is
+// REFUSED rather than half-loaded.  Serialize throws a badSchema CArchive
+// exception for a missing XML signature, and the driver turns that into FALSE.
+// Without this the ASSERT_TRUE above would be satisfied by a driver that
+// swallowed every error and always answered true.
+TEST(WorldLoadHost, ANonWorldFileIsRefused)
+{
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_test_notaworld_%d.txt", (int)getpid());
+    FILE* f = fopen(path, "wb");
+    ASSERT_TRUE(f != nullptr);
+    fputs("this is not a world file\n", f);
+    fclose(f);
+
+    CMUSHclientDoc doc;
+    EXPECT_FALSE(doc.LoadWorldFromFile(path));
+    EXPECT_STREQ("", (const char*) doc.m_mush_name);
+
+    unlink(path);
+}

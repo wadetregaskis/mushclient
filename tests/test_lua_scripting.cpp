@@ -2005,7 +2005,11 @@ TEST(LuaScripting, ProgressDialogLibraryIsRegistered)
 
 // ── Intent-comment tests, tail batch (candidate mining, 2026-07) ──────────
 
+#ifdef _WIN32
+#include <sys/utime.h>   // and posix_compat.h aliases utime/utimbuf onto it
+#else
 #include <utime.h>
+#endif
 
 // methods_triggers.cpp AddTriggerEx: "must have a label for 'send to label'
 // (eSendToVariable)" — a blank trigger name (auto-assigned '*trigger...'
@@ -2286,6 +2290,13 @@ TEST(LuaScripting, CreateScriptEngineRefusesToReplaceALiveEngine)
 static int  g_askCount = 0;
 static int  CountingAsk(const char*, const char*, unsigned) { ++g_askCount; return IDNO; }
 
+// Headless only: g_wxhook_message_box is the PORT'S seam for the reload prompt
+// (platform/wx_mfc_hooks.h).  On Windows the prompt is a real ::MessageBox, and
+// what this host substitutes instead is CWinApp::DoMessageBox (mc_test.h) -- a
+// different interception point with no per-call counting, so the "asked exactly
+// once" assertions below have nothing to count.  Answering that properly wants
+// the host to count its own DoMessageBox calls, which is its own change.
+#ifndef _WIN32
 TEST(LuaScripting, ReloadNeverDoesNotEvenAsk)
 {
     char path[256];
@@ -2346,6 +2357,7 @@ TEST(LuaScripting, ReloadNeverDoesNotEvenAsk)
 
     ::unlink(path);
 }
+#endif
 
 // ── world.Metaphone ──────────────────────────────────────────────────────
 // CMUSHclientDoc::Metaphone joins primary+","+secondary; the BSTR→Lua
@@ -3694,6 +3706,12 @@ TEST(SweepR4, ExportXmlPerTypeAndImportErrors)
     lua_close(L);
 }
 
+// Headless only: CArchiveException::s_iLiveCount is an instrument the PORT'S
+// shim adds (platform/mfc_ui.h) so a leaked exception can be seen at all.  Real
+// MFC has no such counter, and there is no way to observe the same thing here --
+// which is exactly why the Windows target grows its own leak checks instead
+// (tests/win/test_gap_coverage.cpp uses the debug CRT block count).
+#ifndef _WIN32
 // methods_xml.cpp CMUSHclientDoc::ImportXML: the catch (CArchiveException*)
 // clause used to have no parameter name and so never called e->Delete() -
 // every failed import (bad schema, as here) leaked the exception object.
@@ -3717,6 +3735,7 @@ TEST(LuaScripting, ImportXMLDeletesArchiveExceptionOnFailure)
 
     lua_close(L);
 }
+#endif
 
 TEST(SweepR4, DefaultAndCurrentAlphaOptions)
 {
@@ -4156,7 +4175,7 @@ TEST(SweepR4, ScriptErrorLogFileAppended)
     char dir[128];
     snprintf(dir, sizeof dir, "/tmp/mc_test_r4_errlog_%d/", (int)getpid());
     mkdir(dir, 0755);
-    std::string savedDir = (const char*)App.m_strDefaultLogFileDirectory.c_str();
+    std::string savedDir = (const char*)(LPCTSTR) App.m_strDefaultLogFileDirectory;
     App.m_strDefaultLogFileDirectory = dir;
 
     CMUSHclientDoc doc;
@@ -4191,7 +4210,7 @@ TEST(SweepR4, ScriptErrorLogFileIncludesContextBlock)
     char dir[128];
     snprintf(dir, sizeof dir, "/tmp/mc_test_r4_errlog_ctx_%d/", (int)getpid());
     mkdir(dir, 0755);
-    std::string savedDir = (const char*)App.m_strDefaultLogFileDirectory.c_str();
+    std::string savedDir = (const char*)(LPCTSTR) App.m_strDefaultLogFileDirectory;
     App.m_strDefaultLogFileDirectory = dir;
 
     CMUSHclientDoc doc;

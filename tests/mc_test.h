@@ -530,8 +530,15 @@ void Generate256colours(void);
 //     &amp; and friends through App.m_EntityMap, so without this the parser
 //     rejects a document containing any predefined entity -- and a world file's
 //     custom entity would SHADOW a predefined one rather than lose to it.
+// MUSHCLIENT_VERSION is a CString GLOBAL that CMUSHclientApp::InitInstance
+// assigns (MUSHclient.cpp), not a compile-time constant -- so in a host that
+// never runs InitInstance it is the empty string, and world.Version() answers
+// "".  Set it here for the same reason this macro loads the option table and
+// the MXP tables: those are all things InitInstance does that the engine then
+// assumes have happened.
 #define MC_TEST_WIN_APP_STATE() \
     do { \
+        MUSHCLIENT_VERSION = VERSION_STRING; \
         App.LoadGlobalsFromDatabase(); \
         App.MXP_LoadElements(); \
         App.MXP_LoadEntities(); \

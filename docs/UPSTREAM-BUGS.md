@@ -102,6 +102,7 @@ patches upstream, not as a claim that this tree fixed it.
 | 85 | `MXP_StartTag` records a built-in tag as open — an active-list entry plus a `START_TAG` marker style — before `MXP_OpenAtomicTag` asks the veto, and nothing unwinds it, so a vetoed tag stays on the active list: a spurious `StartNewLine` from its close, a swallowed outstanding-tag warning, a close-tag callback for an open that was suppressed, and a vetoed `<send>` rewriting the enclosing anchor's action | `3095c2a` | mxpStart.cpp `CMUSHclientDoc::MXP_StartTag`; mxpOpenAtomic.cpp `CMUSHclientDoc::MXP_OpenAtomicTag` |
 | 86 | `calculate_line_and_column`'s two UTF-8 fix-ups disagree about direction — the first walks **forward** to the next character's lead byte (`col++`) where the half-way arm below walks **backward** (`col--`) — so the two arms can resolve the same click to different characters, and a click just left of a multi-byte character selects one too far right | not fixed (needs a Windows run) | mushview.cpp `CMUSHView::calculate_line_and_column` |
 | 87 | lsqlite3 decides whether a column value survives as a Lua number with `n == i64`, where the usual arithmetic conversions widen the int64 operand to double — so the test reads `(double) i64 == (double) i64`, is vacuously true, and the exact-decimal-string branch beside it is unreachable at all three sites; any value a double cannot hold is pushed to Lua silently **rounded** (a column holding `9007199254740993` reads back as `9007199254740992`) | `fbb6695` | lsqlite3.c `vm_push_column`, `db_last_insert_rowid`, `db_push_value` — vendored third-party code, so upstream lsqlite3 carries it too |
+| 88 | `Get_XML_date` builds its `CTime` with `nDST = 0` — "this wall-clock time is standard time" — so a date recorded during daylight saving is handed to `mktime` as if it were not, and reading the hour back through `localtime` returns it **one hour later**.  Measured on Windows: `"2020-05-06 07:08:09"` parses back as hour 8.  Invisible to the port, whose `CTime` shim ignores the argument and always passes `-1` | this commit | xmlparse.cpp `Get_XML_date` — the third bug in this function, after 5 and 6 |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -2072,3 +2073,51 @@ range guard exists for. Mutation-checked: restoring the vacuous test fails it.
 **Vendored code.** `lsqlite/lsqlite3.c` is third-party and is in `MUSHclient.vcxproj`,
 so the defect ships to Windows too and the fix is a local patch that upstream
 lsqlite3 does not carry. See `docs/WINDOWS-VALIDATION.md` §4c-sexquadragies.
+
+## 88 — `Get_XML_date` tells `mktime` that summer is standard time, so every parsed hour is an hour late (this commit)
+
+**Bug:** the function's last line builds the result as
+
+```cpp
+tValue = CTime (iYear, iMonth, iDay, iHour, iMinute, iSecond, 0);
+```
+
+The trailing `0` is MFC's `nDST`, which `CTime` passes straight through as
+`tm_isdst` to `mktime`. `0` does not mean "no opinion" — it is a positive claim
+that the wall-clock time being converted is **standard** time. For any date
+inside a daylight-saving period the CRT therefore converts it as standard time,
+producing a `time_t` an hour earlier than intended; reading a component back
+through `localtime` — which is what `CTime::GetHour()` does — returns the hour
+one **later** than the string said.
+
+Measured rather than inferred, on Windows on 2026-08-21 with
+`tests/test_xmlparse.cpp`'s `XmlAttrR5.DateParseArms`:
+
+| attribute | parsed back as |
+|---|---|
+| `2020-05-06 07:08:09` | hour 8 |
+| `2020-05-06` (no time) | hour 1, not 0 |
+| `2020-05-06 01` | hour 2 |
+
+Every hour in the fixture is off by exactly one, and the shift is the local
+zone's DST offset — so the size of the error depends on the reader's timezone
+and the time of year, and it is zero for half the year, which is a good part of
+why it has survived.
+
+**Fix:** pass `-1` ("work it out"), which is `CTime`'s own default and what the
+three other `CTime` component constructors in this tree already get by not
+naming the parameter. `xmlparse.cpp:1592` is the only site in the tree that
+passes an explicit `nDST`.
+
+**Where it shows:** `Get_XML_date` has one caller that reaches user data —
+`xml_load_world.cpp:2472`, a plugin's `date_written`, which the Plugins dialog
+displays. Cosmetic in effect, but it is a value read straight back out of a file
+the client itself wrote, so a plugin's date drifts by an hour every time it is
+loaded during summer time.
+
+**Why the port never saw it:** `platform/mfc_time.h`'s `CTime` names the
+parameter `int /*dst*/` and always sets `tm_isdst = -1`. The port has therefore
+been giving the correct answer all along, and this is one of the cases where
+Windows and the port genuinely differed and the *port* was right. It took the
+Windows unit-test target (`docs/WINDOWS-VALIDATION.md` §10j, §10k) to see it: the
+test that caught it is not new and had been green on macOS for months.

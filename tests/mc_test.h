@@ -511,6 +511,29 @@ void Generate256colours(void);
                 RUNTIME_CLASS(CChildFrame), RUNTIME_CLASS(CMUSHView)); \
     } while(0)
 
+// ── a CMainFrame object, with no window in it ──────────────────────────────
+// `Frame` is a MACRO -- *((CMainFrame *) App.m_pMainWnd) (stdafx.h:271) -- so
+// every use of it is a DEREFERENCE and faults outright when m_pMainWnd is
+// NULL.  That single fact is behind four separate exclusions in this target's
+// history and three crashing suites, each in a different engine file.
+//
+// CONSTRUCT one, do NOT Create() it.  The constructor is fourteen assignments
+// and a ZeroMemory (mainfrm.cpp:256) -- no window, no toolbars, no timers --
+// which leaves every embedded control with m_hWnd == NULL.  That is exactly
+// the state MFC's own guards are written for (`if (pWnd->m_hWnd)`,
+// `if (Frame.m_wndInfoBar.m_hWnd)`), so the engine's existing checks start
+// working instead of faulting one line before they are read.
+//
+// It is NOT AfxGetApp()->m_pMainWnd in the sense the framework means: nothing
+// pumps messages for it and nothing must try.  Anything that needs a CREATED
+// frame -- toolbar button state, accelerators -- still cannot work here, and
+// those suites stay out with their own reasons.
+#define MC_TEST_WIN_MAIN_FRAME() \
+    do { \
+        if (App.m_pMainWnd == NULL) \
+            App.m_pMainWnd = new CMainFrame; \
+    } while(0)
+
 // ── the InitInstance steps a headless host still needs ─────────────────────
 // CMUSHclientApp's constructor does almost nothing; InitInstance is where the
 // Windows app builds its global state, and InitInstance does not run here.
@@ -539,6 +562,7 @@ void Generate256colours(void);
 #define MC_TEST_WIN_APP_STATE() \
     do { \
         MUSHCLIENT_VERSION = VERSION_STRING; \
+        MC_TEST_WIN_MAIN_FRAME(); \
         App.LoadGlobalsFromDatabase(); \
         App.MXP_LoadElements(); \
         App.MXP_LoadEntities(); \
@@ -546,9 +570,17 @@ void Generate256colours(void);
         MC_TEST_WIN_DOC_TEMPLATES(); \
     } while(0)
 
+// Defined in tests/win/all_tests.cpp, which is the only place this macro is
+// ever expanded (MC_TEST_COMBINED means every other file's MC_TEST_MAIN()
+// produces nothing).  It prints a symbolised stack from the faulting CONTEXT,
+// because /EHsc means the runner's catch(...) never sees an access violation
+// and the run otherwise dies saying only "CRASHED (no summary)".
+void McTestInstallCrashHandler();
+
 #define MC_TEST_WIN_HOST_INIT() \
     do { \
         setvbuf(stdout, NULL, _IONBF, 0); \
+        McTestInstallCrashHandler(); \
         for (int rt_ = 0; rt_ < 3; rt_++) { \
             _CrtSetReportMode(rt_, _CRTDBG_MODE_FILE); \
             _CrtSetReportFile(rt_, _CRTDBG_FILE_STDERR); \

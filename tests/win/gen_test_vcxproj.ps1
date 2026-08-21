@@ -164,7 +164,7 @@ foreach ($cfg in @('Debug','Release')) {
   W '    <Link>'
   W '      <SubSystem>Console</SubSystem>'
   W '      <AdditionalLibraryDirectories>$(SolutionDir)openssl\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>'
-  W '      <AdditionalDependencies>lua5.1.lib;winmm.lib;dsound.lib;Shlwapi.lib;libssl.lib;libcrypto.lib;Crypt32.lib;%(AdditionalDependencies)</AdditionalDependencies>'
+  W '      <AdditionalDependencies>lua5.1.lib;dbghelp.lib;winmm.lib;dsound.lib;Shlwapi.lib;libssl.lib;libcrypto.lib;Crypt32.lib;%(AdditionalDependencies)</AdditionalDependencies>'
   W '      <GenerateDebugInformation>true</GenerateDebugInformation>'
   W '    </Link>'
   W '  </ItemDefinitionGroup>'

@@ -26,8 +26,171 @@
 #include "childfrm.h"
 #include "textchildfrm.h"
 #include "MUSHview.h"
+#include "mainfrm.h"   // MC_TEST_WIN_MAIN_FRAME: a constructed, uncreated frame
 #include "TextView.h"
 #include "mc_test.h"
+#include <dbghelp.h>   // McTestCrashFilter: StackWalk64 + SymFromAddr
+
+// ── A crash names its frame, instead of naming nothing ─────────────────────
+//
+// An access violation here is not caught by anything: mc_test.h's runner wraps
+// each test in catch(...), but this target compiles /EHsc, where a C++ handler
+// does not see an SEH exception -- so the process dies, the summary line is
+// never printed, and run_tests.ps1 can only report "CRASHED (no summary)".
+// The last [PASS] on stdout names the test BEFORE the one that died, which is
+// enough to identify the test and nothing at all about where in the engine it
+// went.
+//
+// So walk the stack from the exception's own CONTEXT and print it.  This is
+// the Windows counterpart of the in-process backtrace()/backtrace_symbols_fd
+// handler the macOS side reached for when lldb hung on the notepad crash
+// (CLAUDE.md, Verification debt) -- and for the same reason: the instrument
+// that is always installed beats the one that has to be attached to a
+// reproduction.
+//
+// Symbols come from the PDB the Debug build already writes beside the exe, so
+// this costs nothing to keep and needs no separate symbol server.  If dbghelp
+// cannot name a frame it prints the module and offset, which is still enough
+// to place it with a map file.
+static void McTestPrintStack (const CONTEXT & context, int maxFrames);
+
+static LONG WINAPI McTestCrashFilter (EXCEPTION_POINTERS * ep)
+{
+  static bool s_inFilter = false;
+  if (s_inFilter)                 // a fault inside the walker: give up quietly
+    return EXCEPTION_EXECUTE_HANDLER;
+  s_inFilter = true;
+
+  const DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
+  const char * name = "exception";
+  switch (code)
+    {
+    case EXCEPTION_ACCESS_VIOLATION:      name = "ACCESS VIOLATION";      break;
+    case EXCEPTION_STACK_OVERFLOW:        name = "STACK OVERFLOW";        break;
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:    name = "INTEGER DIVIDE BY ZERO"; break;
+    case EXCEPTION_ILLEGAL_INSTRUCTION:   name = "ILLEGAL INSTRUCTION";   break;
+    case EXCEPTION_PRIV_INSTRUCTION:      name = "PRIVILEGED INSTRUCTION"; break;
+    case EXCEPTION_IN_PAGE_ERROR:         name = "IN-PAGE ERROR";         break;
+    }
+
+  fprintf (stderr, "\n*** %s (0x%08lX) at 0x%p", name, (unsigned long) code,
+           ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : NULL);
+  if (code == EXCEPTION_ACCESS_VIOLATION && ep && ep->ExceptionRecord &&
+      ep->ExceptionRecord->NumberParameters >= 2)
+    fprintf (stderr, " -- %s 0x%p",
+             ep->ExceptionRecord->ExceptionInformation [0] ? "writing" : "reading",
+             (void *) ep->ExceptionRecord->ExceptionInformation [1]);
+  // Which test was running.  mc_test.h keeps it for exactly this kind of
+  // report; stdout is unbuffered here, but the two streams are separate files
+  // under the runner and only this line ties them together.
+  fprintf (stderr, "\n*** in %s.%s\n",
+           mc_test::g ().current_suite ? mc_test::g ().current_suite : "?",
+           mc_test::g ().current_name  ? mc_test::g ().current_name  : "?");
+
+  McTestPrintStack (*ep->ContextRecord, 40);
+  fflush (stderr);
+  return EXCEPTION_EXECUTE_HANDLER;   // die, but having said where
+}
+
+// The walker itself, split out because an MFC ASSERT is the OTHER thing on
+// this host that reports a file and line with no path to it -- see
+// McTestAssertHook below.
+static void McTestPrintStack (const CONTEXT & context, int maxFrames)
+{
+  HANDLE proc = ::GetCurrentProcess (), thread = ::GetCurrentThread ();
+  ::SymSetOptions (SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+  ::SymInitialize (proc, NULL, TRUE);
+
+  CONTEXT ctx = context;              // StackWalk64 modifies it
+  STACKFRAME64 sf;
+  memset (&sf, 0, sizeof sf);
+  sf.AddrPC.Offset    = ctx.Eip;   sf.AddrPC.Mode    = AddrModeFlat;
+  sf.AddrFrame.Offset = ctx.Ebp;   sf.AddrFrame.Mode = AddrModeFlat;
+  sf.AddrStack.Offset = ctx.Esp;   sf.AddrStack.Mode = AddrModeFlat;
+
+  char symbuf [sizeof (SYMBOL_INFO) + 512];
+  SYMBOL_INFO * sym = (SYMBOL_INFO *) symbuf;
+  memset (symbuf, 0, sizeof symbuf);
+  sym->SizeOfStruct = sizeof (SYMBOL_INFO);
+  sym->MaxNameLen   = 511;
+
+  for (int frame = 0; frame < maxFrames; ++frame)
+    {
+    if (!::StackWalk64 (IMAGE_FILE_MACHINE_I386, proc, thread, &sf, &ctx,
+                        NULL, ::SymFunctionTableAccess64, ::SymGetModuleBase64, NULL))
+      break;
+    if (sf.AddrPC.Offset == 0)
+      break;
+
+    DWORD64 disp = 0;
+    if (::SymFromAddr (proc, sf.AddrPC.Offset, &disp, sym))
+      fprintf (stderr, "  %2d  %s + 0x%lX", frame, sym->Name, (unsigned long) disp);
+    else
+      fprintf (stderr, "  %2d  0x%08lX", frame, (unsigned long) sf.AddrPC.Offset);
+
+    IMAGEHLP_LINE64 line;
+    DWORD lineDisp = 0;
+    memset (&line, 0, sizeof line);
+    line.SizeOfStruct = sizeof line;
+    if (::SymGetLineFromAddr64 (proc, sf.AddrPC.Offset, &lineDisp, &line))
+      fprintf (stderr, "   [%s:%lu]", line.FileName, (unsigned long) line.LineNumber);
+    fprintf (stderr, "\n");
+    }
+}
+
+// ── an MFC assertion says WHERE IN MFC, which is never the interesting half ──
+//
+// MC_TEST_WIN_HOST_INIT routes CRT and MFC diagnostics to stderr so nothing
+// blocks on a dialog, which turns a failed ASSERT into one line naming a file
+// inside MFC -- `winocc.cpp(242) : Assertion failed!`.  That says a CWnd method
+// was called on a window that does not exist, and nothing whatever about which
+// engine line called it.  Most of the time that is fine, because this host
+// provokes assertions by design and they are noise.  When one is the thing you
+// are chasing, it is the only clue there is and it is useless on its own.
+//
+// So: opt in with MC_TEST_ASSERT_STACKS=1 in the environment and each assertion
+// grows a stack.  Off by default because a single suite can raise fifty, and
+// fifty stacks is not a log anyone reads.  The cap is per run, not per
+// assertion, for the same reason.
+static int  McTestAssertHook (int reportType, char * message, int * returnValue)
+{
+  static int s_left = -1;             // -1 = not yet decided
+  if (s_left < 0)
+    {
+    const char * v = getenv ("MC_TEST_ASSERT_STACKS");
+    s_left = (v && *v && strcmp (v, "0") != 0) ? 12 : 0;
+    }
+
+  // Write the report ourselves (the hook replaces the default handling), then
+  // decide whether it earns a stack.
+  fputs (message ? message : "", stderr);
+
+  if (reportType == _CRT_ASSERT && s_left > 0)
+    {
+    --s_left;
+    fprintf (stderr, "*** assertion in %s.%s\n",
+             mc_test::g ().current_suite ? mc_test::g ().current_suite : "?",
+             mc_test::g ().current_name  ? mc_test::g ().current_name  : "?");
+    CONTEXT ctx;
+    memset (&ctx, 0, sizeof ctx);
+    ctx.ContextFlags = CONTEXT_CONTROL;
+    ::RtlCaptureContext (&ctx);
+    McTestPrintStack (ctx, 24);
+    if (s_left == 0)
+      fprintf (stderr, "*** (further assertion stacks suppressed)\n");
+    }
+
+  fflush (stderr);
+  if (returnValue)
+    *returnValue = 0;                 // do NOT break into a debugger
+  return TRUE;                        // handled; skip the default reporting
+}
+
+void McTestInstallCrashHandler ()
+{
+  ::SetUnhandledExceptionFilter (McTestCrashFilter);
+  _CrtSetReportHook (McTestAssertHook);
+}
 
 MC_TEST_MAIN_ALWAYS()
 

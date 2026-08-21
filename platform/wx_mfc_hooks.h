@@ -79,6 +79,29 @@ inline int McTestMessageBox(const char* text, unsigned int nType,
     fflush(stderr);   // interleave correctly with the test suite's own stdout
     return HeadlessMessageBoxAnswer(nType);
 }
+
+// The same answer for a COMMON DIALOG, which McTestMessageBox cannot cover.
+// ::MessageBoxW funnels through one function that can be replaced; a
+// CFileDialog is a stack object whose DoModal the caller owns, so the decision
+// has to be taken at the call site -- one #ifdef per site, each naming the
+// dialog it is declining.
+//
+// The cost of NOT doing this is not a wrong answer, it is a dead run: a modal
+// on this host has no user to answer it and no pump behind it, so DoModal
+// never returns and the suite is killed by the runner's clock with no summary.
+// Two suites sat in exactly that state (docs/WINDOWS-VALIDATION.md 10y) for one
+// CFileDialog in Load_Set.
+//
+// IDCANCEL rather than IDOK, and that is the whole point: cancel is the only
+// answer that needs no file, no user and no state, and every caller of a file
+// dialog already has a cancel path because a user can always press Escape.
+inline int McTestCancelDialog(const char* what)
+{
+    fprintf(stderr, "MUSHclient [dialog]: %s -- cancelled (no user to answer it)\n",
+            what ? what : "?");
+    fflush(stderr);
+    return 2;   // IDCANCEL -- static_asserted at each call site
+}
 #endif  // _WIN32 && MUSHCLIENT_TESTS
 
 #ifndef _WIN32

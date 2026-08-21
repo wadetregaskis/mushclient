@@ -5034,3 +5034,47 @@ absence is benign, so the omission was invisible; the folder was never part of
 what any of those tests was about.  Creating it is a fix, not an accommodation.
 Guarding is reserved for the two that genuinely assert behaviour Windows does
 not have.
+
+### 10s. `test_utilities` — the note was right, and still incomplete
+
+Unlike §10r, this exclusion reason was **accurate**: "the `g_wxhook_*sound*` seam
+and `AllocateLinePositions`, both port-only. ~10 test cases; guarding those
+would bring the rest of a large suite back."  Both named causes are exactly what
+the compiler reported.  It was also incomplete in two ways worth recording,
+because the same two shapes will recur.
+
+**First, one of the two is not a seam at all.**  Seven tests use
+`AllocateLinePositions`, and it is tempting to file that with the wx hooks as
+"port-only plumbing in the way of shared behaviour".  It is not: that function
+**is** the port's unbounded-scrollback mechanism, the one that raised the cap
+from Windows' 500,000 lines to 100,000,000.  `UnlimitedScrollbackNeverEvicts`
+and its siblings are testing a feature Windows does not have.  Guarding them is
+the correct answer rather than a compromise, and the distinction matters for
+whoever reads the guard later: **a guard on port-only plumbing is owed work; a
+guard on a port-only feature is finished work.**
+
+The eighth use was not in a test at all but in `make_buffer_doc`, a helper 13
+tests share, where it applies `m_maxlines = 0`.  Guarding just that one line
+keeps all 13 — for `m_maxlines == 0` the function's job is "trim nothing",
+which is also what Windows does by not having it.  Guarding the helper's
+*callers* would have cost 13 tests to save one line.
+
+**Second, a third blocker the note did not mention** — and it only appears at
+**link** time, so no amount of reading finds it: five `g_ShowFunctionslist*`
+globals that `platform/doc_headless_stubs.cpp` defines to record what the
+Function List was asked for.  On Windows `ShowFunctionslist` is the real modal
+dialog, so there is nothing to record.  That test is §10h's `2e54bba` row, and
+it stays owed: it needs a Windows-side observable, not a guard.
+
+**Where it stands.**  The file now compiles and links.  What stops it is a crash
+**later in the run**, in MXP tests that pass when this file is absent — so the
+suspect is global state `test_utilities` leaves behind, not anything it asserts.
+That is its own hunt and is left for its own pass; the fixes are committed, and
+the exclusion reason records all of the above.
+
+**Two suites, two stopping points, one rule.**  §10r and this section both end
+the same way: the compile problems are solved and committed, a runtime problem
+remains, and the suite stays excluded with a reason that says exactly that.
+Leaving a suite enabled-but-crashing would take the whole target red for one
+file; leaving the reason as it was would waste the diagnosis.  **The unit of
+progress is the recorded reason, not the enabled flag.**

@@ -18,6 +18,15 @@
 
 #include "stdafx.h"
 #include "MUSHclient.h"   // the App global: MC_TEST_WIN_HOST_INIT primes its state
+// The four runtime classes MC_TEST_WIN_DOC_TEMPLATES names.  They cost nothing
+// here -- a CMultiDocTemplate stores the CRuntimeClass pointers and creates no
+// window -- but the framework needs them to be real, so the headers come in.
+#include "doc.h"
+#include "TextDocument.h"
+#include "childfrm.h"
+#include "textchildfrm.h"
+#include "MUSHview.h"
+#include "TextView.h"
 #include "mc_test.h"
 
 MC_TEST_MAIN_ALWAYS()

@@ -413,6 +413,47 @@ void Generate256colours(void);
                     (unsigned long) ::GetLastError()); \
     } while(0)
 
+// ── the two document templates ────────────────────────────────────────────
+// InitInstance builds four of these (MUSHclient.cpp:558-594) and the framework
+// then owns every open document through them.  Two of them are load-bearing for
+// code that has nothing to do with windows, and this host was crashing on both:
+//
+//   m_pWorldDocTemplate   CMainFrame::OnUpdateBtnWorlds opens with
+//                         App.m_pWorldDocTemplate->GetFirstDocPosition()
+//                         (mainfrm.cpp:687), reached from ConnectionClosed --
+//                         so closing a connection was an access violation.
+//                         AcceleratorTo reads m_hAccelTable off the same
+//                         pointer.
+//   m_pNormalDocTemplate  AppendToTheNotepad walks it at doc.cpp:3043, reached
+//                         by every MXP error and debug message.  Note that the
+//                         same walk in notepad_app_shared.cpp:115 DOES check
+//                         the pointer for NULL first: two walkers of one
+//                         template, one careful and one not.  Neither can be
+//                         NULL after InitInstance, so upstream is latent
+//                         rather than broken.
+//
+// Constructing one creates no window: CDocTemplate's constructor stores the
+// three runtime classes and loads a string resource.  This binary links no
+// resources, so that load fails and reports one assertion per template on
+// stderr -- accepted, because the alternative is compiling the app's .rc into
+// the test target for two strings nothing reads.
+//
+// Deliberately NOT AddDocTemplate: that hands the template to the app's
+// document manager and makes File>New and the OLE server reachable, which this
+// host has no business doing.  The tests need the pointer and an empty
+// document list, and that is all this gives them.
+#define MC_TEST_WIN_DOC_TEMPLATES() \
+    do { \
+        if (App.m_pNormalDocTemplate == NULL) \
+            App.m_pNormalDocTemplate = new CMultiDocTemplate( \
+                IDR_NORMALTYPE, RUNTIME_CLASS(CTextDocument), \
+                RUNTIME_CLASS(CTextChildFrame), RUNTIME_CLASS(CTextView)); \
+        if (App.m_pWorldDocTemplate == NULL) \
+            App.m_pWorldDocTemplate = new CMultiDocTemplate( \
+                IDR_MUSHCLTYPE, RUNTIME_CLASS(CMUSHclientDoc), \
+                RUNTIME_CLASS(CChildFrame), RUNTIME_CLASS(CMUSHView)); \
+    } while(0)
+
 // ── the InitInstance steps a headless host still needs ─────────────────────
 // CMUSHclientApp's constructor does almost nothing; InitInstance is where the
 // Windows app builds its global state, and InitInstance does not run here.
@@ -438,6 +479,7 @@ void Generate256colours(void);
         App.MXP_LoadElements(); \
         App.MXP_LoadEntities(); \
         App.MXP_LoadColours(); \
+        MC_TEST_WIN_DOC_TEMPLATES(); \
     } while(0)
 
 #define MC_TEST_WIN_HOST_INIT() \

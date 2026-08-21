@@ -1224,6 +1224,7 @@
     <ClCompile Include="tests\test_database.cpp" />
     <ClCompile Include="tests\test_hashing.cpp" />
     <ClCompile Include="tests\test_hyperlink.cpp" />
+    <ClCompile Include="tests\test_mxp.cpp" />
     <ClCompile Include="tests\test_regexp.cpp" />
     <ClCompile Include="tests\test_speedwalk.cpp" />
     <ClCompile Include="tests\test_tabcomplete.cpp" />

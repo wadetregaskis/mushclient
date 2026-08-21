@@ -1072,7 +1072,23 @@ TEST(MXPOpenAtomic, SecureTagRejectedInOpenMode)
 // g_wxhook_create_text_window instead, which is the seam the product actually
 // uses, and hands the engine a real registered CTextDocument so the append path
 // runs for real too.
-#ifndef _WIN32   // notepad fixture -- see the note at the include
+// ── Why so many #ifndef _WIN32 in this file ───────────────────────────────
+// MXP writes its errors and debug output to a NOTEPAD (mxpError.cpp:142 ->
+// AppendToTheNotepad), and creating one is real MDI window creation on
+// Windows: CMDIChildWnd::Create looks up AfxGetThread()->m_pMainWnd and
+// ENSURE_VALIDs it (winmdi.cpp:490), and a console host has no main frame.
+// Before the host had a document template that path was an access violation
+// on a NULL App.m_pNormalDocTemplate; with the template it gets one step
+// further and throws instead, which the runner reports as a failed test.
+//
+// So two disjoint sets are guarded here, for opposite reasons:
+//   * the 16 cases using MxpDebugCapture below -- because NotepadCapture hooks
+//     g_wxhook_create_text_window, which exists only off Windows;
+//   * the 12 cases that produce debug output WITHOUT installing a capture --
+//     because nothing intercepts the creation and the framework really tries.
+// The second set is the counter-intuitive one: intercepting the notepad is
+// what makes a test safe, so it was the tests WITHOUT the harness that broke.
+#ifndef _WIN32   // notepad fixture -- see the note above
 struct MxpDebugCapture {
     NotepadCapture cap;
     bool contains(const char* s) const { return cap.contains(s); }
@@ -1119,6 +1135,7 @@ TEST(MXPDefs, ElementDefinitionRegistersCustomElement)
 }
 #endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, EmptyKeywordMakesCommandElement)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1128,7 +1145,9 @@ TEST(MXPDefs, EmptyKeywordMakesCommandElement)
     EXPECT_TRUE(el->bCommand);
     EXPECT_FALSE(el->bOpen);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, TagNumberOutOfRangeIsIgnored)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1137,6 +1156,7 @@ TEST(MXPDefs, TagNumberOutOfRangeIsIgnored)
     ASSERT_TRUE(doc.m_CustomElementMap.Lookup("overtag", el));
     EXPECT_EQ(0, el->iTag);   // 150 outside 20..99
 }
+#endif  // !_WIN32
 
 #ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
@@ -1155,6 +1175,7 @@ TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
 }
 #endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, DeleteRemovesCustomElement)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1164,6 +1185,7 @@ TEST(MXPDefs, DeleteRemovesCustomElement)
     stream(doc, "<!ELEMENT deleteme DELETE>");
     EXPECT_FALSE(doc.m_CustomElementMap.Lookup("deleteme", el));
 }
+#endif  // !_WIN32
 
 #ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, CannotRedefineBuiltinElement)
@@ -1244,6 +1266,7 @@ TEST(MXPDefs, UnknownDefinitionTypeAndBadNames)
 }
 #endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1256,6 +1279,7 @@ TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
     ASSERT_TRUE(doc.m_CustomEntityMap.Lookup("glyph", v));
     EXPECT_STREQ("<x>", (LPCTSTR)v);
 }
+#endif  // !_WIN32
 
 #ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, EntityErrorsAndDeletion)
@@ -1274,6 +1298,7 @@ TEST(MXPDefs, EntityErrorsAndDeletion)
 }
 #endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, CustomEntityExpandsInStreamText)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1281,6 +1306,7 @@ TEST(MXPDefs, CustomEntityExpandsInStreamText)
     stream(doc, "greet &who;!");
     EXPECT_TRUE(current_line(doc).find("greet Gandalf!") != std::string::npos);
 }
+#endif  // !_WIN32
 
 #ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
@@ -1298,6 +1324,7 @@ TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
 }
 #endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, SecureOnceModeRestoredAfterDefinition)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1308,6 +1335,7 @@ TEST(MXPDefs, SecureOnceModeRestoredAfterDefinition)
     EXPECT_TRUE(doc.m_CustomElementMap.Lookup("onceonly", el));   // was secure
     EXPECT_EQ(eMXP_open, doc.m_iMXP_mode);                        // restored
 }
+#endif  // !_WIN32
 
 // ═══ Custom element open/close through the stream (mxpStart / mxpClose) ════
 
@@ -1319,6 +1347,7 @@ static CStyle* last_style(CMUSHclientDoc& doc)
     return doc.m_pCurrentLine->styleList.GetTail();
 }
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1338,6 +1367,7 @@ TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
     EXPECT_TRUE(current_line(doc).find("loud") != std::string::npos);
     EXPECT_TRUE(current_line(doc).find("quiet") != std::string::npos);
 }
+#endif  // !_WIN32
 
 // Merged (audit §3): a closing tag with no matching open both (a) warns to the
 // debug notepad and (b) leaves the surrounding literal text on the line untouched.
@@ -1381,6 +1411,7 @@ TEST(MXPCustom, UnknownTagIsAnError)
 }
 #endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPCustom, AttributeSubstitutionSuppliedNamed)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1391,7 +1422,9 @@ TEST(MXPCustom, AttributeSubstitutionSuppliedNamed)
     EXPECT_EQ(COLOUR_RGB, (int)(s->iFlags & COLOURTYPE));
     EXPECT_EQ(RGB(0, 0, 255), s->iForeColour);   // supplied value substituted
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPCustom, AttributeSubstitutionPositional)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1401,7 +1434,9 @@ TEST(MXPCustom, AttributeSubstitutionPositional)
     ASSERT_NE(nullptr, s);
     EXPECT_EQ(RGB(0, 255, 0), s->iForeColour);   // positional argument
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPCustom, AttributeSubstitutionDefault)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1411,6 +1446,7 @@ TEST(MXPCustom, AttributeSubstitutionDefault)
     ASSERT_NE(nullptr, s);
     EXPECT_EQ(RGB(255, 0, 0), s->iForeColour);   // ATT default used
 }
+#endif  // !_WIN32
 
 #ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, MissingNonDefaultArgumentWarns)
@@ -2158,6 +2194,7 @@ TEST(MXPPhaseR5, WrappedHyperlinkKeepsActionOnNextLine)
 
 // A colour-change trigger whose match splits an MXP action style AddRefs the
 // action into the split-off runs.
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPPhaseR5, TriggerColouringSplitsActionStyle)
 {
     CMUSHclientDoc doc; make_doc_e2e(doc);
@@ -2175,6 +2212,7 @@ TEST(MXPPhaseR5, TriggerColouringSplitsActionStyle)
     feed(doc, "<send>middleman</send>\n");
     EXPECT_EQ(1L, t->nMatched);
 }
+#endif  // !_WIN32
 
 
 // mxpEntities.cpp MXP_GetEntity: hex numeric entities (&#xNN;) go through the
@@ -2278,6 +2316,7 @@ TEST(MXPEntity, HexNumericEntityLowerCaseDigitsFold)
 // and mxpDefs.cpp:446, which expand entities inside element arguments and
 // <!ENTITY> values without consulting IsValidName.  Those keep working, which is
 // exactly why this route needs its own test.)
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPEntity, HexNumericEntityDecodesInTheByteStream)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -2294,6 +2333,7 @@ TEST(MXPEntity, HexNumericEntityDecodesInTheByteStream)
     EXPECT_EQ(ents + 3, doc.m_iMXPentities);  // all three reached the collector
     EXPECT_EQ(NONE, doc.m_phase);             // ';' closed the entity phase
 }
+#endif  // !_WIN32
 
 // mxpEntities.cpp:36-42 -- MXP_collected_entity rejects a name that is neither a
 // valid MXP name nor a '#' numeric form.  An error-COUNT assertion cannot see

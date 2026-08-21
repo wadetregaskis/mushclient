@@ -4257,3 +4257,106 @@ It gives back the regression net for shared source — which is the gap a Window
 session actually feels, and it would have covered §10e's fix.  It does not
 exercise the Windows arms; the vcxproj test target is what does that.  They are
 complements, and the runner is hours while the target is days.
+
+### 10j. The Windows test target — built, and what it found
+
+§10i sized this at days rather than the six-to-ten engineer-weeks a survey
+predicted.  It was built the same day.  **`MUSHclient_tests.vcxproj` compiles
+286 engine sources and 14 test files into `WinTest\mushclient_tests.exe`, and
+it runs.**
+
+```
+pwsh tests\win\run_tests.ps1              # build + run, Debug
+pwsh tests\win\run_tests.ps1 -NoBuild     # run what is there
+pwsh tests\win\gen_test_vcxproj.ps1       # regenerate the project
+```
+
+**First run: ~69 tests executed, 18 failures in two suites, then an MFC
+collection assertion aborts the process.**  Nothing about those numbers is
+final — see *What the failures mean* below, which is the part that matters.
+
+**How it is put together, and why each piece is the way it is.**
+
+- **One executable, not forty.**  An MFC test binary is 19 MB and a full link;
+  forty of them is minutes per build.  `MC_TEST_COMBINED` makes each test
+  file's `MC_TEST_MAIN()` expand to nothing and `tests/win/all_tests.cpp`
+  supplies the one `main`.  No test file needed editing for this.  The cost is
+  that the suites share a process, so an `abort()` in one ends the rest — which
+  is exactly what happens today.
+- **It cannot share the app's object files.**  `MUSHCLIENT_TESTS` turns
+  `CMUSHclientDoc`'s constructor from protected into public, and access is part
+  of the C++ mangled name, so a half-applied define makes `doc.obj` reference
+  `??0CMUSHclientDoc@@IAE@XZ` while `doc_construct.obj` defines
+  `??0CMUSHclientDoc@@QAE@XZ` and the link fails on a symbol that looks
+  identical.  Hence its own compilation of all 286 TUs, and hence
+  **`tests/check_win_test_sources.py`**, which fails `ctest` if the two
+  projects' `<ClCompile>` lists ever diverge (with its own four-case fixture
+  selftest, as the three lints beside it have).
+- **MSBuild, not CMake**, for the reason §10i gives: the vcxproj already holds
+  the settings that make this engine compile with MSVC, and a second definition
+  of those would drift.
+- **An exclusion list, not an inclusion list.**  A new test file is compiled
+  into the Windows target by default and has to be argued *out*, with a reason
+  recorded next to its name in the generator.
+
+**The host.**  On Windows the engine compiles against real MFC, so the binary
+is an "MFC in a console application" host: `AfxWinInit` (without it the first
+`AfxGetApp()` asserts in `afxwin1.inl`), `AfxOleInit` (`CMUSHclientDoc` is a
+`CCmdTarget` with `EnableAutomation`, and `~CCmdTarget` calls
+`CoDisconnectObject`), `AfxSocketInit`.  And CRT/MFC assertions are routed to
+**stderr rather than a dialog** — a failed ASSERT in a test process is a test
+result, not something to wait for a human on.  That one line is what made the
+target possible at all: the first run was wedged behind an invisible modal box.
+
+**Six things the build taught, all of them the same shape.**
+
+| Symptom | Cause |
+|---|---|
+| 36,810 errors, nearly all inside the Windows SDK | `platform\` on the include path. `tests/CMakeLists.txt` puts it there, which is safe when `platform/` **is** the platform; on Windows `platform/direct.h` masks the CRT's `<direct.h>`. The port's directories stay off the path; tests that want a port header spell the directory. |
+| `#error LINK_SIZE must be either 2, 3, or 4` | The generator dropped **per-file** settings. 246 of the 286 entries carry them, and the 36 `pcre\*.c` need `HAVE_CONFIG_H`. It copies child nodes verbatim now, so a future per-file setting is inherited rather than lost. |
+| `'binary_function': base class undefined` | The tests need C++17 (`mc_test.h` uses `if constexpr`); C++17 removed `std::binary_function`, which `stdafx.h` derives from. `_HAS_AUTO_PTR_ETC=1` on the test project only, so §2's "no C++17 in code MSVC compiles" stays true of the shipping client. |
+| `'(': illegal token on right side of '::'` | `windows.h`'s `min`/`max` macros versus `std::max`. Parenthesised as `(std::max)(...)` in two test headers. |
+| `#error MFC requires use of Winsock2.h` | `tests/posix_compat.h` pulled in `windows.h` ahead of `stdafx.h`. Fixed *in that header* — one advertised as safe to include anywhere has to get the order right on its own behalf. |
+| `_main already defined` | **The interesting one.**  `test_database.cpp` and `test_lua_scripting.cpp` gate their whole bodies on `MUSHCLIENT_LUA_SCRIPTING`; without it each falls to a "Lua not available" stub *that defines its own main*.  They were not conflicting, they were **silently empty**.  Had the duplicate-symbol error not stopped the build, two large suites would have shipped passing vacuously — the same shape as §10f's three vacuous probes. |
+
+**What is excluded, and the test that decides it.**  28 files, each with a
+reason in `tests/win/gen_test_vcxproj.ps1`.  The question is always *does the
+Windows product contain the thing this test asserts on?*
+
+- **Permanent (10)** — it does not: `test_mfc_ui`, `test_cstring`,
+  `test_collections`, `test_posix_socket`, `test_gdi_headless`,
+  `test_mc_dispatch`, `test_pal_transport`, `test_pal_surface`,
+  `test_menu_rules`, `test_notepad_convert`.  These test the port's
+  *substitutes* — on Windows `CString` is Microsoft's problem.  A Windows suite
+  is a smaller suite by design, and that is correct rather than a compromise.
+- **Re-enterable (18)** — the suite is fine, it just reaches a port-owned seam:
+  `notepad_fixture.h`'s `CTextDocument::m_fn_*` (5 suites), the wx hooks for
+  clipboard / status / sound (3), `socketpair` (2), `LoadWorldFromFile` (1),
+  port-only globals and the `BSTR`-as-`char*` typedef (4), and
+  `test_plugins.cpp`, which is **undiagnosed**: a `#define` at `:125` reads as
+  an undeclared identifier at `:1736` with no platform guard anywhere in the
+  file.  `test_lua_scripting` (5,000 lines) and `test_triggers` / `test_timers`
+  are the ones most worth reclaiming.
+
+**What the failures mean — do not over-read them.**  11 of the 18 are
+`Accelerators`, where `AcceleratorTo("F5", "sing", eSendToWorld)` answers
+`eBadParameter` (30046) instead of `eOK`.  The accelerator family reaches
+`Frame` and an accelerator table, and **this host has no main window**, so that
+is at least as likely to be a limitation of the console host as a defect in the
+product.  The other 7 are `EvaluateArms`.  **Triage is owed before any of this
+is called a bug**, and the first question for each is "does this need a window?"
+rather than "is Windows wrong?".
+
+That caveat is the whole reason the count is reported rather than celebrated.
+The value delivered here is the *target*, not its first verdict.
+
+**Still owed on the target itself:** the `oleunk.cpp:455` assertion on every
+document destruction (69 of them in a run — `CoDisconnectObject` failing
+despite `AfxOleInit`), and the `afxcoll.inl:384` assertion that ends the run
+early and hides the summary line.  Neither is understood yet, and until the
+second is fixed the pass count is a floor rather than a total.
+
+**One trap for whoever iterates next:** MSBuild's up-to-date check did not
+notice a changed preprocessor definition across a regenerated project file, and
+a stale `test_lua_scripting.obj` kept the old "Lua unavailable" `main` for a
+whole cycle.  After changing the defines, delete `WinTest\obj`.

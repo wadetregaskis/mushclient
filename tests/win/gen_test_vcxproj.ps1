@@ -1,4 +1,4 @@
-﻿# tests/win/gen_test_vcxproj.ps1 â€” regenerate MUSHclient_tests.vcxproj from
+﻿# tests/win/gen_test_vcxproj.ps1 -- regenerate MUSHclient_tests.vcxproj from
 # MUSHclient.vcxproj.
 #
 # The test target has to compile the same 286 engine TUs the app does, because
@@ -11,7 +11,7 @@
 # definitions of "how this builds on Windows" is the bug class
 # docs/WINDOWS-VALIDATION.md exists to catch.  Two things guard it: this
 # generator, and tests/check_win_test_sources.py, which fails the suite if the
-# two projects' <ClCompile> lists ever differ.  The lint is the real guard â€”
+# two projects' <ClCompile> lists ever differ.  The lint is the real guard --
 # regenerating is just the convenient way to fix it.
 #
 #   pwsh tests/win/gen_test_vcxproj.ps1        (from the repo root)
@@ -33,7 +33,7 @@ $sources = $sourceNodes | ForEach-Object { $_.Include }
 
 # Test files that are meaningless on Windows: they test the port's SUBSTITUTES
 # for things Windows has natively, so running them here would assert against a
-# shim that is not present.  This is an EXCLUSION list on purpose â€” a new test
+# shim that is not present.  This is an EXCLUSION list on purpose -- a new test
 # file is compiled into the Windows target by default, and has to be argued out
 # rather than argued in.  Add a reason to every entry.
 $excluded = [ordered]@{
@@ -58,12 +58,6 @@ $excluded = [ordered]@{
   'test_lua_scripting.cpp'   = 'CMUSHclientDoc::LoadWorldFromFile is port-only (Windows loads worlds through the MFC doc/view framework), plus <utime.h>. A 5000-line suite: worth re-entering by giving the fixture a Windows world-load path'
   'test_menu_rules.cpp'      = 'needs platform/menu_ui_rules.cpp, the port menu-rule table; the app drives menus from MFC message maps and does not link it'
   'test_pal_surface.cpp'     = 'asserts on pal::CpuRaster, the port software rasteriser; Windows draws through pal/gdi_surface.cpp and never instantiates it'
-  'test_display.cpp'         = 'COMPILES AND LINKS now. The old reason said socketpair; the compiler never got that far -- <unistd.h> at line 20 stopped it first, and one guarded test covers the socketpair use. Blocked instead by the shared-process crash in section 10t'
-  'test_info.cpp'            = 'COMPILES AND LINKS now: five tests guarded (g_pWinApp x3, g_wxhook_get_key_state, and CTimeShim, which tests the port shim by name). Blocked instead by the shared-process crash in section 10t'
-  'test_mcdatetime.cpp'      = 'COMPILES AND LINKS now: nanosleep became posix_compat.h usleep, and the one CmcDateTime::Format test is guarded (Format is a port addition). Blocked instead by the shared-process crash in section 10t'
-  'test_scriptengine.cpp'    = 'COMPILES AND LINKS now: 21 BSTR-in-a-ternary sites, the same fix as test_database and test_triggers. Blocked instead by the shared-process crash in section 10t'
-  'test_utilities.cpp'       = 'COMPILES AND LINKS now -- the three blockers are handled in the file (the seven AllocateLinePositions tests, which ARE the port unbounded-scrollback mechanism rather than shared behaviour behind a seam; the whole g_wxhook_sound_* family; and the g_ShowFunctionslist* observation globals, which the old note did not mention). What stops it is a crash LATER in the run, in MXP tests that pass without this file present -- so the suspect is global state this file leaves behind, not anything it asserts. That is its own hunt. See section 10s'
-  'test_plugins.cpp'         = 'NOT the preprocessor oddity the old note described -- that diagnosis was wrong. Five ordinary causes, all now FIXED in the file: 2-arg mkdir, three BSTR-as-const-char* ternaries, and const double small, which the Windows SDK rewrites to const double char because rpcndr.h has #define small char (an error naming neither the macro nor the header -- almost certainly what the old note half-saw). Plus guards for the port-only directory picker and the two state-folder tests. It now compiles and runs 420 tests, then the process exits without printing its summary: one more crash to chase, starting from 420 rather than zero. See section 10r'
 }
 # Everything above is opted OUT with a reason.  The last block is the interesting
 # one: those suites are not Windows-hostile, they just reach a seam the port
@@ -119,7 +113,7 @@ foreach ($cfg in @('Debug','Release')) {
   $dbg = ($cfg -eq 'Debug')
   W "  <ItemDefinitionGroup Condition=`"'`$(Configuration)|`$(Platform)'=='$cfg|Win32'`">"
   W '    <ClCompile>'
-  # NOT $(SolutionDir)platform\ â€” and not scripting\ either, though that one is
+  # NOT $(SolutionDir)platform\ -- and not scripting\ either, though that one is
   # merely unnecessary.  tests/CMakeLists.txt puts both on the path, which is
   # safe when platform/ IS the platform; on Windows it is a trap.  platform/
   # holds direct.h, windows_types.h and friends, whose whole purpose is to

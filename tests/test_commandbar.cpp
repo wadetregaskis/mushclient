@@ -34,12 +34,12 @@ struct BarFixture
 {
     CMUSHclientDoc doc;
     FakeWorldView  view;
+    // Restores the doc's own view, which on Windows it constructed and will
+    // delete -- see ScopedWorldView in mc_test.h.  Declared after the two it
+    // refers to so it is destroyed first.
+    mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach;
 
-    BarFixture()
-    {
-        doc.m_pWorldView = &view;
-    }
-    ~BarFixture() { doc.m_pWorldView = nullptr; }
+    BarFixture() : attach(doc, &view) {}
 
     // Put `text` in the input bar with the caret at `caret` (defaults to end).
     void type(const char* text, int caret = -1)

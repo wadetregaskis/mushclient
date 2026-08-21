@@ -5138,3 +5138,228 @@ real `CTime` has **both** `operator-(CTimeSpan)` and `operator-(CTime)`, so the
 `LONGLONG` from `GetTotalSeconds()` matches both and the call is **ambiguous**.
 A shim can diverge by having too few overloads *or* too many, and only building
 both sides finds either.
+
+### 10u. One process per suite — and three ways a wait can lie
+
+§10t ended with a choice: give the crashing suites isolation, or hunt the global
+they share. **Isolation won**, and not because of this bug. It is the property
+macOS already has and gets for free by building one executable per test file: a
+suite that corrupts process state takes only itself down, and says so. Hunting
+the global would have fixed one crash; isolation fixes the class, including the
+ones not yet written.
+
+The implementation is deliberately the *cheap* half of what
+`tests/win/all_tests.cpp` proposed ("give it its own vcxproj"). A second vcxproj
+means a second ~19 MB MFC link. Instead the one binary learned two flags:
+
+```
+mushclient_tests.exe --list-suites      # every TEST() suite name, one per line
+mushclient_tests.exe --suite=NAME       # run only that suite
+```
+
+and `run_tests.ps1` launches it once per suite. The cost is one process start
+per suite and no extra link; `run_all` gained a `const char*` and one `strcmp`.
+The runner asks the **binary** for the list rather than keeping its own, because
+a second list would drift and a suite missing from it would simply not run,
+silently.
+
+That part took twenty minutes. **Getting the runner to report anything at all
+took the rest of the afternoon, and all three obstacles were the same shape: a
+wait that looked like slowness.**
+
+**1. `Start-Process -PassThru` returns a `Process` with no cached handle.**
+`WaitForExit(ms)` and `ExitCode` both misbehave without one — the timeout
+silently never fires. The run just sat there, indistinguishable from a slow
+suite. The fix is one line, `$null = $j.Handle`, before the wait; nothing in
+either signature hints at it. It also explains an empty `run exit=` seen earlier
+in this campaign and shrugged off at the time.
+
+**2. `--list-suites` hung, because it exited too early.** It printed its names
+and returned from `main` *before* `MC_TEST_WIN_HOST_INIT`, which looked
+obviously right: listing strings needs no MFC, so why pay for the init? Because
+MFC's OLE teardown asserts in `oleunk.cpp:455` when `AfxOleInit` was never
+called — and on this host an assertion is an **invisible modal dialog** (§10q).
+The process printed nothing, exited never, and the runner waited on it forever.
+Two runs were lost before the window enumeration from §10q was pointed at it and
+read the caption back.
+
+> **On this host an early return from `main` is a hang, not a shortcut.** Any
+> flag added to `MC_TEST_MAIN_ALWAYS` must run the full host init and leave
+> through the same exit as an ordinary run. That is now the comment above the
+> macro, and both flags are handled after the init rather than before it.
+
+**3. The list call had no clock**, because it was too trivial to need one — and
+it was the thing that hung. Both callers now go through one `Invoke-TestExe`
+helper that always takes a timeout. The helper also returns stdout and stderr
+**separately**, which is not tidiness: MFC's leak report goes to stderr, and a
+runner that concatenated the streams would read `0 bytes in 0 Free Blocks.` as a
+suite name and launch a process for it. A shape filter on the names
+(`^[A-Za-z_][A-Za-z0-9_]*$`) is the belt to that braces.
+
+**The rule the three share:** a hang and a slow run are indistinguishable
+without a clock, and each of these was a wait on something that would never
+arrive. §10t gave the *suites* a timeout for exactly this reason and then let
+the list call go unguarded — the ordinary way a lesson fails to generalise. It
+gets applied to the instance that taught it.
+
+**What it costs and what it bought.** The full run is ~7 minutes rather than
+~40 seconds, almost all of it process start plus host init repeated 130 times.
+That is the price of the property, and it is worth paying: the very first
+isolated run took the target from **16 files / 674 passing** to **22 files /
+1042 passing**, and every one of the 19 failures, 2 crashes and 1 hang named its
+own suite instead of an innocent bystander thirty tests later.  Triaging those
+(section 10v) finished at **1075 passing, 0 failing, across 128 suites**.
+
+Three reporting states now exist, and the distinction is the point:
+
+| state | meaning |
+|---|---|
+| `N passed, M failed` | the suite ran and disagreed with itself |
+| `CRASHED (no summary)` | the process died before printing a summary |
+| `BLOCKED (killed after Ns)` | the process was still alive when the clock ran out |
+
+### 10v. What the six re-entered suites found
+
+Isolation made the six suites of §10t runnable; running them produced 19
+failures, 2 crashes and 1 hang. Every one is triaged below, because the split
+between them is the interesting part: **two were real defects, one was a missing
+host capability, one was a host capability that turned out to be expensive, and
+the rest were tests that had quietly encoded the port's answer as *the* answer.**
+
+#### The two real defects
+
+**`ExtractDirectory` searched for a backslash only on Windows.** A plugin path
+written with forward slashes therefore resolved `$PLUGINDIR` to the current
+directory. Full write-up in `docs/UPSTREAM-BUGS.md` 89; the short version is
+that the function's own caller (`xml_load_world.cpp`) tests a plugin filename
+for **both** separators six lines before handing it to a function that knows
+only one. Fixed by using the POSIX arm's search everywhere; the only thing left
+under `#ifdef` is the no-separator fallback, which still names the platform's
+own separator.
+
+**Three tests were about to `delete` a stack object.** The pattern
+`doc.m_pWorldView = &view;` … `doc.m_pWorldView = nullptr;` is harmless on the
+port, where the member starts null and nothing owns it. On Windows the document
+**constructs its own adapter** (`doc_construct.cpp`: `pal::CreateWinWorldView`)
+and its destructor **deletes** it, so the same two lines do one of two wrong
+things: nulling the pointer leaks the adapter, and leaving the fake in place
+runs `delete` over a stack address. `test_info.cpp`'s
+`MainClientRectComesFromTheViewNotTheCharacterGrid` did the second, and had
+never fired only because the `GetInfo` crash described below killed the suite
+several tests earlier. `mc_test.h` grew a `ScopedWorldView` guard that restores
+the doc's own view rather than NULL; `test_info`, `test_commandbar` and
+`test_tabcomplete` now use it.
+
+> The general shape is worth keeping: **a test that pokes a raw member has to
+> know who owns it, and ownership can differ per platform even when the member
+> does not.** A shared test file is a place where two ownership models meet.
+
+#### The host capability that was worth building
+
+**Documents were never registered with the world template.** `world.GetWorld`,
+`GetWorldList` and every cross-world call walk `App.m_pWorldDocTemplate`'s
+document list and nothing else (`methods_worlds.cpp`). On Windows the framework
+fills that list inside `CDocTemplate::OpenDocumentFile`; a bare
+`CMUSHclientDoc doc;` never goes near it, so every world was invisible to every
+other one. That reads as "the plugin callback did not fire", which is exactly
+what `PluginGuards.ScreendrawGuardIsPerDocument` reported.
+`doc_construct.cpp`'s `_WIN32 && MUSHCLIENT_TESTS` arm now calls `AddDocument`,
+mirroring the headless arm a few lines above it. Symmetric for free:
+`AddDocument` sets `m_pDocTemplate` and `~CDocument` removes it again.
+
+#### The host capability that was not — and the measurement that said so
+
+**There is no main frame, and `Frame` is a macro.** `stdafx.h` defines it as
+`*((CMainFrame*)App.m_pMainWnd)`, so with `m_pMainWnd` NULL every
+`Frame.something` in the engine is a **null dereference**, not a call that
+quietly does nothing. `GetInfo` codes 251-260 take `&Frame.m_wndToolBar` and
+friends; 249/250 get there one level down, through `GetMainClientRect` into the
+seam adapter's `mainClientRect`, which is `Frame.GetClientRect`
+(`pal/win_worldview.cpp`). They segfaulted the whole `GetInfo` suite from inside
+a loop over ninety other codes — no assertion, nothing naming the culprit, just
+a suite that stopped. Code 125 (`IsClientFullscreen` → `Frame.IsFullScreen()`)
+is the same thing one family earlier.
+
+The obvious fix looks cheap and is not. Constructing a `CMainFrame` **object**
+without ever `Create`ing it should be free: the constructor sets scalars and
+zeroes a `NOTIFYICONDATA`, the destructor is empty, and every window inside it is
+created in `OnCreate`. Each embedded `CWnd` would then exist with
+`m_hWnd == NULL`, and MFC's own guards would answer 0 — which is what Windows
+reports for a bar that is not there.
+
+**Measured: it took the target from 1053 passed / 1 failed to 1006 / 71.**
+Plugin loading failed across the board, on an MFC assertion in `winocc.cpp:242`
+followed by a `CArchive exception: badSchema`, and it dragged down suites with
+no connection to frames at all — `Mapper`, `RegexpTest`, `TelnetTest`,
+`MXPOpenAtomic`. It was reverted, undiagnosed, and the codes are excluded on
+Windows instead with the measurement written beside them.
+
+> Two things worth keeping. **A null `App.m_pMainWnd` is not "no frame", it is a
+> landmine**, because `Frame` is a dereference rather than a pointer — every use
+> site is undefined behaviour, and the one that fired did so from inside a loop
+> that named ninety innocent codes. And **the cheap-looking host capability was
+> the expensive one**: registering documents with a template was five lines and
+> fixed four tests; giving the host a frame object was three lines and cost
+> seventy. Neither cost was predictable from the size of the change, which is
+> the argument for measuring each one on its own rather than landing them
+> together.
+
+Tests that need a *created* toolbar or a *created* view remain owed (§10m), and
+a main frame is now on that list rather than off it.
+
+#### The rest: tests that encoded the port's answer as the answer
+
+Five causes, and each guard now carries its reason:
+
+- **Note colours start in different modes.** `m_bNotesInRGB` is `true` on the
+  port by deliberate design (headless has no palette to resolve an index
+  against) and `false` from the Windows constructor. Three tests in
+  `test_display.cpp` read the doc's colours, called `ColourTell`/`AnsiNote`, and
+  asserted they were restored — but restoring is *conditional on the mode*, so
+  each was testing whichever branch the platform happened to pick. Fixed by
+  saying which mode is meant (`NoteColourRGB`) rather than guarding: the tests
+  are stronger on both platforms now.
+- **Logs are CRLF here.** The log file is opened in text mode (`fopen "w"` /
+  `"a+"`), so the CRT expands every LF. That is a recorded, deliberate parity
+  gap; the helper that reads the file back now collapses the pair, which keeps
+  every assertion about content rather than encoding and still catches a doubled
+  line break, because the substitution is one-for-one.
+- **`TipsFileName`'s suffix is platform-specific, and the test hard-coded the
+  Mac one.** Rewritten against a per-platform tail. Its length assertion is the
+  more interesting half: 250 characters plus `/../Resources/tips.txt` clears
+  `MAX_PATH`, but plus `\tips.txt` is 259 and does not. **A test whose point is
+  "longer than the platform's constant" must not pick a length close to it** —
+  the assertion had quietly stopped meaning anything.
+- **`CScriptEngine::Execute`'s DISPPARAMS entry is the port's path for Lua.**
+  Windows checks `if (L)` first and returns through `ExecuteLua` with empty
+  parameter lists, never reaching the `Invoke` that carries `rgvarg`. That is
+  not a defect: every caller in the product asks `UsesEmbeddedCallback()` first
+  and routes Lua elsewhere (`plugins.cpp` ×6, `CallPlugin`). The port needs the
+  marshalling because five *more* languages are embedded rather than
+  COM-hosted. Three tests guarded, with that reasoning written down — the naive
+  reading, "Windows hands rgvarg to Invoke, so it must work", is true and still
+  gets the answer wrong.
+- **The rest asserted port-only behaviour outright**: the whole
+  `PluginDispatch` family (a "vbscript" plugin is a real COM language on
+  Windows, and with `m_pDispatch` NULL the first test took the process down
+  before it could print), the unsupported-language message (VBScript *is*
+  supported on Windows), the headless plugin wizard (`DoModal` degrades to
+  `IDCANCEL` only on the port), the inert headless preferences database, and
+  `SetScroll`'s scrollbar flag — whose Windows arm does record it, but from
+  inside the loop over the document's views, so a document with no view records
+  nothing.
+
+#### One modal with no way out
+
+`PluginState.StateFolderIsAFileFails` points the state folder at a file. Windows
+answers with `AfxMessageBox` (which this host intercepts) and then
+`::SHBrowseForFolder` — a **Shell** dialog, not a message box, with no hook and
+no window a test can find or close. It is the one modal in this tree that
+nothing can answer, and it hung the suite until the runner's clock killed it.
+Without §10u's timeout it would have hung the whole run instead.
+
+`plugins.cpp` now skips that browse under `_WIN32 && MUSHCLIENT_TESTS`. This is
+not a fabricated outcome: a NULL `pidl` is exactly what pressing Cancel
+produces, and the code below already handles it by leaving the folder alone and
+letting the save fail — which is the arm the test asserts. Skipping the dialog
+keeps the assertion running on Windows instead of guarding it away.

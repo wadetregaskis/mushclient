@@ -28,8 +28,12 @@ struct TabFixture
     CMUSHclientDoc doc;
     FakeWorldView  view;
     CString        savedDelims;
+    // Restores the doc's own view, which on Windows it constructed and will
+    // delete -- see ScopedWorldView in mc_test.h.  Declared after the two it
+    // refers to so it is destroyed first.
+    mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach;
 
-    TabFixture()
+    TabFixture() : attach(doc, &view)
     {
         savedDelims = App.m_strWordDelimiters;
         // The shipping default (globalregistryoptions.cpp "WordDelimiters").
@@ -39,7 +43,6 @@ struct TabFixture
         doc.m_iFlags        = COLOUR_ANSI;
         doc.m_iForeColour   = WHITE;
         doc.m_iBackColour   = BLACK;
-        doc.m_pWorldView    = &view;
 
         // Stock-ish option values; individual tests override.
         doc.m_bLowerCaseTabCompletion = false;
@@ -50,7 +53,6 @@ struct TabFixture
 
     ~TabFixture()
     {
-        doc.m_pWorldView = nullptr;
         App.m_strWordDelimiters = savedDelims;
     }
 

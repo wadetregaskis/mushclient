@@ -145,6 +145,15 @@ TEST(ScriptEngine, EverySupportedLanguageSpellingIsRecognised)
 
 // VBScript is COM-only and PHP has no embeddable engine here.  Both must say so
 // out loud rather than leaving the user with a world whose scripts never run.
+//
+// Headless only: the message is the PORT'S, and so is the list of languages it
+// offers instead.  Windows hosts VBScript through COM, so it is supported
+// there and says nothing; an unknown name fails at CLSIDFromProgID with a COM
+// error instead.  Its sibling above (SupportedLanguagesAreAccepted) is
+// deliberately left unguarded even though it asserts the ABSENCE of this
+// message, which Windows satisfies vacuously -- it still earns its keep there
+// as a smoke test that CreateScriptEngine runs at all for each name.
+#ifndef _WIN32
 TEST(ScriptEngine, UnsupportedLanguagesSaySo)
 {
     for (const char* name : { "VBScript", "vbscript", "PHP", "php", "Brainfuck" }) {
@@ -156,6 +165,7 @@ TEST(ScriptEngine, UnsupportedLanguagesSaySo)
         EXPECT_TRUE(saw(doc, "Lua"));                // and lists what does work
     }
 }
+#endif
 
 // A world with scripting switched off has an empty language and must stay quiet.
 TEST(ScriptEngine, NoLanguageIsNotAnError)
@@ -516,6 +526,23 @@ TEST(ScriptEngine, DontChangeActionLeavesTheSourceAlone)
 // say so in their own comments -- so the LAST array slot is the FIRST argument.
 //
 // It used to ignore its DISPPARAMS entirely, so every argument arrived as nil.
+//
+// The three tests below are headless-only, and the reason is worth stating
+// precisely because "Windows hands rgvarg to Invoke" is true and still not the
+// whole story.  Windows' Execute checks `if (L)` FIRST and, for a Lua engine,
+// returns through ExecuteLua with two EMPTY parameter lists -- it never reaches
+// the Invoke that would have carried the arguments.  These tests drive a Lua
+// engine, because that is the one language both platforms embed, so on Windows
+// they exercise the early return rather than the marshalling.
+//
+// That early return is not a defect: every caller of this entry point in the
+// product asks UsesEmbeddedCallback() first and sends Lua to ExecuteLua with
+// typed lists instead (plugins.cpp x6, methods_plugins.cpp CallPlugin), so a
+// Lua engine never arrives here with arguments.  The port needs the
+// marshalling because FIVE more languages are embedded rather than COM-hosted,
+// and they all come through here.  Testing the Windows path needs a COM engine
+// -- a different fixture, not this one with a guard removed.
+#ifndef _WIN32
 
 TEST(ScriptEngine, ExecuteUnpacksDispparamsInDeclarationOrder)
 {
@@ -563,6 +590,7 @@ TEST(ScriptEngine, ExecuteMarshalsNumericArguments)
     VARIANT v = e.doc.GetVariable("t");
     EXPECT_EQ(CString("number:42"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
+#endif
 
 // Execute reports the handler's keep-processing answer through its COleVariant
 // out-parameter -- that is how the MXP callbacks decide whether to suppress.

@@ -56,8 +56,25 @@ struct Registrar {
 
 // ── Runner ────────────────────────────────────────────────────────────────
 
-inline int run_all() {
+// ── Running one suite, or all of them ──────────────────────────────────────
+// `only` non-null runs just the tests whose TEST(suite, ...) matches it.
+//
+// This exists for the Windows target, where every enabled tests/test_*.cpp is
+// linked into ONE executable (tests/win/all_tests.cpp).  That design trades
+// link time for isolation, and its own comment says so: "suites are no longer
+// isolated from each other's global state ... if a suite ever needs isolation,
+// give it its own vcxproj."  Six suites turned out to need it -- each compiled
+// and linked, then killed the process partway through a run, always inside a
+// DIFFERENT suite from the one just added (docs/WINDOWS-VALIDATION.md section 10t).
+//
+// A filter is the cheap half of that vcxproj: one binary still, but the runner
+// can launch it once per suite, so a suite that corrupts process state takes
+// only itself down.  That is exactly the property macOS gets for free by
+// building one executable per test file.
+inline int run_all(const char* only = nullptr) {
     for (auto& tc : cases()) {
+        if (only && strcmp(tc.suite, only) != 0)
+            continue;
         g().current_suite  = tc.suite;
         g().current_name   = tc.name;
         g().current_failed = false;
@@ -101,6 +118,46 @@ inline int run_all() {
     else
         fprintf(stdout, "\n%d passed, %d failed\n", g().passed, g().failed);
     return g().failed ? 1 : 0;
+}
+
+// ── Swapping a fake pal::IWorldView into a document ────────────────────────
+// Put the doc's OWN view back at the end of the scope -- never NULL.
+//
+// On the port m_pWorldView starts null and nothing owns it, so `= &view` then
+// `= nullptr` is harmless and that is how the pattern was written.  On Windows
+// the doc constructs its own adapter (doc_construct.cpp: pal::CreateWinWorldView)
+// and its destructor DELETES it, so the same two lines do one of two wrong
+// things: nulling the pointer leaks the adapter, and leaving the fake in place
+// runs `delete` over a stack object.  Both were live in this suite the moment
+// the Windows target stopped crashing before it reached them.
+//
+// Templated only so this header need not know the pal types -- it is included
+// long before them.  Use it as a scope guard:
+//
+//     mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach (doc, &view);
+//
+template <class Doc, class View>
+struct ScopedWorldView {
+    Doc& doc;
+    typename std::decay<decltype (std::declval<Doc&> ().m_pWorldView)>::type saved;
+    ScopedWorldView (Doc& d, View* v) : doc (d), saved (d.m_pWorldView) { d.m_pWorldView = v; }
+    ~ScopedWorldView () { doc.m_pWorldView = saved; }
+    ScopedWorldView (const ScopedWorldView&) = delete;
+    ScopedWorldView& operator= (const ScopedWorldView&) = delete;
+};
+
+// Every distinct TEST() suite name, in registration order, one per line.
+// tests/win/run_tests.ps1 reads this to decide what to launch, so the runner
+// never has to keep its own copy of the list -- a second list would drift, and
+// a suite missing from it would simply not run, silently.
+inline void list_suites() {
+    std::vector<const char*> seen;
+    for (auto& tc : cases()) {
+        bool dup = false;
+        for (const char* s : seen)
+            if (strcmp(s, tc.suite) == 0) { dup = true; break; }
+        if (!dup) { seen.push_back(tc.suite); fprintf(stdout, "%s\n", tc.suite); }
+    }
 }
 
 // ── Running under a sanitizer? ────────────────────────────────────────────
@@ -558,13 +615,39 @@ inline _CrtMemState& McTestLeakBaseline()
 // function, because MC_TEST_WIN_HOST_INIT calls AfxWinInit: on Windows the test
 // files include mc_test.h BEFORE stdafx.h, so afxwin.h is not in scope here and
 // is in scope at the MC_TEST_MAIN() call site at the foot of the file.
+// argv is read for two flags, both used only by tests/win/run_tests.ps1:
+//   --list-suites   print every TEST() suite name and exit
+//   --suite=NAME    run only that suite
+// Neither changes what a plain run does, so macOS -- one executable per test
+// file, already isolated -- is unaffected.
+//
+// Both flags are handled AFTER the host is initialised, and that ordering is
+// load-bearing rather than tidy.  --list-suites first did its printing and
+// returned from main BEFORE MC_TEST_WIN_HOST_INIT, which looks obviously right
+// -- listing names needs no MFC, so why pay for it? -- and hung every time:
+// MFC's OLE teardown asserts in oleunk.cpp when AfxOleInit was never called,
+// and on this host an assertion is an invisible modal dialog (see
+// docs/WINDOWS-VALIDATION.md section 10q).  So the process printed nothing,
+// exited never, and the runner waited on it forever.
+//
+// The rule that follows is worth more than the fix: on this host an early
+// return from main is a HANG, not a shortcut.  A flag added here must run the
+// full host init and leave through the same exit as an ordinary run.
 #define MC_TEST_MAIN_ALWAYS() \
-    int main(int, char**) { \
+    int main(int argc_, char** argv_) { \
+        const char* only_ = nullptr; \
+        bool list_ = false; \
+        for (int i_ = 1; i_ < argc_; ++i_) { \
+            if (strcmp(argv_[i_], "--list-suites") == 0) list_ = true; \
+            else if (strncmp(argv_[i_], "--suite=", 8) == 0) only_ = argv_[i_] + 8; \
+        } \
         MC_TEST_WIN_HOST_INIT(); \
         MC_TEST_IGNORE_SIGPIPE(); \
         Generate256colours(); \
         MC_TEST_WIN_LEAK_BASELINE();  /* host setup done; measure from here */ \
-        int rc_ = mc_test::run_all(); \
+        int rc_ = 0; \
+        if (list_) mc_test::list_suites(); \
+        else rc_ = mc_test::run_all(only_); \
         MC_TEST_WIN_LEAK_REPORT(); \
         return rc_; \
     }

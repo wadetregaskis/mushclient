@@ -43,6 +43,9 @@
 #ifndef getcwd
 #define getcwd _getcwd
 #endif
+#ifndef rmdir
+#define rmdir _rmdir
+#endif
 
 // mkdir with a mode, which Windows _mkdir does not take.  The mode is dropped
 // rather than translated: these are scratch directories under /tmp, the tests

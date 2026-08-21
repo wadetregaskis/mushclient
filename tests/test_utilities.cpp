@@ -510,17 +510,31 @@ TEST(Utilities, MakeAbsolutePathStripsLeadingDotSlash)
     EXPECT_STREQ("c:x",  Make_Absolute_Path("c:x"));
 }
 
-// utilities_shared.cpp ExtractDirectory: "On POSIX paths use '/' but also
-// accept '\' in case of cross-platform world files ... if no slash: './'".
+// utilities_shared.cpp ExtractDirectory: both separator kinds are accepted on
+// BOTH platforms, and the later one wins.  The Windows arm used to look for a
+// backslash only, so a plugin path written with forward slashes -- a shape the
+// world loader expressly expects -- resolved to the current directory instead
+// of the plugin's own.  See the function, and docs/UPSTREAM-BUGS.md 89.
 TEST(Utilities, ExtractDirectoryAcceptsBackslashSeparators)
 {
     EXPECT_STREQ("plugins\\images\\",
                  (const char*)ExtractDirectory("plugins\\images\\x.png"));
     EXPECT_STREQ("plugins/images/",
                  (const char*)ExtractDirectory("plugins/images/x.png"));
-    // the LATER of the two separator kinds wins in a mixed path
+    // the LATER of the two separator kinds wins in a mixed path, whichever
+    // kind it is -- so assert BOTH orders, not just one.  Only the first of
+    // these two distinguishes the arms: a backslash-only search answers the
+    // second correctly by accident, because there the backslash IS the later
+    // separator.  The pair is what pins the rule rather than one example of it.
     EXPECT_STREQ("a\\b/", (const char*)ExtractDirectory("a\\b/c.png"));
+    EXPECT_STREQ("a/b\\", (const char*)ExtractDirectory("a/b\\c.png"));
+    // With no separator at all there is nothing to split, so the answer names
+    // the current directory with the platform's own separator.
+#ifdef _WIN32
+    EXPECT_STREQ(".\\", (const char*)ExtractDirectory("noslash.png"));
+#else
     EXPECT_STREQ("./", (const char*)ExtractDirectory("noslash.png"));
+#endif
 }
 
 // ── DefaultWorldFileName ────────────────────────────────────────────────────
@@ -580,20 +594,45 @@ TEST(Utilities, DefaultWorldFileNameNeverContainsAPathSeparator)
     }
 }
 
-// ── TipsFileName ────────────────────────────────────────────────────────────
-// Where CTipDlg looks for the Tip of the Day text.  It used to build this in a
-// `char [MAX_PATH]` with strcpy + strcat, so a long enough install path ran the
-// suffix off the end of the array — Help ▸ Tip of the Day, and the tip shown at
-// startup, smashed the stack.  The 250-character directory below is what proves
-// the fixed array is gone: 250 + 22 is past MAX_PATH, so the old code could not
-// have produced this answer at all.
+// ── TipsFileName ─────────────────────────────────────────────
+// The suffix TipsFileName appends, and the separator it splits on, are both
+// platform-specific by design (utilities_shared.cpp): Windows keeps tips.txt
+// beside the executable and splits on a backslash, a .app bundle has to reach
+// ../Resources/ because code signing allows only the executable in
+// Contents/MacOS/, and plain Unix keeps the file beside the executable.
+//
+// What is NOT platform-specific is the property these two tests exist for --
+// that the answer is built with CString rather than the `char [MAX_PATH]` the
+// original used -- so both run everywhere, against the local shape.
+#ifdef _WIN32
+  #define MC_TIPS_SEP  "\\"
+  #define MC_TIPS_TAIL "\\tips.txt"
+#elif defined (__APPLE__)
+  #define MC_TIPS_SEP  "/"
+  #define MC_TIPS_TAIL "/../Resources/tips.txt"
+#else
+  #define MC_TIPS_SEP  "/"
+  #define MC_TIPS_TAIL "/tips.txt"
+#endif
+
+// dialogs/TipDlg.cpp built this path in a `char [MAX_PATH]` with strcpy +
+// strcat, so a long enough install path ran the suffix off the end of the array
+// - Help > Tip of the Day, and the tip shown at startup, smashed the stack.
+// The long directory below is what proves the fixed array is gone: the answer
+// is past MAX_PATH, so the old code could not have produced it at all.
+//
+// 300 rather than the 250 this started with, because the suffix is the SHORTEST
+// part and it differs per platform.  250 + "/../Resources/tips.txt" clears 260
+// on the Mac; 250 + "\tips.txt" is 259, and the assertion below quietly stopped
+// meaning anything the moment the test ran somewhere with a shorter suffix.  A
+// length that depends on the platform's constant is not a length to hard-code
+// close to it.
 TEST(Utilities, TipsFileNameSurvivesADirectoryLongerThanMAX_PATH)
 {
-    const CString strDir = CString('d', 250);
-    const CString got = TipsFileName(strDir + "/MUSHclient");
+    const CString strDir = CString('d', 300);
+    const CString got = TipsFileName(strDir + MC_TIPS_SEP "MUSHclient");
 
-    EXPECT_STREQ((const char*) (strDir + "/../Resources/tips.txt"),
-                 (const char*) got);
+    EXPECT_STREQ((const char*) (strDir + MC_TIPS_TAIL), (const char*) got);
     EXPECT_GT(got.GetLength(), MAX_PATH);
 }
 
@@ -602,17 +641,20 @@ TEST(Utilities, TipsFileNameSurvivesADirectoryLongerThanMAX_PATH)
 // keeps everything (the behaviour the `if (p)` guard gave).
 TEST(Utilities, TipsFileNameDropsTheExecutableName)
 {
-    EXPECT_STREQ("/Applications/MUSHclient.app/Contents/MacOS"
-                 "/../Resources/tips.txt",
-                 (const char*) TipsFileName(
-                     "/Applications/MUSHclient.app/Contents/MacOS/MUSHclient"));
+    EXPECT_STREQ((const char*) (CString("C:" MC_TIPS_SEP "Program Files"
+                                        MC_TIPS_SEP "MUSHclient") + MC_TIPS_TAIL),
+                 (const char*) TipsFileName("C:" MC_TIPS_SEP "Program Files"
+                                            MC_TIPS_SEP "MUSHclient"
+                                            MC_TIPS_SEP "MUSHclient.exe"));
 
-    EXPECT_STREQ("MUSHclient/../Resources/tips.txt",
+    // No separator at all: nothing is dropped, the suffix goes on the whole
+    // string.  This is the `if (p)` guard's behaviour, kept deliberately.
+    EXPECT_STREQ((const char*) (CString("MUSHclient") + MC_TIPS_TAIL),
                  (const char*) TipsFileName("MUSHclient"));
 
     // Only the LAST separator counts, so a directory with a dot in it is safe.
-    EXPECT_STREQ("/opt/mc.1.2/../Resources/tips.txt",
-                 (const char*) TipsFileName("/opt/mc.1.2/MUSHclient"));
+    EXPECT_STREQ((const char*) (CString("mc.1.2") + MC_TIPS_TAIL),
+                 (const char*) TipsFileName("mc.1.2" MC_TIPS_SEP "MUSHclient"));
 }
 
 // utilities_shared.cpp: the CommandIDs[] lookups are case-insensitive and

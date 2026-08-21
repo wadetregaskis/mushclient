@@ -571,6 +571,21 @@ int i;
   m_total_lines = 0;
   m_pCurrentLine = new CLine (++m_total_lines, m_nWrapColumn, 0, WHITE, BLACK, m_bUTF_8);
   m_LineList.AddTail (m_pCurrentLine);
+
+  // Register with the world-doc template, which is what makes world.GetWorld,
+  // GetWorldList and every cross-world call work: they walk
+  // App.m_pWorldDocTemplate's document list and nothing else
+  // (methods_worlds.cpp).  On Windows the framework does this inside
+  // CDocTemplate::OpenDocumentFile; a bare `CMUSHclientDoc doc;` never goes
+  // near it, so the list stayed empty and every world was invisible to every
+  // other one -- which reads as "the plugin callback did not fire" rather than
+  // as "the world could not be found".
+  //
+  // Symmetric without any more code: AddDocument sets m_pDocTemplate, and
+  // ~CDocument removes the document from whatever template that names.  The
+  // headless arm above does the same thing for the same reason.
+  if (App.m_pWorldDocTemplate)
+    App.m_pWorldDocTemplate->AddDocument (this);
 #endif
 
 #ifndef _WIN32

@@ -783,7 +783,20 @@ bool bError = true;
                MB_ICONSTOP);
 
     // BROWSE FOR STATE FOLDER
-#ifdef _WIN32
+#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
+    // The unit-test host answers this browse as CANCELLED, and it has to.
+    // ::SHBrowseForFolder is a SHELL dialog rather than a message box, so the
+    // host's AfxMessageBox / UMessageBox interception cannot reach it and there
+    // is no hook to substitute: it simply blocks, with no window a test can
+    // find or close.  It is the one modal in this tree with no way out
+    // (docs/WINDOWS-VALIDATION.md 10r).
+    //
+    // Cancelling is not a fabricated outcome.  A NULL pidl is exactly what a
+    // user pressing Cancel produces, and the code below already handles it by
+    // leaving the folder alone and letting the save fail -- which is the arm
+    // PluginState.StateFolderIsAFileFails asserts.  Skipping the dialog keeps
+    // that assertion running on Windows instead of guarding it away.
+#elif defined(_WIN32)
     // Gets the Shell's default allocator
     LPMALLOC pMalloc;
     if (::SHGetMalloc(&pMalloc) == NOERROR)

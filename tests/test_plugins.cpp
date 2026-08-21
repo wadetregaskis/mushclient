@@ -926,6 +926,16 @@ TEST(PluginLifecycle, PluginArrayLivesInPluginScope)
 }
 
 // ═══ ExecutePluginScript argument-marshalling variants ═════════════════════
+// Headless only.  The whole family drives CScriptEngine::Execute's NON-embedded
+// arm, and "headless" is what makes that arm reachable: the port answers a
+// dispatch-language plugin by consuming the dispid and returning true, so the
+// argument packing can be asserted with no engine behind it.  On Windows
+// "vbscript" is a real COM language and Execute goes to m_pDispatch->Invoke --
+// with m_pDispatch NULL here, because these plugins never call
+// CreateScriptEngine, that is a null dereference, and it took the process down
+// before the first test in the family could print.  A Windows version wants a
+// real COM engine, which is a different fixture.
+#ifndef _WIN32
 // The non-embedded (dispatch) arms: a plugin whose engine is a COM-style
 // language (here "vbscript", which has no embedded engine on this platform)
 // routes through CScriptEngine::Execute.  Headless, Execute's non-embedded
@@ -1023,6 +1033,7 @@ TEST(PluginDispatch, UnknownDispidShortCircuitsAsApproval)
     EXPECT_TRUE(p->ExecutePluginScript(ci, "line"));
     EXPECT_EQ(0, (int)d._count);                    // not invoked at all
 }
+#endif  // !_WIN32 -- end of the dispatch-arm family
 
 // ═══ Lua arms of the argument variants ═════════════════════════════════════
 
@@ -1471,8 +1482,17 @@ TEST(PluginState, StateFolderIsAFileFails)
     unlink(filePath);
 }
 
-// The plugin wizard headless: DoModal cancels, but the preparation runs —
+// The plugin wizard headless: DoModal cancels, but the preparation runs --
 // everything gets pre-selected and the script file is loaded.
+//
+// Headless only, and "Headless" in the name is load-bearing.  What makes this
+// testable is that CDialog::DoModal degrades to IDCANCEL through a null hook on
+// the port, so the wizard's preparation runs and its window never does.  On
+// Windows DoModal is a real CPropertySheet: there is nothing to assert about
+// afterwards without driving it, and driving a modal is what this whole target
+// exists to avoid.  (Measured: it does not hang here, it throws -- but that is
+// an accident of the resource lookup, not a contract.)
+#ifndef _WIN32
 TEST(WizardTest, HeadlessWizardSelectsEverythingThenCancels)
 {
     CMUSHclientDoc doc;
@@ -1506,6 +1526,7 @@ TEST(WizardTest, HeadlessWizardSelectsEverythingThenCancels)
     ASSERT_TRUE(doc.GetVariableMap().Lookup("wv", v));
     EXPECT_TRUE(v->bSelected);
 }
+#endif
 
 // ═══ Round-4 sweep: GetPluginInfo cases, load/reload error arms, the
 //     doc-level CallPlugin ═══════════════════════════════════════════════════
@@ -1703,6 +1724,12 @@ TEST(PluginInfoR4, LineReceivedFalseOmitsLineFromOutput)
     EXPECT_TRUE(!output_contains(doc, "secret line"));   // omitted
 }
 
+// Headless only.  Windows' Execute checks `if (L)` first and returns through
+// ExecuteLua with EMPTY parameter lists, so a LUA engine never reaches the
+// Invoke that carries rgvarg -- which is fine there because every caller asks
+// UsesEmbeddedCallback() first and routes Lua elsewhere.  Full reasoning in the
+// section comment above the same family in tests/test_scriptengine.cpp.
+#ifndef _WIN32
 // The non-Windows CScriptEngine::Execute used to declare its DISPPARAMS
 // parameter WITHOUT A NAME and hand ExecuteLua two empty argument lists, so
 // every argument a caller packed was dropped: world.CallPlugin's argument for a
@@ -1737,6 +1764,7 @@ TEST(ScriptEngineExecute, DispparamsReachTheCallee)
     doc.m_ScriptEngine = nullptr;
     delete engine;
 }
+#endif
 
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
@@ -1860,6 +1888,14 @@ TEST(PluginState, DocSaveStateWithCurrentPluginReturnsOk)
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d_docok/", (int)getpid());
+    // Make the folder rather than leaning on SaveState to make it.  The port
+    // auto-creates a missing state folder (mkdir -p, plugins.cpp); Windows
+    // does not -- it reports "does not exist", offers a browse, and fails the
+    // save.  Creating it here is not a workaround for that difference: it is
+    // what this test should have done anyway, because it is about SaveState
+    // WRITING the file, and the auto-create has its own test
+    // (SaveStateAutoCreatesFolderAndNamesFile).  One test, one behaviour.
+    mkdir(dir, 0755);
     App.m_strDefaultStateFilesDirectory = dir;
 
     ASSERT_TRUE(load_plugin(doc, write_plugin("docok", IDA, "DocOkPlugin",
@@ -1877,6 +1913,8 @@ TEST(PluginState, DocSaveStateWithCurrentPluginReturnsOk)
     struct stat st;
     EXPECT_EQ(0, stat(expected, &st));              // state file was written
 
+    unlink(expected);
+    rmdir(dir);
     App.m_strDefaultStateFilesDirectory.Empty();
 }
 

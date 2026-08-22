@@ -1224,6 +1224,7 @@
     <ClCompile Include="tests\win\all_tests.cpp" />
     <ClCompile Include="tests\win\test_prefs_pages.cpp" />
     <ClCompile Include="tests\win\test_gap_coverage.cpp" />
+    <ClCompile Include="tests\win\test_notepad_win.cpp" />
     <ClCompile Include="tests\test_accelerators.cpp" />
     <ClCompile Include="tests\test_aliases.cpp" />
     <ClCompile Include="tests\test_ansi.cpp" />

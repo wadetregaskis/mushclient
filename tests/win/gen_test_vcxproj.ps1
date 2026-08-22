@@ -46,7 +46,7 @@ $excluded = [ordered]@{
   'test_pal_transport.cpp' = 'drives platform/posix_transport.cpp; the Windows adapter is pal/win_transport.cpp'
   'test_mc_test_framework.cpp' = 'uses dup2 to capture the harness own output'
   # --- needs a port-only seam; re-enterable once that seam has a Windows half
-  'test_notepad_methods.cpp' = 'every one of its 18 tests IS the notepad: notepad_fixture.h is #ifndef _WIN32 because a notepad on Windows is a real CEditView from the MFC doc/view framework, so guarding the users would leave an empty file'
+  'test_notepad_methods.cpp' = 'every one of its 18 tests drives CTextDocument m_fn_* callbacks, which TextDocument.h declares #ifndef _WIN32 -- a notepad here is a real CEditView in a frame, a different implementation rather than a different seam. The Windows half is covered by tests\win\test_notepad_win.cpp instead'
   'test_sound.cpp'           = 'drives the miniaudio backend, which is the non-Windows sound path'
   'test_chat_sockets.cpp'    = 'builds real AF_UNIX/loopback pairs with socketpair, which Windows does not have'
   'test_notepad_convert.cpp' = 'NotepadDetectLineEndings is non-Windows only: CEditView::SerializeRaw means the buffer IS the representation on Windows (CLAUDE.md, macOS notes)'
@@ -248,6 +248,7 @@ W '    <ClCompile Include="tests\win\all_tests.cpp" />'
 # must not pick them up.  Listed by hand, one line each.
 W '    <ClCompile Include="tests\win\test_prefs_pages.cpp" />'
 W '    <ClCompile Include="tests\win\test_gap_coverage.cpp" />'
+W '    <ClCompile Include="tests\win\test_notepad_win.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'
@@ -257,4 +258,4 @@ W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />'
 W '</Project>'
 
 Set-Content -Path 'MUSHclient_tests.vcxproj' -Value $sb.ToString().TrimEnd() -Encoding UTF8
-"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 2 Windows-only, $($excluded.Count) excluded"
+"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 3 Windows-only, $($excluded.Count) excluded"

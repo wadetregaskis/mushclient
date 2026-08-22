@@ -6586,3 +6586,123 @@ The timing is the one thing to get right: the timer is relative to world OPEN,
 not to the connection, so it must be set later than the `ID_CONNECTION_CONNECT`
 that follows. Six seconds was too early on the first attempt and the dump
 contained only MUSHclient's own banner.
+
+### 10al. The notepad family, over the real MFC doc/view
+
+`test_notepad_methods.cpp` was the largest remaining exclusion — 18 tests, and
+the only one of the seven "needs a port-only seam" rows whose reason named a
+*seam* rather than a hostility. The reason was right and the conclusion drawn
+from it was wrong.
+
+It said the fixture needs `CTextDocument`'s twelve `m_fn_*` callbacks, which
+`TextDocument.h` declares `#ifndef _WIN32`, so guarding the users would leave an
+empty file. All true. What it implied — that the coverage therefore cannot exist
+here — does not follow, because the callbacks are not a *seam to the same code*.
+They are one of **two implementations**.
+`scripting/methods/methods_notepad.cpp` is `#ifndef _WIN32 / #else` eleven times
+over, and the `#else` half — the half every Windows user runs — had never had a
+test on any platform.
+
+So the right move was not to port the file. It was
+`tests/win/test_notepad_win.cpp`: 19 tests, the same behaviours, over the real
+`CTextView` in a real frame. **19 passed, 0 failed** on the first complete run;
+the target is now **1638 passed, 0 failed, 181 suites**.
+
+#### The observables are strictly better here
+
+| port fixture | this suite |
+|---|---|
+| `applyFontCalls` counter | the `HFONT` the EDIT control answers `WM_GETFONT` with, and its `LOGFONT` face, weight and height |
+| `applyColourCalls` counter | the frame caption `CTextView::OnUpdate` rewrites when `UpdateAllViews` reaches it |
+| `readOnly` bool | the control's `ES_READONLY` style bit |
+| `lastMove[4]` | the frame's real screen rectangle |
+| `saveCalls` / `lastSavePath` | the bytes on disk |
+| `closeCalls` | `::IsWindow(frame)` going FALSE, and the document leaving the template |
+
+A counter fails only when nothing was called. Every entry on the right fails
+additionally when the *wrong* thing was called, or the right thing with the
+wrong argument. `NotepadFont`'s keep-current arm is the clearest case: on the
+port "it re-applied" is `applyFontCalls` going up, and here it is the control
+wearing a **different `HFONT` handle** — because `CTextView::SetTheFont` builds
+a new `CFont` every time — while the face and size stay put.
+
+#### What a console process needs in order to own a notepad
+
+Four things, and the third is the one that is easy to get backwards:
+
+1. **The document** through `RUNTIME_CLASS(CTextDocument)->CreateObject()`. The
+   constructor is protected and `CreateInstance` — the port's way past it — is
+   itself `#ifndef _WIN32`. `DECLARE_DYNCREATE` is the Windows way past it, the
+   same route `test_accelerators.cpp` uses for `CMUSHView`.
+2. **A real `CFrameWnd`.** Not optional and not cosmetic: `CTextView::OnUpdate`
+   does `GetParentFrame ()->GetWindowText (...)` with no null check, and
+   `ActivateNotepad`, `MoveNotepadWindow` and `GetNotepadWindowPosition` all go
+   through `GetParentFrame ()` too. A windowless view is not an option here the
+   way it was for the accelerator tests.
+3. **`AddView` AFTER `Create`, not before.** `CView::OnCreate` asserts
+   `m_pDocument == NULL`; the framework wires the document through a
+   `CCreateContext` in `lpCreateParams`, which a hand-made view has none of.
+   MFC traces "Creating a pane with no CDocument" for each one, which is the
+   TRACE for exactly that and is expected output here.
+4. **`App.m_pNormalDocTemplate`**, which `MC_TEST_WIN_DOC_TEMPLATES` already
+   builds and `LoadTemplate`s.
+
+Teardown is `CTextDocument::OnCloseDocument` — the same call `world.CloseNotepad`
+makes — and nothing in the fixture deletes anything by hand: the frame destroys
+the view, `~CView` removes it from the document, and the document, being out of
+views, closes and deletes itself. A fixture that unpicks that by hand ends up
+testing its own bookkeeping instead of MFC's.
+
+The single access-control snag is that `~CView` is **protected** (the framework
+deletes a view from `PostNcDestroy`, which never runs when `Create` failed and
+there is no window). `delete (CObject *) view` is the same deletion — `CObject`'s
+destructor is public and virtual — by a route the access specifier allows.
+
+#### The one thing that does not work, and what it is worth anyway
+
+**Creation.** `CreateTextWindow` goes through
+`CMultiDocTemplate::OpenDocumentFile`, whose `CTextChildFrame` is a
+`CMDIChildWnd` and needs the main frame's MDI client window — and this host
+constructs `CMainFrame` without ever creating it (§10z). So it fails, loudly,
+with three MFC assertions and a "Failed to create empty document" that the
+message-box hook routes to stderr.
+
+That does not cost the two tests that reach it. `SendToNotepad` and
+`AppendToNotepad`-with-an-unknown-title are both asserting a *negative* — that
+the call did not write into the notepad that already exists — and a creation
+that fails cannot fake that. The drift the port's version of this test pins (a
+twin that forwarded `SendToNotepad` to the append path) would fail here exactly
+as it does there.
+
+#### Two findings from writing it
+
+- **`CDocument::SetPathName` canonicalises.** `SaveNotepad(title, "/tmp/x.txt",
+  TRUE)` leaves `GetPathName()` reading `C:\tmp\x.txt`, because `SetPathName`
+  runs `AfxFullPath`. The first version of the test asserted the string that
+  went in, and was asserting that this does not happen. It now asserts the
+  property that matters — the document points at a file, and that file is the
+  one just written — which is true under any canonicalisation.
+- **A failing save is reported, not swallowed.** `CDocument::OnSaveDocument`
+  reports the `CFileException` through `AfxMessageBox`
+  ("... contains an invalid path") and returns FALSE, so `SaveNotepad` answers
+  FALSE. Only the message-box hook makes that assertable rather than a hang.
+
+#### What is left of the exclusion list
+
+Fourteen, of which eight are correct-by-design (they test the port's
+substitutes: `CString`, the collections, `mfc_ui.h`, `mc_dispatch`,
+`posix_socket`, the headless CDC, the posix transport, and the framework's own
+`dup2` test). The other six are `test_sound.cpp`, `test_chat_sockets.cpp`,
+`test_notepad_convert.cpp`, `test_pal_worldview.cpp`, `test_menu_rules.cpp` and
+`test_pal_surface.cpp`. `test_notepad_methods.cpp` stays excluded on purpose and
+its reason now names this file, because two copies of the same 18 assertions in
+two dialects would be two places to keep in step — the same rule the header of
+`tests/win/test_gap_coverage.cpp` states.
+
+**The generalisable check**, and the third time this campaign has produced one:
+*a reason that names a missing seam is a reason to ask whether the other side is
+the same code.* When it is — `test_accelerators.cpp`, `test_lua_surface.cpp` —
+the fix is a guard or a host change and the tests come across whole. When it is
+not, as here, porting them would be the wrong move and writing the other half is
+the right one. The exclusion reason cannot tell you which; only reading the
+`#else` can.

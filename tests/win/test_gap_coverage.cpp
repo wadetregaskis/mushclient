@@ -27,6 +27,8 @@
 
 #include "MUSHview.h"       // CMUSHView: the click-column tests below
 #include "dialogs/plugins/PluginsDlg.h"  // CPluginsDlg -- the stale-CPlugin* row
+#include "dialogs/world_prefs/prefspropertypages.h"  // FittedLastColumnWidth,
+                                                 // OutputBufferBytesNeeded, CPrefsP7/8
 #include "posix_compat.h"   // getpid / unlink, for the names-file tests
 
 #include <commctrl.h>   // a real WC_LISTVIEW for the Plugins dialog test
@@ -756,3 +758,72 @@ TEST(PluginsDlgR6, ShowInfoIsDisabledOnceThePluginHasLeftTheList)
     dlg.m_ctlPluginList.Detach();   // never let MFC's map outlive the window
     delete erased;                  // m_PluginList no longer owns it
 }
+
+// ═══ 44f0737's two hoisted helpers, which Windows could not reach ══════════
+//
+// FittedLastColumnWidth and OutputBufferBytesNeeded are pure arithmetic in
+// dialogs/world_prefs/prefspropertypages.h, and the comment above them says why
+// they are there: "in the header so the headless suite can drive them without
+// linking a property page ... Both were bugs precisely because they were buried
+// in a dialog nothing tests."
+//
+// They are tested — in tests/test_mfc_ui.cpp, which this target EXCLUDES, for a
+// reason that has nothing to do with them ("tests platform/mfc_ui.h, the 108
+// fake MFC classes").  So two functions in a shipping header, hoisted expressly
+// to be testable, had no coverage on the platform they ship for.  That is the
+// same artefact §10h describes and this file exists to close, and it is the
+// cheapest instance of it yet: no fixture, no window, no document.
+//
+// If test_mfc_ui.cpp is ever split so its shim half and its engine half can be
+// excluded separately, these two become redundant and should go.
+
+TEST(PrefsHelpersR6, TheMemoryWarningSurvivesTheRaisedLineCeiling)
+{
+    // Windows' own ceiling: comfortably inside 32 bits either way.
+    EXPECT_EQ(16ULL * 1024 * 1024 + 500000ULL * 60,
+              OutputBufferBytesNeeded(500000L));
+
+    // The port's ceiling is ~6.02 Gb.  The wrapped DWORD figure was ~1.72 Gb,
+    // so a 4 Gb machine was told the biggest possible buffer would fit.  The
+    // ceiling is the port's, but the arithmetic is in shared code and is what
+    // this target can check.
+    const unsigned long long need = OutputBufferBytesNeeded(100000000L);
+    EXPECT_EQ(16ULL * 1024 * 1024 + 100000000ULL * 60, need);
+    EXPECT_TRUE(need > 4ULL * 1024 * 1024 * 1024);
+
+    // 0 lines is "unlimited" and has its own warning; no per-line bytes here.
+    EXPECT_EQ(16ULL * 1024 * 1024, OutputBufferBytesNeeded(0L));
+}
+
+TEST(PrefsHelpersR6, TheLastColumnIsFittedOnlyWhenTheUserHasNoWidthOfTheirOwn)
+{
+    // Seed still in place = the user has never resized this column, so fit it:
+    // 600 wide, less a 15-pixel scrollbar, less 160 of other columns.
+    EXPECT_EQ(425, FittedLastColumnWidth(150, 150, 600, 15, 160));
+
+    // A restored width that differs is the user's own: leave it alone.
+    EXPECT_EQ(0, FittedLastColumnWidth(150, 320, 600, 15, 160));
+
+    // A list too narrow for the other columns is not a reason to set a silly
+    // width — 0 means "leave the column alone" here too.
+    EXPECT_EQ(0, FittedLastColumnWidth(150, 150, 100, 15, 160));
+    EXPECT_EQ(0, FittedLastColumnWidth(150, 150, 175, 15, 160));
+}
+
+// ── 44f0737's eighth defect, which has no runtime observable at all ────────
+//
+// LoadPrefsP7 indexed the ALIAS page's column arrays with the TRIGGER page's
+// CPrefsP8::eColumnSequence.  Two independent enums that happen to agree, so
+// the fix corrected an expression without changing a value, and no test can
+// watch it happen.  What CAN be pinned is the coincidence the old code rested
+// on: if either enum is ever reordered, this stops compiling, which is exactly
+// the notice the original code never got.
+//
+// Deliberately a static_assert rather than an EXPECT: the hazard is at edit
+// time, not run time, and a failing build is the only report that arrives
+// before the damage.
+static_assert((int) CPrefsP7::eColumnSequence == (int) CPrefsP8::eColumnSequence,
+              "The alias and trigger pages' column enums have diverged. "
+              "That is legal -- they are independent -- but LoadPrefsP7 in "
+              "dialogs/world_prefs/configuration.cpp once indexed one with the "
+              "other, and this assertion is what would have caught it.");

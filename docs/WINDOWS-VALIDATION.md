@@ -6486,3 +6486,61 @@ The client keeps its preferences in the **working directory** first
 `Documents\MUSHclientx64\`. Both were fingerprinted before the run: the
 installed one verified unchanged afterwards, and the scratch one was restored
 from a backup, since dismissing the "Thanks for upgrading" screen writes to it.
+
+### 10ai. Two helpers hoisted to be testable, untested on the platform they ship for
+
+`44f0737` hoisted `FittedLastColumnWidth` and `OutputBufferBytesNeeded` out of
+the property pages and into `dialogs/world_prefs/prefspropertypages.h`, with a
+comment saying exactly why: *"in the header so the headless suite can drive them
+without linking a property page … Both were bugs precisely because they were
+buried in a dialog nothing tests."*
+
+They are tested — in `tests/test_mfc_ui.cpp`, which this target **excludes**,
+for a reason that has nothing to do with them ("tests `platform/mfc_ui.h`, the
+108 fake MFC classes"). So two functions in a shipping header, hoisted expressly
+to be testable, had no coverage at all on the platform they ship for. The
+assertions are now duplicated into `tests/win/test_gap_coverage.cpp` — no
+fixture, no window, no document, the cheapest instance of this file's whole
+premise. If `test_mfc_ui.cpp` is ever split so its shim half and its engine half
+can be excluded separately, they become redundant and should go.
+
+**`44f0737`'s eighth defect has no runtime observable and never will.**
+`LoadPrefsP7` indexed the alias page's column arrays with the trigger page's
+`CPrefsP8::eColumnSequence` — "two independent enums that happen to agree", so
+the fix corrected an expression without changing a value. No test can watch it.
+What *can* be pinned is the coincidence the old code rested on, and the right
+instrument is a `static_assert`: the hazard is at edit time, and a failing build
+is the only report that arrives before the damage.
+
+With that, `44f0737` is as closed as it can be from a test: six of its eight are
+covered here, the seventh is the static assertion, and the eighth
+(`CGlobalPrefsP4::OnFont`'s seeding) needs a modal font dialog whose only
+outputs are `UpdateData` and `SetWindowText` — both of which need a window even
+with the dialog answerable.
+
+### 10aj. Two of this document's own instructions cannot be followed on this machine
+
+Recorded because both look like negligence otherwise, and the next session will
+hit them in the first ten minutes.
+
+**"`tests/mud_stub.py` is the loopback server; do not write another."** There is
+no Python on this machine. `python`, `python3` and `py` all resolve to the
+Microsoft Store *alias stubs* under
+`%LOCALAPPDATA%\Microsoft\WindowsApps\`, which print an install advertisement
+and exit non-zero; there is no interpreter in `C:\Python*`, `Program Files` or
+`%LOCALAPPDATA%\Programs\Python`. So the instruction cannot be honoured as
+written, and a PowerShell equivalent is the alternative — kept in the session
+scratchpad rather than committed, precisely so it does not become the second
+loopback server the instruction warns about. **If Python is ever installed here,
+delete it and use `mud_stub.py`.**
+
+**The `tests/check_*.py` lints have not run once during this campaign.** They
+are `ctest` entries, and `ctest` is the macOS side; on Windows nothing invokes
+them. That matters most for `check_win_test_sources.py`, whose whole job is to
+notice when `MUSHclient.vcxproj` and `MUSHclient_tests.vcxproj` stop compiling
+the same engine sources — the guard against exactly the drift this round has
+been editing the generator to avoid. Its invariant was therefore checked by
+hand at the end of this round instead: **286 `<ClCompile>` entries each, and the
+two lists are identical.** Regenerating after every change achieves the same
+thing, but "the generator was re-run" is not the same claim as "the lint
+passed", and only the second one is a guard.

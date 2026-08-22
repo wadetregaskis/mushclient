@@ -6854,3 +6854,52 @@ asserting the same claim about two different subjects **is** the cross-check,
 and deriving either from the other would make both agree with anything.
 
 **1648 passed, 0 failed, across 182 suites.**
+
+### 10an. The real menu, dumped — and why an id diff is the wrong diff
+
+The port builds its menu bar by hand in `platform/wx_mfc_impl.cpp`. The Windows
+client loads its menus from a resource. Nobody has ever compared the two, and
+`tests/win/dump_menu_resource.ps1` now makes the Windows half printable:
+
+| resource | menu | commands |
+|---|---|---|
+| 128 `IDR_MAINFRAME` | with no world open | 44 |
+| 129 `IDR_MUSHCLTYPE` | a world | **147** |
+| 130 `IDR_NORMALTYPE` | a notepad | 79 |
+
+(`MUSHclient.rc` has no menus — they are in `locale\en.dll`, §10ac.
+`LOAD_LIBRARY_AS_DATAFILE` is enough for `LoadMenu`.)
+
+**The first attempt at the comparison was the wrong one, and the failure is
+worth recording because it is tempting.** Extracting every id the port appends
+and set-subtracting it from the 147 reports **67 missing commands** — and almost
+all 67 are phantoms. The port renumbers: Always On Top is
+`ID_MENU_VIEW_ALWAYSONTOP`, the Immediate window is `ID_MENU_GAME_LUA_EVAL`, a
+new notepad is the port-local `40001`, and every standard File/Edit verb is a
+`wxID_*` that never equals its `57xxx` MFC twin. An id is not the identity of a
+menu command across these two builds; **the path and the caption are.** A real
+audit therefore needs the port's menu dumped the same way and diffed by
+`File > &Open World…`, not by `57601` — which is macOS-side work.
+
+Two leads did survive checking against the port's source, and both are recorded
+as **leads, not findings**: they are macOS UI, nothing here can run them, and
+the port's menu builder has conventions of its own that a grep does not see.
+
+- **View ▸ Info Bar (`ID_VIEW_INFOBAR`, 32988) has no port menu item.** The
+  string "Info Bar" does not occur in any `platform/*.cpp`. The feature itself
+  is fully implemented — `CWorldChildFrame::infobarShow/Text/...`
+  (`wx_world_child.cpp:6522`) backs the whole seven-method `pal::IWorldView`
+  infobar API — so a script can raise the bar and the user has no way to toggle
+  it. Windows has the toggle.
+- **Edit ▸ Notepad's `Ctrl+Alt+W` is bound nowhere.** Windows'
+  `ID_EDIT_NOTESWORKAREA` (32333) is `&Notepad\tCtrl+Alt+W`; the port's nearest
+  item is `40001 "New Notepad"` with no accelerator, and `Alt+W` appears in no
+  `platform/*.cpp`.
+
+Neither is in the *Settings that are deliberately NOT coming back* table, so
+neither has been triaged before.
+
+**The reusable part is the script**, not the two leads. Any question of the form
+"does the port's menu match the client's" now starts with a text file instead of
+a screenshot, and the same three resources carry the captions and accelerator
+text that a caption-level diff needs.

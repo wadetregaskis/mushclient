@@ -7870,3 +7870,71 @@ whose answer the port already matches. `tmHeight - tmInternalLeading` was
 confirmed equal to `MulDiv (points, 96, 72)` exactly, across four sizes and
 five faces, which quantifies `pal::CpuRaster`'s under-report at 3 px in 16 —
 about 19% — at 10 pt Courier New.
+
+### §10ax — The five unasserted miniwindow image ops, measured against real GDI
+
+`CLAUDE.md` lists five image operations with no assertions anywhere:
+`WindowMergeImageAlpha`'s mask variant, `BlendImage`, `Filter`,
+`TransformImage`, `ImageOp`. The GUI rig from §10aw drives all five over known
+pixels and reads the result back with `WindowGetPixel`, so "returned `eOK` and
+did nothing" fails. `COLORREF` is `0x00BBGGRR` throughout.
+
+**All five work.** No defect found. The reference values, from a source window
+that is pure red (`0x0000FF`) on the left and pure blue (`0xFF0000`) on the
+right:
+
+| op | driven as | result |
+|---|---|---|
+| `DrawImage` (control, already covered) | mode 1 over white | `0x0000FF` / `0xFF0000` — exact copy |
+| `BlendImage` | mode 1, opacity 0.5, over white | `0x8080FF` / `0xFF8080` — exactly half-way to white on each channel |
+| `TransformImage` | identity | `0x0000FF` at x=5, `0xFF0000` at x=25 |
+| `TransformImage` | 0.5 scale | image occupies x 0-20, so red at x=5 and blue at x=15 |
+| `ImageOp` | action 1, rect 0,0-20,20, image as brush | `0x0000FF` inside, `0xFFFFFF` outside |
+| `MergeImageAlpha` | mask black left / white right, over a green ground | `0x00FF00` where the mask is black, `0xFF0000` where it is white |
+
+The `MergeImageAlpha` row is the one worth keeping: black mask = fully
+transparent, white mask = fully opaque, which is exactly the alpha-mask
+contract and had never been asserted anywhere.
+
+**`Filter`'s `Options` argument means two different things, and reading it as
+one cost a false positive.** For `Noise`, `Brightness`, `Contrast`, `Gamma` and
+the per-channel variants it is a strength. For the five convolutions — blur,
+sharpen, edge detect, emboss and the two at cases 20-21 — it is a **direction
+selector**: `GeneralFilter` guards its horizontal pass with
+`if (Options != 2) // 2 = vertical only` (`miniwindow.cpp:2668`) and its
+vertical pass with `if (Options != 1) // 1 = horizontal only` (`:2716`).
+
+That was first read as a strength, which made blur, sharpen and emboss look
+like they silently no-opped at `Options = 2.0` while working at `0.5` — a
+"returns `eOK` and does nothing" bug, reported by a test field whose only edge
+ran *vertically*. A vertical-only convolution across a vertical edge correctly
+changes nothing. **Before calling a filter inert, check what its parameter
+selects.**
+
+The full 19-operation table over a mid-grey field (`0x808080`, chosen so
+nothing clamps and nothing sits on a gamma fixed point) with a black block whose
+edge runs down x=30, sampling a flat pixel at (10,10) and an edge-adjacent one
+at (29,10):
+
+- **Noise** perturbs both samples, more at 2.0 than 0.5; **MonoNoise** is
+  sub-unit at 0.5 and visible at 2.0.
+- **blur** leaves the flat pixel alone and pulls the edge pixel toward the black
+  block (`0x808080` → `0x4C4C4C`); **sharpen** pushes it away (`→ 0xD5D5D5`);
+  **emboss** saturates it (`→ 0xFFFFFF`). All three at `Options = 0.5` (both
+  directions); all three correctly inert at `2.0` (vertical only).
+- **Contrast** and all three **ColourContrast** ops leave mid-grey untouched at
+  every strength — correct, since contrast pivots about mid-grey. The first
+  pass proved they are not inert: on pure red, `Contrast 0.5` gave
+  `0x0000FF → 0x4040BF`.
+- **Gamma** is the cleanest signal: `0.5 → 0xB4B4B4`, `2.0 → 0x404040`, and the
+  three `ColourGamma` ops move exactly one channel each (`0x8080B4`, `0x80B480`,
+  `0xB48080` at 0.5) — which also confirms the channel-to-index mapping
+  (2 = red, 1 = green, 0 = blue) that `miniwindow.cpp:3153-3161` asserts in
+  comments only.
+- **greyscale** leaves mid-grey unchanged, as it must.
+
+One method note, recorded because the first run of this probe produced a file
+that *looked* like a run: in Lua, `out:write (..., "\n")` truncates `...` to its
+**first** value, so every line came out as a bare label with no data. An output
+helper that silently drops its arguments is indistinguishable from a probe that
+found nothing.

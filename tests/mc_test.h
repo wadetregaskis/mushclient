@@ -515,6 +515,16 @@ void Generate256colours(void);
             App.m_pWorldDocTemplate = new CMultiDocTemplate( \
                 IDR_MUSHCLTYPE, RUNTIME_CLASS(CMUSHclientDoc), \
                 RUNTIME_CLASS(CChildFrame), RUNTIME_CLASS(CMUSHView)); \
+        /* Populate m_strDocStrings, m_hMenuShared and m_hAccelTable from the \
+           resource id.  The framework does this from AddDocTemplate, which \
+           this host does not call; CMultiDocTemplate::LoadTemplate is the same \
+           work without handing the template to the document manager.  It needs \
+           the resources MC_TEST_WIN_RESOURCE_DLL loads, and it is what makes \
+           App.m_pWorldDocTemplate->m_hAccelTable non-NULL -- which \
+           AcceleratorTo falls back on, and CopyAcceleratorTable of a NULL \
+           table answers 0, after which the body indexes an empty vector. */ \
+        App.m_pNormalDocTemplate->LoadTemplate(); \
+        App.m_pWorldDocTemplate->LoadTemplate(); \
     } while(0)
 
 // ── the localisation resource DLL ──────────────────────────────────────────

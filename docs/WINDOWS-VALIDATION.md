@@ -6232,3 +6232,63 @@ the only observable a test has for a path that ends in one.
 net, not a replacement: declining at the call site never creates the window at
 all, which is both cheaper and deterministic, and it documents at the site what
 the test is choosing not to do.
+
+### 10ae. `test_accelerators.cpp` is in, and "needs a view" turned out to be three things
+
+§10ab said the line was "no window", not "no view", and that several exclusion
+reasons in this document say the latter when they mean the former. This is the
+first one cashed in. `test_accelerators.cpp` is IN: 17 tests over the Win32
+`HACCEL` machinery, which had **no test on either platform** — the port's suite
+covers the map bookkeeping, and the table manipulation is `#ifdef _WIN32`.
+
+Its reason had been re-measured twice and both times the number was 11 of 17.
+It took three changes, not one, and the useful part is that none of them is what
+the reason named:
+
+1. **A `CMUSHView` attached to the document.** `AcceleratorTo` opens by walking
+   the view list for the MDI child frame that owns the table, and refuses with
+   `eBadParameter` if the walk finds nothing.
+   `RUNTIME_CLASS (CMUSHView)->CreateObject ()` gets past the protected
+   constructor and `CDocument::AddView` accepts a windowless view — the
+   `ClickColumnR6` technique, applied for real.
+2. **`CMultiDocTemplate::LoadTemplate ()` in the host.** With no window on the
+   view, `GetParentFrame ()` is NULL and the fallback chain ends at
+   `App.m_pWorldDocTemplate->m_hAccelTable`. That is populated by
+   `LoadTemplate`, which the framework calls from `AddDocTemplate` — which this
+   host deliberately does not call. Without it the table is NULL,
+   `CopyAcceleratorTable` answers 0, and the body then evaluates `&vAccel [0]`
+   on an **empty vector**: an out-of-range subscript that the debug STL turns
+   into an abort.
+3. **The resources from §10ad**, because `LoadTemplate` loads the accelerator
+   table from `locale\en.dll`. That DLL does carry `RT_ACCELERATOR`; the exe
+   does not.
+
+So the dependency chain runs view → template → resources → dialog hook, and
+removing any link puts the suite back where it was. That is why the earlier
+measurements ("giving the host the document templates did NOT fix this", "the
+resource DLL made no difference") were each true and each incomplete.
+
+#### The conversion, and the one that got away
+
+Every test declared `CMUSHclientDoc doc;`. They now declare an `AccelDoc`
+fixture and bind `CMUSHclientDoc& doc` from it, so each body is unchanged; the
+fixture is a plain `CMUSHclientDoc` member off Windows. Fourteen sites converted
+mechanically — and **one did not**, because it declares `doc2` rather than
+`doc`, and a pattern that matches on the variable name matches only the name.
+It was the single remaining failure at 1,615/1, which is the cheap kind of
+mistake: a regex conversion that leaves one site behind fails loudly at exactly
+that site.
+
+The fixture destroys the **document first and the view second**, and that
+ordering is the whole reason both are pointers rather than members. `~CDocument`
+runs `DisconnectViews`, which detaches without deleting; `RemoveView` is the
+tidy-looking call and the wrong one, because removing the last view runs
+`OnCloseDocument` — `delete this` on an auto-delete document.
+
+#### Cost
+
+Attaching a view is noisy: `CDocument::AddView` and its `UpdateFrameCounts` walk
+raise a handful of MFC assertions per document, routed to stderr as usual. In a
+suite that constructs one document per test that is a few hundred lines of
+noise for 17 tests' worth of coverage over code nothing else reaches. Accepted,
+and worth knowing before the technique is applied to a bigger suite.

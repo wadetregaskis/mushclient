@@ -51,7 +51,6 @@ $excluded = [ordered]@{
   'test_chat_sockets.cpp'    = 'builds real AF_UNIX/loopback pairs with socketpair, which Windows does not have'
   'test_notepad_convert.cpp' = 'NotepadDetectLineEndings is non-Windows only: CEditView::SerializeRaw means the buffer IS the representation on Windows (CLAUDE.md, macOS notes)'
   'test_pal_worldview.cpp'   = 'platform/activity_refresh.h includes <strings.h>; drives the port worldview'
-  'test_accelerators.cpp'    = 'AcceleratorTo returns eBadParameter at its first line: the Windows arm walks the document view list for the MDI child frame that owns the HACCEL, and this host has no view. Re-measured with the resource DLL loaded (locale\en.dll does carry RT_ACCELERATOR) and with the CMainFrame object: still 11 of 17, unchanged. What it needs is three things, not one: a CMUSHView ATTACHED to the document -- which ClickColumnR6 in tests/win/test_gap_coverage.cpp shows is possible, RUNTIME_CLASS(..)->CreateObject() plus CDocument::AddView -- and App.m_pWorldDocTemplate->LoadTemplate() so m_hAccelTable is non-NULL, because CopyAcceleratorTable of a NULL table answers 0 and the body then evaluates &vAccel[0] on an empty vector. The third is 17 edits in a file macOS shares'
   'test_menu_rules.cpp'      = 'needs platform/menu_ui_rules.cpp, the port menu-rule table; the app drives menus from MFC message maps and does not link it'
   'test_pal_surface.cpp'     = 'asserts on pal::CpuRaster, the port software rasteriser; Windows draws through pal/gdi_surface.cpp and never instantiates it'
 }
@@ -70,6 +69,15 @@ $excluded = [ordered]@{
 # that declines instead of hanging (evaluate.cpp), and a CMainFrame OBJECT for
 # the `Frame` macro to dereference (mc_test.h MC_TEST_WIN_MAIN_FRAME).  See
 # docs/WINDOWS-VALIDATION.md 10z.
+#
+# test_connection.cpp and test_lua_surface.cpp followed (10z, 10aa), and
+# test_accelerators.cpp after them (10ae).  That last one is the warning about
+# these reasons: it said "needs a view" through two re-measurements, and what it
+# actually needed was a view ATTACHED to the document, plus
+# CMultiDocTemplate::LoadTemplate in the host, plus the resource DLL the
+# template loads the accelerator table from.  Each earlier measurement was true
+# and incomplete.  A reason here names the first thing that stopped it, which is
+# not always the only thing.
 
 $tests = Get-ChildItem 'tests\test_*.cpp' | Where-Object { -not $excluded.Contains($_.Name) } |
          ForEach-Object { 'tests\' + $_.Name }

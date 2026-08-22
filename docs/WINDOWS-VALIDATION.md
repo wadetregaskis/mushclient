@@ -1160,6 +1160,16 @@ machinery:
   without this, "unlimited" silently came back as 5,000 on the next load.
   **Check a save/reload of an ordinary world produces a byte-identical file** to
   one saved before this change (no stray `="0"` attributes anywhere).
+
+  **Superseded, 2026-08-22.** The `bWriteZero` argument is no longer keyed on
+  `OPT_ZERO_UNLIMITED` alone but on whether the option's *default* is non-zero
+  — because four rows that were never given the flag had exactly the same trap
+  and were losing a deliberate 0 on every save (`docs/UPSTREAM-BUGS.md` 101).
+  The byte-identical check above therefore no longer holds: an ordinary world
+  now also carries `pixel_offset`, `fade_output_opacity_percent`,
+  `tool_tip_visible_time` and `tool_tip_start_time` whenever any of them is 0.
+  That is the four attributes it should always have had, and nothing else
+  changes — a row whose default is 0 is written exactly as before.
 - **The world loader widens the minimum to 0 for `OPT_ZERO_UNLIMITED` options**
   (`xml_load_world.cpp`) and lets `SetOptionItem` apply the real "0, or at least
   200" rule. A world file with `max_output_lines="5"` is still rejected — but now
@@ -6401,6 +6411,7 @@ the Windows target. Listed with what a macOS run should check:
 | `chatsock.cpp` | `Process_File_start` refuses a second offer while one is running, and nulls `m_pFile` after deleting it (`UPSTREAM-BUGS` 98) | shared, and the defect ships there too. The same ASan run that covers 96 covers this. |
 | `OtherTypes.h` | `bEnabled = TRUE` in `CTimer`'s constructor (`UPSTREAM-BUGS` 99) | shared header; the defect ships there too, and the reachable route is plugin-authored `<timer defaults="y">` XML |
 | `scriptingoptions.cpp` | the `wrap_column` re-allocation now uses the UTF-8 byte count and updates `iMemoryAllocated` (`UPSTREAM-BUGS` 100) | shared, and **more likely to bite on macOS**, where a UTF-8 world is the common case. Worth an ASan run with `world.SetOption ("wrap_column", …)` on a busy world. |
+| `xml/xml_save_world.cpp` | a zero is written whenever the option's default is non-zero (`UPSTREAM-BUGS` 101) | shared. **World files saved by this build gain up to four attributes** (`pixel_offset`, `fade_output_opacity_percent`, `tool_tip_visible_time`, `tool_tip_start_time`) when any is 0 — older clients read them fine, and the §5 byte-identical check no longer holds. |
 
 `pal/win_transport.cpp`'s `flushSend` guard is inside the file's own
 `#ifdef _WIN32` and cannot reach macOS.
@@ -7644,7 +7655,7 @@ it.**
 So the list below is split by what I did, and nothing in the second half should
 be treated as established.
 
-#### Checked by hand, and fixed (five)
+#### Checked by hand, and fixed (six)
 
 | finding | outcome |
 |---|---|
@@ -7653,6 +7664,7 @@ be treated as established.
 | `scripting/scriptengine.cpp` — a script routine name used as a printf format | `UPSTREAM-BUGS` 97. Verified by reading `Trace`'s declaration (`MC_PRINTF_FORMAT(2, 3)`) and body (`FormatV`), and by finding the Lua twin already fixed with the reasoning spelled out at three sites. A tree-wide grep for the same shape now returns only the two legitimate `va_list` forwarders in `exceptions.cpp`. |
 | `OtherTypes.h` — `CTimer`'s constructor never initialises `bEnabled` | `UPSTREAM-BUGS` 99. Verified by reading all three constructors (the two siblings do set it) and `Get_XML_boolean`, which leaves its output untouched when the attribute is absent and defaults are wanted. |
 | `scriptingoptions.cpp` — `wrap_column` re-allocates the line buffer without the UTF-8 ×4 factor and leaves `iMemoryAllocated` stale | `UPSTREAM-BUGS` 100, and worse than the claim: the stale record is what `DisplayMsg`'s only overrun guard tests against. Measured — a UTF-8 line at wrap 80 keeps `iMemoryAllocated == 320` while its buffer becomes 200. |
+| `xml/xml_save_world.cpp` — a numeric option set to 0 reloads as its default | `UPSTREAM-BUGS` 101, and broader than the claim: **four** rows, not one. The claim's real value was refuting `docs/AUDIT-2026-08.md`'s own closing sentence, that only *future* options could have the trap. Both that file and §5's write-up are corrected. |
 
 #### Checked by hand, and deliberately not fixed
 
@@ -7673,7 +7685,7 @@ already written down.
 
 #### NOT checked — leads only
 
-Ten remain. Each has a file, a line and an argument in the sweep's own
+Nine remain. Each has a file, a line and an argument in the sweep's own
 output; none has been read by me, and the first sweep's record is that **eight of thirteen such
 claims did not survive contact.** Treat accordingly.
 
@@ -7690,9 +7702,9 @@ claims did not survive contact.** Treat accordingly.
 | `doc_shared.cpp` | the MCCP decompression loop keeps inflating and displaying after `DisplayMsg` has closed the world |
 | `doc_shared.cpp` | the SOCKS5 CONNECT reply is assumed to be exactly 10 bytes and to arrive whole in one packet |
 
-The five I did check were the five I could reach with a test on this machine.
+The six I did check were the six I could reach with a test on this machine.
 That is the honest selection criterion, and it is worth saying out loud: the
-untouched ten are not less serious, they are less convenient.
+untouched nine are not less serious, they are less convenient.
 
 #### One unreproduced crash, recorded rather than dismissed
 

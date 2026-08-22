@@ -7812,3 +7812,61 @@ path, and this project's own record (the notepad selftest, 2-in-12 before Guard
 Malloc made it deterministic) is that a flake in that neighbourhood is worth a
 line rather than a shrug. If it recurs, the loop-and-count is the first
 instrument and `MC_TEST_ASSERT_STACKS=1` the second.
+
+### §10aw — Driving the real GUI app, and what it said
+
+The unit suite links `mushcore` and never constructs a `CMUSHView`. To reach the
+code that only exists when a frame, a view and a command bar do, the app itself
+was driven — not by clicking, but by a **world script**, so that every claim
+below is a file on disk rather than a screenshot.
+
+The rig (`scratchpad/gui/`, not committed — it is three files and a listener):
+a minimal `.mcl` naming a Lua `script_filename`, a one-shot `active_closed`
+timer that defers the battery until after the view exists, and a PowerShell
+`TcpListener` on 127.0.0.1 so the world genuinely connects and receives.
+
+**Four instrument lessons, each of which cost a run:**
+
+- **`script_file` is not the attribute; `script_filename` is.** The app says so
+  in a message box naming the line — read the box before guessing.
+- **A hand-written world file needs `defaults="y"`.** Without it every omitted
+  boolean loads as FALSE, *including* `enable_timers`, so the deferred battery
+  never ran and every timer sat overdue with `nMatched = 0`. This is deliberate
+  and the reason is commented at `xml/xml_load_world.cpp:1046`: the saver omits
+  FALSE booleans, so honouring ctor defaults for omitted ones would silently
+  re-enable every true-by-default option the user had turned off, on every
+  save/load round trip. **Four hypotheses were burned before reading that
+  comment** — the option table's default (`true`) is not what a minimal file
+  gets, and `world.GetOption ("enable_timers")` from inside the running app is
+  what settled it. Ask the app, not the table.
+- **Never `SendMessage (BM_CLICK)` into a modal from outside the process.** It
+  ends the modal loop *inside* the send, and MFC's `CWnd::RunModalLoop` then
+  trips `ASSERT(ContinueModal())` (`wincore.cpp:4659`) on its next pump. That
+  assertion is the instrument, not the app: posting `WM_LBUTTONDOWN`/`UP`
+  instead produced zero assertions across every later run. A Debug-build
+  assertion that appears the moment you start automating is yours until proven
+  otherwise.
+- **Read a dialog before dismissing it.** The first-run "Thanks for upgrading"
+  and "Tip of the Day" boxes are ordinary; clicking blind would have hidden the
+  `script_filename` error that was sitting behind them.
+
+**What the battery found: nothing wrong.** 82 probes over `GetInfo` 1-296, the
+selection and command-bar family, and the miniwindow ops against **real GDI**.
+Everything was internally consistent — `WindowGetPixel (10,10)` returned the
+blue of the diagonal line drawn over the green fill; `WindowTextWidth` for ten
+`M`s was exactly ten times `aveCharWidth` on a monospaced face and larger on a
+proportional one; `GetInfo (288)` (timers fired this session) read 1 at the
+moment the one-shot timer's own routine was running; `GetInfo (280/281)` and
+`(292/293)` agreed pairwise. **`GetInfo (249)/(250)` reported 931 × 1616
+against a 1616 × 1022 screen** — real client geometry, which is the fix for the
+minimised-client fabrication holding up in the live app.
+
+**And one open item closed by measurement**, which is the real return on the
+rig: `docs/FONT-PARITY-2026-08.md` §9. GDI's substitute for an unavailable face
+is decided by the `pitchAndFamily` hint the port drops — `FIXED_PITCH` gives
+Courier New, `FF_DONTCARE` gives Arial — but **only when the face is unknown**;
+a face Windows has beats the hint every time, and the default hint is the one
+whose answer the port already matches. `tmHeight - tmInternalLeading` was
+confirmed equal to `MulDiv (points, 96, 72)` exactly, across four sizes and
+five faces, which quantifies `pal::CpuRaster`'s under-report at 3 px in 16 —
+about 19% — at 10 pt Courier New.

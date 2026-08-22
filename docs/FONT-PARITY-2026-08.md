@@ -271,3 +271,71 @@ port defect** — recorded so it is not chased in our code.
 Note also that the `sizem`/`sizel` tiers (11-15 pt) are gated on window width >= 250 and
 every Dina window ships at 190-200 px wide, so **in practice only 8 pt and 9 pt are ever
 requested** by that plugin pack.
+
+## 9. The Windows measurement, taken — 2026-08-22
+
+§5's script existed; this is the run. Measured in the **real GUI app** (`WinDebug\MUSHclient.exe`,
+Debug/Win32, DPI-unaware so `LOGPIXELSY = 96`) with a world script that creates a
+miniwindow, calls `world.WindowFont`, and reads back `world.WindowFontInfo` — including
+**info code 21, the realized face**, which is the code §2 says answers the question.
+
+### 9a. §3 item 1 is CONFIRMED, and the substitutes are named
+
+Requesting a 10 pt font by name, varying only the `PitchAndFamily` argument
+(`world.WindowFont`'s 10th, which the port's `CFont::CreateFont` drops):
+
+| pitch hint | unknown face → realized | `Courier New` → | `Arial` → |
+|---|---|---|---|
+| `0` (DEFAULT_PITCH \| FF_DONTCARE) | **Arial** | Courier New | Arial |
+| `1` (FIXED_PITCH) | **Courier New** | Courier New | Arial |
+| `49` (FIXED_PITCH \| FF_MODERN) | **Courier New** | Courier New | Arial |
+| `2` (VARIABLE_PITCH) | **Arial** | Courier New | Arial |
+| `34` (VARIABLE_PITCH \| FF_SWISS) | **Arial** | Courier New | Arial |
+
+`"NoSuchFaceAtAll"`, `"Menlo"` (macOS-only) and `""` all behaved identically — the mapper
+does not distinguish "absent" from "never heard of it".
+
+Two things follow, and the second matters more than the first:
+
+1. The hypothesis was right. A fixed-pitch hint really does buy a monospaced substitute,
+   and dropping `pitchAndFamily` really does cost it.
+2. **But the hint only decides anything when the face is unknown.** A face Windows *has*
+   wins over the hint in every row — `Courier New` with a VARIABLE_PITCH hint is still
+   Courier New. And the default hint is `0`, which Windows itself answers with **Arial**,
+   the same proportional fallback the port produces. So the port's dropped field changes
+   the result **only** for a script that passes an unavailable face *together with* a
+   fixed-pitch hint. That is a narrower blast radius than §3 implied, and it is worth
+   knowing before spending anything on `CFont::CreateFont`.
+
+### 9b. §3 item 3 is CONFIRMED with a number: `tmHeight = em + tmInternalLeading`
+
+Across four sizes and every scalable face measured, `height - internalLeading` equals
+`MulDiv (points, 96, 72)` **exactly** — and note `MulDiv` rounds, which is why 8 pt gives
+11 and not 10:
+
+| face | pt | height | internalLeading | height − IL | `MulDiv(pt,96,72)` |
+|---|---|---|---|---|---|
+| Courier New | 8 | 14 | 3 | 11 | 11 |
+| Courier New | 10 | 16 | 3 | 13 | 13 |
+| Courier New | 12 | 18 | 2 | 16 | 16 |
+| Courier New | 24 | 36 | 4 | 32 | 32 |
+| Consolas | 10 | 15 | 2 | 13 | 13 |
+| Lucida Console | 10 | 13 | 0 | 13 | 13 |
+| Arial | 10 | 16 | 3 | 13 | 13 |
+
+So `pal::CpuRaster` reporting the em as `tmHeight` is short by exactly
+`tmInternalLeading` — **3 px out of 16 at 10 pt Courier New, about 19%**. That is the
+size of the slack in the headless parity assertions, now quantified.
+
+The two bitmap faces behave as §2's "Why a bitmap face can make Windows render *larger*"
+predicts and are excluded from the identity above: **Fixedsys** answers `height = 15` at
+8, 10 *and* 12 pt (one strike, no scaling) and 40 at 24 pt; **Terminal** answers 8/12/16/32
+with `internalLeading = 0` throughout and `charset = 255` (OEM).
+
+### 9c. Method note
+
+The first pass passed only eight arguments to `world.WindowFont`, so `Charset` and
+`PitchAndFamily` both defaulted to 0 — and it therefore measured only the `FF_DONTCARE`
+row, from which "GDI substitutes Arial" would have been the wrong general conclusion.
+**A measurement that leaves the variable under test at its default has not tested it.**
+The second pass varies the hint and is the one the table above comes from.

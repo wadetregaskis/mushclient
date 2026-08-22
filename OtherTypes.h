@@ -484,6 +484,28 @@ typedef map <CAlias*, string> CAliasRevMap;
 #define TRIGGER_COLOUR_CHANGE_FOREGROUND 1
 #define TRIGGER_COLOUR_CHANGE_BACKGROUND 2
 
+// Which entry of CTrigger::wildcards does a trigger's clipboard_arg name?
+//
+// 0 is "(none)"; 1..9 are %1..%9; and 10 is the WHOLE MATCHING LINE, which
+// lives at wildcards [0].  That last one is not an invention here -- it is the
+// convention the array handed to scripts already uses: it is built 1-relative
+// with MAX_WILDCARDS elements and its final element is deliberately
+// wildcards [0] ("the whole matching line", doc_shared.cpp:4500 and
+// evaluate.cpp:1195).  The Trigger dialog's IDC_WILDCARD_CLIPBOARD dropdown
+// offers 1..10, so before this the last entry it offered silently copied
+// nothing.  docs/UPSTREAM-BUGS.md 109.
+//
+// Returns -1 for "copy nothing", which covers both 0 and anything above 10
+// (the option table and the world loader both accept 0..10, so out-of-range
+// cannot arrive from either, but a hand-edited value should not index past
+// the vector).
+inline int ClipboardWildcardIndex (const unsigned short iClipboardArg)
+  {
+  if (iClipboardArg == 0 || iClipboardArg > MAX_WILDCARDS)
+    return -1;
+  return (iClipboardArg == MAX_WILDCARDS) ? 0 : (int) iClipboardArg;
+  }
+
 
 // when adding new fields, update operator==
 class CTrigger : public CObject

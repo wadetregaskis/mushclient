@@ -1406,3 +1406,45 @@ TEST(Socks5R6, ConnectReplyLengthFollowsTheAddressType)
     char refused[10] = { 5, 5, 0, 4, 1,2,3,4, 0x0F, 0xA0 };   // REP 5 = refused
     EXPECT_EQ(-1, doc.ProcessProxyResponse3(refused, sizeof refused));
 }
+
+// ── clipboard_arg 10 names the whole matching line ─────────────────────────
+//
+// The Trigger dialog's clipboard dropdown (`IDC_WILDCARD_CLIPBOARD`) offers
+// `(none)` then 1…10, so the selected index is the wildcard number. The
+// clipboard code guarded with `< MAX_WILDCARDS` (10), so the last entry the
+// dropdown offered stored 10, failed the bound, and silently copied nothing.
+//
+// 10 is not a nonexistent wildcard: the array handed to scripts is built
+// 1-relative with `MAX_WILDCARDS` elements and its final one is deliberately
+// `wildcards [0]`, "the whole matching line" (`doc_shared.cpp:4500`,
+// `evaluate.cpp:1195`). `docs/UPSTREAM-BUGS.md` 109.
+//
+// This asserts the mapping, not the clipboard. Driving the real call site
+// would put text on the machine's actual clipboard and clobber whatever the
+// user had copied, which is not something a unit test should do; the live
+// end-to-end check runs in the GUI rig instead, where it can save and restore
+// the clipboard around itself.
+TEST(ClipboardWildcardR6, TenNamesTheWholeLineAndZeroNamesNothing)
+{
+    EXPECT_EQ(-1, ClipboardWildcardIndex(0));      // "(none)"
+    EXPECT_EQ(1,  ClipboardWildcardIndex(1));      // %1
+    EXPECT_EQ(9,  ClipboardWildcardIndex(9));      // %9 — the last capture
+    EXPECT_EQ(0,  ClipboardWildcardIndex(10));     // the whole matching line
+
+    // Above the dropdown's range nothing is copied rather than the vector
+    // being indexed past its end.  wildcards is sized MAX_WILDCARDS, so 10
+    // would be out of bounds if it were used literally — which is exactly what
+    // the old `< MAX_WILDCARDS` bound was protecting against, and why the fix
+    // remaps rather than widening it.
+    EXPECT_EQ(-1, ClipboardWildcardIndex(11));
+    EXPECT_EQ(-1, ClipboardWildcardIndex(65535));
+
+    // Every value the option table and the world loader accept (0…10) maps
+    // either to "nothing" or to an index inside the vector.  This is the
+    // property that matters: no accepted value can index past the end.
+    for (unsigned short i = 0; i <= 10; ++i)
+    {
+        const int w = ClipboardWildcardIndex(i);
+        EXPECT_TRUE(w == -1 || (w >= 0 && w < MAX_WILDCARDS));
+    }
+}

@@ -3271,3 +3271,63 @@ the document until OK. 95's own comment says exactly that. The test now seeds
 those four fields so the comparison isolates the tick. **A page-wide "did
 anything change" check is not a test of one field**, and reading it as one
 turns a documented behaviour into a phantom regression.
+
+## 109 — The trigger clipboard dropdown offers a wildcard the clipboard code cannot copy
+
+`ProcessPreviousLine.cpp`, and the mapping now lives in `OtherTypes.h`.
+
+The Trigger dialog's clipboard dropdown (`IDC_WILDCARD_CLIPBOARD`) is populated
+from `DLGINIT` with **eleven** entries — `(none)`, then `1` … `10` — so the
+selected index is the wildcard number. The code that acts on it was
+
+```cpp
+if (trigger_item->iClipboardArg &&
+    trigger_item->iClipboardArg >= 0 &&
+    trigger_item->iClipboardArg < MAX_WILDCARDS)
+   putontoclipboard (trigger_item->wildcards [trigger_item->iClipboardArg]...);
+```
+
+with `MAX_WILDCARDS == 10`, so the usable range was **1 … 9** and the last
+entry the dropdown offers stored 10, failed the bound, and silently copied
+nothing.
+
+**Wildcard 10 is not a nonexistent wildcard.** The array handed to scripts is
+built 1-relative with `MAX_WILDCARDS` elements, and its final element is
+deliberately not a capture group:
+
+```cpp
+// i should be MAX_WILDCARDS (10) now ;)
+COleVariant v (trigger_item->wildcards [0].c_str ()); // the whole matching line
+```
+
+(`doc_shared.cpp:4500`, and the same again in `evaluate.cpp:1195` for aliases.)
+So a script's `wildcards[10]` is the whole matching line — which is the natural
+reading of what the dropdown's `10` offers, and the clipboard code could reach
+it by neither index: 10 failed the upper bound, and 0, where the whole line
+actually lives in `trigger_item->wildcards`, fails the truthiness guard that
+means "(none)".
+
+The `iClipboardArg >= 0` term beside it was dead: the member is
+`unsigned short`.
+
+**Fix:** `ClipboardWildcardIndex` (`OtherTypes.h`) maps `clipboard_arg` onto the
+vector — 0 is "copy nothing", 1…9 are `%1`…`%9`, and 10 is `wildcards [0]`, the
+whole matching line. It **remaps** rather than widening the bound, because
+widening it would index a 10-element vector at 10; that is what the old bound
+was there for, and the fix keeps that protection while making the dropdown's
+last entry mean what scripts already mean by it.
+
+Two tests, at two levels, because neither alone is enough:
+
+- `ClipboardWildcardR6.TenNamesTheWholeLineAndZeroNamesNothing` asserts the
+  mapping, including the property that matters — **no value the option table
+  and the loader accept (0…10) can index past the end of the vector**. It
+  deliberately does not drive the call site: that would put text on the
+  machine's real clipboard and clobber whatever the user had copied.
+- `tests/win/app_probes/clipboard.lua` drives the real call site inside the
+  running app, through an actual trigger match, and can afford to because
+  `world.GetClipboard`/`SetClipboard` let it save and restore. It seeds
+  `SENTINEL` before each match so "copied nothing" is visible, and checks
+  `clipboard_arg` 1, 3, 10 and 0 — the last as the control. Against the app
+  built before the fix it failed on exactly the `10` assertion and passed the
+  other three, which is the end-to-end proof the unit test cannot give.

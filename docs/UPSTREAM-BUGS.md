@@ -2422,3 +2422,131 @@ behavioural difference from stock 5.06, registered as
 its one-`Send`-per-`FD_WRITE` structure faithfully. It had. The byte counter
 beside it had not, deliberately, and nothing recorded that.
 `WinTransport.BytesSentAreCountedOncePerSendPacket` pins the fixed behaviour.
+
+## 93 — "Save notes to file" is an OPEN dialog, so it truncates without asking
+
+**Where:** `dialogs/world_prefs/prefspropertypages.cpp`, `CPrefsP11::OnSaveNotes`
+(the world-properties Notes page, the **Save…** button).
+
+```cpp
+CFileDialog filedlg (TRUE,   // loading the file
+                     "txt",
+                     "",
+                     OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+                     ...
+filedlg.m_ofn.lpstrTitle = "File to save notes into";
+...
+f = new CFile (filedlg.GetPathName (), CFile::modeWrite | CFile::modeCreate);
+```
+
+`CFileDialog`'s first parameter is `bOpenFileDialog`, and it is `TRUE`. So the
+panel is an **Open** dialog wearing a save dialog's title, and
+`OFN_OVERWRITEPROMPT` — which the author asked for explicitly — is inert,
+because an open panel has no overwrite confirmation to give. `CFile::modeCreate`
+then truncates. **Choosing an existing file destroys it with no warning.**
+
+It is a copy-paste: `CPrefsP11::OnLoadNotes` sits directly above with the same
+four arguments and the same `// loading the file` comment, which came along with
+them.
+
+This is the only site in the tree shaped this way. Every other
+`OFN_OVERWRITEPROMPT` passes `FALSE` (`chatsock.cpp:1082`, `doc.cpp:740`,
+`evaluate.cpp:850`, `mushview.cpp:3997`, `plugins.cpp:1051`,
+`prefspropertypages.cpp:1156` and `:8019`) or derives it from a `bLoad`
+parameter that is `FALSE` on the save arm (`prefspropertypages.cpp:7238`,
+`scripting/lua_utils.cpp:750`).
+
+**Measured on the running client**, not inferred: driving Game ▸ Configure ▸
+Notes ▸ Save… and reading the resulting panel's controls gave
+
+```
+FILE PANEL title: 'File to save notes into'
+   button id=1      '&Open'          <- before
+   button id=1      '&Save'          <- after
+```
+
+**Fix:** `FALSE`. The overwrite prompt then works because it is finally attached
+to a dialog that implements one.
+
+**Note for the port.** The macOS symptom was *different and more visible* — an
+`NSOpenPanel` will not return a name that does not exist, so the button could
+never create a new file — and `platform/mfc_ui.h` compensated for it in the shim
+with an `openOrCreate` heuristic ("an open-style dialog whose flags say the file
+need not exist and that it should warn before overwriting"). That heuristic was
+the *blocker stated at the wrong layer*: it patched the shim for a typo one
+level up, and it could not have fixed Windows, where the open panel happily
+returns new names and only the warning is lost. With the call site corrected the
+heuristic is unreachable; it is left in place with a comment saying so.
+
+## 94 — MXP `</p>` uses the line a gagging trigger just freed
+
+**Where:** `mxp/mxpClose.cpp`, `CMUSHclientDoc::MXP_CloseTag`.
+
+`MXP_CloseTag` opens by scanning backwards through `m_LineList` for the matching
+start tag, and caches four things about where it found it:
+
+```cpp
+CLine  * pLine;    POSITION oldlinepos;
+CStyle * pStyle;   POSITION oldstylepos;
+```
+
+It then dispatches the tag through `MXP_CloseAtomicTag`, and afterwards uses all
+four again without re-checking any of them:
+
+```cpp
+pLine->styleList.RemoveAt (oldstylepos);
+...
+m_pCurrentLine->styleList.AddTail (pStyle);
+pStyle->iFlags &= ~START_TAG;
+```
+
+For `</p>` the dispatch is (`mxp/mxpCloseAtomic.cpp`)
+
+```cpp
+case MXP_ACTION_P:
+   m_bInParagraph = false;
+   StartNewLine (true, 0);
+```
+
+`StartNewLine` with a hard break runs `ProcessPreviousLine`, and a trigger with
+**omit from output** does this (`ProcessPreviousLine.cpp`):
+
+```cpp
+delete pLine;                // delete contents of tail iten
+m_LineList.RemoveTail ();    // get rid of the line
+```
+
+The line `MXP_CloseTag` is holding is the **tail** — that is where its backwards
+scan began — so it is the first one gagged away, taking its `styleList` and
+therefore `pStyle` with it (`~CLine` deletes every style it owns). Everything
+after the dispatch then reads and writes freed memory.
+
+**Reachable from the MUD**: any server sending `<p>…</p>` in secure mode to a
+world with a gagging trigger. `p` is secure-only (`mxp/mxpinit.cpp` gives it no
+`TAG_OPEN`), so a plain-mode world is safe; a Discworld-style MXP world is not.
+
+**Measured**, with a Debug CRT that fills freed memory with `0xDD`:
+
+```
+*** ACCESS VIOLATION (0xC0000005) -- writing 0xDDDDDDDD
+   0  CPtrList::RemoveAt
+   1  CMUSHclientDoc::MXP_CloseTag   mxp/mxpClose.cpp:337
+   2  CMUSHclientDoc::MXP_EndTag     mxp/mxpEnd.cpp:111
+   3  CMUSHclientDoc::MXP_collected_element
+   4  CMUSHclientDoc::Phase_MXP_ELEMENT
+   5  CMUSHclientDoc::DisplayMsg
+```
+
+**Fix:** re-find the line before touching it, and return if it has gone — the
+same liveness check `aca2478` gave the Plugins dialog for a stale `CPlugin*`.
+The re-scan is bounded by how far back the opening tag was, which the forward
+scan already measured, so it costs no more than the search that produced the
+pointer.
+
+Nothing leaks on the bail-out path: `~CLine` released the styles and their
+actions when it went.
+
+**Shared code — the same defect ships on macOS**, where a sanitizer would call
+it a heap-use-after-free rather than an access violation.
+`MXPCloseR6.ParagraphCloseSurvivesAGaggingTrigger` in `tests/test_mxp.cpp` runs
+on both.

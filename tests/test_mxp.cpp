@@ -2536,4 +2536,98 @@ TEST(MXPEntity, HexNumericEntityValueBoundaries)
 }
 #endif  // !_WIN32
 
+
+// ── MXP </p> across a gagging trigger ─────────────────────────────────────
+//
+// MXP_CloseTag (mxp/mxpClose.cpp:20) opens by scanning BACKWARDS through
+// m_LineList for the matching start tag, caching four things about where it
+// found it:
+//
+//     CLine  * pLine;         POSITION oldlinepos;
+//     CStyle * pStyle;        POSITION oldstylepos;
+//
+// It then dispatches the tag, and afterwards — at :337, :350 and :353 — uses
+// all four again, unconditionally and without re-checking any of them.
+//
+// For </p> the dispatch is MXP_CloseAtomicTag's MXP_ACTION_P arm
+// (mxp/mxpCloseAtomic.cpp:116), whose entire body is
+//
+//     m_bInParagraph = false;
+//     StartNewLine (true, 0);
+//
+// and StartNewLine with hard_break calls ProcessPreviousLine, which is where
+// a trigger with "omit from output" does this (ProcessPreviousLine.cpp:800):
+//
+//     delete pLine;                // delete contents of tail iten
+//     m_LineList.RemoveTail ();    // get rid of the line
+//
+// The line MXP_CloseTag is holding is the tail — that is where the backwards
+// scan started — so a gagging trigger frees it, and the CStyle that lives in
+// its styleList, from underneath the caller.  Everything after the dispatch
+// then reads and WRITES freed memory: RemoveAt on a dead list, AddTail of a
+// dead style onto the live line, and `pStyle->iFlags &= ~START_TAG`.
+//
+// Reachable from a MUD: any server sending <p>…</p> in secure mode to a world
+// with a gagging trigger.  `p` is secure-only (mxp/mxpinit.cpp:63 gives it no
+// TAG_OPEN), which is why this fixture asks for eMXP_secure.
+//
+// The test cannot assert "it did not corrupt the heap" — it asserts the
+// observable consequences, which are cheap and specific: the process survives,
+// the trigger fired, the gagged text is gone, and the surviving line's style
+// list is walkable and self-consistent.  Under a Debug CRT the freed CLine is
+// 0xDD-filled, so the unfixed code reliably faults or asserts here rather than
+// passing quietly.
+static CTrigger* mxp_add_gag(CMUSHclientDoc& doc, const char* match)
+{
+    CTrigger* t     = new CTrigger();
+    t->trigger      = CString(match);
+    t->contents     = CString("");
+    t->bEnabled     = TRUE;
+    t->bRegexp      = false;
+    t->iSendTo      = eSendToOutput;
+    t->iSequence    = DEFAULT_TRIGGER_SEQUENCE;
+    t->bOmitFromOutput = TRUE;
+    t->strLabel     = CString(match);
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    CString pattern = ConvertToRegularExpression(t->trigger, true, true);
+    try { t->regexp = regcomp(pattern, 0); }
+    catch (CException* e) { e->Delete(); }
+    return t;
+}
+
+TEST(MXPCloseR6, ParagraphCloseSurvivesAGaggingTrigger)
+{
+    CMUSHclientDoc doc;
+    make_doc_e2e(doc);
+    doc.m_iMXP_mode = eMXP_secure;          // <p> is a secure-only tag
+
+    CTrigger* gag = mxp_add_gag(doc, "*gagme*");
+
+    // <p> opens a paragraph and leaves its START_TAG style on the tail line;
+    // </p> closes it, and the StartNewLine inside that close is what runs the
+    // trigger that deletes the very line the close is still holding.
+    feed(doc, "<p>gagme</p>");
+
+    EXPECT_EQ(1L, gag->nMatched);           // the gag really ran
+
+    // The gagged text is gone, and every line left is intact enough to walk.
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        ASSERT_TRUE(l != NULL);
+        EXPECT_EQ((const void*) NULL, (const void*) memchr(l->text, 0xDD, l->len));
+        int covered = 0;
+        for (POSITION sp = l->styleList.GetHeadPosition(); sp; ) {
+            CStyle* s = l->styleList.GetNext(sp);
+            ASSERT_TRUE(s != NULL);
+            EXPECT_GE(s->iLength, 0);
+            covered += s->iLength;
+        }
+        // A style run that claims more characters than the line has is the
+        // signature of a style from a freed line being spliced onto a live one.
+        EXPECT_LE(covered, l->len);
+    }
+}
+
 MC_TEST_MAIN()

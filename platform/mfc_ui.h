@@ -5027,9 +5027,18 @@ public:
         // open dialog will happily return a name that is not there; a macOS
         // NSOpenPanel will not, and wxFD_FILE_MUST_EXIST is a no-op there, so
         // honouring the flag would not help — it has to be a SAVE panel.
-        // Exactly one call site in the tree is shaped this way: the world-prefs
-        // Notes page's "Save notes" (prefspropertypages.cpp:5290), which could
-        // therefore never write to a file that did not already exist.
+        // Exactly one call site in the tree was shaped this way: the world-prefs
+        // Notes page's "Save notes", which could therefore never write to a file
+        // that did not already exist.
+        //
+        // That call site is FIXED now (it passes FALSE, a save panel, as every
+        // other save-with-overwrite-prompt site in the tree always did), so this
+        // arm is currently unreachable — the heuristic was compensating in the
+        // shim for a typo one layer up. The Windows symptom of the same typo was
+        // different and worse: an open panel there returns non-existent names
+        // happily, so saving worked, and the overwrite prompt was simply lost.
+        // docs/UPSTREAM-BUGS.md 93. Kept as belt and braces; a candidate for
+        // deletion once nothing has needed it for a while.
         bool openOrCreate = m_bOpenFileDialog && overwrite &&
                             (m_ofn.Flags & OFN_FILEMUSTEXIST) == 0;
 

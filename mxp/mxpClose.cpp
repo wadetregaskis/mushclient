@@ -29,11 +29,16 @@ void CMUSHclientDoc::MXP_CloseTag (CString strTag, const bool bOpen)
   bool bFoundit = false;
   CString strFoundVariable;
 
+  // How far back from the tail the opening tag turned out to be.  Used below
+  // to bound the re-check that the line is still there after the dispatch.
+  int iLinesBack = 0;
+
   // work backwards through the lines
   for (linepos = m_LineList.GetTailPosition (); linepos && !bFoundit; )
     {
     oldlinepos = linepos;   // for going forwards again
     pLine = m_LineList.GetPrev (linepos);
+    iLinesBack++;
 
     // work backwards through the styles on the line
     for (stylepos = pLine->styleList.GetTailPosition (); stylepos && !bFoundit; )
@@ -330,9 +335,40 @@ CAtomicElement * pAtomicElement;
       } // end of doing each one
     } // end of user-defined element
 
+  // The dispatch above can DELETE the line this function has been holding since
+  // its backwards scan, and pStyle lives inside that line's styleList, so both
+  // pointers and both POSITIONs die together.  </p> is the reachable case:
+  // MXP_CloseAtomicTag's MXP_ACTION_P arm (mxpCloseAtomic.cpp:116) calls
+  // StartNewLine (true, 0), that runs ProcessPreviousLine, and a trigger with
+  // "omit from output" does `delete pLine; m_LineList.RemoveTail ()`
+  // (ProcessPreviousLine.cpp:800).  The line the scan started from IS the tail,
+  // so it is the first one gagged away.  Measured before this guard existed:
+  // an access violation writing 0xDDDDDDDD inside CPtrList::RemoveAt, one frame
+  // below the line under this comment.
+  //
+  // Re-find the line rather than trusting the pointer — the same liveness check
+  // aca2478 gave the Plugins dialog for a stale CPlugin*.  Bounded by how far
+  // back the opening tag was, so it costs no more than the scan that produced
+  // the pointer in the first place, and a gagged-away line is found missing
+  // within that same bound rather than by walking the whole buffer.
+  {
+  bool bLineStillThere = false;
+  POSITION checkpos = m_LineList.GetTailPosition ();
+  for (int i = 0; i < iLinesBack && checkpos; i++)
+    if (m_LineList.GetPrev (checkpos) == pLine)
+      {
+      bLineStillThere = true;
+      break;
+      }
+
+  if (!bLineStillThere)
+    return;   // the tag's line was gagged out from under us; nothing to clean up
+              // (~CLine deleted its styles, and pStyle was one of them)
+  }
+
   // I don't need the opening style tag any more, and as it remembers the style at
-  // the moment it was made it will make a good way of restoring existing styles 
-  // eg. underline off 
+  // the moment it was made it will make a good way of restoring existing styles
+  // eg. underline off
 
   pLine->styleList.RemoveAt (oldstylepos);
 

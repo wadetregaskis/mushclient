@@ -48,6 +48,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "mainfrm.h"
+#include "MUSHview.h"       // CMUSHView: two views, one document
 #include "pal/iworldview.h"
 #include "pal/win_worldview.h"
 
@@ -278,4 +279,71 @@ TEST(WinWorldView, SaveWorldAnswersTrueForASaveThatHappened)
     EXPECT_NE(0xFFFFFFFFu, (unsigned) ::GetFileAttributesA(path));   // it exists
 
     ::DeleteFileA(path);
+}
+
+// ── Which view's selection does a script see? ──────────────────────────────
+//
+// `Window ▸ New Window` (ID_WINDOW_NEW, in the menu with no handler of the
+// app's own, so MFC's `CMDIFrameWnd::OnWindowNew` serves it) gives one world
+// TWO `CMUSHView`s. Each carries its own `m_selstart_line`/`m_selend_col`.
+//
+// `outputSelection` — behind `GetSelectionStart/EndLine/Column` — walks the
+// document's view list and answers the FIRST `CMUSHView` it finds, while
+// `CMUSHView::OnEditCopy` copies `this` view's selection via `GetSelection`.
+// So with two windows open, selecting in the second and asking a script what
+// is selected reports the first window's answer, which is usually "nothing".
+//
+// This is upstream's own loop, transcribed (`git show e362b37`); the port did
+// not introduce it and the adapter only added an `m_LineList` emptiness guard
+// upstream lacks. It is pinned rather than changed because "which view is
+// authoritative" is a genuine design question for a document-level API, and
+// answering it differently would alter a documented return value on both
+// platforms. `docs/WINDOWS-VALIDATION.md` §10av records the reasoning.
+//
+// AddView raises MFC assertions here — CDocument::UpdateFrameCounts walks the
+// view list asserting ::IsWindow on views that have none, and it re-walks the
+// whole list on each add.  Measured: 18 for this test, which is the suite's
+// only contribution to the assertion baseline from this file.  Same expected
+// noise tests/win/test_menu_rules_win.cpp documents for the same reason.
+TEST(WinWorldViewR6, OutputSelectionAnswersTheFirstViewNotTheSelectedOne)
+{
+    CMUSHclientDoc* doc = new CMUSHclientDoc;
+    doc->DisplayMsg("hello world", 11, COMMENT);
+    ASSERT_TRUE(doc->m_LineList.GetCount() > 0);
+
+    CMUSHView* first  = (CMUSHView*) RUNTIME_CLASS(CMUSHView)->CreateObject();
+    CMUSHView* second = (CMUSHView*) RUNTIME_CLASS(CMUSHView)->CreateObject();
+    ASSERT_TRUE(first != NULL && second != NULL);
+    doc->AddView(first);
+    doc->AddView(second);
+
+    // Nothing selected in the first window...
+    first->m_selstart_line = first->m_selend_line = 0;
+    first->m_selstart_col  = first->m_selend_col  = 0;
+
+    // ...and the user has selected five characters in the second.
+    second->m_selstart_line = 0;  second->m_selstart_col = 0;
+    second->m_selend_line   = 0;  second->m_selend_col   = 5;
+
+    const pal::TextRange r = doc->m_pWorldView->outputSelection();
+
+    // The first view wins, so the script is told there is no selection at all.
+    EXPECT_EQ(0, r.startLine);
+    EXPECT_EQ(0, r.endCol);
+
+    // Non-vacuous: put the same selection on the FIRST view and it is seen,
+    // which proves the zeros above are the view choice and not a dead reader.
+    first->m_selend_col = 5;
+    const pal::TextRange r2 = doc->m_pWorldView->outputSelection();
+    EXPECT_EQ(1, r2.startLine);      // 1-based
+    EXPECT_EQ(6, r2.endCol);         // endcol + 1
+
+    // Teardown order matters.  RemoveView on the last view runs
+    // OnChangedViewList -> OnCloseDocument, which deletes the document; so the
+    // views are never RemoveView'd and the DOCUMENT goes first, whose
+    // ~CDocument calls DisconnectViews to detach without deleting.  The views
+    // are then ours to free, and ~CView is protected, hence the CObject cast.
+    delete doc;
+    delete (CObject*) first;
+    delete (CObject*) second;
 }

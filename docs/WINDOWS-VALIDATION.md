@@ -7721,9 +7721,54 @@ forbidden state out of a legal one. **When several places disagree about what
 is legal, enumerate all of them before deciding which is wrong** — the count
 here was four, and the first two leads each found only two of them.
 
+#### Checked, true, and deliberately NOT changed
+
+**`outputSelection ()` answers the first `CMUSHView`, not the one you selected
+in.** `Window ▸ New Window` (`ID_WINDOW_NEW`, present in the menu with no
+handler of the app's own, so MFC's `CMDIFrameWnd::OnWindowNew` serves it) gives
+one world two `CMUSHView`s, each with its own
+`m_selstart_line`/`m_selend_col`. `GetSelectionStart/EndLine/Column` walk the
+document's view list and answer the first `CMUSHView` they find, while
+`CMUSHView::OnEditCopy` copies **`this`** view's selection through
+`GetSelection`. Select in the second window and a script is told there is no
+selection.
+
+The lead named `pal/win_worldview.cpp`, which is port-introduced code — but
+this is not the port's doing. `git show e362b37:scripting/methods/methods_info.cpp`
+has the identical loop; the adapter transcribed it and added only an
+`m_LineList.GetCount () > 0` guard that upstream lacks.
+
+**Left as it is, on purpose.** "Which view is authoritative" is a real design
+question for a document-level API that can only report one answer, and changing
+it would alter a documented return value on both platforms to no clear benefit —
+the port has exactly one view per world, so a fix would be Windows-only in
+effect. Pinned instead by
+`WinWorldViewR6.OutputSelectionAnswersTheFirstViewNotTheSelectedOne`, so that a
+future change to it is a decision rather than an accident. The test moves the
+same selection onto the first view and watches it appear, which is what keeps
+the zeros from being a dead reader.
+
+It costs **18 MFC assertions** — `CDocument::UpdateFrameCounts` re-walks the
+view list on each `AddView`, asserting `::IsWindow` on views that have none —
+so the suite's assertion baseline moves from 169 to 187. That is expected
+noise of the same kind `tests/win/test_menu_rules_win.cpp` already documents,
+not a regression.
+
+**Two hypotheses raised while reading nearby code, both refuted**, recorded so
+they are not re-raised:
+
+- *The timer poll interval is really the activity-window refresh interval.*
+  It is not mislabelled: `IDD_GLOBAL_PREFSP6` is captioned "Timers", the field
+  is "&Timer interval (seconds):", and the page even carries the hint "Set to
+  zero for timers that can fire up to 1/10 of a second apart." The identifier
+  `ACTIVITY_TIMER_ID` is misleading; the user-facing contract is correct.
+- *`world.Debug ("timers")` hardcodes 0.1 s.* It does not —
+  `world_debug.cpp:1189` already branches on `App.m_nTimerInterval` and reports
+  the real figure.
+
 #### NOT checked — leads only
 
-Four remain. Each has a file, a line and an argument in the sweep's own output;
+Three remain. Each has a file, a line and an argument in the sweep's own output;
 none has been read by me, and the record across both sweeps is that a
 "confirmed" label means only that one agent argued for it and a second failed to
 refute it. **Eight of the first sweep's thirteen did not survive contact.**
@@ -7732,13 +7777,12 @@ Treat accordingly.
 | file | claim |
 |---|---|
 | `dialogs/world_prefs/configuration.cpp` | World Properties clears the persisted "accept chat connections" tick when the listen socket failed to bind — and this one interacts with `UPSTREAM-BUGS` 95, since that fix moved five chat defaults into locals and deliberately left this one reading live state |
-| `pal/win_worldview.cpp` | `outputSelection ()` reports the *first* `CMUSHView`'s selection while `CMUSHView::OnEditCopy` copies `this` view's |
 | `doc_shared.cpp` | the MCCP decompression loop keeps inflating and displaying after `DisplayMsg` has closed the world |
 | `doc_shared.cpp` | the SOCKS5 CONNECT reply is assumed to be exactly 10 bytes and to arrive whole in one packet |
 
 The seven I checked first were the seven I could reach with a test on this
 machine. That is the honest selection criterion, and it is worth saying out
-loud: the remaining four are not less serious, they are less convenient.
+loud: the remaining three are not less serious, they are less convenient.
 
 #### One unreproduced crash, recorded rather than dismissed
 

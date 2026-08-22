@@ -6890,7 +6890,10 @@ the port's menu builder has conventions of its own that a grep does not see.
   is fully implemented — `CWorldChildFrame::infobarShow/Text/...`
   (`wx_world_child.cpp:6522`) backs the whole seven-method `pal::IWorldView`
   infobar API — so a script can raise the bar and the user has no way to toggle
-  it. Windows has the toggle.
+  it. Windows has the toggle — **confirmed on the live menu bar** (2026-08-21,
+  `WinDebug\MUSHclient.exe` with a world open): id 32988, a checkable `View`
+  item, ticked by default. This is no longer a lead about the resource; it is
+  what the running client offers and the port does not.
 - **Edit ▸ Notepad's `Ctrl+Alt+W` is bound nowhere.** Windows'
   `ID_EDIT_NOTESWORKAREA` (32333) is `&Notepad\tCtrl+Alt+W`; the port's nearest
   item is `40001 "New Notepad"` with no accelerator, and `Alt+W` appears in no

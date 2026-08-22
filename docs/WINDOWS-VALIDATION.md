@@ -6292,3 +6292,83 @@ raise a handful of MFC assertions per document, routed to stderr as usual. In a
 suite that constructs one document per test that is a few hundred lines of
 noise for 17 tests' worth of coverage over code nothing else reaches. Accepted,
 and worth knowing before the technique is applied to a bigger suite.
+
+### 10af. What round two owes macOS, file by file
+
+Everything from §10z to §10ae was written and measured on Windows. This is the
+list the macOS `ctest` run has to clear before any of it merges, sorted by how
+much attention each needs.
+
+#### One behavioural change to shared engine code
+
+`scripting/lua_methods.cpp` — `L_Save` no longer restores an **empty** path name
+after a Save-As (`docs/UPSTREAM-BUGS.md` 91). On Windows that call threw
+`CFileException::badPath` out of the Lua binding; on the port the `CDocument`
+shim accepted it silently. The visible change on macOS is that
+`world.Save (name, true)` on a world that has never been saved now **keeps** the
+name it just wrote, where before it set the path name back to `""`. Nothing in
+the suite asserts the old behaviour, but this is the one hunk that can change
+what a macOS test sees.
+
+#### Nothing else in shipping code can reach macOS at all
+
+Verified by reading each hunk's guard rather than by assuming:
+
+| file | why it cannot affect the port |
+|---|---|
+| `mainfrm.cpp` | both hunks are inside the `#else` (i.e. `_WIN32`) arm of an existing `#ifndef _WIN32` |
+| `evaluate.cpp` | `Load_Set` is inside `#ifdef _WIN32` (`:599`); the `MUSHCLIENT_TESTS` arm nests inside it |
+| `pal/win_worldview.cpp` | the whole file is `#ifdef _WIN32` |
+| `platform/wx_mfc_hooks.h` | the addition sits inside the existing `#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)` block |
+| `tests/mc_test.h` | every hunk is inside the file's `#ifdef _WIN32` block |
+| `tests/win/*` | Windows-only files, not in the CMake build |
+
+#### Shared test files: what changed for BOTH platforms
+
+Most of the test edits are `#ifdef`-guarded and leave the macOS arm verbatim.
+These do not, and are the ones to look at if `ctest` goes red:
+
+- **`test_lua_surface.cpp`, `MiniWindowFontIsWindowsSized`** — the pin is now
+  `tmHeight - tmInternalLeading` rather than `tmHeight`. Equivalent on
+  `pal::CpuRaster` *because it leaves `internalLeading` at its zero default*
+  (`pal/isurface.h`), which is exactly the thing this change makes explicit. If
+  CpuRaster ever starts reporting a real internal leading, this is the test that
+  says so — which is the point.
+- **`test_lua_surface.cpp`, `ChangeDirRoundTrip`** — the restore path is now
+  escaped before it goes into a Lua literal, and `chdir` is called again in C
+  regardless. A no-op on a platform whose paths contain no backslashes; the
+  belt-and-braces `chdir` is new.
+- **`test_lua_surface.cpp`, `GetRecentLinesClamps…`** — the discriminator is
+  2,000,000,000 rather than 3,000,000,000, because the latter does not fit the
+  32-bit `long` the API takes. Still past the buffer, still wraps
+  `size () - Count`.
+- **`test_lua_scripting.cpp`, `PaletteAccessors…`** — `0x7F123456` rather than
+  `0xFF123456`, for the same reason.
+- **`test_lua_scripting.cpp`, the two `SweepR4` debug-listing tests** — they
+  concatenate the output lines before searching instead of scanning line by
+  line, so a match spanning a wrap boundary is still found. Strictly weaker, and
+  deliberately: the per-line form was asserting the wrap column.
+- **`test_world_load.cpp`, `PluginLoad.SourcePathRecorded`** — asserts that the
+  recorded source names the file and reopens, rather than string-equalling the
+  path it was handed. `CFile::GetFilePath` fully qualifies.
+- **`test_world_load.cpp`, `PluginHeaderValidationArms`** — split into a
+  refusal loop and a language loop whose expectation is a named constant. On the
+  port the constant is `false` and the assertions are the originals.
+- **`test_connection.cpp`** — `MC_LOG_NL` is `"\n"` off Windows and
+  `kNawsNeedsAView` is `false`, so both are inert there.
+  `CommandDestinationFillsEmptyBarOnly` now saves and restores
+  `m_pWorldView` instead of nulling it, which on the port stops leaking the
+  adapter the document built for itself.
+- **`test_accelerators.cpp`** — every test binds a `CMUSHclientDoc&` from an
+  `AccelDoc` fixture, which off Windows is a plain `CMUSHclientDoc` member. The
+  bodies are unchanged.
+
+#### And the one thing Windows found that only macOS can fix
+
+The five embedded engines still carry `docs/UPSTREAM-BUGS.md` 90: a Python
+`OnMXP_OpenTag` that returns `None` still vetoes every tag, because
+`ExecuteLua`'s new `pbReturnedAValue` is set only in Lua's own body and the
+other five return before it. One line each — `py_engine.cpp:552,555`,
+`perl_engine.cpp:411`, `js_engine.cpp:579`, `tcl_engine.cpp:365`,
+`ruby_engine.cpp:512` — and `--engines-selftest` is the only place they can be
+proved.

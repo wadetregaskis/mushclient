@@ -6958,33 +6958,49 @@ once connected — which is what "append and it drains on writability" promises,
 and the test now asserts that they arrive.
 
 
-#### What actually reaches it: `ConnectionOpen ()` stopped meaning what it says
+#### What actually reaches it: a timer with "Send to: World"
 
-The first version of this section named the wrong route — "a trigger, a timer or
-a script's `world.Send`" — and checking it turned up something better.
+This took three tries to get right, and the two wrong answers are as useful as
+the right one, so all three are here.
 
-**A script cannot reach it.** `Send`, `SendImmediate`, `SendNoEcho`
+**Not a script.** `Send`, `SendImmediate`, `SendNoEcho`
 (`scripting/methods/methods_sending.cpp:23`, `:41`, `:54`) and `SendPkt`
 (`methods_utilities.cpp:479`, plus its Lua twin at `lua_methods.cpp:5290`) all
-open with
+open with `if (m_iConnectPhase != eConnectConnectedToMud) return eWorldClosed;`.
+Measured in the running client: `world.Send` during a lookup returns **30002**
+(`eWorldClosed`) and sends nothing.
 
-```cpp
-if (m_iConnectPhase != eConnectConnectedToMud)
-  return eWorldClosed;
+**Not typed input either.** A command from the command bar, an alias, or
+`world.Execute` goes through `EvaluateCommand`, which opens with
+`CheckConnected ()` (`evaluate.cpp:118`, `:205`, `:1085`). That function tests
+`m_iConnectPhase != eConnectConnectedToMud || !ConnectionOpen ()` and, mid-connect,
+puts up **"The connection to *world* is currently being established."**
+(`doc.cpp:2792`) and refuses. The message box turning up unbidden in a scripted
+GUI run is how this was found — it is the client saying no.
+
+**A timer is.** `eSendToWorld` — send_to 0, the default for every trigger,
+alias and timer — dispatches at `doc_shared.cpp:5472` straight to `SendMsg`,
+which has no gate at all, into `DoSendMsg`, whose only gate is
+`ConnectionOpen ()`. `CheckConnected` is nowhere on that path. And a timer with
+**Active when world is closed** ticked (`active_closed="y"`) is *designed* to
+fire while there is no connection.
+
+Measured in the running client, `WinDebug\MUSHclient.exe`, with a world whose
+site is a name that cannot resolve and a one-shot timer at 1.0 s sending
+`hello-from-a-timer` to the world:
+
+```
+connect phase (227): 1        <- eConnectMudNameLookup
+connecting?  (107): true
+bytes out    (217): 20        <- 18 characters + CRLF
 ```
 
-so the whole scripting surface is closed during a lookup.
+Twenty bytes handed to `SendPacket` while the client was still resolving the
+name, i.e. straight into `flushSend` with `m_hSocket == INVALID_SOCKET`. Before
+the fix that is two `_CRT_ASSERT`s and the bytes discarded; after it they are
+queued and go out if the connect completes.
 
-**Typed input is not.** Everything the *user* sends — a command typed in the
-command bar, an alias, a macro, a timer's send-to-world, a speedwalk — funnels
-through `SendMsg` (no guard at all) into `DoSendMsg`, whose only gate is
-
-```cpp
-if (!ConnectionOpen ())
-  return;
-```
-
-and `ConnectionOpen ()` is now
+#### The underlying cause: `ConnectionOpen ()` stopped meaning what it says
 
 ```cpp
 // The "socket exists" half of the classic connectivity test
@@ -6995,37 +7011,27 @@ bool ConnectionOpen (void) const { return m_pTransport != NULL; }
 Upstream it was `m_pSocket != NULL` (`doc.h:656` at `249534f^`), and `m_pSocket`
 was assigned only after `Create ()` had succeeded — so **"the connection object
 exists" and "a socket exists" were the same statement, and the comment was
-true.** With the transport created by a factory ahead of its socket they came
-apart, and the comment is now describing a property the expression no longer
-has.
+true.** A factory that builds the transport ahead of its socket pulled them
+apart. Nothing at `ConnectionOpen ()` had to be edited for it to become wrong.
 
-So the reproduction is an entirely ordinary action: **type a command while a
-world is still resolving its hostname, and press Enter.**
+`DoSendMsg` is the only Windows-reachable caller where the difference bites. The
+other five all pair it with an explicit
+`m_iConnectPhase == eConnectConnectedToMud` (`doc.cpp:2122` and `:2782`,
+`doc_shared.cpp:4811`, `mainfrm.cpp:740`, `dialogs/SendToAllDlg.cpp:62` and
+`:87`) — which is itself the tell: five sites already distrust the predicate
+enough to add the phase check beside it, and the sixth is the one that did not.
 
-`DoSendMsg` is the only Windows-reachable caller where the difference bites.
-The other five all pair `ConnectionOpen ()` with an explicit
-`m_iConnectPhase == eConnectConnectedToMud` and are unaffected
-(`doc.cpp:2122` and `:2782`, `doc_shared.cpp:4811`, `mainfrm.cpp:740`,
-`dialogs/SendToAllDlg.cpp:62` and `:87`) — which is itself the tell: five sites
-already distrust it enough to add the phase check, and the sixth is the one that
-did not.
+**The check that finds this shape: when a lifetime moves, grep every predicate
+that tests whether the thing exists, and read its comment as a claim rather than
+as documentation.** A rename would have caught it; a relocation did not have to
+touch the line at all.
 
-**The lesson is the one this campaign keeps producing in new clothes.** A
-predicate's *name and comment* survived a change to its *meaning*, because the
-change was made somewhere else entirely — in when the object it tests gets
-created. Nothing at `ConnectionOpen ()` had to be edited for it to become wrong.
-The check that finds this shape: when a lifetime moves, grep every predicate
-that tests for the existence of the thing whose lifetime moved, and re-read its
-comment as a claim rather than as documentation.
-
-The fix in `flushSend` is still the right one — the adapter must not make an
-illegal call whoever provokes it — but the guard in `DoSendMsg` is now weaker
-than the one it replaced, and that is worth its own decision rather than a
-quiet fix here: restoring upstream's effective behaviour means adding the phase
-check, and that would also change what happens to a command typed during a
-lookup (silently dropped, versus queued and sent on connect, which is what the
-`flushSend` fix now gives). The second is arguably nicer and is definitely a
-behaviour change, so it is flagged, not taken.
+The `flushSend` fix stands on its own — the adapter must not make an illegal
+call whoever provokes it. Tightening `DoSendMsg` is **flagged, not taken**: it
+decides whether a timer's output during a lookup is dropped or queued and
+delivered on connect, and that is a behaviour choice rather than a repair. The
+`flushSend` fix currently makes it "queued and delivered", which is new — the
+bytes used to be discarded on both platforms.
 
 **The general shape, and it is the mirror of one already recorded.**
 `pal/win_transport.cpp` says "Structure mirrors `platform/posix_transport.cpp`

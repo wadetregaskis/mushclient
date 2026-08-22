@@ -559,9 +559,17 @@ void Generate256colours(void);
 // "".  Set it here for the same reason this macro loads the option table and
 // the MXP tables: those are all things InitInstance does that the engine then
 // assumes have happened.
+// InstallGdiSurfaceBridge is the third InitInstance step this host needs, and
+// it is the one with the widest reach: pal::g_surface is NULL until it runs
+// (MUSHclient.cpp:254), so without it every CMiniWindow drawing operation --
+// the whole world.Window* family, the image ops, text measurement -- fails at
+// the seam rather than at anything it is being asked about.  Installing it here
+// is what lets the miniwindow tests run against REAL GDI, which is a cross-check
+// the port's own pal::CpuRaster has never had.
 #define MC_TEST_WIN_APP_STATE() \
     do { \
         MUSHCLIENT_VERSION = VERSION_STRING; \
+        InstallGdiSurfaceBridge(); \
         MC_TEST_WIN_MAIN_FRAME(); \
         App.LoadGlobalsFromDatabase(); \
         App.MXP_LoadElements(); \

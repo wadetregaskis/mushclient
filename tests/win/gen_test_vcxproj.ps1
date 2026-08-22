@@ -170,6 +170,21 @@ foreach ($cfg in @('Debug','Release')) {
   W '      <AdditionalDependencies>lua5.1.lib;dbghelp.lib;winmm.lib;dsound.lib;Shlwapi.lib;libssl.lib;libcrypto.lib;Crypt32.lib;%(AdditionalDependencies)</AdditionalDependencies>'
   W '      <GenerateDebugInformation>true</GenerateDebugInformation>'
   W '    </Link>'
+  # DPI awareness is part of "how this builds on Windows" just as much as the
+  # source list, and getting it wrong changes what every PIXEL measurement in
+  # the suite means.  MUSHclient.vcxproj sets EnableDpiAwareness=false in both
+  # configurations (its manifest declares no dpiAware element either), so the
+  # shipping client is DPI-UNAWARE: Windows lies to it about the display and
+  # GetDeviceCaps (LOGPIXELSY) answers 96 whatever the monitor is doing.
+  #
+  # MSBuild's default for a VC project is DPI-AWARE.  Without this the test
+  # binary read the real screen -- 216 on the machine this was found on -- so
+  # CMiniWindow::Font's MulDiv (points, dpi(), 72) produced a 24-pixel cell for
+  # an 8-point font where the client produces 11, and LuaSurface's font-parity
+  # pin failed against a client that was never wrong.  Mirror the app.
+  W '    <Manifest>'
+  W '      <EnableDpiAwareness>false</EnableDpiAwareness>'
+  W '    </Manifest>'
   W '  </ItemDefinitionGroup>'
 }
 W '  <ItemGroup Label="engine">'

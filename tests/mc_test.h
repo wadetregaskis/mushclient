@@ -530,22 +530,30 @@ void Generate256colours(void);
 // the title/filter string its constructor asks for, and AfxMessageBox(nID) has
 // no text to find.
 //
-// It would be six lines to add -- LoadLibrary ("locale\\en.dll") next to the
-// staged runtime assets, then AfxSetResourceHandle; I18N_Setup itself is not
-// callable here because its failure arms are plain ::MessageBox, which nothing
-// routes.  **It is deliberately NOT done, and this is the measurement.**
+// Six lines add it -- LoadLibrary ("locale\\en.dll") next to the staged runtime
+// assets, then AfxSetResourceHandle.  I18N_Setup itself is not callable here
+// because its failure arms are plain ::MessageBox, which nothing routes.
 //
-// With the resource handle set, four suites went from green to BLOCKED at the
+// The first attempt at this took four suites from green to BLOCKED at the
 // runner's clock -- LifecycleArms, LuaScripting, SpellCheckTest, SweepR4 --
-// because CDialog::DoModal stops failing and starts putting up a window.  This
-// host's safety from modal dialogs has never come from routing them; it comes
-// from there being no dialog templates to instantiate.  McTestMessageBox covers
-// AfxMessageBox and UMessageBox, and NOTHING covers a CDialog.
+// because with templates available CDialog::DoModal stops FAILING and starts
+// putting up a window.  That measurement inverted an assumption: this host's
+// safety from modal dialogs never came from routing them, it came from there
+// being no template to instantiate.
 //
-// So the resources are worth having only together with a way to decline every
-// DoModal, which is a change to the shim, not to this host.  Until then a
-// missing dialog template is load-bearing, and the tests that would otherwise
-// need one say so at their own site.
+// So the resources arrive together with the thing that makes them safe: the
+// WH_CBT hook in tests/win/all_tests.cpp, which closes every dialog the process
+// creates before it can block.  Load the DLL only if that hook is installed --
+// they are one change, not two.
+#define MC_TEST_WIN_RESOURCE_DLL() \
+    do { \
+        HINSTANCE hres_ = ::LoadLibrary("locale\\en.dll"); \
+        if (hres_) \
+            AfxSetResourceHandle(hres_); \
+        else \
+            fprintf(stderr, "note: locale\\en.dll not found - no dialog, menu " \
+                            "or string resources for this run\n"); \
+    } while(0)
 
 // ── a CMainFrame object, with no window in it ──────────────────────────────
 // `Frame` is a MACRO -- *((CMainFrame *) App.m_pMainWnd) (stdafx.h:271) -- so
@@ -605,6 +613,7 @@ void Generate256colours(void);
 #define MC_TEST_WIN_APP_STATE() \
     do { \
         MUSHCLIENT_VERSION = VERSION_STRING; \
+        MC_TEST_WIN_RESOURCE_DLL(); \
         InstallGdiSurfaceBridge(); \
         MC_TEST_WIN_MAIN_FRAME(); \
         App.LoadGlobalsFromDatabase(); \
@@ -620,6 +629,11 @@ void Generate256colours(void);
 // because /EHsc means the runner's catch(...) never sees an access violation
 // and the run otherwise dies saying only "CRASHED (no summary)".
 void McTestInstallCrashHandler();
+
+// How many dialogs the WH_CBT hook has closed so far.  "A dialog was raised" is
+// the only observable a test has for a code path that ends in one, since the
+// hook means none of them survives long enough to be inspected.
+long McTestDialogsCancelled();
 
 #define MC_TEST_WIN_HOST_INIT() \
     do { \

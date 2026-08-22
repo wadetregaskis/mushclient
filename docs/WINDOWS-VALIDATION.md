@@ -6165,3 +6165,70 @@ mechanism rather than 159 edits, it needs no change to shipping source, and it
 would let the resource DLL be loaded. It also silently changes what every
 existing green test is running against, so it wants its own measurement before
 anyone relies on it.
+
+### 10ad. One hook answers every dialog, so the host can have its resources
+
+§10ac ended by ruling out the obvious route — a `MUSHCLIENT_TESTS` arm on
+`CDialog::DoModal`, which is the *port's* answer and meaningless on Windows,
+where `CDialog` is real MFC in a static library — and recorded a measured
+alternative as untried: **a `WH_CBT` hook, cancelling any dialog the process
+creates**. It has now been tried, and it works.
+
+```cpp
+static LRESULT CALLBACK McTestCbtProc (int code, WPARAM wParam, LPARAM lParam)
+{
+  if (code == HCBT_ACTIVATE)
+    {
+    char cls [64] = "";
+    ::GetClassNameA ((HWND) wParam, cls, sizeof cls);
+    if (strcmp (cls, "#32770") == 0)          // the dialog window class
+      {
+      ++s_dialogsCancelled;
+      ::PostMessageA ((HWND) wParam, WM_CLOSE, 0, 0);
+      }
+    }
+  return ::CallNextHookEx (s_cbtHook, code, wParam, lParam);
+}
+```
+
+Three properties make it the right shape:
+
+- **It is the funnel Windows itself provides.** Every window the process creates
+  passes through the hook before it is shown, so there is one place instead of
+  the 159 `DoModal ()` call sites §10ac counted.
+- **`WM_CLOSE`, not `WM_COMMAND`/`IDCANCEL`.** `DefDlgProc` turns `WM_CLOSE` into
+  `IDCANCEL` for a dialog that has a Cancel button and closes one that does not,
+  so property sheets and the common dialogs are covered by the same line.
+- **No shipping source changes.** It lives entirely in
+  `tests/win/all_tests.cpp`.
+
+With it installed, `MC_TEST_WIN_RESOURCE_DLL` is safe, and the two land as one
+change: `LoadLibrary ("locale\\en.dll")` then `AfxSetResourceHandle`. The run is
+**1,599 passing across 177 suites**, exactly as before — and the four suites the
+first attempt at the DLL had blocked (`LifecycleArms`, `LuaScripting`,
+`SpellCheckTest`, `SweepR4`) are green.
+
+The second measurement is the better one. `--suite=LuaScripting` used to print
+several MFC assertions per run — the two document templates failing to load
+their title/filter strings, `dlgcore.cpp:210` failing the progress dialog's
+template lookup. It now prints **zero**. The host is not merely quieter; it is
+closer to the app, because those assertions were the sound of resources the real
+client has and this one did not.
+
+#### What it costs, and the one thing to remember
+
+Every dialog is cancelled, including one a test might want to complete. That is
+the trade, and it is the right way round for a unit-test host — but it means a
+code path whose *outcome* depends on the user pressing OK cannot be asserted
+here, only that it does not hang. `CGlobalPrefsP4::OnFont` is the standing
+example and remains untestable for a different reason anyway: the subject of its
+fix is the `LOGFONT` seeded before `DoModal`, and its only outputs are
+`UpdateData` and `SetWindowText`, both of which need a window.
+
+`McTestDialogsCancelled ()` exports the count, because "a dialog was raised" is
+the only observable a test has for a path that ends in one.
+
+`McTestCancelDialog`'s per-site `#ifdef` (§10z, `Load_Set`) stays. The hook is a
+net, not a replacement: declining at the call site never creates the window at
+all, which is both cheaper and deterministic, and it documents at the site what
+the test is choosing not to do.

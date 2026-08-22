@@ -187,10 +187,52 @@ static int  McTestAssertHook (int reportType, char * message, int * returnValue)
   return TRUE;                        // handled; skip the default reporting
 }
 
+// ── every dialog this process creates is cancelled, by one mechanism ────────
+//
+// A modal dialog is the one failure this host cannot report: the run stops, the
+// clock kills it, and the summary never prints.  Two answers were already in
+// place and neither is general -- McTestMessageBox catches AfxMessageBox and
+// UMessageBox, and McTestCancelDialog is an #ifdef at one CFileDialog site.
+// A CDialog has no funnel at all: on Windows it is real MFC in a static
+// library, and there are 159 DoModal() call sites in this tree.
+//
+// A WH_CBT hook is the funnel Windows itself provides.  Every window the
+// process creates passes through it before it is shown, so a dialog can be told
+// to close before it can block anything -- one mechanism instead of 159 edits,
+// and no change to shipping source.
+//
+// WM_CLOSE rather than WM_COMMAND/IDCANCEL: DefDlgProc turns it into IDCANCEL
+// for a dialog that has a Cancel button and closes one that does not, so it
+// covers property sheets and the common dialogs as well.
+//
+// The count is exported because "a dialog was raised" is the only observable a
+// test has for a code path that ends in one -- see McTestDialogsCancelled.
+static HHOOK s_cbtHook = NULL;
+static long  s_dialogsCancelled = 0;
+
+long McTestDialogsCancelled () { return s_dialogsCancelled; }
+
+static LRESULT CALLBACK McTestCbtProc (int code, WPARAM wParam, LPARAM lParam)
+{
+  if (code == HCBT_ACTIVATE)
+    {
+    char cls [64] = "";
+    ::GetClassNameA ((HWND) wParam, cls, sizeof cls);
+    if (strcmp (cls, "#32770") == 0)          // the dialog window class
+      {
+      ++s_dialogsCancelled;
+      ::PostMessageA ((HWND) wParam, WM_CLOSE, 0, 0);
+      }
+    }
+  return ::CallNextHookEx (s_cbtHook, code, wParam, lParam);
+}
+
 void McTestInstallCrashHandler ()
 {
   ::SetUnhandledExceptionFilter (McTestCrashFilter);
   _CrtSetReportHook (McTestAssertHook);
+  s_cbtHook = ::SetWindowsHookExA (WH_CBT, McTestCbtProc, NULL,
+                                   ::GetCurrentThreadId ());
 }
 
 MC_TEST_MAIN_ALWAYS()

@@ -251,6 +251,7 @@ W '    <ClCompile Include="tests\win\test_gap_coverage.cpp" />'
 W '    <ClCompile Include="tests\win\test_notepad_win.cpp" />'
 W '    <ClCompile Include="tests\win\test_menu_rules_win.cpp" />'
 W '    <ClCompile Include="tests\win\test_win_transport.cpp" />'
+W '    <ClCompile Include="tests\win\test_win_worldview.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'
@@ -260,4 +261,4 @@ W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />'
 W '</Project>'
 
 Set-Content -Path 'MUSHclient_tests.vcxproj' -Value $sb.ToString().TrimEnd() -Encoding UTF8
-"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 5 Windows-only, $($excluded.Count) excluded"
+"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 6 Windows-only, $($excluded.Count) excluded"

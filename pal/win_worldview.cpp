@@ -969,10 +969,29 @@ public:
 
     bool saveWorld() override
     {
-        // Save with no name (methods_utilities.cpp): !DoSave == success.
-        // GetPathName() is CDocument's public accessor for m_strPathName,
-        // which the original reached directly as a member of the doc.
-        return !m_pDoc->DoSave(m_pDoc->GetPathName(), TRUE);
+        // TRUE on success, and false when there is no path to save to — the
+        // contract pal/iworldview.h states ("false = no path") and the one
+        // platform/wx_world_child.cpp implements.
+        //
+        // This used to be `return !m_pDoc->DoSave (GetPathName (), TRUE);`,
+        // under a comment reading "!DoSave == success".  That is true of
+        // CMUSHclientDoc::Save (methods_utilities.cpp), whose own comment says
+        // "returns zero if no error" — it is an ERROR CODE, and world.Save
+        // hands it straight to the script.  Copying the expression into a seam
+        // whose return is a BOOLEAN inverted it: this adapter answered false
+        // for a save that worked and true for one that failed, the exact
+        // opposite of the wx adapter and of the test fake.
+        //
+        // Latent rather than live — nothing calls CMUSHclientDoc::
+        // SaveWorldViaView yet, world.Save still reaching DoSave directly — so
+        // it cost nothing so far and would have cost an inverted world.Save
+        // result to whoever wired the seam up.  The empty-path early return
+        // was missing too: DoSave with no name prompts, which is not what
+        // "save the world file to its current path" means.
+        const CString strPath = m_pDoc->GetPathName();
+        if (strPath.IsEmpty())
+            return false;
+        return m_pDoc->DoSave(strPath, TRUE) != FALSE;
     }
 
     Rect mainRect() const override

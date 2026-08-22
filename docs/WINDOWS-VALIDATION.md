@@ -6395,6 +6395,7 @@ the Windows target. Listed with what a macOS run should check:
 | `pal/iworldview.h`, `doc.h` | the new `hasMainWindow ()` predicate and the accessor that gates on it (§10ar) | header-only; every adapter that does not override it keeps the old behaviour by construction |
 | `platform/wx_world_child.cpp` / `.h` | `hasMainWindow ()` returning true | **blind edit** — three lines. If it is missing or wrong the port silently reverts to the character-grid fallback for `GetInfo(249)/(250)`, which is what it did before, so the failure mode is quiet: check `world.GetInfo (250)` against the world window's width |
 | `tests/fake_worldview.h`, `tests/test_info.cpp`, `tests/test_pal_worldview.cpp` | the fake gained `hasMainWin`; both suites now distinguish "no window" from "a window measuring nothing" | `test_pal_worldview.cpp` is excluded here, so its two new cases have never been compiled |
+| `pal/win_worldview.cpp` | `saveWorld ()` now returns true on success and false for no path, matching the contract and the wx adapter (§10as) | `#ifdef _WIN32` — cannot reach macOS. Nothing calls the seam yet on either side, so nothing there changes. |
 
 `pal/win_transport.cpp`'s `flushSend` guard is inside the file's own
 `#ifdef _WIN32` and cannot reach macOS.
@@ -7410,3 +7411,84 @@ seemed like the same answer, and they are — right up until a real window can b
 empty. The check that finds more: for any seam value doing double duty as a
 sentinel, ask whether the sentinel is *reachable as a real measurement*. Here it
 took one keystroke to reach.
+
+### 10as. Every `IWorldView` method with nothing behind it — one test, one bug
+
+`pal/win_worldview.cpp` is ~1200 lines of port-introduced code shipping to every
+Windows user: about fifty methods forwarding to `CMUSHView`, `CSendView`,
+`CChildFrame` and `CMainFrame`. `tests/test_pal_worldview.cpp` drives the
+**port's** adapter and is excluded here, so the Windows one had no test at all.
+
+`tests/win/test_win_worldview.cpp` calls **every method** on the real adapter
+with no main-frame window and no view, with deliberately unhelpful arguments
+(negative line numbers, empty strings, out-of-range window-status codes), and
+asserts two things: the process survives, and **`McTestAssertionsRaised ()` does
+not move.**
+
+The second is the point. A null dereference is an access violation and gets
+noticed. What does *not* get noticed is a method that "works" by calling
+`CWnd::SetWindowText` on a null `m_hWnd` — real MFC asserts
+`ASSERT (::IsWindow (m_hWnd))`, which in a Debug build of the product is a modal
+Abort/Retry/Ignore during ordinary use and in Release is a silent no-op the
+author never intended. §10ao added the counter for one such case; this is what
+it is for.
+
+This also finally pins the six null-guards added to this file earlier in the
+round. §10v's lesson — *"a guard that has to dereference the thing it is
+guarding is not a guard"* — cost three crashing suites and two exclusions, and
+nothing had been pinning the fix.
+
+#### The bug it found: `saveWorld ()` was inverted
+
+The first run of the blanket sweep did not report a missing guard. It threw:
+`CWinApp::DoPromptFileName`'s `ENSURE (m_pDocManager != NULL)`, out of
+`saveWorld ()`, which read
+
+```cpp
+// Save with no name (methods_utilities.cpp): !DoSave == success.
+return !m_pDoc->DoSave (m_pDoc->GetPathName (), TRUE);
+```
+
+Two defects in one line.
+
+**It is inverted.** The comment is quoting `CMUSHclientDoc::Save`
+(`methods_utilities.cpp`), whose own comment says *"returns zero if no error"* —
+that is an **error code**, and `world.Save` hands it straight to the script.
+Pasting the expression into a seam whose return is a **boolean** flips it:
+
+| | on a successful save |
+|---|---|
+| `pal/iworldview.h` contract — *"false = no path"* | true |
+| `platform/wx_world_child.cpp` — `DoSave (...) != FALSE` | true |
+| `tests/fake_worldview.h` | true |
+| **`pal/win_worldview.cpp`** — `!DoSave (...)` | **false** |
+
+**And it ignores the "no path" clause.** With an empty path name `DoSave`
+prompts, which is not what *"save the world file to its current path"* means —
+and prompting is what threw here, because this host has no document manager.
+The wx adapter returns false early; the Windows one did not.
+
+**Latent, not live.** Nothing calls `CMUSHclientDoc::SaveWorldViaView` in
+production — `world.Save` still reaches `DoSave` directly — so the two adapters
+have been disagreeing at rest. Which is exactly why it is worth fixing now: the
+cost lands entirely on whoever wires the seam up, at which point `world.Save`
+starts reporting failure for every successful save on Windows and success on
+macOS, and the test fake agrees with macOS so a shared test would not catch it.
+
+Fixed to match the contract and the other adapter, and pinned by
+`WinWorldView.SaveWorldAnswersTrueForASaveThatHappened`, which asserts both
+halves: no path → false with no assertion raised, and a real path → true with
+the file on disk.
+
+#### The general shape
+
+**A seam is a place where two conventions meet, and one of them has to lose.**
+`CMUSHclientDoc::Save` returns an error code; `pal::IWorldView::saveWorld`
+returns a boolean. The adapter author copied a working expression across that
+boundary along with a comment asserting it was right. The comment is the tell —
+*"!DoSave == success"* is true of the function it was copied from and false of
+the function it was pasted into, and nothing checks a comment.
+
+Same family as §10ar's sentinel-that-is-also-a-measurement and §10ao's
+shim-more-permissive-than-the-real-thing: **all three are a value crossing a
+boundary while its meaning quietly does not.**

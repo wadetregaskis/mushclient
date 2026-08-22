@@ -2673,3 +2673,90 @@ PaddedFromTheHeap` in `tests/win/test_gap_coverage.cpp` drives
 `Process_File_block` directly (the socket-level suite is excluded on Windows for
 using `socketpair`) and was verified non-vacuous: with the guard replaced by
 `if (false)`, all three of its assertions fail.
+
+## 97 — A script routine name is used as a printf format (Windows COM engines)
+
+**Where:** `scripting/scriptengine.cpp`, `CScriptEngine::ExecuteScript`, inside
+the file's own `#ifdef _WIN32`.
+
+```cpp
+m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
+```
+
+`CMUSHclientDoc::Trace` is **printf-style** — `doc.h` declares it
+`void Trace (LPCTSTR lpszFormat, ...) MC_PRINTF_FORMAT(2, 3)` and its body does
+`strMsg.FormatV (lpszFormat, argList)`. The line above hands it the
+*already-composed* string as the format, with no varargs behind it. A `%` in
+`szProcedure` is therefore a conversion specifier read against an empty
+argument list.
+
+`szProcedure` is a script routine name: it comes from a world file's
+`script="…"` attribute on a trigger, alias or timer, or from
+`world.AddTrigger (…, "name")`. A routine called `100%s` is enough.
+
+**This was already found and fixed — three times — in the Lua twin**, which
+carries the reasoning verbatim at each site:
+
+```cpp
+// Trace takes a FORMAT; szProcedure is a plugin-supplied callback name, so
+// handing the composed string straight in would let a '%' in it read a
+// vararg that does not exist.
+m_pDoc->Trace ("%s",
+  (LPCTSTR) TFormat ("Executing %s script \"%s\"", szType, szProcedure));
+```
+
+(`scripting/lua_scripting.cpp`, three occurrences.) `exceptions.cpp` carries a
+comment about the same hazard. The COM path is `#ifdef _WIN32`, so the port
+never compiled it and the sweep that fixed the others never reached it.
+
+**Fix:** the same one line the Lua path uses. A tree-wide grep for a
+`MC_PRINTF_FORMAT`-annotated function called with a computed first argument now
+returns nothing but the two legitimate `va_list` forwarders in `exceptions.cpp`.
+
+**Narrow but real:** it needs a `%` conversion in a routine name, tracing on
+(Game ▸ Trace), and a COM scripting language — VBScript, JScript, PerlScript or
+PythonScript, i.e. not Lua. That is a Windows-only combination, which is exactly
+why it survived.
+
+## 98 — A second chat file offer corrupts, or frees, the transfer in progress
+
+**Where:** `chatsock.cpp`, `CChatSocket::Process_File_start`.
+
+The function had **no in-progress guard**. Its only gates were
+`m_bCanSendFiles`, the `"filename,filesize"` argument count, the slash check,
+and whether the user wanted the file. A second `CHAT_FILE_START` arriving
+mid-transfer therefore ran straight through to
+
+```cpp
+m_pFile = new CFile (m_strOurFileName, CFile::modeCreate | CFile::modeReadWrite);
+```
+
+**leaking the open `CFile`** and orphaning the half-received file it was
+writing. And the failure arm of that same `new` did
+
+```cpp
+delete m_pFile;    // in case it was set up
+```
+
+**without nulling it.** On its own that is harmless — `m_bDoingFileTransfer` is
+false, so `Process_File_block` and `StopFileTransfer` both return early — but
+together with the missing guard it is a **write through freed memory**: a
+transfer is running (so the flag is true), a second offer's open fails, and the
+next `CHAT_FILE_BLOCK` writes to the deleted `CFile`.
+
+**It bites even when the user says no.** `m_iFileSize = atol (strSize)` runs
+*before* the accept prompt, so a second offer that is refused still overwrites
+the running transfer's size — and that feeds `m_iFileBlocks` and the
+final-block arithmetic, so the file being received is truncated or padded.
+Measured: with the guard removed, `m_iFileSize` reads 2048 where the running
+transfer had 4096.
+
+**Fix:** refuse a second `CHAT_FILE_START` while one is running, with a
+`CHAT_FILE_DENY` in the same style as the existing refusals; and null `m_pFile`
+after deleting it, as every other site that deletes it already does.
+
+`ChatFileBlockR6.ASecondFileStartIsRefusedWhileATransferIsRunning` pins it, and
+was verified non-vacuous.
+
+**Shared code — the same defect ships on macOS.** Same family as 96, found in
+the same function's neighbourhood by the same sweep.

@@ -1019,8 +1019,22 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
   {
   if (!m_bCanSendFiles)
     {
-    SendChatMessage (CHAT_FILE_DENY, 
+    SendChatMessage (CHAT_FILE_DENY,
                     TFormat ("%s is not allowing file transfers from you.",
+                    (LPCTSTR) m_pDoc->m_strOurChatName));
+    return;
+    }
+
+  // One transfer at a time.  Without this a second CHAT_FILE_START arriving
+  // mid-transfer walked straight over m_pFile with a new CFile *, leaking the
+  // open one and orphaning the half-received file it was writing -- and if the
+  // new open then FAILED, the catch below left m_pFile dangling while
+  // m_bDoingFileTransfer was still true, so the next CHAT_FILE_BLOCK wrote
+  // through a freed pointer.  docs/UPSTREAM-BUGS.md 98.
+  if (m_bDoingFileTransfer)
+    {
+    SendChatMessage (CHAT_FILE_DENY,
+                    TFormat ("%s is already transferring a file.",
                     (LPCTSTR) m_pDoc->m_strOurChatName));
     return;
     }
@@ -1149,6 +1163,10 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
     m_iFileSize = 0;
 
     delete m_pFile;    // in case it was set up
+    m_pFile = NULL;    // ...and say so: everything else that deletes it nulls
+                       // it, and leaving a freed pointer here is what turned a
+                       // failed open into a write through freed memory
+                       // (docs/UPSTREAM-BUGS.md 98)
 
     return;
     } // end of catching a file exception

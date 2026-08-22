@@ -7581,21 +7581,25 @@ eleven were misattributed that way on the first pass (`Tls` and
 `TransportEventsR5` appeared to assert inside `OnConnectionDisconnect`, which was
 just the trace line above the stack). Match on the frame shape, not on the path.
 
-### 10au. A second sweep, mostly lost — and the one finding that survived it
+### 10au. A second sweep, and a chat file block that wrote heap into a file
 
-A second read-only hunt was launched over six areas the first had not covered
-(the world loader/saver, the matching engines, everything that writes a file,
-the VARIANT boundary, a second pass at `pal/win_worldview.cpp`, and telnet/MCCP).
-**It did not finish.** The journal records seven agents started and one result;
-the aggregate came back with nothing confirmed and nothing refuted, which is
-what an empty pipeline looks like rather than a clean bill of health. Recorded
-because "the sweep found nothing" and "the sweep did not run" are the same
-output and must not be read the same way — the tool result was
-`confirmed: 0, refuted: 0, byArea: []`, and it was the **empty `byArea`** that
-gave it away.
+A second read-only hunt over six areas the first had not covered: the world
+loader and saver, the matching engines, everything that writes a file, the
+VARIANT boundary, a second pass at `pal/win_worldview.cpp`, and telnet/MCCP.
+**17 confirmed, 4 refuted**, listed in §10av.
 
-The one agent that did report found `docs/UPSTREAM-BUGS.md` 96, and its verifier
-never ran, so it was checked by hand instead:
+**This section first said the sweep had died, and that was wrong.** Its output
+file existed while the run was still going, and reading it early gave
+`confirmed: 0, refuted: 0, byArea: []` — which reads exactly like a finished
+sweep that found nothing. The journal agreed (seven agents started, one result),
+because it too was mid-run. The correction is the useful part: **a background
+run's output file existing is not the same as the run having finished**, and the
+completion notification is the only signal that is. Both of the things that
+looked like evidence of death were just snapshots of a live run.
+
+The one finding read from that early snapshot was acted on immediately, and the
+sweep later confirmed it independently. Its verifier had not run at the time, so
+it was checked by hand instead:
 
 **`CChatSocket::Process_File_block` writes the block size the peer PROMISED, not
 the number of bytes that arrived.** On the zChat transport the block length
@@ -7623,3 +7627,75 @@ drives the method directly — the socket-level suite is excluded here for using
   a `CFile` opened `shareCompat`. The assertion was right and the explanation
   beside it was false, which is the worse of the two failures — it now reports
   the file's *existence*, which is what it can actually see.
+
+### 10av. The second sweep's 17, and which of them I actually checked
+
+The sweep in §10au returned **17 confirmed, 4 refuted** across six areas. That
+ratio is much softer than the first sweep's 5-of-13, and softer is a warning,
+not a result: the same verification harness produced both, so either these areas
+are richer or these verifiers were less sceptical. **A "confirmed" here means one
+agent argued for it and a second failed to refute it. It does not mean I checked
+it.**
+
+So the list below is split by what I did, and nothing in the second half should
+be treated as established.
+
+#### Checked by hand, and fixed
+
+| finding | outcome |
+|---|---|
+| `chatsock.cpp` — zChat file block written at the promised size, not the received one | `UPSTREAM-BUGS` 96. Independently re-found by this sweep after I had already fixed it from the early snapshot, which is a reassuring cross-check. |
+| `chatsock.cpp` — `Process_File_start` has no in-progress guard, and its catch deletes `m_pFile` without nulling | `UPSTREAM-BUGS` 98. Verified by reading the whole function for the guard the claim said was missing; it was. The sharper half is mine, not the agent's: `m_iFileSize = atol (strSize)` runs *before* the accept prompt, so a **refused** second offer still corrupts the running transfer's size. |
+| `scripting/scriptengine.cpp` — a script routine name used as a printf format | `UPSTREAM-BUGS` 97. Verified by reading `Trace`'s declaration (`MC_PRINTF_FORMAT(2, 3)`) and body (`FormatV`), and by finding the Lua twin already fixed with the reasoning spelled out at three sites. A tree-wide grep for the same shape now returns only the two legitimate `va_list` forwarders in `exceptions.cpp`. |
+
+#### Checked by hand, and deliberately not fixed
+
+**`pal/win_worldview.cpp`'s `commandSelection ()` cannot say "no command
+view".** It returns `Range{0, 0}`, which is also a real caret at offset 0, so
+`GetInfo (236)` answers **1** and `GetInfo (237)` answers **0** where upstream
+answered **nil** — verified against `f9b47d6^`, where `SetUpVariantLong` is
+called only inside the `CSendView` branch and an absent view leaves `vaResult`
+at `VT_EMPTY`.
+
+This is precisely §10ar's shape, and the fix would be precisely §10ar's fix: a
+second predicate on the seam. It is **not** taken, because unlike the minimised
+main frame I cannot show the state is reachable in the product — a world's
+`CSendView` exists for as long as its window does. Adding a seam predicate for a
+state nobody can reach is how a seam grows a method per hypothesis. Recorded
+here so that if a "no command view" window ever becomes reachable, the answer is
+already written down.
+
+#### NOT checked — leads only
+
+Thirteen remain. Each has a file, a line and an argument in the sweep's own
+output; none has been read by me, and the first sweep's record is that **eight
+of thirteen such claims did not survive contact.** Treat accordingly.
+
+| file | claim |
+|---|---|
+| `dialogs/world_prefs/configuration.cpp` | World Properties clears the persisted "accept chat connections" tick when the listen socket failed to bind — and this one interacts with `UPSTREAM-BUGS` 95, since that fix moved five chat defaults into locals and deliberately left this one reading live state |
+| `scriptingoptions_alpha.inc` | `send_to_world_line_preamble`/`postamble` lose a trailing space on load; the paste twins carry `OPT_KEEP_SPACES` and do not |
+| `xml/xml_save_world.cpp` | a numeric option set to 0 is omitted by the saver and reloads as the constructor default — `pixel_offset` named as a live instance, against a doc that currently asserts only *future* options have this trap |
+| `xml/xml_save_world.cpp` | timer seconds saved with 2 decimals, so a sub-0.005 s "every" timer is dropped on the next load |
+| `scripting/methods/methods_triggers.cpp` (×2) | `Add*Ex` with `eReplace` deletes an item without the `bExecutingScript` guard every `Delete*` path has — i.e. deletes an item whose script is on the stack |
+| `scripting/methods/methods_timers.cpp` | `SetTimerOption` can set a zero interval; the timer then re-fires on every poll |
+| `OtherTypes.h` | `CTimer`'s constructor never initialises `bEnabled`, and the XML `defaults="y"` path relies on the constructor value |
+| `plugins.cpp` | plugin state save reports success before the archive is flushed — the write happens at `delete ar`, outside every catch, over an already-truncated file |
+| `scriptingoptions.cpp` | `world.SetOption ("wrap_column", n)` shrinks the current line's buffer without the UTF-8 ×4 factor and leaves `iMemoryAllocated` stale |
+| `pal/win_worldview.cpp` | `outputSelection ()` reports the *first* `CMUSHView`'s selection while `CMUSHView::OnEditCopy` copies `this` view's |
+| `doc_shared.cpp` | the MCCP decompression loop keeps inflating and displaying after `DisplayMsg` has closed the world |
+| `doc_shared.cpp` | the SOCKS5 CONNECT reply is assumed to be exactly 10 bytes and to arrive whole in one packet |
+
+The three I did check were the three I could reach with a test on this machine.
+That is the honest selection criterion, and it is worth saying out loud: the
+untouched thirteen are not less serious, they are less convenient.
+
+#### One unreproduced crash, recorded rather than dismissed
+
+`MXPCloseR6` reported `CRASHED (no summary)` on one full run, and only that one.
+It passed **12/12** in a loop immediately afterwards and clean on a full re-run,
+so there is nothing to chase yet — but the code under it is a use-after-free
+path, and this project's own record (the notepad selftest, 2-in-12 before Guard
+Malloc made it deterministic) is that a flake in that neighbourhood is worth a
+line rather than a shrug. If it recurs, the loop-and-count is the first
+instrument and `MC_TEST_ASSERT_STACKS=1` the second.

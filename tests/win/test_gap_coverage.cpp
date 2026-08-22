@@ -997,3 +997,64 @@ TEST(ChatFileBlockR6, AShortBlockIsRefusedRatherThanPaddedFromTheHeap)
     }
     EXPECT_TRUE(attrs == INVALID_FILE_ATTRIBUTES);
 }
+
+// ── A second CHAT_FILE_START must not walk over the live transfer ──────────
+//
+// `Process_File_start` had no in-progress guard: its only gates were
+// `m_bCanSendFiles`, the argument count, the slash check, and whether the user
+// wanted the file. A second `CHAT_FILE_START` arriving mid-transfer therefore
+// ran straight to `m_pFile = new CFile (...)`, **leaking the open CFile** and
+// orphaning the half-received file it was writing.
+//
+// And the failure arm of that same `new` did `delete m_pFile;` without nulling
+// it. Harmless on its own — `m_bDoingFileTransfer` is false, so
+// `Process_File_block` and `StopFileTransfer` both return early — but combined
+// with the missing guard it is a **write through freed memory**: transfer in
+// progress (so the flag is true), second FILE_START whose open fails, and the
+// next `CHAT_FILE_BLOCK` writes to the deleted `CFile`.
+//
+// And it bites even when the second transfer is REFUSED: `m_iFileSize = atol
+// (strSize)` runs before the accept prompt, so a second offer the user says no
+// to still overwrites the running transfer.s size -- which feeds
+// `m_iFileBlocks` and the final-block arithmetic. That is what this test
+// measures, and with the guard replaced by `if (false)` it reads 2048 where it
+// should read 4096.
+//
+// `docs/UPSTREAM-BUGS.md` 98. Driven directly, like the block test above.
+TEST(ChatFileBlockR6, ASecondFileStartIsRefusedWhileATransferIsRunning)
+{
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_chatstart_%d.bin", (int) ::GetCurrentProcessId());
+    ::DeleteFileA(path);
+
+    CMUSHclientDoc doc;
+    CChatSocket sock(&doc);
+
+    CFile* f = new CFile;
+    ASSERT_TRUE(f->Open(path, CFile::modeWrite | CFile::modeCreate) != FALSE);
+
+    sock.m_bDoingFileTransfer = true;      // a transfer is already running
+    sock.m_bSendFile          = false;
+    sock.m_bCanSendFiles      = true;      // ...and files are allowed
+    sock.m_pFile              = f;
+    sock.m_iFileBlockSize     = 1024;
+    sock.m_iFileSize          = 4096;
+    sock.m_iFileBlocks        = 4;
+    sock.m_iBlocksTransferred = 1;
+    sock.m_strOurFileName     = path;
+
+    // A well-formed "filename,filesize" for a SECOND file.
+    sock.Process_File_start(CString("second.bin,2048"));
+
+    // The live transfer must be untouched: same CFile, same name, same size.
+    EXPECT_TRUE(sock.m_pFile == f);
+    EXPECT_TRUE(sock.m_bDoingFileTransfer);
+    EXPECT_EQ(4096L, sock.m_iFileSize);
+    EXPECT_EQ(std::string(path), std::string((const char*) sock.m_strOurFileName));
+
+    sock.m_bDoingFileTransfer = false;     // stop the dtor from touching it
+    sock.m_pFile = NULL;
+    f->Close();
+    delete f;
+    ::DeleteFileA(path);
+}

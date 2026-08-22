@@ -7939,7 +7939,7 @@ that *looked* like a run: in Lua, `out:write (..., "\n")` truncates `...` to its
 helper that silently drops its arguments is indistinguishable from a probe that
 found nothing.
 
-### §10ay — "Copy wildcard 10 to the clipboard" selects a wildcard the clipboard code cannot reach
+### §10ay — "Copy wildcard 10 to the clipboard" selected a wildcard the clipboard code could not reach
 
 Found while checking whether the saver can write a `clipboard_arg` its own
 loader rejects (it cannot — the option table and the loader both say 0..10, and
@@ -7979,14 +7979,28 @@ that means "(none)".
 The `iClipboardArg >= 0` term is dead in any case: the member is
 `unsigned short`.
 
-**Not changed, and the reason is the resource.** Three fixes are conceivable —
-drop `10` from the combo, lower the option table's maximum to 9, or make `10`
-copy the whole line — and none is wholly available here. The dialog lives in
-the prebuilt `locale\EN.dll`, not in a resource this tree compiles; lowering
-only the setter's maximum would leave a value that a world file can still hold
-and the script API can no longer set; and making `10` mean "the whole line" is
-a behaviour change to a documented option. Recorded for a decision rather than
-guessed at.
+**Fixed** — `UPSTREAM-BUGS` 109. This section originally ended "recorded for a
+decision rather than guessed at", listing three conceivable fixes and arguing
+none was wholly available: the dialog lives in the prebuilt `locale\EN.dll`
+rather than a resource this tree compiles, and lowering the option table's
+maximum to 9 would leave a value a world file can still hold and the script API
+can no longer set — the shape `UPSTREAM-BUGS` 106 warns about.
+
+The third option was the right one and the objection to it was weaker than the
+other two: make `10` mean what scripts already mean by it. `ClipboardWildcardIndex`
+(`OtherTypes.h`) maps 0 to "copy nothing", 1…9 to `%1`…`%9`, and 10 to
+`wildcards [0]`, the whole matching line. It **remaps** rather than widening the
+bound, so the ten-element vector is still never indexed at 10 — the old guard's
+actual job is kept.
+
+Worth noting how the two levels of test divide: the unit test asserts the
+mapping and deliberately does not drive the call site, because
+`putontoclipboard` would clobber the machine's real clipboard; the in-app probe
+(`tests/win/app_probes/clipboard.lua`, §11) drives it through a real trigger
+match and can afford to, because `world.GetClipboard`/`SetClipboard` let it save
+and restore. Against the app built before the fix it failed on exactly the `10`
+assertion and passed the other three — which is the end-to-end evidence the unit
+test cannot supply.
 
 ## §11 — The in-app probe suite
 

@@ -1988,11 +1988,12 @@ had a Lua fixture whose `OnOpen` already returned `name == 'suppressme'`, but no
 ever sent `<suppressme>`, so the atomic-veto branch had **zero** coverage at HEAD. See
 `docs/WINDOWS-VALIDATION.md` §4c-duodequadragies.
 
-## 86 — The two UTF-8 click fix-ups walk in opposite directions (not fixed; needs a Windows run)
-**Bug:** `CMUSHView::calculate_line_and_column` corrects a click that lands mid-character
-twice, and the two corrections disagree. The first, right after `col--` makes the column
-zero-relative (`mushview.cpp:1927-1932`), walks **forward** to the next character's lead
-byte:
+## 86 — REFUTED: the two UTF-8 click fix-ups compose, they do not disagree (this commit)
+
+**The claim was:** `CMUSHView::calculate_line_and_column` corrects a click that lands
+mid-character twice, and the two corrections walk in opposite directions. The first,
+right after `col--` makes the column zero-relative (`mushview.cpp:1927-1932`), walks
+**forward** to the next character's lead byte:
 
 ```cpp
   if (pDoc->m_bUTF_8)
@@ -2000,23 +2001,59 @@ byte:
       col++;
 ```
 
-The half-way arm below it (`:1943-1947`), reached when the click is past the midpoint of
-the character and `bHalfWay` is set, walks **backward** with `col--`. So on Windows the
-same click can resolve to different characters depending on which arm runs, and a click
-just left of a multi-byte character selects one too far right.
+while the half-way arm below it (`:1943-1947`) walks **backward** with `col--`. So — the
+reasoning went — the same click resolves to different characters depending on which arm
+runs, and a click just left of a multi-byte character selects one too far right. The
+entry proposed a one-token fix (`col++` → `col--`), and recorded that it needed a Windows
+run before anyone made it, because `CMUSHView` is never constructed on the port.
 
-**Not fixed, on either platform.** `CMUSHView` is never constructed on the port, so the
-change is unverifiable from this side — nothing here can observe the defect or a fix for
-it. Correcting it is a single token (`col++` -> `col--`) in canonical `mushview.cpp`, but
-editing sacred upstream code on evidence this platform cannot produce is exactly the kind
-of change the project has learned not to make from reading alone. It needs a Windows run
-to confirm the misresolution, and then a call.
+**The run has now happened, and the answer is that there is no defect.** The two walks
+**compose**; each normalises the byte the step before it produced, in the direction that
+step went.
 
-**What a Windows run has to show:** in a UTF-8 world, click just to the left of a
-multi-byte character (an accented letter or a box-drawing glyph) and start a drag
-selection. The selection should begin at that character, not one to its right. Compare
-against a click past the character's midpoint, which takes the backward arm and is
-believed correct. Recorded as `docs/DECISION-QUEUE-2026-08.md` D-26.
+The loop measures the boundary **at** `col` and then advances `col` past the character
+there, so on exit `col` is the boundary *after* the character the click landed in, and
+`col--` is "that boundary, minus one **byte**". For a single-byte character that is
+already the next character's lead byte; for a multi-byte one it is a continuation byte,
+and the forward walk is exactly what normalises it to the same thing. The half-way arm
+then steps back from "the next character" to "this character", and its backward walk
+normalises *that*.
+
+**Measured** on Windows with `"Aé"` + `"B"` — bytes `A`=0, lead=1, continuation=2,
+`B`=3 — against the single-byte controls either side:
+
+| arm | click in `A` | click in `é` | click in `B` |
+|---|---|---|---|
+| `bHalfWay = false` | 1 | **3** | 4 |
+| `bHalfWay = true`, left half | 0 | **1** | — |
+| `bHalfWay = true`, right half | 1 | **3** | — |
+
+Every row is the **same rule** for one-byte and two-byte characters, which is the only
+thing the asymmetry could have broken. The half-way row is also exactly what a drag
+selection wants: anchor before the character when the click is in its left half, after it
+when the click is in its right.
+
+**The proposed fix was tried and measured too, and it is a regression.** Changing the
+forward walk to `col--` moves the left-half answer from 1 to 0, so a selection started in
+the left half of an accented character would begin one character too far left — the very
+defect the entry was trying to remove, introduced in its place.
+
+**How it was tested without a GUI**, since "needs a Windows run" turned out to mean "needs
+five lines nobody had written": `calculate_line_and_column` is public, its inputs are the
+document's line list and font metrics, and the only Windows object it insists on is a
+`CClientDC` — which, given a **NULL** `CWnd*`, is the screen DC and needs no window.
+`CMUSHView`'s constructor is protected (`// create from serialization only`) but
+`RUNTIME_CLASS(CMUSHView)->CreateObject()` is the framework's own way past that, and
+`CDocument::AddView` attaches the result safely because `CWnd::GetParentFrame` answers
+NULL for a windowless view rather than asserting. The document must be destroyed **before**
+the view (`~CDocument` runs `DisconnectViews`, which detaches without deleting);
+`RemoveView` is the tidy-looking call and the wrong one, because removing the last view
+runs `OnCloseDocument` — `delete this` on an auto-delete document.
+
+`tests/win/test_gap_coverage.cpp`'s `ClickColumnR6` pins both arms, controls included, so
+the refutation stays refuted.
+
+**Recorded as `docs/DECISION-QUEUE-2026-08.md` D-26; that row can be closed.**
 
 ## 87 — lsqlite3's int64 round-trip test is vacuously true, so the module rounds silently (`fbb6695`)
 **Bug:** the bundled Lua `sqlite3` module decides whether an INTEGER column survives

@@ -6032,3 +6032,55 @@ is worth reading before writing the test**; this one had been there all along.
   depends on what the user last copied. The assertion now accepts either
   `eClipboardEmpty` or `eNoChatConnections` and still rules out `eOK`. Clearing
   the real clipboard to force the empty case is not something a unit test may do.
+
+### 10ab. A `CMUSHView` can be constructed here, and the first thing it refuted
+
+`docs/UPSTREAM-BUGS.md` 86 — the two UTF-8 click fix-ups walking in opposite
+directions — had sat marked *"not fixed; needs a Windows run"* since it was
+written, on the grounds that `CMUSHView` is never constructed on the port and
+nothing there can observe the defect. It turns out not to need a GUI at all,
+and once measured it is **not a defect**. The entry has been rewritten as
+refuted; the measurement and the table are there.
+
+The part worth carrying is the technique, because "needs a view" is the reason
+attached to `test_accelerators.cpp`, to `SendWindowSizes`' NAWS rows, to
+`GetWorldWindowPositionX`, to `SpellCheckCommand` and to `world.Open`, and it
+has been treated throughout this campaign as a wall.
+
+**It is a low wall.** Three facts, each measured:
+
+- `CMUSHView`'s constructor is twenty member assignments (`mushview.cpp:275`).
+  It is `protected: // create from serialization only`, like every MFC doc/view
+  class — and `RUNTIME_CLASS(CMUSHView)->CreateObject()` is the framework's own
+  way past that, and it is public.
+- `CDocument::AddView` attaches a windowless view without complaint. Its
+  `OnChangedViewList` → `UpdateFrameCounts` walk asks each view for its parent
+  frame, and `CWnd::GetParentFrame` answers NULL for a null `m_hWnd` rather than
+  asserting.
+- `CClientDC` given a **NULL** `CWnd*` is the **screen DC**. Anything that wants
+  a `CClientDC&` to measure text with can have one.
+
+And one hazard, which is the reason the fixture holds both objects by pointer:
+**the document must be destroyed before the view.** `~CDocument` calls
+`DisconnectViews`, which nulls each view's back-pointer and empties the list
+without deleting anything. `RemoveView` is the tidy-looking call and the wrong
+one — removing the **last** view runs `OnCloseDocument`, and for an auto-delete
+document that is `delete this`.
+
+What this does *not* give is a view with a **window**: `m_hWnd` stays NULL, so
+anything that paints, scrolls, captures the mouse or reads its own client
+rectangle is still out of reach — which is why `test_accelerators.cpp` stays
+excluded (`AcceleratorTo` walks to a view and then wants its accelerator table).
+The line is not "no view" but "no window", and a good many of the reasons in
+this document say the former when they mean the latter. Each is worth
+re-reading against `ClickColumnR6`'s fixture before it is believed again.
+
+**On the refutation itself.** The bug entry's reasoning was careful and its
+proposed fix was one token, and both were wrong: the two walks *compose* — each
+normalises the byte the step before it produced, in the direction that step
+went. Applying the proposed `col++` → `col--` was measured as a regression (a
+selection anchored in the left half of an accented character would start one
+character too far left). The general form is worth stating, because this project
+keeps meeting it: **an asymmetry in code is evidence of nothing until the two
+halves are measured against a control.** The control here was the single-byte
+character next door, and it took eight lines.

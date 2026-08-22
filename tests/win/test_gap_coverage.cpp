@@ -25,6 +25,7 @@
 #include "OtherTypes.h"
 #include "scripting/errors.h"   // eOK / eCouldNotOpenFile
 
+#include "MUSHview.h"       // CMUSHView: the click-column tests below
 #include "posix_compat.h"   // getpid / unlink, for the names-file tests
 
 #include <crtdbg.h>
@@ -413,4 +414,185 @@ TEST(WorldLoadHost, ANonWorldFileIsRefused)
     EXPECT_STREQ("", (const char*) doc.m_mush_name);
 
     unlink(path);
+}
+
+
+
+// ═══ The two UTF-8 click fix-ups — REFUTED (docs/UPSTREAM-BUGS.md 86) ══════
+//
+// `CMUSHView::calculate_line_and_column` corrects a click that lands
+// mid-character twice: the fix-up after `col--` walks FORWARD to the next
+// character's lead byte, and the half-way arm below it walks BACKWARD.  That
+// asymmetry was read as a defect and recorded as one, "not fixed; needs a
+// Windows run", because CMUSHView is never constructed on the port.
+//
+// It is not a defect.  The two walks compose, and this is the run that shows it.
+//
+// The loop measures the boundary AT `col` and then advances `col` past the
+// character there, so on exit `col` is the boundary after the character the
+// click landed in and `col--` is "that boundary, minus one BYTE".  For a
+// single-byte character that is already the next character's lead byte; for a
+// multi-byte one it is a continuation byte, and the forward walk is what
+// normalises it to the same thing.  The half-way arm then steps back from
+// "next character" to "this character", and its backward walk normalises THAT.
+// Each walk fixes the byte the step before it produced, in the direction that
+// step went.
+//
+// Measured, "AeB" with the middle character U+00E9 (bytes A=0, lead=1,
+// continuation=2, B=3), against the single-byte controls either side:
+//
+//   bHalfWay = false   click in A -> 1     click in e -> 3     click in B -> 4
+//   bHalfWay = true    left half of e -> 1 (the character itself)
+//                      right half of e -> 3 (the one after it)
+//
+// Both rows are the same rule for one-byte and two-byte characters, which is
+// the only thing the asymmetry could have broken.  The half-way row is also
+// exactly what a drag selection wants: anchor before the character when the
+// click is in its left half, after it when the right.
+//
+// Changing the forward walk to `col--` -- the "single token" the bug entry
+// proposed -- was tried here and measured: it moves the left-half answer from 1
+// to 0, so a selection started in the left half of an accented character would
+// begin one character too far left.  The entry has been rewritten as refuted
+// and these tests are what keep it that way.
+//
+// Three things make testing this possible without a GUI, and each one unlocks
+// the other "needs a view" claims in this campaign:
+//
+//   * CMUSHView's constructor is twenty member assignments (mushview.cpp:275)
+//     and is `protected: // create from serialization only`, like every MFC
+//     doc/view class.  RUNTIME_CLASS(...)->CreateObject() is the framework's
+//     own way past that, and it is public.
+//   * CClientDC given a NULL CWnd* is the SCREEN DC.  No window required.
+//   * ~CDocument calls DisconnectViews, which nulls each view's back-pointer
+//     and empties the list without deleting anything.  RemoveView would be the
+//     tidy call and is the WRONG one: removing the LAST view runs
+//     OnCloseDocument, which for an auto-delete document is `delete this`.
+//
+// So the document is destroyed first and the view second, which is why both are
+// pointers rather than members with an implicit destruction order.
+namespace {
+
+struct ClickFixture {
+    CMUSHView*      view;
+    CMUSHclientDoc* doc;
+
+    ClickFixture()
+      : view((CMUSHView*) RUNTIME_CLASS(CMUSHView)->CreateObject()),
+        doc(new CMUSHclientDoc)
+    {}
+    ~ClickFixture() { delete doc; delete view; }   // doc FIRST — see above
+
+    bool build(const char* utf8)
+    {
+        if (!view || !doc)
+            return false;
+        doc->m_bUTF_8 = TRUE;
+        doc->m_iConnectPhase = eConnectConnectedToMud;   // or the bytes go nowhere
+        // Fixed pitch, so a cell boundary is arithmetic rather than a guess.
+        doc->ChangeFont(10, "Courier New", FW_NORMAL, ANSI_CHARSET,
+                        FALSE, FALSE, FALSE, 0);
+        if (doc->m_font[0] == NULL || doc->m_FontHeight <= 0)
+            return false;
+
+        char buf[64];
+        strncpy(buf, utf8, sizeof buf - 1);
+        buf[sizeof buf - 1] = 0;
+        const int n = (int) strlen(buf);
+        doc->OnBytesReceived(buf, n);
+        doc->AddView(view);
+        // The line has to have arrived AND carry style runs, because
+        // calculate_width measures per run and answers 0 for a line with none.
+        if (doc->m_LineList.GetCount() == 0)
+            return false;
+        return line0()->len == n && line0()->styleList.GetCount() > 0;
+    }
+
+    CLine* line0() { return doc->m_LineList.GetAt(doc->GetLinePosition(0)); }
+
+    // The x a click must carry to land `w` pixels into the text, in the
+    // coordinates calculate_line_and_column subtracts m_TextRectangle from.
+    long clickX(long w)
+    {
+        return doc->m_TextRectangle.left + doc->m_iPixelOffset
+             + line0()->m_iPreambleOffset + w;
+    }
+    long clickY() { return doc->m_TextRectangle.top; }
+
+    int resolve(long w, bool halfway)
+    {
+        CClientDC dc(NULL);          // the screen DC -- no window required
+        int line = -1, col = -1;
+        view->calculate_line_and_column(CPoint(clickX(w), clickY()), dc,
+                                        line, col, halfway);
+        return col;
+    }
+};
+
+}   // namespace
+
+// bHalfWay = false is the arm menus and tooltips use.  Its answer is the
+// boundary AFTER the character the click landed in, and the point of the test is
+// that a two-byte character gets the same treatment as a one-byte one -- which
+// is precisely what the forward walk is for.
+TEST(ClickColumnR6, TheNoHalfWayArmTreatsAMultiByteCharacterLikeAnyOther)
+{
+    ClickFixture f;
+    ASSERT_TRUE(f.build("A\xC3\xA9" "B"));
+
+    CClientDC dc(NULL);
+    const long wA   = f.view->calculate_width(0, 1, f.doc, dc);   // "A"
+    const long wAe  = f.view->calculate_width(0, 3, f.doc, dc);   // "A" + the char
+    const long wAeB = f.view->calculate_width(0, 4, f.doc, dc);   // the whole line
+    ASSERT_TRUE(wA > 0);
+    ASSERT_TRUE(wAe > wA);
+    ASSERT_TRUE(wAeB > wAe);
+
+    // The controls come FIRST, because they are what establish the rule the
+    // multi-byte case has to follow.  Neither is a lucky number: 'A' is byte 0
+    // and answers 1, 'B' is byte 3 and answers 4.
+    EXPECT_EQ(1, f.resolve(wA / 2, false));                  // in 'A'
+    EXPECT_EQ(4, f.resolve((wAe + wAeB) / 2, false));         // in 'B'
+
+    // ...and the two-byte character in between answers 3 -- the byte after it,
+    // not the continuation byte 2 that `col--` alone leaves behind.
+    const int col = f.resolve((wA + wAe) / 2, false);
+    if (col != 3)
+        printf("  click inside the two-byte character resolved to byte %d"
+               " (its lead byte is 1, its continuation is 2, the next"
+               " character starts at 3)\n", col);
+    EXPECT_NE(2, col);          // never a continuation byte
+    EXPECT_EQ(3, col);
+}
+
+// bHalfWay = true is the selection arm, and its contract is the comment above
+// it: "if we are 50% through this character, take the next one, otherwise take
+// the previous one".  Left half of the accented character anchors at the
+// character itself, right half at the one after -- the same rule the
+// single-byte controls follow, and never a byte inside a character.
+TEST(ClickColumnR6, TheHalfWayArmAnchorsOnCharacterBoundaries)
+{
+    ClickFixture f;
+    ASSERT_TRUE(f.build("A\xC3\xA9" "B"));
+
+    CClientDC dc(NULL);
+    const long wA  = f.view->calculate_width(0, 1, f.doc, dc);
+    const long wAe = f.view->calculate_width(0, 3, f.doc, dc);
+    ASSERT_TRUE(wAe > wA);
+
+    // Controls: the single-byte character before it behaves the same way.
+    EXPECT_EQ(0, f.resolve(wA / 4, true));            // left half of 'A'
+    EXPECT_EQ(1, f.resolve(wA - wA / 4, true));       // right half of 'A'
+
+    const long quarter = (wAe - wA) / 4;
+    const int colLeft  = f.resolve(wA + quarter, true);
+    const int colRight = f.resolve(wAe - quarter, true);
+
+    printf("  half-way arm: left half -> %d, right half -> %d\n",
+           colLeft, colRight);
+
+    EXPECT_NE(2, colLeft);      // never a continuation byte
+    EXPECT_NE(2, colRight);
+    EXPECT_EQ(1, colLeft);      // the character itself
+    EXPECT_EQ(3, colRight);     // the one after it
 }

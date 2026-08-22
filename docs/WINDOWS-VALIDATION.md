@@ -6397,6 +6397,8 @@ the Windows target. Listed with what a macOS run should check:
 | `tests/fake_worldview.h`, `tests/test_info.cpp`, `tests/test_pal_worldview.cpp` | the fake gained `hasMainWin`; both suites now distinguish "no window" from "a window measuring nothing" | `test_pal_worldview.cpp` is excluded here, so its two new cases have never been compiled |
 | `pal/win_worldview.cpp` | `saveWorld ()` now returns true on success and false for no path, matching the contract and the wx adapter (§10as) | `#ifdef _WIN32` — cannot reach macOS. Nothing calls the seam yet on either side, so nothing there changes. |
 | `chatsock.cpp` | `Process_File_block` refuses a block shorter than the size the peer promised (`UPSTREAM-BUGS` 96) | shared, and the defect ships there too. Worth one **ASan** run of the chat suite: this is a heap-buffer-overflow read, and `tests/test_chat_sockets.cpp` runs on macOS where the Windows target excludes it. |
+| `scripting/scriptengine.cpp` | the `Trace` format-string fix (`UPSTREAM-BUGS` 97) | inside the file's own `#ifdef _WIN32`, so it cannot reach macOS — the Lua path there was already correct |
+| `chatsock.cpp` | `Process_File_start` refuses a second offer while one is running, and nulls `m_pFile` after deleting it (`UPSTREAM-BUGS` 98) | shared, and the defect ships there too. The same ASan run that covers 96 covers this. |
 
 `pal/win_transport.cpp`'s `flushSend` guard is inside the file's own
 `#ifdef _WIN32` and cannot reach macOS.

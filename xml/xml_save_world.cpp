@@ -182,7 +182,8 @@ void Save_XML_date    (CArchive& ar,
 void Save_XML_double    (CArchive& ar, 
                        const char * sName, 
                        const double & fNumber,
-                       const bool sameline)
+                       const bool sameline,
+                       const int iDecimals)
   {
 
   /*
@@ -202,8 +203,29 @@ void Save_XML_double    (CArchive& ar,
 
       */
 
-  CString strNumber = CFormat ("%.2f", fNumber);
+  CString strNumber = CFormat ("%.*f", iDecimals, fNumber);
   strNumber.Replace (",", ".");    // don't want any blasted commas!
+
+  // Two decimals is not enough for every caller.  A timer's seconds are
+  // declared to four everywhere else in the app -- the loader reads them with
+  // GET_DOUBLE ("second", ..., 0, 59.9999) and CTimerDlg's DDV_MinMaxDouble
+  // uses the same 59.9999 -- so writing two rounded a legal sub-0.005s
+  // interval to 0.00, which the loader then REFUSES ("Timer for 'every' time
+  // cannot have zero interval").  The app wrote a world file its own loader
+  // rejected, and dropped the timer with a [WARNING] the user never caused.
+  // See docs/UPSTREAM-BUGS.md 106.
+  //
+  // Trailing zeros are trimmed back to two decimals so that asking for more
+  // precision does not rewrite every existing world file: 5.0 still saves as
+  // "5.00" and only 0.001 needs the extra digits to say "0.001".
+  if (iDecimals > 2)
+    {
+    const int iPoint = strNumber.Find ('.');
+    if (iPoint >= 0)
+      while (strNumber.GetLength () - iPoint > 3 &&
+             strNumber [strNumber.GetLength () - 1] == '0')
+        strNumber = strNumber.Left (strNumber.GetLength () - 1);
+    }
 
   Save_XML_string (ar, 
                    sName, 
@@ -580,11 +602,11 @@ void CMUSHclientDoc::Save_One_Timer_XML (CArchive& ar, CTimer * t)
 
   Save_XML_number  (ar, "hour",    (t->iType == CTimer::eAtTime ? t->iAtHour   : t->iEveryHour), true);
   Save_XML_number  (ar, "minute",  (t->iType == CTimer::eAtTime ? t->iAtMinute : t->iEveryMinute), true);
-  Save_XML_double  (ar, "second",  (t->iType == CTimer::eAtTime ? t->fAtSecond : t->fEverySecond), true);
+  Save_XML_double  (ar, "second",  (t->iType == CTimer::eAtTime ? t->fAtSecond : t->fEverySecond), true, 4);
 
   Save_XML_number  (ar, "offset_hour",       t->iOffsetHour, true);
   Save_XML_number  (ar, "offset_minute",     t->iOffsetMinute, true);
-  Save_XML_double  (ar, "offset_second",     t->fOffsetSecond, true);
+  Save_XML_double  (ar, "offset_second",     t->fOffsetSecond, true, 4);
   Save_XML_number  (ar, "send_to",           t->iSendTo);
   Save_XML_boolean (ar, "temporary",         t->bTemporary);
   Save_XML_number  (ar, "user",              t->iUserOption);

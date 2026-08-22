@@ -1308,3 +1308,59 @@ TEST(TimerIntervalR6, ZeroIntervalTimerFiresOnEveryPoll)
     EXPECT_EQ(3L, runaway->nMatched);    // once per poll, forever
     EXPECT_LE(control->nMatched, 1L);    // a real interval waits
 }
+
+// ── A timer's interval must survive being saved ────────────────────────────
+//
+// `Save_XML_double` wrote `%.2f`, but a timer's seconds are declared to FOUR
+// decimals everywhere else: the loader reads them with
+// `GET_DOUBLE ("second", ..., 0, 59.9999)` and `CTimerDlg::DoDataExchange`
+// bounds them with the same `59.9999`.  So a legal sub-0.005 s interval --
+// `AddTimer` accepts anything but exactly zero, and the dialog refuses only
+// `<= 0` -- was rounded to `0.00` on save, and the loader then REFUSED its own
+// output: "Timer for 'every' time cannot have zero interval".
+//
+// Measured before the fix: the file contained `second="0.00"`, the reload
+// dropped `blip` and kept the other two (so the damage is one timer, not the
+// section), and the user got a `[WARNING]` line naming a world file the app
+// itself had just written.  `docs/UPSTREAM-BUGS.md` 106.
+TEST(TimerSaveR6, SubCentisecondIntervalSurvivesASaveAndReload)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_timer_prec_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_EQ(eOK, doc.AddTimer("blip",   0, 0, 0.001, "", eEnabled, ""));
+        ASSERT_EQ(eOK, doc.AddTimer("plain",  0, 0, 5.0,   "", eEnabled, ""));
+        CFile f;
+        ASSERT_TRUE(f.Open(path,
+            CFile::modeWrite | CFile::modeCreate | CFile::shareDenyWrite));
+        { CArchive ar(&f, CArchive::store);
+          doc.Save_World_XML(ar, (unsigned long)~0, CString("")); ar.Close(); }
+        f.Flush(); f.Close();
+    }
+    std::string c;
+    { FILE* fp = fopen(path, "rb"); ASSERT_TRUE(fp != NULL);
+      char buf[4096]; size_t n;
+      while ((n = fread(buf, 1, sizeof buf, fp)) > 0) c.append(buf, n);
+      fclose(fp); }
+
+    EXPECT_NE(c.find("second=\"0.001\""), std::string::npos);  // precision kept
+    // No textual negative for "0.00" here: `offset_second="0.00"` is a legal
+    // superstring of it, and asserting on the shorter one would match that.
+    // The round trip below is what proves the value was not rounded away.
+
+    // A whole number still writes two decimals, so existing world files are
+    // byte-identical after a re-save -- the trim is what buys that.
+    EXPECT_NE(c.find("second=\"5.00\""),        std::string::npos);
+    EXPECT_NE(c.find("offset_second=\"0.00\""), std::string::npos);
+
+    CMUSHclientDoc doc2;
+    ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+    CTimer* t = NULL;
+    ASSERT_TRUE(doc2.GetTimerMap().Lookup("blip", t));         // no longer dropped
+    EXPECT_EQ(0.001, t->fEverySecond);
+    CTimer* p = NULL;
+    ASSERT_TRUE(doc2.GetTimerMap().Lookup("plain", p));
+    EXPECT_EQ(5.0, p->fEverySecond);
+    unlink(path);
+}

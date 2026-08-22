@@ -7688,7 +7688,7 @@ already written down.
 #### The leads, and what became of them
 
 The sweep produced thirteen leads beyond the seven I had already checked.
-**Five of those thirteen have since been confirmed and fixed**, each with a
+**Six of those thirteen have since been confirmed and fixed**, each with a
 non-vacuous test — the fix reverted, the test seen to fail, the fix restored:
 
 | file | outcome |
@@ -7698,6 +7698,7 @@ non-vacuous test — the fix reverted, the test seen to fail, the fix restored:
 | `scripting/methods/methods_triggers.cpp` (×2, and the alias/timer twins) | **confirmed, fixed** — `UPSTREAM-BUGS` 102 |
 | `plugins.cpp` (archive flushed after success is reported) | **confirmed, fixed** — `UPSTREAM-BUGS` 103, which turned out to be three sites, not one |
 | `scripting/methods/methods_timers.cpp` (zero interval) | **confirmed, fixed** — `UPSTREAM-BUGS` 105 |
+| `xml/xml_save_world.cpp` (timer seconds at 2 decimals) | **confirmed, fixed** — `UPSTREAM-BUGS` 106, and it is the same end state as 105 reached from the other side |
 
 The zero-interval one is worth a note on method, because the argument and the
 proof came apart. The claim as filed was an asymmetry — `AddTimer` refuses a
@@ -7711,9 +7712,18 @@ which makes it two entry points guarding and one not — an omission rather than
 a judgement. **Look for the third caller before calling an asymmetry a bug: it
 decides which of the two sides is the wrong one.**
 
+And the *fourth* caller is what turned 106 from a precision nicety into a bug.
+Rounding a timer's seconds from four declared decimals to two is inconsequential
+against a 100 ms poll — until you notice that the loader **refuses** the value
+the rounding produces, so a legal timer silently disappears from a file the app
+itself wrote. Two entry points guarding, one not, and one *manufacturing* the
+forbidden state out of a legal one. **When several places disagree about what
+is legal, enumerate all of them before deciding which is wrong** — the count
+here was four, and the first two leads each found only two of them.
+
 #### NOT checked — leads only
 
-Five remain. Each has a file, a line and an argument in the sweep's own output;
+Four remain. Each has a file, a line and an argument in the sweep's own output;
 none has been read by me, and the record across both sweeps is that a
 "confirmed" label means only that one agent argued for it and a second failed to
 refute it. **Eight of the first sweep's thirteen did not survive contact.**
@@ -7722,14 +7732,13 @@ Treat accordingly.
 | file | claim |
 |---|---|
 | `dialogs/world_prefs/configuration.cpp` | World Properties clears the persisted "accept chat connections" tick when the listen socket failed to bind — and this one interacts with `UPSTREAM-BUGS` 95, since that fix moved five chat defaults into locals and deliberately left this one reading live state |
-| `xml/xml_save_world.cpp` | timer seconds saved with 2 decimals, so a sub-0.005 s "every" timer is dropped on the next load |
 | `pal/win_worldview.cpp` | `outputSelection ()` reports the *first* `CMUSHView`'s selection while `CMUSHView::OnEditCopy` copies `this` view's |
 | `doc_shared.cpp` | the MCCP decompression loop keeps inflating and displaying after `DisplayMsg` has closed the world |
 | `doc_shared.cpp` | the SOCKS5 CONNECT reply is assumed to be exactly 10 bytes and to arrive whole in one packet |
 
 The seven I checked first were the seven I could reach with a test on this
 machine. That is the honest selection criterion, and it is worth saying out
-loud: the remaining five are not less serious, they are less convenient.
+loud: the remaining four are not less serious, they are less convenient.
 
 #### One unreproduced crash, recorded rather than dismissed
 

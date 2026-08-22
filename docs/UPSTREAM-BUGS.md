@@ -3101,3 +3101,67 @@ timer may still be set to midnight.
 either, so a hand-edited world file can still contain a zero-interval timer.
 Rejecting one at load time would fail to open a file that opens today, which is
 a different risk from refusing a script call, and belongs in its own change.
+
+## 106 — The world saver rounds a timer's interval to a value its own loader refuses
+
+`xml/xml_save_world.cpp`, `Save_XML_double`.
+
+A timer's seconds are declared to **four** decimals everywhere the app reads or
+validates them:
+
+```cpp
+GET_DOUBLE ("second", t->fEverySecond, 0, 59.9999);     // xml_load_world.cpp
+DDV_MinMaxDouble (pDX, m_fEverySecond, 0., 59.9999);    // TimerDlg.cpp
+```
+
+and to **two** where it writes them:
+
+```cpp
+CString strNumber = CFormat ("%.2f", fNumber);
+```
+
+`AddTimer` accepts any interval but exactly zero, and the dialog refuses only
+`<= 0`, so `world.AddTimer ("blip", 0, 0, 0.001, ...)` — or typing `0.001` into
+the Timers dialog — is legal on both routes. Saving the world writes it as
+`second="0.00"`, and the loader then **refuses the app's own output**:
+
+```cpp
+if (!(t->iEveryHour || t->iEveryMinute || t->fEverySecond > 0.0))
+  ThrowErrorException ("Timer for 'every' time cannot have zero interval");
+```
+
+**Measured**, before the fix, with three timers in the file:
+
+- the file contained `second="0.00"` for the sub-0.005 s one;
+- the reload dropped exactly that timer and kept the other two — the per-item
+  `HandleLoadException` means the blast radius is one timer, not the section;
+- `LoadWorldFromFile` still returned TRUE, so the world opens normally with the
+  timer simply gone;
+- the user gets `[WARNING] <world file>` and `Timer for 'every' time cannot
+  have zero interval` in the output window — naming a file the app itself had
+  just written.
+
+This is the same end state as `UPSTREAM-BUGS` 105 approached from the other
+side. There, `SetTimerOption` let a script *create* the zero interval that
+`AddTimer` and the dialog both refuse; here the saver *manufactures* it out of
+a legal value. Four places had an opinion about a zero interval and three of
+them agreed.
+
+**Fix:** `Save_XML_double` takes a precision, defaulting to 2 so the only other
+caller (`plugins.cpp`'s `"requires"` version number, which wants exactly two)
+is untouched, and the two timer-second sites pass 4 — the precision the loader
+and the dialog already declare. Trailing zeros are trimmed back to two decimals
+so that widening the format does **not** rewrite every existing world file:
+`5.0` still writes `"5.00"`, and only `0.001` spends the extra digits.
+
+**Residual, and deliberate:** an interval below 0.00005 s still rounds to zero.
+That is now *below the declared precision of the field* rather than inside it,
+so it is a stated limit instead of a silent disagreement. Note also that
+`CheckTimers` is driven by a 100 ms poll at best, so nothing below that is
+distinguishable at runtime anyway.
+
+Pinned by `TimerSaveR6.SubCentisecondIntervalSurvivesASaveAndReload`, which
+checks the written text, the round trip, and — as the control for the trim —
+that a whole-second timer still writes `"5.00"`. There is deliberately **no**
+textual negative assertion for `second="0.00"`: `offset_second="0.00"` is a
+legal superstring of it, and the first draft of the test failed on exactly that.

@@ -1230,3 +1230,81 @@ TEST(ReplaceWhileRunningR6, AllThreeRefuseToReplaceAnItemWhoseScriptIsOnTheStack
     EXPECT_EQ(eOK, doc.AddAlias("a", "stop", "", eEnabled | eReplace, ""));
     EXPECT_EQ(eOK, doc.AddTimer("m", 0, 0, 9.0, "", eEnabled | eReplace, ""));
 }
+
+// ── An "every" timer may not be given a zero interval ──────────────────────
+//
+// `AddTimer` refuses the combination outright — *"can't have a zero time for
+// 'every' timers"* — because such a timer fires on every poll, forever:
+// `CheckTimers` adds the interval to `tFireTime`, which leaves it in the past,
+// and its own guard
+//
+//     // in case clock changes or some such thing, make sure timer will be due
+//     // to fire in the future, not the past, or it might go mad and keep firing
+//     if (timer_item->tFireTime <= tNow)
+//       ResetOneTimer (timer_item);
+//
+// calls `ResetOneTimer`, which adds the same zero. The comment names the
+// symptom exactly; the guard cannot reach this case.
+//
+// `SetTimerOption` had no such check, so zeroing the components one call at a
+// time arrived at the state `AddTimer` exists to prevent.
+// `docs/UPSTREAM-BUGS.md` 105.
+TEST(TimerIntervalR6, SetTimerOptionRefusesToZeroTheLastComponentOfAnEveryTimer)
+{
+    CMUSHclientDoc doc;
+    ASSERT_EQ(eOK, doc.AddTimer("t", 0, 1, 30.0, "", eEnabled, ""));
+
+    CTimer* t = NULL;
+    ASSERT_TRUE(doc.GetTimerMap().Lookup("t", t));
+    ASSERT_EQ(CTimer::eInterval, t->iType);
+
+    // Zeroing components while others remain non-zero is fine.
+    EXPECT_EQ(eOK, doc.SetTimerOption("t", "second", "0"));
+    EXPECT_EQ(0.0, t->fEverySecond);
+    EXPECT_EQ(1,   t->iEveryMinute);
+
+    // ...but the last one is not: that is the state AddTimer refuses.
+    EXPECT_EQ(eTimeInvalid, doc.SetTimerOption("t", "minute", "0"));
+    EXPECT_EQ(1, t->iEveryMinute);         // and nothing was half-written
+
+    // AddTimer's own refusal, for comparison — the two must agree.
+    EXPECT_EQ(eTimeInvalid, doc.AddTimer("z", 0, 0, 0.0, "", eEnabled, ""));
+
+    // An "at" timer is a different thing: midnight is a legitimate time.
+    ASSERT_EQ(eOK, doc.AddTimer("a", 0, 0, 0.0, "", eEnabled | eAtTime, ""));
+    CTimer* a = NULL;
+    ASSERT_TRUE(doc.GetTimerMap().Lookup("a", a));
+    EXPECT_EQ(CTimer::eAtTime, a->iType);
+    EXPECT_EQ(eOK, doc.SetTimerOption("a", "second", "0"));
+}
+
+// The consequence, measured rather than argued: a zero-interval "every" timer
+// fires on EVERY poll.  `CheckTimers` is called three times back to back with
+// no time allowed to pass, and the zero timer matches three times while a
+// legitimate five-second one matches at most once.
+//
+// The state is reached here by writing the field directly, which is what the
+// unguarded `SetTimerOption` did one component at a time -- and is also what a
+// hand-edited world file can still contain, since the XML loader does not run
+// AddTimer's check either.
+TEST(TimerIntervalR6, ZeroIntervalTimerFiresOnEveryPoll)
+{
+    CMUSHclientDoc doc;
+    ASSERT_EQ(eOK, doc.AddTimer("runaway", 0, 0, 5.0, "",
+                                eEnabled | eActiveWhenClosed | eTimerNote, ""));
+    ASSERT_EQ(eOK, doc.AddTimer("control", 0, 0, 5.0, "",
+                                eEnabled | eActiveWhenClosed | eTimerNote, ""));
+
+    CTimer* runaway = NULL;  ASSERT_TRUE(doc.GetTimerMap().Lookup("runaway", runaway));
+    CTimer* control = NULL;  ASSERT_TRUE(doc.GetTimerMap().Lookup("control", control));
+
+    runaway->fEverySecond = 0.0;         // the state AddTimer refuses
+    doc.ResetOneTimer(runaway);
+    doc.ResetOneTimer(control);
+
+    for (int i = 0; i < 3; ++i)
+        doc.CheckTimers();
+
+    EXPECT_EQ(3L, runaway->nMatched);    // once per poll, forever
+    EXPECT_LE(control->nMatched, 1L);    // a real interval waits
+}

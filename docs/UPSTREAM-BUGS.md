@@ -3031,3 +3031,73 @@ as `"."`, while the paste twins keep theirs.
 `WorldLoad.ASendPreamblesTrailingSpaceSurvivesTheLoad` pins it, with the paste
 pair as the control — a test that checked only the send pair would pass on a
 build where the trim had been removed wholesale.
+
+## 105 — `world.SetTimerOption` can give an "every" timer a zero interval, and it then fires on every poll
+
+`scripting/methods/methods_timers.cpp`, `SetTimerOption`.
+
+An interval timer whose hour, minute and second are all zero fires on **every**
+poll of `CheckTimers`, indefinitely. `AddTimer` refuses that combination
+outright:
+
+```cpp
+// can't have a zero time for "every" timers
+if (((Hour == 0) && (Minute == 0) && (Second == 0.0)) && !(Flags & eAtTime))
+  return eTimeInvalid;
+```
+
+and so does the Timers dialog, in `CTimerDlg::DoDataExchange`:
+
+```cpp
+if (ts1 <= CmcDateTimeSpan (0, 0, 0, 0))
+    {
+    ::TMessageBox("The timer interval must be greater than zero.");
+```
+
+`SetTimerOption` sets `hour`, `minute` and `second` one at a time and checked
+neither the component it was writing nor the combination it was producing, so
+zeroing whichever component was last still non-zero arrived at exactly the state
+the other two entry points exist to prevent — returning `eOK`.
+
+Negative values were never a route: the `TimerOptionsTable` rows carry a minimum
+of 0, so `SetBaseOptionItem` answers `eOptionOutOfRange` for those. Zero was the
+only hole.
+
+**Why it runs away.** `CheckTimers` fires anything whose `tFireTime` is not in
+the future, then advances it:
+
+```cpp
+timer_item->tFireTime += CmcDateTimeSpan (0, timer_item->iEveryHour,
+                                          timer_item->iEveryMinute,
+                                          timer_item->fEverySecond);
+
+// in case clock changes or some such thing, make sure timer will be due to
+// fire in the future, not the past, or it might go mad and keep firing
+
+if (timer_item->tFireTime <= tNow)
+  ResetOneTimer (timer_item);
+```
+
+Adding a zero span leaves `tFireTime` where it was — in the past — so the guard
+fires, and `ResetOneTimer` sets `tFireTime = tNow + interval`, which for a zero
+interval is `tNow` again. **The comment names the symptom exactly** ("it might
+go mad and keep firing") and the guard it introduces cannot reach this case,
+because the case is the one where adding the interval is a no-op.
+
+**Measured**, not argued. `TimerIntervalR6.ZeroIntervalTimerFiresOnEveryPoll`
+calls `CheckTimers` three times back to back with no time allowed to pass: the
+zero-interval timer matches 3 times, a legitimate five-second one at most once.
+
+**Fix:** the same combined check `AddTimer` already makes, applied in
+`SetTimerOption` **before** `SetBaseOptionItem` so that a refusal leaves nothing
+half-written. Pinned by
+`TimerIntervalR6.SetTimerOptionRefusesToZeroTheLastComponentOfAnEveryTimer`,
+which also asserts that zeroing a component while another stays non-zero is
+still allowed, that `iEveryMinute` is unchanged after the refusal, and — as
+controls — that `AddTimer` gives the same `eTimeInvalid` and that an *at*-time
+timer may still be set to midnight.
+
+**Not fixed, and deliberately:** the XML world loader makes no such check
+either, so a hand-edited world file can still contain a zero-interval timer.
+Rejecting one at load time would fail to open a file that opens today, which is
+a different risk from refusing a script call, and belongs in its own change.

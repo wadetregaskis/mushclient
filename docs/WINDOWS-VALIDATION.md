@@ -7685,28 +7685,51 @@ state nobody can reach is how a seam grows a method per hypothesis. Recorded
 here so that if a "no command view" window ever becomes reachable, the answer is
 already written down.
 
+#### The leads, and what became of them
+
+The sweep produced thirteen leads beyond the seven I had already checked.
+**Five of those thirteen have since been confirmed and fixed**, each with a
+non-vacuous test — the fix reverted, the test seen to fail, the fix restored:
+
+| file | outcome |
+|---|---|
+| `scriptingoptions_alpha.inc` | **confirmed, fixed** — `UPSTREAM-BUGS` 104 |
+| `xml/xml_save_world.cpp` (option set to 0 omitted by the saver) | **confirmed, fixed** — `UPSTREAM-BUGS` 101 |
+| `scripting/methods/methods_triggers.cpp` (×2, and the alias/timer twins) | **confirmed, fixed** — `UPSTREAM-BUGS` 102 |
+| `plugins.cpp` (archive flushed after success is reported) | **confirmed, fixed** — `UPSTREAM-BUGS` 103, which turned out to be three sites, not one |
+| `scripting/methods/methods_timers.cpp` (zero interval) | **confirmed, fixed** — `UPSTREAM-BUGS` 105 |
+
+The zero-interval one is worth a note on method, because the argument and the
+proof came apart. The claim as filed was an asymmetry — `AddTimer` refuses a
+zero "every" interval and `SetTimerOption` does not — which is true but is only
+evidence of an *inconsistency*. What makes it a bug is the consequence, and the
+consequence is measurable: three back-to-back `CheckTimers` calls with no time
+allowed to pass, three matches on the zero timer against at most one on a
+five-second control. The dialog turned out to carry the same refusal
+(`CTimerDlg::DoDataExchange`, "The timer interval must be greater than zero"),
+which makes it two entry points guarding and one not — an omission rather than
+a judgement. **Look for the third caller before calling an asymmetry a bug: it
+decides which of the two sides is the wrong one.**
+
 #### NOT checked — leads only
 
-Eight remain. Each has a file, a line and an argument in the sweep's own
-output; none has been read by me, and the first sweep's record is that **eight of thirteen such
-claims did not survive contact.** Treat accordingly.
+Five remain. Each has a file, a line and an argument in the sweep's own output;
+none has been read by me, and the record across both sweeps is that a
+"confirmed" label means only that one agent argued for it and a second failed to
+refute it. **Eight of the first sweep's thirteen did not survive contact.**
+Treat accordingly.
 
 | file | claim |
 |---|---|
 | `dialogs/world_prefs/configuration.cpp` | World Properties clears the persisted "accept chat connections" tick when the listen socket failed to bind — and this one interacts with `UPSTREAM-BUGS` 95, since that fix moved five chat defaults into locals and deliberately left this one reading live state |
-| `scriptingoptions_alpha.inc` | `send_to_world_line_preamble`/`postamble` lose a trailing space on load; the paste twins carry `OPT_KEEP_SPACES` and do not |
-| `xml/xml_save_world.cpp` | a numeric option set to 0 is omitted by the saver and reloads as the constructor default — `pixel_offset` named as a live instance, against a doc that currently asserts only *future* options have this trap |
 | `xml/xml_save_world.cpp` | timer seconds saved with 2 decimals, so a sub-0.005 s "every" timer is dropped on the next load |
-| `scripting/methods/methods_triggers.cpp` (×2) | `Add*Ex` with `eReplace` deletes an item without the `bExecutingScript` guard every `Delete*` path has — i.e. deletes an item whose script is on the stack |
-| `scripting/methods/methods_timers.cpp` | `SetTimerOption` can set a zero interval; the timer then re-fires on every poll |
-| `plugins.cpp` | plugin state save reports success before the archive is flushed — the write happens at `delete ar`, outside every catch, over an already-truncated file |
 | `pal/win_worldview.cpp` | `outputSelection ()` reports the *first* `CMUSHView`'s selection while `CMUSHView::OnEditCopy` copies `this` view's |
 | `doc_shared.cpp` | the MCCP decompression loop keeps inflating and displaying after `DisplayMsg` has closed the world |
 | `doc_shared.cpp` | the SOCKS5 CONNECT reply is assumed to be exactly 10 bytes and to arrive whole in one packet |
 
-The seven I did check were the seven I could reach with a test on this machine.
-That is the honest selection criterion, and it is worth saying out loud: the
-untouched eight are not less serious, they are less convenient.
+The seven I checked first were the seven I could reach with a test on this
+machine. That is the honest selection criterion, and it is worth saying out
+loud: the remaining five are not less serious, they are less convenient.
 
 #### One unreproduced crash, recorded rather than dismissed
 

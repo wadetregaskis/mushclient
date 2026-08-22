@@ -6418,3 +6418,71 @@ list-control barrier that this row and two of `44f0737`'s leftovers share — th
 fitted last-column width, and `LoadPrefsP7`'s wrong-enum indexing, both recorded
 in `tests/win/test_prefs_pages.cpp` as needing "a created `CListCtrl`" — is the
 same twelve lines of fixture away.
+
+### 10ah. `2e54bba` run on the real client, and how the GUI was driven
+
+`tests/test_utilities.cpp` guards its `ShowFunctionslist` test `#ifndef _WIN32`
+with a note that says exactly what was missing: *"re-entering the test below
+needs a Windows-side observable, not a guard. This is §10h's 2e54bba row, and
+it stays owed."* This is that observable.
+
+**The fix.** `Help`'s fallback called `ShowFunctionslist (m_strFilter, bLua)`,
+binding `bLua` to the second parameter (`nStartChar`, an `int`) instead of the
+fourth — so the fourth kept its default `false` and the Function List never
+showed Lua's own functions, while the bogus start offset also blanked the
+filter. `CMainFrame::OnGameFunctionslist` had the identical mistake.
+
+**The observable turned out to be a count.** `ShowFunctionslist` fills the
+dialog from `InternalFunctionsTable` always, and adds `LuaFunctionsSet` only
+when `bLua`. `LVM_GETITEMCOUNT` needs no buffer, so it reads cleanly across the
+process boundary where item *text* would need `WriteProcessMemory`. Measured:
+
+| world | route | items |
+|---|---|---|
+| `enable_scripts="y"`, Lua | Game ▸ Function List | **650** |
+| `enable_scripts="n"` | Game ▸ Function List | **418** |
+| `enable_scripts="y"`, Lua | `world.Help ("")` | **650** |
+
+The 232-entry difference is `LuaFunctionsSet`, and 418 is precisely what the
+defect produced. Both call sites the commit touched are covered: the menu
+handler and the scripting method.
+
+#### How the app was driven, since §10h's instrument note is now out of date
+
+§10h records that posted `WM_CHAR` works but a posted `VK_RETURN` does not send,
+and concludes that anything needing typed input must follow §8v — drain the
+startup dialogs, confirm focus with `GetGUIThreadInfo`, then `keybd_event`.
+**None of that was needed, and two of its assumptions did not hold.**
+
+- **Menu commands do not need clicking.** `PostMessage (frame, WM_COMMAND, id, 0)`
+  with the id from `resource.h` runs the same message-map handler a click would,
+  with no focus race and nothing to synchronise. `GetMenu`/`GetSubMenu`/
+  `GetMenuItemID` enumerate the live menu bar, so a command can be found by name
+  and driven by number.
+- **Dialogs are read, not photographed.** `EnumChildWindows` plus
+  `GetDlgCtrlID` gives every control's id, class and text, which is evidence a
+  screenshot is not. Buttons are pressed the same way as menu items —
+  `WM_COMMAND` with `IDOK`/`IDCANCEL`.
+- **Cross-process `WM_SETTEXT` does NOT work**, and neither did posted `WM_CHAR`
+  here. Both hand the target process a pointer into the *sender's* address
+  space, or arrive at a control that is not accepting them. This is the one
+  place §10h's note is confirmed rather than superseded — and the answer is not
+  a better keystroke.
+- **Let the world drive itself.** A one-shot timer in the world file with
+  `send_to="12"` (`eSendToScript`) runs arbitrary Lua three seconds after the
+  world opens, with no input synthesis of any kind. That is how `world.Help ("")`
+  was invoked, and it is the general answer for any scripting-reachable
+  behaviour: put it in a timer, open the world, read the result.
+
+What still needs real typed input is a much shorter list than §10h implies:
+only the things with no scripting entry point at all — the macro `switch`
+(`5359254`), the auto-say tri-state (`8468a76`), and tab-completion.
+
+#### Housekeeping, recorded so the next session repeats it
+
+The client keeps its preferences in the **working directory** first
+(`MUSHclient.cpp:328`), so running it from `WinDebug` uses
+`WinDebug\mushclient_prefs.sqlite` and cannot reach the installed copy under
+`Documents\MUSHclientx64\`. Both were fingerprinted before the run: the
+installed one verified unchanged afterwards, and the scratch one was restored
+from a backup, since dismissing the "Thanks for upgrading" screen writes to it.

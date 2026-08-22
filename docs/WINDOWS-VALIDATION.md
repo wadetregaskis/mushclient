@@ -7938,3 +7938,52 @@ that *looked* like a run: in Lua, `out:write (..., "\n")` truncates `...` to its
 **first** value, so every line came out as a bare label with no data. An output
 helper that silently drops its arguments is indistinguishable from a probe that
 found nothing.
+
+### §10ay — "Copy wildcard 10 to the clipboard" selects a wildcard the clipboard code cannot reach
+
+Found while checking whether the saver can write a `clipboard_arg` its own
+loader rejects (it cannot — the option table and the loader both say 0..10, and
+they agree). What does not agree is the *third* place, the one that uses it.
+
+The Trigger dialog's clipboard dropdown (`IDC_WILDCARD_CLIPBOARD`) is populated
+from `DLGINIT` with **eleven** entries: `(none)`, then `1` … `10`, so the
+selected index is the wildcard number. `ProcessPreviousLine.cpp:1196-1199`
+then does
+
+```cpp
+if (trigger_item->iClipboardArg &&
+    trigger_item->iClipboardArg >= 0 &&
+    trigger_item->iClipboardArg < MAX_WILDCARDS)
+   putontoclipboard (trigger_item->wildcards [trigger_item->iClipboardArg]...);
+```
+
+with `MAX_WILDCARDS == 10`, so the usable range is **1…9**. Choosing `10` in
+the dialog stores 10, fails `< MAX_WILDCARDS`, and silently copies nothing.
+
+What makes it more than an off-by-one in a dropdown is that **wildcard 10 does
+mean something everywhere else**. The array handed to scripts is built
+1-relative with `MAX_WILDCARDS` elements, and its last one is deliberately not
+a capture group:
+
+```cpp
+// i should be MAX_WILDCARDS (10) now ;)
+COleVariant v (trigger_item->wildcards [0].c_str ()); // the whole matching line
+```
+
+So a script's `wildcards[10]` is the whole matching line — and that is the
+natural reading of what the dropdown's `10` offers. The clipboard code can
+reach it by neither index: 10 fails the upper bound, and 0 (where the whole
+line actually lives in `trigger_item->wildcards`) fails the truthiness guard
+that means "(none)".
+
+The `iClipboardArg >= 0` term is dead in any case: the member is
+`unsigned short`.
+
+**Not changed, and the reason is the resource.** Three fixes are conceivable —
+drop `10` from the combo, lower the option table's maximum to 9, or make `10`
+copy the whole line — and none is wholly available here. The dialog lives in
+the prebuilt `locale\EN.dll`, not in a resource this tree compiles; lowering
+only the setter's maximum would leave a value that a world file can still hold
+and the script API can no longer set; and making `10` mean "the whole line" is
+a behaviour change to a documented option. Recorded for a decision rather than
+guessed at.

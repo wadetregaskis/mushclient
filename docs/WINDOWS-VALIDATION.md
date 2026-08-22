@@ -6380,6 +6380,28 @@ should link from `wx_mfc_impl.cpp` — but that is reasoning, not a build. The
 behavioural check on macOS is: with **no world open**, Game ▸ Functions List must
 be selectable and must open the list.
 
+#### Shared code changed on Windows since §10af was written
+
+Five more hunks, all in files macOS compiles, none of them built here except by
+the Windows target. Listed with what a macOS run should check:
+
+| file | change | what to check on macOS |
+|---|---|---|
+| `mxp/mxpClose.cpp` | `MXP_CloseTag` re-finds its line after the dispatch and returns if a gagging trigger deleted it (`UPSTREAM-BUGS` 94) | `MXPCloseR6.ParagraphCloseSurvivesAGaggingTrigger` is a **shared** test and runs there too. Worth one ASan run: this was a heap-use-after-free on both platforms, and ASan is the instrument that names it. |
+| `dialogs/world_prefs/configuration.cpp` | `LoadPrefsP23` defaults into locals, not onto the document (`UPSTREAM-BUGS` 95) | World prefs ▸ **Cancel** on a world with no chat name must leave the file alone; **OK** must still write `chat_name`. |
+| `dialogs/world_prefs/prefspropertypages.cpp` | `CPrefsP11::OnSaveNotes` builds a SAVE dialog (`UPSTREAM-BUGS` 93) | The Notes page's Save… must still offer a save panel and must now warn before overwriting. This is the call site the port's `openOrCreate` shim heuristic existed for. |
+| `platform/mfc_ui.h` | comment only — records that the `openOrCreate` arm is now unreachable | nothing to run; the arm is left in place deliberately |
+| `tests/test_mxp.cpp` | the new `MXPCloseR6` case and its local gagging-trigger helper | compiles against the port's `CTriggerArray` / `regcomp` / `ConvertToRegularExpression`, all shared, but it has only ever been built by MSVC |
+
+`pal/win_transport.cpp`'s `flushSend` guard is inside the file's own
+`#ifdef _WIN32` and cannot reach macOS.
+
+Two findings from the same round are **macOS-only and deliberately not fixed
+here** — `platform/mfc_collections.h`'s leaked walk cursor and `timers.cpp`'s
+dropped status-line refresh. Both are described with proposed fixes in §10ap;
+neither can be compiled on this machine, and the first is the container shim the
+whole port stands on.
+
 #### And the one thing Windows found that only macOS can fix
 
 The five embedded engines still carry `docs/UPSTREAM-BUGS.md` 90: a Python

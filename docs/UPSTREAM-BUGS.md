@@ -2893,3 +2893,50 @@ checking both the bytes on disk and the reload. The two checks are not
 redundant: the boolean and alpha arms of the loader *do* zero an absent
 attribute, so a reload-only test could pass on a build where the numeric arm
 started doing the same.
+
+## 102 — Replacing a trigger, alias or timer whose own script is running frees it
+
+**Where:** `scripting/methods/methods_triggers.cpp` (`AddTriggerEx`),
+`methods_aliases.cpp` (`AddAlias`), `methods_timers.cpp` (`AddTimer`) — the
+`eReplace` arm of each.
+
+`ProcessPreviousLine` brackets a trigger's script like this:
+
+```cpp
+trigger_item->bExecutingScript = true;     // cannot be deleted now
+SendTo (...);                              // the script runs here
+trigger_item->bExecutingScript = false;    // can be deleted now
+```
+
+`DeleteTrigger` honours that comment:
+
+```cpp
+// can't if executing a script
+if (trigger_item->bExecutingScript)
+  return eItemInUse;
+```
+
+The `eReplace` arm of `AddTriggerEx` did not — it went straight to
+`delete trigger_item`. So a script that replaces the very trigger that invoked
+it frees the object, and the `= false` on the line after `SendTo` writes into
+freed memory. `DeleteAlias` and `DeleteTimer` have the same guard and
+`AddAlias`/`AddTimer` had the same hole.
+
+**Reachable, and not exotic:** `world.AddTrigger (name, …, eReplace)` from
+inside that trigger's own script. Re-registering yourself — to change the match
+text, the sequence, or the response — is an ordinary thing for a plugin to do,
+and `eReplace` exists precisely so that it can be done without a separate
+delete.
+
+**Measured**, with the three guards removed: all three calls return `eOK`
+instead of `eItemInUse`, and the map's pointer changes underneath the caller —
+`0A7A5F58` → `0A7A6500` for the trigger, and likewise for the alias and the
+timer. The old address is the one the caller is about to write `false` into.
+
+**Fix:** the same guard the matching `Delete*` has, at the point where
+`bReplace` is decided, returning `eItemInUse`. Pinned by
+`ReplaceWhileRunningR6.AllThreeRefuseToReplaceAnItemWhoseScriptIsOnTheStack`,
+which also asserts the refusal is about the *script* and not about replace being
+broken: with the flag cleared, the same three calls succeed.
+
+**Shared code — the same defect ships on macOS.**

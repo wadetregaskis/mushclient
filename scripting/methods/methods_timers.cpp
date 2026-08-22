@@ -155,10 +155,20 @@ bool bReplace = false;
 
   // if it already exists, error
   if (GetTimerMap ().Lookup (strTimerName, timer_item))
+    {
     if (Flags & eReplace)
+      {
+      // Not while its own script is on the stack -- the eReplace arm below
+      // deletes this object and the caller writes bExecutingScript = false into
+      // it when the script returns.  DeleteTimer refuses it with eItemInUse
+      // (:255); the replace path never did.  docs/UPSTREAM-BUGS.md 102.
+      if (timer_item->bExecutingScript)
+        return eItemInUse;
       bReplace = true;
+      }
     else
       return eTimerAlreadyExists;
+    }
 
 
   if (Hour < 0 || Hour > 23)

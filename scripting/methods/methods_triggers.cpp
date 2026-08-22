@@ -153,10 +153,23 @@ bool bReplace = false;
 
   // if it already exists, error
   if (GetTriggerMap ().Lookup (strTriggerName, trigger_item))
+    {
     if (Flags & eReplace)
+      {
+      // ...but not while its own script is on the stack.  The eReplace arm
+      // below DELETES this object, and ProcessPreviousLine writes
+      // `trigger_item->bExecutingScript = false` into it the moment the script
+      // returns -- under a comment two lines above reading "cannot be deleted
+      // now", which is exactly the invariant this path was breaking.
+      // DeleteTrigger has refused it since forever with eItemInUse; the replace
+      // path never did.  docs/UPSTREAM-BUGS.md 102.
+      if (trigger_item->bExecutingScript)
+        return eItemInUse;
       bReplace = true;
+      }
     else
       return eTriggerAlreadyExists;
+    }
 
   // cannot have null match text
   if (strlen (MatchText) == 0)

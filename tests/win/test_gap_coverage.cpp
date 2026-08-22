@@ -32,6 +32,7 @@
 #include "posix_compat.h"   // getpid / unlink, for the names-file tests
 #include "fake_worldview.h"  // the swappable pal::IWorldView — GetInfo 249/250
 #include "chatsock.h"        // CChatSocket — the file-block test at the end
+#include "flags.h"           // eEnabled / eReplace — the replace-while-running test
 
 #include <commctrl.h>   // a real WC_LISTVIEW for the Plugins dialog test
 
@@ -1164,4 +1165,68 @@ TEST(WrapColumnResizeR6, TheLineBufferAndItsRecordedSizeStayInStep)
         EXPECT_TRUE(doc.m_pCurrentLine->iMemoryAllocated >=
                     doc.m_pCurrentLine->len);
     }
+}
+
+// ── Replacing an item whose own script is running ──────────────────────────
+//
+// `ProcessPreviousLine` brackets a trigger's script with
+//
+//     trigger_item->bExecutingScript = true;     // cannot be deleted now
+//     SendTo (...);                              // the script runs here
+//     trigger_item->bExecutingScript = false;    // can be deleted now
+//
+// and `DeleteTrigger` honours that comment: `if (trigger_item->bExecutingScript)
+// return eItemInUse;`. `AddTriggerEx`'s `eReplace` arm did not — it went
+// straight to `delete trigger_item`. So a script that replaces the very trigger
+// that invoked it frees the object, and the `= false` on the line after
+// `SendTo` writes into freed memory.
+//
+// `world.AddTrigger (name, …, eReplace)` from inside that trigger's own script
+// is the reproduction, and re-registering yourself is a normal thing for a
+// plugin to do. `AddAlias` and `AddTimer` had the identical hole against their
+// own `DeleteAlias` / `DeleteTimer` guards. `docs/UPSTREAM-BUGS.md` 102.
+TEST(ReplaceWhileRunningR6, AllThreeRefuseToReplaceAnItemWhoseScriptIsOnTheStack)
+{
+    CMUSHclientDoc doc;
+
+    ASSERT_EQ(eOK, doc.AddTriggerEx("t", "hello", "", eEnabled, -1, 0,
+                                    "", "", eSendToWorld, 100));
+    ASSERT_EQ(eOK, doc.AddAlias("a", "go", "", eEnabled, ""));
+    ASSERT_EQ(eOK, doc.AddTimer("m", 0, 0, 5.0, "", eEnabled, ""));
+
+    CTrigger* t = NULL;  ASSERT_TRUE(doc.GetTriggerMap().Lookup("t", t));
+    CAlias*   a = NULL;  ASSERT_TRUE(doc.GetAliasMap().Lookup("a", a));
+    CTimer*   m = NULL;  ASSERT_TRUE(doc.GetTimerMap().Lookup("m", m));
+
+    // Each one's script is on the stack, exactly as ProcessPreviousLine and its
+    // alias/timer counterparts leave it while SendTo runs.
+    t->bExecutingScript = true;
+    a->bExecutingScript = true;
+    m->bExecutingScript = true;
+
+    EXPECT_EQ(eItemInUse, doc.AddTriggerEx("t", "goodbye", "", eEnabled | eReplace,
+                                           -1, 0, "", "", eSendToWorld, 100));
+    EXPECT_EQ(eItemInUse, doc.AddAlias("a", "stop", "", eEnabled | eReplace, ""));
+    EXPECT_EQ(eItemInUse, doc.AddTimer("m", 0, 0, 9.0, "", eEnabled | eReplace, ""));
+
+    // The objects must be the SAME ones, still in the maps — a replace that
+    // deleted and re-created would leave a different pointer behind, which is
+    // the freed one the caller is about to write to.
+    CTrigger* t2 = NULL; EXPECT_TRUE(doc.GetTriggerMap().Lookup("t", t2));
+    CAlias*   a2 = NULL; EXPECT_TRUE(doc.GetAliasMap().Lookup("a", a2));
+    CTimer*   m2 = NULL; EXPECT_TRUE(doc.GetTimerMap().Lookup("m", m2));
+    EXPECT_EQ((void*) t, (void*) t2);
+    EXPECT_EQ((void*) a, (void*) a2);
+    EXPECT_EQ((void*) m, (void*) m2);
+
+    // ...and the refusal must be about the SCRIPT, not about replace being
+    // broken: with the flag cleared, the same three calls succeed.
+    t->bExecutingScript = false;
+    a->bExecutingScript = false;
+    m->bExecutingScript = false;
+
+    EXPECT_EQ(eOK, doc.AddTriggerEx("t", "goodbye", "", eEnabled | eReplace,
+                                    -1, 0, "", "", eSendToWorld, 100));
+    EXPECT_EQ(eOK, doc.AddAlias("a", "stop", "", eEnabled | eReplace, ""));
+    EXPECT_EQ(eOK, doc.AddTimer("m", 0, 0, 9.0, "", eEnabled | eReplace, ""));
 }

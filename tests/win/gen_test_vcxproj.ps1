@@ -51,7 +51,7 @@ $excluded = [ordered]@{
   'test_chat_sockets.cpp'    = 'builds real AF_UNIX/loopback pairs with socketpair, which Windows does not have'
   'test_notepad_convert.cpp' = 'NotepadDetectLineEndings is non-Windows only: CEditView::SerializeRaw means the buffer IS the representation on Windows (CLAUDE.md, macOS notes)'
   'test_pal_worldview.cpp'   = 'platform/activity_refresh.h includes <strings.h>; drives the port worldview'
-  'test_menu_rules.cpp'      = 'needs platform/menu_ui_rules.cpp, the port menu-rule table; the app drives menus from MFC message maps and does not link it'
+  'test_menu_rules.cpp'      = 'needs platform/menu_ui_rules.cpp, the port menu-rule table; the app drives menus from MFC message maps and does not link it. The claims that table makes ABOUT Windows are cross-checked against MFC by tests\win\test_menu_rules_win.cpp'
   'test_pal_surface.cpp'     = 'asserts on pal::CpuRaster, the port software rasteriser; Windows draws through pal/gdi_surface.cpp and never instantiates it'
 }
 # Everything above is opted OUT with a reason.  The last block is the interesting
@@ -249,6 +249,7 @@ W '    <ClCompile Include="tests\win\all_tests.cpp" />'
 W '    <ClCompile Include="tests\win\test_prefs_pages.cpp" />'
 W '    <ClCompile Include="tests\win\test_gap_coverage.cpp" />'
 W '    <ClCompile Include="tests\win\test_notepad_win.cpp" />'
+W '    <ClCompile Include="tests\win\test_menu_rules_win.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'
@@ -258,4 +259,4 @@ W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />'
 W '</Project>'
 
 Set-Content -Path 'MUSHclient_tests.vcxproj' -Value $sb.ToString().TrimEnd() -Encoding UTF8
-"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 3 Windows-only, $($excluded.Count) excluded"
+"wrote MUSHclient_tests.vcxproj: $($sources.Count) engine sources, $($tests.Count) test files + 4 Windows-only, $($excluded.Count) excluded"

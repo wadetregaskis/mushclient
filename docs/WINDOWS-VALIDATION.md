@@ -6706,3 +6706,134 @@ the fix is a guard or a host change and the tests come across whole. When it is
 not, as here, porting them would be the wrong move and writing the other half is
 the right one. The exclusion reason cannot tell you which; only reading the
 `#else` can.
+
+### 10am. The port's menu-rule table, asked of MFC — and the one row that was wrong
+
+`platform/menu_ui_rules.cpp` is a table that **restates another system's
+behaviour**: wx leaves a menu item enabled when nobody handles it, MFC greys it,
+so the port writes down which commands MFC greys. `tests/test_menu_rules.cpp`
+pins the table faithfully — and a table restating a foreign system is only as
+good as the reading it was written from, which had never been checked against
+the system.
+
+`tests/win/test_menu_rules_win.cpp` checks it. Ten tests, and it found one row
+wrong on the first run.
+
+#### The finding: Functions List is live on Windows and was greyed here
+
+`ID_GAME_FUNCTIONSLIST` (33046) was in the port's world-only list, so with no
+world open **Game ▸ Functions List is greyed on macOS**. On Windows it is not.
+There are three handlers for that id, not one:
+
+| handler | context it uses |
+|---|---|
+| `CSendView::OnGameFunctionslist` (`sendvw.cpp:2467`) | the input bar's text and selection |
+| `CTextView::OnGameFunctionslist` (`TextView.cpp:1482`) | the notepad's text and selection |
+| **`CMainFrame::OnGameFunctionslist`** (`scripting/functionlist.cpp:602`) | **none** — `ShowFunctionslist ("", 0, 0, true)` |
+
+The frame's is the fallback, and `ShowFunctionslist` needs no world at all: it
+fills a dialog from `InternalFunctionsTable` plus `LuaFunctionsSet` and jumps to
+a help topic. So on Windows the item works with nothing open whatsoever.
+
+Fixed in three places, all of them the port's: the id is out of
+`menu_ui_rules.cpp`'s list, `wx_mfc_impl.cpp`'s dispatch grew a no-child arm
+calling the same context-free `ShowFunctionslist`, and `test_menu_rules.cpp`
+moves it from `kWorldOnly` to `kGlobal`. **None of that is compiled or run
+here** — it is macOS code — so it is on the re-integration list with everything
+else in §10af.
+
+**Why the port's own reading missed it:** the sweep that built the table went
+looking for the handler, found `sendvw.cpp`, and stopped. One id, three
+`ON_COMMAND` entries in three files. The check that finds this shape is the one
+`docs/UPSTREAM-DIVERGENCES.md` §16 already states for a different family —
+*grep every occurrence, not the first* — and it is the same lesson as D-31's
+"grep every overload in a set, not just the most visible definition".
+
+#### The catch-all that makes "is it handled?" the wrong question
+
+`mainfrm.cpp:238` is `ON_UPDATE_COMMAND_UI_RANGE (0, 0xFFFF, OnFixMenus)`, and
+`doc.cpp:205` is the same on the document. **CMainFrame claims the update-UI
+side of every command id there is.** Both handlers call `ContinueRouting`, so at
+run time they strip an accelerator from the caption and step aside — but a probe
+that asks "is there an update-UI handler for this id" is answered *yes* by the
+catch-all, because a non-NULL `AFX_CMDHANDLERINFO` short-circuits
+`_AfxDispatchCmdMsg` **before the handler runs** and therefore before
+`ContinueRouting` can be observed.
+
+The first draft of this suite asked exactly that question and got "all 24
+world-only commands ARE handled with no world open", which is true and useless.
+Worse, the mirror-image test — "every world-only id is claimed somewhere in the
+world chain" — passed **vacuously**, because the document carries a catch-all
+too. The only honest question in this app is what `DoUpdate` *enables*.
+`MenuRulesWin.EveryIdHasAnUpdateUiHandlerAndAlmostNoneHasACommandOne` pins that
+fact against id 31111, which is in no menu and no message map and still has an
+update-UI handler.
+
+#### What `CCmdUI::DoUpdate` actually returns
+
+Worth writing down, because a second wrong assertion came from guessing it:
+
+```
+BOOL CCmdUI::DoUpdate (CCmdTarget * pTarget, BOOL bDisableIfNoHndler)
+  m_bEnableChanged = FALSE;
+  bResult = pTarget->OnCmdMsg (m_nID, CN_UPDATE_COMMAND_UI, this, NULL);
+  if (bDisableIfNoHndler && !m_bEnableChanged)
+    Enable (pTarget->OnCmdMsg (m_nID, CN_COMMAND, this, &info));
+  return bResult;
+```
+
+The **return value** is "an update-UI handler ran", not "the command is
+handled", and the two differ for every command with an `ON_COMMAND` and no
+`ON_UPDATE_COMMAND_UI` — which is most of them. Those come back `FALSE` and
+`enabled`. Assert on the outcome, never on the return.
+
+#### A third shape the table did not have a name for
+
+`ID_FILE_OPENWORLDSINSTARTUPLIST` (32954) is neither global nor world-only: it
+is live or dead by a piece of *global* state,
+`CMainFrame::OnUpdateFileOpenworldsinstartuplist` → `Enable
+(!App.m_strWorldList.IsEmpty ())`. The first draft put it in the always-live
+list and it failed, because this host's `LoadGlobalsFromDatabase` runs over no
+database and the startup list is empty.
+
+That one is **not** a divergence — `platform/menubar_selftest.cpp:708-713`
+already drives both arms of the same condition on the port. But it is a reminder
+that a two-bucket classification will mis-sort anything that belongs in a third
+bucket, and the failure looks exactly like a bug until it is read.
+
+#### What the suite covers, and what a bare view can be asked
+
+Ten tests, no windows anywhere: the frame is the host's windowless `CMainFrame`
+and the views are bare `DYNCREATE` instances, which is enough because a message
+map is a static table and `OnCmdMsg` walks it whether or not the object owns an
+`HWND`. Beyond the two lists, it runs the canonical handlers the port's table
+*dispatches to* rather than restates — `OnUpdateConnectionConnect` across every
+connect phase and its `0.0.0.0` placeholder test, `OnUpdateConnectionDisconnect`
+staying live through all eight in-progress phases (the rule that has shipped
+broken before), the Trace and Debug-packets check marks per document, and
+`CSendView::OnUpdateSessionOpen` behind Quit From This World.
+
+That last one is the first time `CSendView` has been **instantiated** in this
+campaign — the class the port compiles and never constructs, and the home of
+four of `docs/UPSTREAM-DIVERGENCES.md`'s entries.
+
+Two mechanical notes for anyone extending it:
+
+- **`RUNTIME_CLASS(T)` cannot be used in a template.** It token-pastes to
+  `T::classT`, so inside `template <class T>` it names a member called `classT`
+  on every class and nothing compiles. Pass the `CRuntimeClass *` in.
+- **Never `RemoveView` a fixture's last view.** `CDocument::RemoveView` runs
+  `OnChangedViewList`, which closes and *deletes* the document — fatal for one
+  on the stack, a double delete for one on the heap. `~CDocument` calls
+  `DisconnectViews` instead, which detaches without deleting, so deleting the
+  document first is both simpler and correct. `tests/test_accelerators.cpp` had
+  already learned this.
+
+`tests/test_menu_rules.cpp` stays excluded: two thirds of it drives
+`PortMenuRuleUiState` / `PortMenuActionForCommandId` / `kPortMenuId*`, which are
+the port's own inventions with no Windows meaning. The lists are copied
+literally into the Windows file rather than shared, deliberately — two files
+asserting the same claim about two different subjects **is** the cross-check,
+and deriving either from the other would make both agree with anything.
+
+**1648 passed, 0 failed, across 182 suites.**

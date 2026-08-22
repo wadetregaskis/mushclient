@@ -41,7 +41,6 @@ static const int kWorldOnly[] = {
     32152,  // ID_GAME_COMMANDHISTORY
     32946,  // ID_EDIT_GOTOMATCHINGBRACE
     32947,  // ID_EDIT_SELECTTOMATCHINGBRACE
-    33046,  // ID_GAME_FUNCTIONSLIST
     32953,  // ID_EDIT_FLIPTONOTEPAD
     32983,  // ID_FILE_PLUGINS
     32971,  // ID_EDIT_DEBUGINCOMINGPACKETS
@@ -77,6 +76,14 @@ TEST(MenuRules, GlobalCommandsAreLeftAlone) {
         32325,  // ID_GAME_SENDTOALLWORLDS          (CMainFrame)
         32234,  // ID_GAME_MINIMISEPROGRAM          (the app)
         0xE140, // ID_APP_ABOUT                     (the app)
+
+        // Moved out of kWorldOnly on 2026-08-21.  It reads like a CSendView
+        // command and sendvw.cpp does have a handler — but so do CTextView and
+        // CMainFrame, and the frame's (scripting/functionlist.cpp:602) takes no
+        // context at all: ShowFunctionslist ("", 0, 0, true).  Windows leaves
+        // the item LIVE with nothing open; this table greyed it.  Measured by
+        // tests/win/test_menu_rules_win.cpp — docs/WINDOWS-VALIDATION.md §10am.
+        33046,  // ID_GAME_FUNCTIONSLIST            (CMainFrame, context-free)
     };
     for (int id : kGlobal) {
         const MenuCmdUiState st = MenuCommandUiState(id, nullptr);

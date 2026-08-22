@@ -1864,6 +1864,17 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                     child->ClearCommandHistory();          break;
                 }
             }
+            else if (id == 33046) {
+                // Functions List is the one command in this cluster that
+                // Windows also answers with NO world open: besides CSendView
+                // and CTextView, CMainFrame::OnGameFunctionslist
+                // (scripting/functionlist.cpp:602) calls the same dialog with
+                // no context at all.  Without this arm the item was greyed
+                // whenever no world was up, which the Windows suite measured
+                // (docs/WINDOWS-VALIDATION.md 10am).
+                CString noContext;
+                ::ShowFunctionslist(noContext, 0, 0, true);
+            }
             return;
         }
 

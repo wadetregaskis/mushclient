@@ -895,7 +895,16 @@ CString filename;
       case TIMER:     Save_World_XML (*ar, XML_TIMERS); break;
 
       } // end of switch
-    
+
+    // Flush inside the try, before clearing `error`.  Save_World_XML only fills
+    // the archive's buffer; the bytes reach the file when the CArchive is
+    // destroyed, after every catch arm below.  So this reported a successful
+    // export for a write that had not happened yet, over a file
+    // CFile::modeCreate had already truncated -- and ~CArchive flushes with no
+    // guard, so the failure throws out of a noexcept destructor.
+    // docs/UPSTREAM-BUGS.md 103.
+    ar->Close ();
+
     error = FALSE;
     } // end of try block
 

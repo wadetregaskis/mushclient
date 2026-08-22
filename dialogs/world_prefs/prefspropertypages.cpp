@@ -8045,6 +8045,14 @@ CArchive * ar = NULL;
 
     m_doc->Save_World_XML (*ar, XML_VARIABLES);
 
+    // Flush inside the try.  Save_World_XML only fills the archive's buffer;
+    // the bytes reach the file when the CArchive is destroyed, which is after
+    // the catch below -- so a failing write is reported to nobody, over a file
+    // CFile::modeCreate has already truncated.  And ~CArchive calls Flush with
+    // no guard of its own, so that failure throws out of a noexcept destructor.
+    // docs/UPSTREAM-BUGS.md 103.
+    ar->Close ();
+
     }   // end of try
 	catch (CException* e)
 	  {

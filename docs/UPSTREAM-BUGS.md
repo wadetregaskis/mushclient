@@ -2940,3 +2940,58 @@ which also asserts the refusal is about the *script* and not about replace being
 broken: with the flag cleared, the same three calls succeed.
 
 **Shared code — the same defect ships on macOS.**
+
+## 103 — Three archive writes report success before the bytes are written
+
+**Where:** `plugins.cpp` (`CPlugin::SaveState`),
+`dialogs/world_prefs/prefspropertypages.cpp` (export variables) and
+`evaluate.cpp` (`Save_Set` — export triggers/aliases/colours/macros/timers).
+
+All three have the same shape:
+
+```cpp
+try {
+  f  = new CFile (name, CFile::modeCreate | CFile::modeReadWrite);
+  ar = new CArchive (f, CArchive::store);
+  Save_World_XML (*ar, …);
+  bError = false;              // success declared HERE
+}
+catch (CFileException *)   { … }
+catch (CMemoryException *) { … }
+catch (CArchiveException *){ … }
+
+delete ar;                     // ...and the bytes are written HERE
+delete f;
+```
+
+`Save_World_XML` only fills the archive's buffer. The write happens when the
+`CArchive` is destroyed — **after every catch arm** — so:
+
+- **A failed write is reported as success.** `CPlugin::SaveState` returns its
+  `bError` to `world.SaveState ()`, so a script is told the state was saved when
+  it was not. `CFile::modeCreate` truncated the old state file first, so what
+  the user actually has is nothing.
+- **And the failure throws out of a destructor.** MFC's `~CArchive` is
+
+  ```cpp
+  CArchive::~CArchive()
+  {
+      if (m_pFile != NULL && !(m_nMode & bNoFlushOnDelete))
+          Close();      // -> Flush(), which can throw
+      Abort();
+  }
+  ```
+
+  with no guard of its own. Under C++11 a destructor is implicitly `noexcept`,
+  so a `CFileException` from that `Flush` terminates the process.
+
+**Fix:** `ar->Close ()` inside the `try`, before success is declared. The
+subsequent `delete ar` then finds `m_pFile == NULL` and does nothing.
+
+**No new test.** The success path is already pinned by
+`PluginState.SaveStateWritesVariablesToStateFile`, which reads the file's
+contents back and is green with the change; the failure path needs a write that
+fails, which this suite has no way to arrange. That is an honest gap rather than
+a covered one.
+
+**Shared code — all three sites ship on both platforms.**

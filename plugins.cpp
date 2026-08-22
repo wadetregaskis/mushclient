@@ -891,6 +891,23 @@ bool bError = true;
 
     m_pDoc->Save_World_XML (*ar, XML_VARIABLES, strComment);
 
+    // Flush INSIDE the try, before declaring success.  Save_World_XML only
+    // fills the archive's buffer; the bytes reach the file when the CArchive is
+    // destroyed, which happens after every catch arm below.  Two consequences,
+    // and both were live:
+    //
+    //   * bError was cleared before anything had been written, so SaveState
+    //     returned success for a save that then failed -- over a file
+    //     CFile::modeCreate had already TRUNCATED, so the user's plugin state
+    //     was gone and world.SaveState() said it had worked.
+    //   * ~CArchive calls Close() -> Flush() with no guard of its own, so a
+    //     failing write throws out of a destructor.  Under C++11 that is a
+    //     noexcept destructor and the client terminates.
+    //
+    // Closing here leaves ~CArchive with m_pFile == NULL, so it does nothing.
+    // docs/UPSTREAM-BUGS.md 103.
+    ar->Close ();
+
     bError = false;
 
     } // end of try block

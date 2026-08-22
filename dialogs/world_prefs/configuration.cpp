@@ -816,31 +816,48 @@ void CMUSHclientDoc:: LoadPrefsP23 (CPrefsP23 &page23)
   DelayDebugMsg ("Loading", 23);
   page23.m_doc = this;
 
-  // take reasonable defaults
+  // Take reasonable defaults — into LOCALS, and thence onto the page only.
+  //
+  // These five used to be written straight onto the document, which made
+  // merely OPENING the world-properties sheet change the world, at any page:
+  // the sheet loads every page before it is shown.  Cancel could not undo it,
+  // because the change had already happened at load time, and no modified flag
+  // was set either, so the new value sat in the document until something else
+  // saved and silently persisted it.  Measured: a world with no chat name
+  // gained chat_name="Name-not-set" from an open-and-CANCEL.
+  //
+  // Nothing is lost by defaulting on the page: SavePrefsP23 copies every one of
+  // these back on OK, so the OK path lands on exactly the same values it always
+  // did — and now says so, because ChangedPrefsP23 can see the difference and
+  // the world is marked modified when it really has been.
+  // docs/UPSTREAM-BUGS.md 95.
 
-  if (m_strOurChatName.IsEmpty ())
-    m_strOurChatName = m_name;      // try login character name
+  CString  strChatName = m_strOurChatName;
+  long     iChatPort   = m_IncomingChatPort;
+  COLORREF cChatFore   = m_cChatForegroundColour;
+  COLORREF cChatBack   = m_cChatBackgroundColour;
 
-  if (m_strOurChatName.IsEmpty ())
-    m_strOurChatName = DEFAULT_CHAT_NAME;  // still nothing? blech!
+  if (strChatName.IsEmpty ())
+    strChatName = m_name;           // try login character name
 
-  if (m_IncomingChatPort == 0)
-    m_IncomingChatPort = DEFAULT_CHAT_PORT;  // won't use port 0
+  if (strChatName.IsEmpty ())
+    strChatName = DEFAULT_CHAT_NAME;  // still nothing? blech!
 
-  if (m_cChatForegroundColour == m_cChatBackgroundColour) 
+  if (iChatPort == 0)
+    iChatPort = DEFAULT_CHAT_PORT;  // won't use port 0
+
+  if (cChatFore == cChatBack)
     {
     // colour X on X will be hard to see ;)
-    m_cChatForegroundColour = RGB (255, 0, 0);  // Red
-    m_cChatBackgroundColour = RGB (0, 0, 0);    // on Black
+    cChatFore = RGB (255, 0, 0);    // Red
+    cChatBack = RGB (0, 0, 0);      // on Black
     }
 
-  // show whether we really are accepting calls
-  m_bAcceptIncomingChatConnections = m_pChatListenSocket != NULL;
-
-  page23.m_strOurChatName                   = m_strOurChatName                   ;
+  page23.m_strOurChatName                   = strChatName                        ;
   page23.m_bAutoAllowSnooping               = m_bAutoAllowSnooping               ;
-  page23.m_bAcceptIncomingChatConnections   = m_bAcceptIncomingChatConnections   ;
-  page23.m_IncomingChatPort                 = m_IncomingChatPort                 ;
+  // show whether we really are accepting calls
+  page23.m_bAcceptIncomingChatConnections   = m_pChatListenSocket != NULL         ;
+  page23.m_IncomingChatPort                 = iChatPort                          ;
   page23.m_bValidateIncomingCalls           = m_bValidateIncomingCalls           ;
   page23.m_bIgnoreChatColours               = m_bIgnoreChatColours               ;
   page23.m_strChatMessagePrefix             = m_strChatMessagePrefix             ;
@@ -848,8 +865,8 @@ void CMUSHclientDoc:: LoadPrefsP23 (CPrefsP23 &page23)
   page23.m_iMaxChatBytesPerMessage          = m_iMaxChatBytesPerMessage          ;
   page23.m_bAutoAllowFiles                  = m_bAutoAllowFiles                  ;
   page23.m_strChatSaveDirectory             = m_strChatSaveDirectory             ;
-  page23.m_iTextColour                      = m_cChatForegroundColour            ;
-  page23.m_iBackColour                      = m_cChatBackgroundColour            ; 
+  page23.m_iTextColour                      = cChatFore                          ;
+  page23.m_iBackColour                      = cChatBack                          ;
 
   }   // end of CMUSHclientDoc::LoadPrefsP23
 

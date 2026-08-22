@@ -7215,3 +7215,90 @@ must have its line numbers re-checked, and the verifier catching its own
 sibling's staleness is the mechanism working. And **an MFC or CRT claim needs
 the toolset's actual header**, not a remembered one: two claims died on
 `CTime`'s default constructor differing between MFC versions.
+
+### 10aq. Driving the world-properties sheet, and the invariant that found a bug
+
+The settings audits so far have asked "does anything read this setting?". This
+asks a different question, of the running client, with a checkable answer:
+
+> **Opening a world-properties page and pressing OK must not change the world
+> file.**
+
+`tests/win/drive_world_prefs.ps1` opens a world, saves it twice to establish
+that a no-op save is stable, then for each of the twenty-two Game ▸ Configure
+pages posts the menu command, presses a button, saves again and diffs. Any diff
+is a page whose load and save halves disagree — asked here of real MFC DDX
+rather than of the port's dialog bridge.
+
+It found `docs/UPSTREAM-BUGS.md` 95 on the first page it tried:
+`LoadPrefsP23` fills the Chat page's defaults into **the document** instead of
+the page, so merely opening the sheet — at any page, since the sheet builds all
+twenty-three — writes `chat_name`, `m_IncomingChatPort` and the chat colours,
+and **Cancel cannot take them back**. No modified flag is set either, so the
+values wait quietly in the document until something else saves.
+
+
+#### The result, once the driver stopped lying
+
+All twenty-two pages, opened and OK'd on a world with default settings:
+
+| page | result |
+|---|---|
+| MUD name/IP address (32295) | `chat_name="Name-not-set"` added |
+| the other twenty-one | **clean** |
+
+The one non-clean row is **expected and is not the bug**. `SavePrefsP23` runs
+unconditionally on OK, so the first OK commits whatever the load put in the Chat
+page — which, on a world that has never had a chat name, is the default. That is
+the design: the sheet loads every page, shows the user sensible values, and
+commits them. What was wrong, and is fixed, is that **Cancel** committed them
+too. Every subsequent page reports clean because the value is now in the file.
+
+**An intermediate version of this run reported twenty of those rows as
+"clean" when it had tested nothing at all** — the Logging page's confirmation
+was still up, so the sheet never closed and the next twenty menu commands went
+nowhere. The driver now checks for a leftover dialog before believing its own
+diff, and prints `UNTESTED - a modal is stuck` instead. Then it learned to
+**answer** the box (IDYES, else IDOK) rather than close it: WM_CLOSE means "no,
+that is not intentional", which sends the user back to the page and is exactly
+how the sheet got wedged. A driver that reports a pass for work it did not do is
+worse than one that stops, and this one did both in turn.
+#### Four things the driver had to learn, all of which make a run lie
+
+Each of these produced a plausible, wrong result first:
+
+- **`date_saved` and the `<!-- Saved on … -->` comment differ between two
+  identical saves.** Without normalising them the invariant is a clock. The
+  first run reported eighteen lines of pure timestamp; the second still tripped
+  on the comment when a minute boundary fell mid-run.
+- **A posted `WM_COMMAND(IDOK)` closes a property sheet, but `DoModal` returns
+  IDCANCEL.** The sheet vanishes, the run looks orderly, and the entire save
+  half never executes — so every page reports "clean" for the wrong reason.
+  `GetDlgItem(sheet, IDOK)` and a `BM_CLICK` on the button is the difference
+  between testing OK and testing Cancel twice. This one is worth remembering
+  for anything driving MFC dialogs: **the sheet closing is not evidence that OK
+  happened.**
+- **A validation message box wedges the rest of the sweep.** The Logging page's
+  OK asks *"You are not logging output from the MUD — is this intentional?"*
+  (by design). A driver that closes stray dialogs by title learns nothing;
+  reporting the longest static in each leftover dialog turns "something is
+  stuck" into the actual sentence.
+- **Start-up modals do not all arrive at once.** With fresh preferences the
+  client shows an upgrade splash *and* Tip of the Day, the second of which
+  turned up after the property sheet on one run and swallowed the click. The
+  driver now closes dialogs until two seconds pass with none.
+
+#### And two the world files taught
+
+Both cost a run each, and both are silent-until-modal:
+
+- **An unknown world attribute is a modal.** `auto_connect="n"` is not a world
+  attribute, and the client stops with *"Line 11: Attribute not used"* before
+  anything else happens.
+- **`<script>` is not a world tag, and `--` inside an XML comment is not legal
+  XML.** The second gives *"Invalid '--' inside comment (Cannot load)"*. Inline
+  Lua belongs in a `send_to="12"` timer's `<send>`, which is §10ak's technique
+  and remains the only route that works.
+
+`world.DoCommand` **posts**, as §10ap records: any effect it has is invisible
+until the message loop runs, so a probe must read it from a *later* timer.

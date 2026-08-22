@@ -2550,3 +2550,70 @@ actions when it went.
 it a heap-use-after-free rather than an access violation.
 `MXPCloseR6.ParagraphCloseSurvivesAGaggingTrigger` in `tests/test_mxp.cpp` runs
 on both.
+
+## 95 — "Cancel" on world properties is not a cancel
+
+**Where:** `dialogs/world_prefs/configuration.cpp`,
+`CMUSHclientDoc::LoadPrefsP23` (the Chat page's load half).
+
+```cpp
+  // take reasonable defaults
+
+  if (m_strOurChatName.IsEmpty ())
+    m_strOurChatName = m_name;      // try login character name
+
+  if (m_strOurChatName.IsEmpty ())
+    m_strOurChatName = DEFAULT_CHAT_NAME;  // still nothing? blech!
+
+  if (m_IncomingChatPort == 0)
+    m_IncomingChatPort = DEFAULT_CHAT_PORT;  // won't use port 0
+
+  if (m_cChatForegroundColour == m_cChatBackgroundColour)
+    {
+    m_cChatForegroundColour = RGB (255, 0, 0);
+    m_cChatBackgroundColour = RGB (0, 0, 0);
+    }
+
+  // show whether we really are accepting calls
+  m_bAcceptIncomingChatConnections = m_pChatListenSocket != NULL;
+```
+
+Every one of those writes **the document**, not the page — and `LoadPrefsP23`
+runs when the property sheet is *built*, alongside the other twenty-two, so it
+happens whichever page the user asked for and before anything is shown. By the
+time there is a button to press, the document has already changed, and **Cancel
+cannot undo it**: the change did not happen at OK.
+
+`SetModifiedFlag` is not called either, so the world is not marked dirty and
+nothing prompts. The new values simply sit in the document until the next save
+— autosave, File ▸ Save World Details, quitting a world with
+`save_world_automatically` — and are written then.
+
+**Measured on the running client.** A world file with no `chat_name`, opened,
+Game ▸ Configure ▸ *MUD name/IP address* (not even the Chat page), **Cancel**,
+File ▸ Save World Details, diff:
+
+```
+CANCEL : WORLD FILE CHANGED
+   =>    chat_name="Name-not-set"
+```
+
+**Fix:** default into locals and put them on the *page*. Nothing is lost:
+`SavePrefsP23` copies all of these back on OK, unconditionally
+(`configuration.cpp`'s save block is a straight-line list, not gated on
+`ChangedPrefs*`), so the OK path lands on exactly the values it always did. It
+also now *says* so — `ChangedPrefsP23` can finally see the difference, so a
+sheet that fills in defaults marks the world modified, which it should always
+have done.
+
+Verified both ways on the running client after the change:
+
+```
+Chat page, OK      -> WORLD FILE CHANGED:  chat_name="Name-not-set"
+Chat page, CANCEL  -> world file unchanged
+```
+
+**Scope.** Only `LoadPrefsP23` does this; the other twenty-two `LoadPrefsP*`
+functions assign to `pageNN.*` and nothing else, checked by walking each body
+for a bare `m_… =`. So this is one page's slip, not a pattern — but it is the
+page every sheet loads.

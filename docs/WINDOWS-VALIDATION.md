@@ -7096,3 +7096,122 @@ It counts `_CRT_ASSERT` reports only.
   it was not — an assertion that cannot distinguish "correct" from "never ran"
   is worse than none. Forcing a partial send on Windows loopback needs a lever
   this test does not have.
+
+### 10ap. A read-only agent sweep, adversarially verified — 13 claims, 5 survived
+
+Six independent readers over six areas (`pal/win_transport.cpp`,
+`pal/win_worldview.cpp`, the uninitialised-read family, the input parsers,
+lifetimes/ownership, and shared files with `#ifndef _WIN32 / #else` pairs), each
+followed by a checker told to **refute** its findings. Read-only throughout — no
+edits, no builds, no running the app — so it could run alongside GUI work.
+
+**13 claims, 8 refuted, 5 confirmed.** The refutations are the interesting half
+and are summarised below, because a sweep that reports everything it thinks of
+is worth less than one that discards two thirds.
+
+Of the five survivors, **two were reproduced and fixed**, one was reproduced and
+**deliberately not fixed**, and two are macOS-side and recorded for the
+re-integration run.
+
+#### Reproduced and fixed
+
+Both have full entries in `docs/UPSTREAM-BUGS.md`:
+
+- **92→94, MXP `</p>` uses the line a gagging trigger just freed.**
+  `MXP_CloseTag` caches `pLine`/`pStyle` from a backwards scan, dispatches, and
+  uses them again unchecked; `</p>` dispatches to `StartNewLine (true)`, which
+  runs `ProcessPreviousLine`, where "omit from output" does
+  `delete pLine; m_LineList.RemoveTail ()`. The line held IS the tail.
+  Reproduced as an access violation writing `0xDDDDDDDD` inside
+  `CPtrList::RemoveAt`, one frame under `mxpClose.cpp:337`. Shared code, so the
+  same defect ships on macOS.
+- **93, "Save notes to file" is an Open dialog.** `CFileDialog (TRUE, …)` with
+  `OFN_OVERWRITEPROMPT`, then `CFile::modeCreate`. Measured on the running
+  client: default button `&Open` before, `&Save` after.
+
+#### Reproduced, and deliberately NOT fixed
+
+**`GetInfo (249)` and `(250)` report a fabricated size while the client is
+minimised.** `pal/win_worldview.cpp`'s `mainClientRect ()` returns
+`Rect{0,0,0,0}` for "there is no main window" **and** for "there is one and it
+measures empty", and `CMUSHclientDoc::GetMainClientRect` treats `w <= 0 || h <= 0`
+as the former, so `methods_info.cpp` falls back to
+`(m_gui_rows + 2) * m_gui_font_height` and `m_gui_cols * m_gui_font_width`.
+Those four members default to 24/80/18/10 and **nothing on Windows ever writes
+them** — their only writers are under `platform/`, which the Windows project
+does not compile. Upstream had no fallback at all: `Frame.GetClientRect (&rect);
+SetUpVariantLong (vaResult, rect.bottom);`.
+
+Measured in the running client, one timer reading and asking to minimise and a
+second reading afterwards:
+
+```
+restored   h=931  w=1616
+minimised  h=468  w=800
+(the no-window fallback is h=468 w=800)
+```
+
+`IsIconic` on the frame was TRUE and `GetClientRect` from another process gave
+0 × 0, so the state is real and the numbers are invented. A plugin laying
+miniwindows out against the main window gets a plausible-looking rectangle where
+upstream gave it a 0 it would have skipped on.
+
+**Not fixed here, on purpose.** The honest fix is to let the seam express three
+states rather than two, and that touches `pal/iworldview.h`, both adapters, the
+test fake, and a pinned assertion (`tests/test_info.cpp:373`, "A view with no
+window to measure must fall back, not report zero") — none of which can be
+compiled or run on this machine. A Windows-only patch would have to invent a
+different lie. It is a wrong number, not a crash, so it waits for a change that
+can be made on both sides at once.
+
+**The first draft of this measurement was wrong, and the reason generalises.**
+`world.DoCommand ("MinimiseProgram")` **posts**; reading `GetInfo` in the same
+script reported the restored size and looked like a refutation. Anything driven
+through `DoCommand` needs the message loop to run before its effect is
+observable, so the read has to be in a *later* timer.
+
+#### macOS-side, recorded not fixed
+
+- **`platform/mfc_collections.h`, `CTypedPtrMap::GetStartPosition` leaks a
+  heap cursor on any walk that stops early.** The token is `new`ed by
+  `GetStartPosition` and `delete`d only when `GetNextAssoc` reaches `end()`, so
+  the canonical MFC idiom — walk until you find it, then `break` — leaks one
+  token per walk. Real MFC allocates nothing (`BEFORE_START_POSITION` is a
+  sentinel). `CAliasMap`, `CTriggerMap`, `CTimerMap` and `CVariableMap` are all
+  this shim off Windows. `evaluate.cpp`'s alias lookup has exactly this shape,
+  so it is **one leak per user command** for the life of the session, plus the
+  early exits in `xml/xml_load_world.cpp` and `dialogs/plugins/PluginWizard.cpp`.
+  A fix that needs no allocation: make the POSITION a pointer to the map node
+  and re-find it with `map_.find (key)` to advance — allocation-free and
+  leak-free, at `O(log n)` per step. **Not applied**: this is the container shim
+  the whole port stands on, and it cannot be compiled here.
+- **`timers.cpp`'s non-Windows arm drops the 5-second status-line refresh.**
+  The Windows arm re-runs `ShowStatusLine ()` when `m_tStatusDisplayed` is more
+  than five seconds old; the `#else` arm has only the log flush, and its comment
+  does not mention the omission. The tell is that `m_tStatusDisplayed` is
+  written three times off Windows and read **zero** times — a member with
+  writers and no readers is a dropped consumer. The port's status bar is a
+  different mechanism (`CWorldChildFrame::UpdateStatusBar`, driven by events),
+  so the fix is not the Windows line verbatim, which is why it is recorded
+  rather than pasted across.
+
+#### What killed the other eight
+
+Worth keeping, because most of them are shapes that will be claimed again:
+
+| claim | why it fell |
+|---|---|
+| `flushSend` skips the `INVALID_SOCKET` guard | **The guard is on the two lines immediately above the cited line** — the finder read the file as it was before `eed6351`, which had landed hours earlier. |
+| `flushSend`'s hard-error arm relies on an `FD_CLOSE` that never comes for a local shutdown | line numbers stale by 18 for the same reason, and the arm it describes is the TLS one |
+| two claims that a failed `CFile::GetStatus` leaves an **uninitialised `CTime`** | v143's `CTime()` is `m_time (0)`, not the empty body the claim quoted from an older header; the project pins v143 in both configurations |
+| a short `CFile::Read` publishes uninitialised heap | `CFile::Read` throws on error rather than returning short |
+| `Phase_UTF8` writes one past `m_UTF8Sequence[5]` | the arithmetic is right and the write is in padding on every ABI this builds for; the claim conceded it in its own last sentence |
+| `addToCommandHistory` fails to reset `CSendView::m_HistoryPosition` | not a relocation defect — the Windows code it replaced never reset it either |
+| `ChangeInputFont` forwards a raw `nHeight` | that is the documented seam contract, and the arm has no caller |
+
+Two lessons in that table. **Half the refutations turned on the tree having
+moved under the reader** — a sweep run against a branch being actively edited
+must have its line numbers re-checked, and the verifier catching its own
+sibling's staleness is the mechanism working. And **an MFC or CRT claim needs
+the toolset's actual header**, not a remembered one: two claims died on
+`CTime`'s default constructor differing between MFC versions.

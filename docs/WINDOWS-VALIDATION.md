@@ -6363,6 +6363,23 @@ These do not, and are the ones to look at if `ctest` goes red:
   `AccelDoc` fixture, which off Windows is a plain `CMUSHclientDoc` member. The
   bodies are unchanged.
 
+#### Port source changed on Windows, and NOT compiled here (§10am)
+
+The Functions List fix is three edits to macOS-only code, made on this machine
+and therefore built by nothing:
+
+| file | change |
+|---|---|
+| `platform/menu_ui_rules.cpp` | `ID_GAME_FUNCTIONSLIST` removed from the world-only list |
+| `platform/wx_mfc_impl.cpp` | a no-active-child arm for 33046 calling `::ShowFunctionslist (noContext, 0, 0, true)` |
+| `tests/test_menu_rules.cpp` | 33046 moved from `kWorldOnly` to `kGlobal` |
+
+`ShowFunctionslist` is declared in `stdafx.h` and defined in
+`scripting/functionlist.cpp`, which is a `mushgui_adapters` TU, so the call
+should link from `wx_mfc_impl.cpp` — but that is reasoning, not a build. The
+behavioural check on macOS is: with **no world open**, Game ▸ Functions List must
+be selectable and must open the list.
+
 #### And the one thing Windows found that only macOS can fix
 
 The five embedded engines still carry `docs/UPSTREAM-BUGS.md` 90: a Python

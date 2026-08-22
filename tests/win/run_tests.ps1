@@ -141,6 +141,7 @@ try {
   }
 
   $passed = 0; $failed = 0; $crashed = @(); $blocked = @()
+  $asserts = @{}
   foreach ($suite in $suites) {
     $r = Invoke-TestExe -ExeArgs @("--suite=$suite") -TimeoutMs $SuiteTimeoutMs
     if ($r.TimedOut) {
@@ -149,6 +150,18 @@ try {
       continue
     }
     $all = @($r.Out) + @($r.Err)
+
+    # How many MFC assertions this suite raised.  Not a failure -- plenty of
+    # them are a test deliberately driving a path MFC dislikes -- but a number
+    # worth having in front of you, because an assertion is what a code path
+    # expecting a window it has not got looks like, and that family has cost
+    # this target three crashing suites.  A suite whose count MOVES after an
+    # unrelated change is the signal; see section 10at.
+    $ac = $all | Where-Object { $_ -match '^MFC assertions: (\d+)$' } | Select-Object -Last 1
+    if ($ac -match '^MFC assertions: (\d+)$' -and [int]$Matches[1] -gt 0) {
+      $asserts[$suite] = [int]$Matches[1]
+    }
+
     $sum = $all | Where-Object { $_ -match '^\s*(\d+) passed, (\d+) failed' } | Select-Object -Last 1
     if ($sum -match '^\s*(\d+) passed, (\d+) failed') {
       $passed += [int]$Matches[1]; $failed += [int]$Matches[2]
@@ -165,6 +178,19 @@ try {
 
 Write-Host ""
 Write-Host "$passed passed, $failed failed, across $($suites.Count) suites"
+
+# Not a failure -- several suites deliberately drive paths MFC dislikes -- but
+# the number belongs in front of you.  An assertion is what "this code expected
+# a window and has not got one" looks like, and a suite whose count MOVES after
+# an unrelated change is the signal worth chasing.  Section 10at.
+if ($asserts.Count) {
+  $total = ($asserts.Values | Measure-Object -Sum).Sum
+  Write-Host ""
+  Write-Host "MFC assertions: $total, from $($asserts.Count) of $($suites.Count) suites"
+  $asserts.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object {
+    Write-Host ("  {0,5}  {1}" -f $_.Value, $_.Key)
+  }
+}
 if ($crashed.Count) { Write-Host "CRASHED (no summary line): $($crashed -join ', ')" }
 if ($blocked.Count) { Write-Host "BLOCKED (killed on timeout): $($blocked -join ', ')" }
 if ($crashed.Count -or $blocked.Count) { exit 2 }

@@ -7492,3 +7492,69 @@ the function it was pasted into, and nothing checks a comment.
 Same family as §10ar's sentinel-that-is-also-a-measurement and §10ao's
 shim-more-permissive-than-the-real-thing: **all three are a value crossing a
 boundary while its meaning quietly does not.**
+
+### 10at. An MFC-assertion census, and what it is and is not evidence of
+
+`McTestAssertionsRaised ()` (§10ao) counted `_CRT_ASSERT`s so that one test could
+ask a question. It costs nothing to ask it of all 186 suites: the host now prints
+`MFC assertions: N` at the end of every run, and `run_tests.ps1` aggregates it.
+
+```
+1670 passed, 0 failed, across 186 suites
+
+MFC assertions: 169, from 11 of 186 suites
+     90  Accelerators
+     14  LuaSurface
+     12  ClickColumnR6
+     12  SmallArms
+     12  MenuRulesWin
+     11  ConnectionClosedR5
+      6  NotepadWin
+      5  PrefsP9
+      4  LuaR5
+      2  Tls
+      1  TransportEventsR5
+```
+
+#### What it turned out to mean
+
+Every one of the 169 was triaged, with `MC_TEST_ASSERT_STACKS=1` for the stacks.
+**None is a product defect**, and saying so plainly matters more than the census
+looking impressive:
+
+| suite | asserts at | reached from | verdict |
+|---|---|---|---|
+| `Accelerators` (90) | `CDocument::UpdateFrameCounts` — `ASSERT (::IsWindow (pView->m_hWnd))` then `IsWindowVisible` | the suite's own `AccelDoc` fixture calling `AddView` on a windowless view | fixture; 45 tests × 2 |
+| `MenuRulesWin` (12), `NotepadWin` (6), `ClickColumnR6` (12) | the same, plus the MDI-child failure `NotepadWin` documents | my own fixtures | fixture, already commented at each site |
+| `LuaSurface` (14) | `CWnd::InvalidateRect` | `SetFrameBackgroundColour` doing `Frame.InvalidateRect (NULL)` unguarded | real code, unreachable state: the main frame always has a window once the app is up |
+| `SmallArms` (12), `LuaR5` (4) | `CMDIFrameWnd::MDIGetActive` — `ASSERT (m_hWndMDIClient != NULL)` | `CreateTextWindow` → `OpenDocumentFile` → `CreateNewFrame` | same shape, same verdict |
+| `ConnectionClosedR5` (11) | a toolbar assertion in `bartool.cpp` | `ConnectionClosed` updating button state | same |
+| `PrefsP9` (5), `Tls` (2), `TransportEventsR5` (1) | `CWnd` accessors on pages/frames this host never creates | — | same |
+
+So the honest summary is: **the census found no bugs today.** It is worth having
+anyway, for two reasons.
+
+#### Why keep it
+
+**It is a baseline, and the signal is movement.** A suite whose count changes
+after an unrelated edit is a suite that started reaching a window-dependent path
+it did not reach before — which is precisely how the `flushSend` defect
+announced itself in §10ao, as two assertions where there had been none. Without
+a recorded number, "two assertions" is indistinguishable from the ambient 169.
+
+**And it is a map.** The table's middle rows are a list of shipping call sites
+that dereference a window without checking — `Frame.InvalidateRect (NULL)` being
+the clearest. None is reachable *today*, because the main frame outlives every
+caller. Each becomes reachable the moment something is constructed earlier or
+destroyed later than it is now, which is exactly what the transport relocation
+did to `ConnectionOpen ()` (§10ao). This is the list to re-read after any change
+to when a window is created.
+
+#### The one caveat, learned while triaging
+
+The stack walker prints innermost-first, so "the first frame in our tree" is the
+**caller of the MFC function that asserted** — but a naive grep for the repo path
+also matches `TRACE` output, which MFC interleaves on the same stream. Two of the
+eleven were misattributed that way on the first pass (`Tls` and
+`TransportEventsR5` appeared to assert inside `OnConnectionDisconnect`, which was
+just the trace line above the stack). Match on the frame shape, not on the path.

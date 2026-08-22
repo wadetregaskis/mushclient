@@ -712,10 +712,25 @@ inline _CrtMemState& McTestLeakBaseline()
         /* and stop the exit dump reporting App's live tables as leaks */ \
         AfxEnableMemoryLeakDump(FALSE); \
     } while(0)
+
+// One line on stdout naming how many _CRT_ASSERTs the run raised, so a number
+// nobody was counting becomes one the runner can aggregate.
+//
+// MFC asserts wherever a Win32 handle is required and absent, so a suite with a
+// non-zero count is a suite reaching a code path that expects a window it has
+// not got.  That is the defect family which cost this target three crashing
+// suites (docs/WINDOWS-VALIDATION.md §10v) and which §10as's sweep was written
+// to catch in one file; the count generalises it to all 186 at no cost.
+//
+// Printed unconditionally, INCLUDING the zero: a missing line then means an old
+// binary rather than a clean run, which is the distinction the runner needs.
+#define MC_TEST_WIN_ASSERT_REPORT() \
+    printf("MFC assertions: %ld\n", McTestAssertionsRaised())
 #else
 #define MC_TEST_WIN_HOST_INIT()     ((void)0)
 #define MC_TEST_WIN_LEAK_BASELINE() ((void)0)
 #define MC_TEST_WIN_LEAK_REPORT()   ((void)0)
+#define MC_TEST_WIN_ASSERT_REPORT() ((void)0)
 #endif
 
 // MC_TEST_COMBINED links many suites into ONE executable, which is what the
@@ -761,6 +776,7 @@ inline _CrtMemState& McTestLeakBaseline()
         int rc_ = 0; \
         if (list_) mc_test::list_suites(); \
         else rc_ = mc_test::run_all(only_); \
+        MC_TEST_WIN_ASSERT_REPORT(); \
         MC_TEST_WIN_LEAK_REPORT(); \
         return rc_; \
     }

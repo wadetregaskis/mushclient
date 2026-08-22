@@ -1364,3 +1364,45 @@ TEST(TimerSaveR6, SubCentisecondIntervalSurvivesASaveAndReload)
     EXPECT_EQ(5.0, p->fEverySecond);
     unlink(path);
 }
+
+// ── The SOCKS 5 CONNECT reply is not always ten bytes ──────────────────────
+//
+// RFC 1928 §6: `VER REP RSV ATYP BND.ADDR BND.PORT`, and BND.ADDR is 4 bytes
+// for ATYP 1 (IPv4), 16 for ATYP 4 (IPv6) and 1+N for ATYP 3 (domain name).
+// `ProcessProxyResponse3` assumed ten unconditionally, so anything but an
+// IPv4 bind address left the tail of the reply in the buffer for
+// `OnBytesReceived` to memmove to the front and hand to `DisplayMsg` —
+// binary garbage on the first line of the session.
+// `docs/UPSTREAM-BUGS.md` 107.
+//
+// The return value IS the byte count the caller consumes, so asserting on it
+// is asserting the whole behaviour.
+TEST(Socks5R6, ConnectReplyLengthFollowsTheAddressType)
+{
+    CMUSHclientDoc doc;
+    doc.m_iSocksProcessing = eProxyServerSocks5;
+
+    //                VER  REP  RSV ATYP  ...address...          port
+    char ipv4[10] = { 5,   0,   0,   1,   10, 0, 0, 1,           0x0F, 0xA0 };
+    EXPECT_EQ(10, doc.ProcessProxyResponse3(ipv4, sizeof ipv4));
+
+    char ipv6[22] = { 5, 0, 0, 4,
+                      0x20,0x01,0x0d,0xb8, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+                      0x0F, 0xA0 };
+    EXPECT_EQ(22, doc.ProcessProxyResponse3(ipv6, sizeof ipv6));
+
+    // domain name "proxy.example" — 13 characters, so 4 + 1 + 13 + 2
+    char host[20] = { 5, 0, 0, 3, 13,
+                      'p','r','o','x','y','.','e','x','a','m','p','l','e',
+                      0x0F, 0xA0 };
+    EXPECT_EQ(20, doc.ProcessProxyResponse3(host, sizeof host));
+
+    // An ATYP RFC 1928 does not define keeps the old IPv4 assumption: there is
+    // nothing better to guess, and this pins that it is a choice, not a crash.
+    char odd[10] = { 5, 0, 0, 9, 1,2,3,4, 0x0F, 0xA0 };
+    EXPECT_EQ(10, doc.ProcessProxyResponse3(odd, sizeof odd));
+
+    // A refusal still reports one, whatever the address type says.
+    char refused[10] = { 5, 5, 0, 4, 1,2,3,4, 0x0F, 0xA0 };   // REP 5 = refused
+    EXPECT_EQ(-1, doc.ProcessProxyResponse3(refused, sizeof refused));
+}

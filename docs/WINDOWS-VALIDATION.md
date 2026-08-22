@@ -7768,8 +7768,8 @@ they are not re-raised:
 
 #### NOT checked — leads only
 
-Three remain. Each has a file, a line and an argument in the sweep's own output;
-none has been read by me, and the record across both sweeps is that a
+One remains. It has a file, a line and an argument in the sweep's own output,
+and has not been read by me. The record across both sweeps is that a
 "confirmed" label means only that one agent argued for it and a second failed to
 refute it. **Eight of the first sweep's thirteen did not survive contact.**
 Treat accordingly.
@@ -7777,12 +7777,10 @@ Treat accordingly.
 | file | claim |
 |---|---|
 | `dialogs/world_prefs/configuration.cpp` | World Properties clears the persisted "accept chat connections" tick when the listen socket failed to bind — and this one interacts with `UPSTREAM-BUGS` 95, since that fix moved five chat defaults into locals and deliberately left this one reading live state |
-| `doc_shared.cpp` | the MCCP decompression loop keeps inflating and displaying after `DisplayMsg` has closed the world |
-| `doc_shared.cpp` | the SOCKS5 CONNECT reply is assumed to be exactly 10 bytes and to arrive whole in one packet |
 
 The seven I checked first were the seven I could reach with a test on this
 machine. That is the honest selection criterion, and it is worth saying out
-loud: the remaining three are not less serious, they are less convenient.
+loud: the one that remains is not less serious, it is less convenient.
 
 #### One unreproduced crash, recorded rather than dismissed
 

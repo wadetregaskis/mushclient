@@ -3165,3 +3165,59 @@ checks the written text, the round trip, and — as the control for the trim —
 that a whole-second timer still writes `"5.00"`. There is deliberately **no**
 textual negative assertion for `second="0.00"`: `offset_second="0.00"` is a
 legal superstring of it, and the first draft of the test failed on exactly that.
+
+## 107 — A SOCKS 5 proxy that answers with a non-IPv4 bind address puts binary garbage on the first line
+
+`doc_shared.cpp`, `ProcessProxyResponse3`.
+
+RFC 1928 §6 gives the CONNECT reply as
+
+```
++----+-----+-------+------+----------+----------+
+|VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+| 1  |  1  |   1   |  1   | Variable |    2     |
++----+-----+-------+------+----------+----------+
+```
+
+where BND.ADDR is **4** bytes for ATYP 1 (IPv4), **16** for ATYP 4 (IPv6) and
+**1 + N** for ATYP 3 (a domain name). Only the IPv4 case is ten bytes, and the
+code said
+
+```cpp
+iBytesToMove = 10;
+```
+
+unconditionally. The caller then does
+
+```cpp
+memmove (buff, &buff [iBytesToMove], count - iBytesToMove);
+count -= iBytesToMove;
+```
+
+so with an IPv6 bind address the remaining **12** bytes of the proxy's reply
+are moved to the front of the receive buffer and handed to `DisplayMsg` — the
+session opens with a line of binary. A domain-name reply does the same with
+however many bytes the name ran to.
+
+This is not a memory-safety bug: the caller guards with
+`if (count <= iBytesToMove) return;`, so a *short* reply is dropped rather than
+over-read.
+
+**Fix:** derive the length from ATYP. An ATYP the RFC does not define keeps the
+old ten-byte assumption — there is nothing better to guess from — and the test
+pins that as a choice rather than leaving it undefined.
+
+**Not fixed, and it needs more than a length calculation: a reply split across
+TCP segments.** There is no accumulation buffer for the proxy phase; each
+`ProcessProxyResponse*` sees one packet and must answer from it. A short read
+still reports success off `buff [1]`, and the rest of the reply arrives in the
+next packet, by which time the phase is `eConnectConnectedToMud` and it is
+displayed. Closing that means giving the proxy phase a persistent buffer and a
+"need more data" return value — a change to the phase machinery, not to this
+arm, and worth its own decision. A ≤22-byte reply written immediately after
+connect rarely splits, which is why this has not been noticed; it is a real
+hole all the same.
+
+Pinned by `Socks5R6.ConnectReplyLengthFollowsTheAddressType`, which asserts the
+returned byte count — the value the caller consumes — for all three address
+types, for an undefined one, and for a refusal.

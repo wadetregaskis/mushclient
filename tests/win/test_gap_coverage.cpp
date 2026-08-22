@@ -26,7 +26,10 @@
 #include "scripting/errors.h"   // eOK / eCouldNotOpenFile
 
 #include "MUSHview.h"       // CMUSHView: the click-column tests below
+#include "dialogs/plugins/PluginsDlg.h"  // CPluginsDlg -- the stale-CPlugin* row
 #include "posix_compat.h"   // getpid / unlink, for the names-file tests
+
+#include <commctrl.h>   // a real WC_LISTVIEW for the Plugins dialog test
 
 #include <crtdbg.h>
 #include <string>
@@ -595,4 +598,161 @@ TEST(ClickColumnR6, TheHalfWayArmAnchorsOnCharacterBoundaries)
     EXPECT_NE(2, colRight);
     EXPECT_EQ(1, colLeft);      // the character itself
     EXPECT_EQ(3, colRight);     // the one after it
+}
+
+// ═══ aca2478: the Plugins dialog's stale CPlugin* ══════════════════════════
+//
+// The last row in docs/WINDOWS-VALIDATION.md §10h with no test on EITHER
+// platform.  CPluginsDlg::OnUpdateNeedDescription pulled the selected row's
+// CPlugin* straight off the list control's item data with no
+// find()-in-m_PluginList liveness check, unlike all five sibling handlers.  A
+// plugin removed from the list while the dialog stays open without LoadList()
+// rebuilding the rows -- world.UnloadPlugin or ReloadPlugin from a timer firing
+// during the dialog's modal loop -- leaves that row's item data pointing at a
+// CPlugin the idle-driven update-UI pump then reads.
+//
+// The port covers it in platform/gui_bridge_selftest.cpp by pointing the real
+// dialog at a wxListCtrl.  The same shape works here with a REAL Win32 list
+// view, and that is the whole reason this is a unit test rather than the GUI
+// walk §10h asked for: the hazard needs a plugin to vanish from m_PluginList
+// between LoadList() and the next idle, which no sequence of clicks arranges --
+// the dialog's own Remove button calls LoadList() afterwards.
+//
+// A console process may create windows; nothing about this needs the app.  The
+// list is a plain WC_LISTVIEW child of a hidden STATIC, Attach()ed to the
+// dialog's CListCtrl member and Detach()ed before it goes away, so MFC's handle
+// map never outlives the window.
+namespace {
+
+// A hidden parent + a report-mode list view, torn down in the right order.
+struct ListCtrlFixture {
+    HWND parent;
+    HWND list;
+
+    ListCtrlFixture() : parent(NULL), list(NULL)
+    {
+        INITCOMMONCONTROLSEX icc;
+        icc.dwSize = sizeof icc;
+        icc.dwICC  = ICC_LISTVIEW_CLASSES;
+        ::InitCommonControlsEx(&icc);
+
+        parent = ::CreateWindowExA(0, "STATIC", "mc_test_parent",
+                                   WS_POPUP, 0, 0, 500, 400,
+                                   NULL, NULL, ::GetModuleHandle(NULL), NULL);
+        if (!parent) return;
+        list = ::CreateWindowExA(0, WC_LISTVIEWA, "",
+                                 WS_CHILD | LVS_REPORT, 0, 0, 480, 360,
+                                 parent, NULL, ::GetModuleHandle(NULL), NULL);
+    }
+    ~ListCtrlFixture()
+    {
+        if (list)   ::DestroyWindow(list);
+        if (parent) ::DestroyWindow(parent);
+    }
+    bool ok() const { return parent != NULL && list != NULL; }
+};
+
+// The port's version of this test uses AfxDispatchUpdateUI and CCmdUI's
+// m_pCaptureEnable.  Neither exists in real MFC -- both are platform/mfc_ui.h's
+// additions -- so capture the answer the way the framework actually offers:
+// CCmdUI::Enable is virtual, and CCmdUI::DoUpdate is the public entry the idle
+// pump itself goes through.  Recording whether Enable was called AT ALL is also
+// strictly more than a captured bool can say.
+struct CaptureCmdUI : public CCmdUI {
+    bool enabled;
+    bool sawEnable;
+    CaptureCmdUI() : enabled(false), sawEnable(false) {}
+    virtual void Enable(BOOL bOn)
+    {
+        enabled   = (bOn != FALSE);
+        sawEnable = true;
+        m_bEnableChanged = TRUE;
+    }
+};
+
+// A plugin object with just the fields LoadList and the handler read.
+CPlugin* make_plugin(CMUSHclientDoc& doc, const char* name, const char* id,
+                     const char* description)
+{
+    CPlugin* p = new CPlugin(&doc);
+    p->m_strName        = name;
+    p->m_strID          = id;
+    p->m_strDescription = description;
+    p->m_strAuthor      = "test";
+    p->m_strPurpose     = "fixture";
+    p->m_strLanguage    = "lua";
+    p->m_dVersion       = 1.0;
+    p->m_bEnabled       = TRUE;
+    return p;
+}
+
+}   // namespace
+
+TEST(PluginsDlgR6, ShowInfoIsDisabledOnceThePluginHasLeftTheList)
+{
+    ListCtrlFixture ctl;
+    ASSERT_TRUE(ctl.ok());
+
+    CMUSHclientDoc doc;
+    CPlugin* live   = make_plugin(doc, "AAALive",   "aaaaaaaaaaaaaaaaaaaaaaaa",
+                                  "The live plugin's long description.");
+    CPlugin* erased = make_plugin(doc, "ZZZErased", "bbbbbbbbbbbbbbbbbbbbbbbb",
+                                  "The erased plugin's long description.");
+    doc.m_PluginList.push_back(live);
+    doc.m_PluginList.push_back(erased);
+
+    CPluginsDlg dlg;
+    dlg.m_pDoc = &doc;
+    dlg.m_ctlPluginList.Attach(ctl.list);
+
+    // LoadList only fills rows; the columns a report-mode list needs to hold
+    // them come from OnInitDialog, which this test skips (it also reads and
+    // writes the user's real column-width preferences).
+    dlg.m_ctlPluginList.InsertColumn(eColumnName,     "Name",     LVCFMT_LEFT,  130);
+    dlg.m_ctlPluginList.InsertColumn(eColumnPurpose,  "Purpose",  LVCFMT_LEFT,  130);
+    dlg.m_ctlPluginList.InsertColumn(eColumnAuthor,   "Author",   LVCFMT_LEFT,   55);
+    dlg.m_ctlPluginList.InsertColumn(eColumnLanguage, "Language", LVCFMT_LEFT,   55);
+    dlg.m_ctlPluginList.InsertColumn(eColumnFile,     "File",     LVCFMT_LEFT,   80);
+    dlg.m_ctlPluginList.InsertColumn(eColumnEnabled,  "Enabled",  LVCFMT_LEFT,   30);
+    dlg.m_ctlPluginList.InsertColumn(eColumnVersion,  "Ver",      LVCFMT_RIGHT,  20);
+
+    dlg.LoadList();     // sorts by name: row 0 = AAALive, row 1 = ZZZErased
+    ASSERT_EQ(2, dlg.m_ctlPluginList.GetItemCount());
+
+    // The hazard: the plugin leaves m_PluginList without LoadList() rebuilding
+    // the rows, so row 1's item data still points at it.  It is kept ALIVE, so
+    // the test itself never touches freed memory -- only the liveness check
+    // under test would.
+    PluginListIterator pit = find(doc.m_PluginList.begin(),
+                                  doc.m_PluginList.end(), erased);
+    ASSERT_TRUE(pit != doc.m_PluginList.end());
+    doc.m_PluginList.erase(pit);
+
+    // The live row first: without this control a handler that simply disabled
+    // Show Info always would pass the assertion that matters.
+    dlg.m_ctlPluginList.SetItemState(-1, 0, LVIS_SELECTED);
+    dlg.m_ctlPluginList.SetItemState(0, LVIS_SELECTED, LVIS_SELECTED);
+    ASSERT_EQ(1u, (unsigned) dlg.m_ctlPluginList.GetSelectedCount());
+
+    CaptureCmdUI live_ui;
+    live_ui.m_nID = IDC_SHOW_DESCRIPTION;
+    EXPECT_TRUE(live_ui.DoUpdate(&dlg, FALSE) != FALSE);
+    EXPECT_TRUE(live_ui.sawEnable);
+    EXPECT_TRUE(live_ui.enabled);
+
+    // ...and the erased row, whose item data is stale.
+    dlg.m_ctlPluginList.SetItemState(-1, 0, LVIS_SELECTED);
+    dlg.m_ctlPluginList.SetItemState(1, LVIS_SELECTED, LVIS_SELECTED);
+    EXPECT_EQ((DWORD_PTR) erased, dlg.m_ctlPluginList.GetItemData(1));
+    ASSERT_EQ(1u, (unsigned) dlg.m_ctlPluginList.GetSelectedCount());
+
+    CaptureCmdUI stale_ui;
+    stale_ui.m_nID   = IDC_SHOW_DESCRIPTION;
+    stale_ui.enabled = true;              // the opposite of the expected answer
+    EXPECT_TRUE(stale_ui.DoUpdate(&dlg, FALSE) != FALSE);
+    EXPECT_TRUE(stale_ui.sawEnable);      // the handler ran; it did not just skip
+    EXPECT_FALSE(stale_ui.enabled);       // was: read the stale item data unchecked
+
+    dlg.m_ctlPluginList.Detach();   // never let MFC's map outlive the window
+    delete erased;                  // m_PluginList no longer owns it
 }

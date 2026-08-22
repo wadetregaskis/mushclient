@@ -6372,3 +6372,49 @@ other five return before it. One line each — `py_engine.cpp:552,555`,
 `perl_engine.cpp:411`, `js_engine.cpp:579`, `tcl_engine.cpp:365`,
 `ruby_engine.cpp:512` — and `--engines-selftest` is the only place they can be
 proved.
+
+### 10ag. `aca2478`, the last §10h row with no test anywhere
+
+`CPluginsDlg::OnUpdateNeedDescription` read the selected row's `CPlugin*`
+straight off the list control's item data with no `find ()`-in-`m_PluginList`
+liveness check, unlike all five sibling handlers. §10w recorded it as
+**"genuinely owed, with no test anywhere"**, needing "the dialog and its list
+control". It now has one, and it is a unit test rather than the GUI walk that
+row asked for — for a reason worth stating.
+
+**No sequence of clicks arranges the hazard.** It needs a plugin to leave
+`m_PluginList` between `LoadList ()` and the next idle, and the dialog's own
+Remove button calls `LoadList ()` afterwards. What produces it is
+`world.UnloadPlugin` or `ReloadPlugin` from a timer firing during the dialog's
+modal loop. A test can arrange that in three lines; a person driving the GUI
+cannot arrange it at all.
+
+The port covers it in `platform/gui_bridge_selftest.cpp` against a
+wxListCtrl-backed `CListCtrl`. The same shape works here against a **real Win32
+list view** — a console process may create windows, and nothing about this needs
+the application. `tests/win/test_gap_coverage.cpp`'s `PluginsDlgR6` creates a
+hidden `STATIC` parent and a `WC_LISTVIEW` child, `Attach ()`es it to the
+dialog's `CListCtrl` member and `Detach ()`es before it goes away, so MFC's
+handle map never outlives the window.
+
+**Two of the port's helpers do not exist in real MFC**, and the substitutes are
+better. `AfxDispatchUpdateUI` and `CCmdUI::m_pCaptureEnable` are both
+`platform/mfc_ui.h`'s additions. The framework's own equivalents are
+`CCmdUI::DoUpdate` — the public entry the idle pump goes through — and the fact
+that `CCmdUI::Enable` is **virtual**, so a two-field subclass records not only
+what the handler answered but *whether it answered at all*. A captured `bool`
+cannot tell "disabled" from "never called"; `sawEnable` can, and both assertions
+are made.
+
+**Revert-checked.** With the liveness check deleted and nothing else changed,
+`stale_ui.enabled` stays true — the handler reads the erased plugin's
+description and enables Show Info. The erased plugin is deliberately kept
+*alive* (only removed from `m_PluginList`), so the test itself never touches
+freed memory; only the check under test would.
+
+That closes the row. It also settles the shape of the remaining §10h dialog
+work: **"needs the dialog" is not the same as "needs a GUI session"**, and the
+list-control barrier that this row and two of `44f0737`'s leftovers share — the
+fitted last-column width, and `LoadPrefsP7`'s wrong-enum indexing, both recorded
+in `tests/win/test_prefs_pages.cpp` as needing "a created `CListCtrl`" — is the
+same twelve lines of fixture away.

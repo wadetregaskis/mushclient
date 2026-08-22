@@ -6544,3 +6544,45 @@ hand at the end of this round instead: **286 `<ClCompile>` entries each, and the
 two lists are identical.** Regenerating after every change achieves the same
 thing, but "the generator was re-run" is not the same claim as "the lint
 passed", and only the second one is a guard.
+
+### 10ak. xterm-256 live on Windows, and the technique that got it
+
+§4c-quintricies item 6 asked for "a real xterm-256 world, live, for a session".
+Done, and the evidence is exact rather than visual.
+
+A loopback stub sent SGR `38;5;196` (foreground), `48;5;21` (background) and
+`0` (reset) around three marker lines; a one-shot timer in the world file then
+walked `GetLinesInBufferCount` / `GetLineInfo` / `GetStyleInfo` and wrote every
+line's style runs to a file. Measured:
+
+| line | `GetStyleInfo` fore | back |
+|---|---|---|
+| `XTERM256-FOREGROUND-196` | **255** = `0x0000FF` | 0 |
+| `XTERM256-BACKGROUND-21` | 12632256 (default) | **16711680** = `0xFF0000` |
+| `PLAIN-LINE-AFTER-RESET` | 12632256 = `0xC0C0C0` | 0 |
+
+`COLORREF` is `0x00BBGGRR`, so `0x0000FF` is pure **red** and `0xFF0000` is pure
+**blue** — which is exactly xterm-256's 196 (`#FF0000`) and 21 (`#0000FF`). Both
+directions resolve correctly and the reset restores the world's defaults. That
+is more than a session's eyeballing would have shown.
+
+#### The technique, because it generalises to most of what §10h has left
+
+Three pieces, none of which needs a human or a synthesised keystroke:
+
+1. **A loopback stub** that plays a script of `TEXT` / `RAW <hex>` / `WAIT`
+   directives at the client and logs whatever the client sends back. Anything
+   that arrives over the wire — ANSI, xterm-256, MXP, telnet negotiation,
+   MCCP — can be put in front of the real client this way.
+2. **A world file with a one-shot timer** (`send_to="12"`, `active_closed="y"`)
+   that runs arbitrary Lua a few seconds after the world opens. No input
+   synthesis at all.
+3. **The world writes its own evidence.** `io.open` plus the `GetLineInfo` /
+   `GetStyleInfo` family turns "what did the client actually display" into a
+   file this side can diff. A screenshot could not have distinguished
+   `0x0000FF` from `0xFF0000`; this does.
+
+The timing is the one thing to get right: the timer is relative to world OPEN,
+not to the connection, so it must be set later than the `ID_CONNECTION_CONNECT`
+that follows. Six seconds was too early on the first attempt and the dump
+contained only MUSHclient's own banner.

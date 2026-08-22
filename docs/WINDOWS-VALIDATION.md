@@ -7558,3 +7558,46 @@ also matches `TRACE` output, which MFC interleaves on the same stream. Two of th
 eleven were misattributed that way on the first pass (`Tls` and
 `TransportEventsR5` appeared to assert inside `OnConnectionDisconnect`, which was
 just the trace line above the stack). Match on the frame shape, not on the path.
+
+### 10au. A second sweep, mostly lost — and the one finding that survived it
+
+A second read-only hunt was launched over six areas the first had not covered
+(the world loader/saver, the matching engines, everything that writes a file,
+the VARIANT boundary, a second pass at `pal/win_worldview.cpp`, and telnet/MCCP).
+**It did not finish.** The journal records seven agents started and one result;
+the aggregate came back with nothing confirmed and nothing refuted, which is
+what an empty pipeline looks like rather than a clean bill of health. Recorded
+because "the sweep found nothing" and "the sweep did not run" are the same
+output and must not be read the same way — the tool result was
+`confirmed: 0, refuted: 0, byArea: []`, and it was the **empty `byArea`** that
+gave it away.
+
+The one agent that did report found `docs/UPSTREAM-BUGS.md` 96, and its verifier
+never ran, so it was checked by hand instead:
+
+**`CChatSocket::Process_File_block` writes the block size the peer PROMISED, not
+the number of bytes that arrived.** On the zChat transport the block length
+comes from two bytes of the peer's own message header and is never compared with
+`m_iFileBlockSize`, so a one-byte `CHAT_FILE_BLOCK` makes the receiver
+`Write (pBuff, 1024)` out of a one-byte allocation — 1023 bytes of heap into the
+user's file, and into the SHA sumcheck. The MudMaster arm of the same switch
+already has the guard (`if (iLength < (m_iFileBlockSize + 2)) return;`); the
+zChat arm simply never got one.
+
+Confirmed by reading both arms and both size fields before touching anything,
+and pinned by `ChatFileBlockR6` in `tests/win/test_gap_coverage.cpp`, which
+drives the method directly — the socket-level suite is excluded here for using
+`socketpair`, and every member the setup needs is public.
+
+#### Two things the test got wrong first, both worth keeping
+
+- **`StopFileTransfer` does `delete m_pFile`.** The first fixture pointed it at
+  a stack `CFile` and the debug heap failed instantly with
+  `is_block_type_valid`. A fixture that hands a member to code which owns it has
+  to hand it something owned the same way.
+- **The diagnostic printed a number it had not measured.** It reported
+  "0 bytes on disk" for a file that had just had 1024 written into it: the file
+  is still open on the failing path, and a second handle cannot read the size of
+  a `CFile` opened `shareCompat`. The assertion was right and the explanation
+  beside it was false, which is the worse of the two failures — it now reports
+  the file's *existence*, which is what it can actually see.

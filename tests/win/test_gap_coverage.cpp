@@ -31,6 +31,7 @@
                                                  // OutputBufferBytesNeeded, CPrefsP7/8
 #include "posix_compat.h"   // getpid / unlink, for the names-file tests
 #include "fake_worldview.h"  // the swappable pal::IWorldView — GetInfo 249/250
+#include "chatsock.h"        // CChatSocket — the file-block test at the end
 
 #include <commctrl.h>   // a real WC_LISTVIEW for the Plugins dialog test
 
@@ -926,3 +927,73 @@ TEST(MainClientRectR6, AMinimisedWindowReportsZeroRatherThanAFabricatedSize)
     EXPECT_EQ(0L, (long) f.doc.GetInfo(250).lVal);
 }
 
+
+
+// ── A short chat file block must not write bytes that never arrived ────────
+//
+// `CChatSocket::Process_File_block` writes `expected` bytes into the receiving
+// file, where `expected` is the block size agreed at the handshake — or the
+// remainder, for the final block. Both numbers come from the PEER: the block
+// size from its handshake, `m_iFileSize` from its file-start message. The bytes
+// actually present are `strMessage`, and on the **zChat** transport the two need
+// not agree: that arm of `OnReceive` reads the block length out of two bytes of
+// the peer's own message header and hands over exactly that many, with no
+// comparison against the block size. The **MudMaster** arm cannot produce a
+// short block — it returns until `m_iFileBlockSize + 2` bytes have arrived,
+// which is precisely the check the zChat arm lacks.
+//
+// So a peer sending a one-byte `CHAT_FILE_BLOCK` caused
+// `m_pFile->Write (pBuff, 1024)` out of a one-byte buffer: 1023 bytes past the
+// end of a heap allocation, written into the user's file and fed to the SHA
+// sumcheck alongside. `docs/UPSTREAM-BUGS.md` 96.
+//
+// Driven directly rather than over a socket — `tests/test_chat_sockets.cpp` is
+// excluded here because it builds AF_UNIX pairs, and every member this setup
+// needs is public. Verified non-vacuous: with the guard temporarily replaced by
+// `if (false)`, all three assertions below fail.
+TEST(ChatFileBlockR6, AShortBlockIsRefusedRatherThanPaddedFromTheHeap)
+{
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_chatblk_%d.bin", (int) ::GetCurrentProcessId());
+    ::DeleteFileA(path);
+
+    CMUSHclientDoc doc;
+    CChatSocket sock(&doc);
+
+    // On the HEAP: StopFileTransfer does `delete m_pFile`, so a stack CFile here
+    // is a delete of a stack object.  The debug heap said so immediately, which
+    // is how this fixture got caught.
+    CFile* f = new CFile;
+    ASSERT_TRUE(f->Open(path, CFile::modeWrite | CFile::modeCreate) != FALSE);
+
+    // Mid-transfer state: four 1024-byte blocks promised, none received yet.
+    sock.m_bDoingFileTransfer = true;
+    sock.m_bSendFile          = false;
+    sock.m_pFile              = f;
+    sock.m_iFileBlockSize     = 1024;
+    sock.m_iFileSize          = 4096;
+    sock.m_iFileBlocks        = 4;
+    sock.m_iBlocksTransferred = 0;
+    sock.m_strOurFileName     = path;
+
+    // One byte, where 1024 was promised.
+    sock.Process_File_block(CString("x"));
+
+    // The abort path closes the file, nulls the pointer and REMOVES the
+    // half-received file, so "the file is gone" is the whole assertion.
+    EXPECT_TRUE(sock.m_pFile == NULL);
+    EXPECT_FALSE(sock.m_bDoingFileTransfer);
+
+    // The file's existence, not its size.  On the failing path it is still
+    // open, and a second handle cannot read the size of a CFile opened
+    // shareCompat -- the first version of this reported "0 bytes" for a file
+    // that had just had 1024 written into it, which is exactly the sort of
+    // number not to put in a test's output.
+    const DWORD attrs = ::GetFileAttributesA(path);
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        printf("      (the half-received file survived: the transfer carried on"
+               " with bytes that never arrived)\n");
+        ::DeleteFileA(path);
+    }
+    EXPECT_TRUE(attrs == INVALID_FILE_ATTRIBUTES);
+}

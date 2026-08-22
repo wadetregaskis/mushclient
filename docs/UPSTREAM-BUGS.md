@@ -2617,3 +2617,59 @@ Chat page, CANCEL  -> world file unchanged
 functions assign to `pageNN.*` and nothing else, checked by walking each body
 for a bare `m_… =`. So this is one page's slip, not a pattern — but it is the
 page every sheet loads.
+
+## 96 — A short chat file block writes heap memory into the user's file
+
+**Where:** `chatsock.cpp`, `CChatSocket::Process_File_block`.
+
+```cpp
+UINT expected = m_iFileBlockSize;
+if (m_iBlocksTransferred == m_iFileBlocks)
+  expected = m_iFileSize % m_iFileBlockSize;   // smaller final block
+if (expected == 0)
+  expected = m_iFileBlockSize;
+
+CString strBuffer = strMessage;
+char * pBuff = strBuffer.GetBuffer (strMessage.GetLength ());
+...
+m_pFile->Write (pBuff, expected);
+...
+shsUpdate (&m_shsInfo, (unsigned char *) pBuff, expected);
+```
+
+`expected` is what the **peer promised**: `m_iFileBlockSize` comes from the
+handshake (`request.fileBlockSize`, 1024 for zChat) and `m_iFileSize` from its
+file-start message (`m_iFileSize = atol (strSize)`). `pBuff` is a buffer of
+`strMessage.GetLength ()` bytes — what actually arrived. **Nothing compares the
+two.**
+
+The two transports differ, and only one is safe:
+
+| transport | how the block is sliced |
+|---|---|
+| MudMaster | `if (iLength < (m_iFileBlockSize + 2)) return;` then `Mid (1, m_iFileBlockSize)` — waits for a full block, so the slice is always exactly the block size |
+| **zChat** | length taken from two bytes of the peer's own message header, `Mid (4, iLength)` — **whatever the peer said, 0 to 65535, never compared to the block size** |
+
+So a peer sending a one-byte `CHAT_FILE_BLOCK` over zChat makes the receiver
+`Write (pBuff, 1024)` out of a one-byte allocation: **1023 bytes past the end of
+a heap block, written into the file the user is receiving**, and fed to the SHA
+sumcheck alongside. The guard the zChat arm needs is the one the MudMaster arm
+already has.
+
+**Reachable:** the chat file-transfer flow — a peer this client is chatting with
+offers a file and the user accepts it, or `m_bAutoAllowFiles` ("accept files
+automatically") is on and no acceptance is needed. Both ends of a chat session
+are ordinary MUSHclient users; this needs a modified or malfunctioning one at
+the other end, not a compromised MUD.
+
+**Fix:** refuse a block shorter than promised, rather than clamping. A short
+block means the transfer is already wrong, and silently writing a short one
+produces a corrupt file whose only symptom is the sumcheck failing at the end.
+The abort path already exists and already deletes the half-received file.
+
+**Shared code — the same defect ships on macOS**, where a sanitizer would call
+it a heap-buffer-overflow read. `ChatFileBlockR6.AShortBlockIsRefusedRatherThan
+PaddedFromTheHeap` in `tests/win/test_gap_coverage.cpp` drives
+`Process_File_block` directly (the socket-level suite is excluded on Windows for
+using `socketpair`) and was verified non-vacuous: with the guard replaced by
+`if (false)`, all three of its assertions fail.

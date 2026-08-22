@@ -1286,6 +1286,38 @@ void CChatSocket::Process_File_block			    (const CString strMessage)
   if (expected == 0)
      expected = m_iFileBlockSize; // must be an exact multiple of block size
 
+  // `expected` is what the PEER promised: m_iFileBlockSize comes from the
+  // handshake and m_iFileSize from its file-start message.  The bytes actually
+  // in front of us are strMessage, and on the zChat transport the two need not
+  // agree — that path takes the block length from two bytes of the peer's own
+  // message header and hands over exactly that many, with no comparison against
+  // the block size (chatsock.cpp, the zChat arm of OnReceive).  The MudMaster
+  // arm cannot produce a short block because it waits for
+  // `m_iFileBlockSize + 2` bytes before slicing, which is the check this one
+  // never had.
+  //
+  // Writing `expected` bytes out of a shorter buffer read past the end of the
+  // heap allocation and put whatever followed it into the user's file, and into
+  // the SHA sumcheck.  A peer that sends a one-byte CHAT_FILE_BLOCK got 1023
+  // bytes of this process's heap written to disk.  docs/UPSTREAM-BUGS.md 96.
+  //
+  // Refuse rather than clamp: a block shorter than promised means the transfer
+  // is already wrong, and silently writing a short block would produce a
+  // corrupt file whose sumcheck failure is the only clue.
+  if ((UINT) strMessage.GetLength () < expected)
+    {
+    SendChatMessage (CHAT_MESSAGE, "File transfer aborted: short file block.");
+    m_pDoc->ChatNote (eChatFile,
+                      TFormat ("Receive of file \"%s\" aborted: block %ld arrived "
+                               "with %i bytes, not the %u agreed.",
+                               (LPCTSTR) m_strOurFileName,
+                               m_iBlocksTransferred,
+                               strMessage.GetLength (),
+                               expected));
+    StopFileTransfer (true);    // close file
+    return;
+    }
+
   CString strBuffer = strMessage;
   char * pBuff = strBuffer.GetBuffer (strMessage.GetLength ());
 

@@ -6903,3 +6903,118 @@ neither has been triaged before.
 "does the port's menu match the client's" now starts with a text file instead of
 a screenshot, and the same three resources carry the captions and accelerator
 text that a caption-level diff needs.
+
+### 10ao. `pal/win_transport.cpp` runs for the first time
+
+The file's own header says what it needed:
+
+> CANNOT be compiled or run in the macOS port environment: correctness is
+> by-construction/reasoning (each mechanic is the exact original call
+> sequence), the same discipline as `pal/gdi_surface.cpp`. **Windows CI is the
+> eventual empirical arbiter.**
+
+Every world connection on Windows goes through it. It replaced `CWorldSocket`
+(worldsock.cpp), `CMUSHclientDoc::ConnectSocket`, and the
+`LookupHostName`/`HostNameResolved` pair, and until now nothing had executed a
+line of it. It is also the least forgiving place for by-reasoning parity: a
+transport that neither connects nor reports a failure is a client that hangs on
+"Connecting…", and there is no test elsewhere in the suite that touches it.
+
+`tests/win/test_win_transport.cpp` is 14 tests over 127.0.0.1 against a listener
+the file creates itself — resolve (success, failure, cancel, destroy-mid-lookup),
+connect (success, refused, non-reentrant delivery), bytes both ways, the big
+buffered send, peer close, local close, delete-from-inside-a-callback, and the
+two engine-seam tests below. `tests/mud_stub.py` is deliberately not used: it is
+a separate process, and these need a socket the assertion can drive byte by
+byte. **All 14 green; the target is 1662 passed, 0 failed, 183 suites.**
+
+#### The finding: a send during the DNS lookup makes an illegal MFC call
+
+`ConnectSocket` calls `CreateTransport ()` and then, for a hostname that is not
+already an IP, sets `eConnectMudNameLookup` and returns to wait for DNS. For the
+whole of that window the doc has `m_pTransport != NULL` and the adapter's
+`CAsyncSocket` has `m_hSocket == INVALID_SOCKET`, because the adapter creates
+its socket in `connect ()`, not in the factory. `SendPacket`'s only guard is
+`m_pTransport == NULL`, which is satisfied — so a trigger, a timer or a script's
+`world.Send` in that window reaches `flushSend`, whose error branch calls
+`AsyncSelect` / `ShutDown` / `Close` on a socket that does not exist.
+
+Measured, not reasoned: **two `_CRT_ASSERT`s per call**, `sockcore.cpp:386`
+(`ASSERT (m_hSocket != INVALID_SOCKET)`) and `:389` (`ASSERT
+(pState->m_hSocketWindow != NULL)`) — both from the single `AsyncSelect`. In a
+Debug build of the product that is a modal Abort/Retry/Ignore box during an
+ordinary connect; in Release the calls fail harmlessly and `m_outgoing.clear ()`
+**silently discards** what the engine just sent.
+
+**Upstream could not reach it.** `ConnectSocket` at `249534f^` did
+`m_pSocket = new CWorldSocket (this)` followed immediately by
+`m_pSocket->Create (…)`, before the phase was set and before the lookup — so a
+non-NULL `m_pSocket` always had a real handle and `SendPacket`'s NULL check was
+sufficient. Creating the socket lazily is what opened the window.
+
+Fixed by giving `flushSend` the guard `close ()` five lines away already has and
+documents (*"real MFC's AsyncSelect ASSERTs on an invalid handle"*). The bytes
+stay queued rather than being discarded, so they go out on the first `FD_WRITE`
+once connected — which is what "append and it drains on writability" promises,
+and the test now asserts that they arrive.
+
+**The general shape, and it is the mirror of one already recorded.**
+`pal/win_transport.cpp` says "Structure mirrors `platform/posix_transport.cpp`
+1:1 (that adapter is the live-verified reference; reviewing this file is a diff
+exercise against it)". The two `flushSend` bodies **are** identical, character
+for character in the error branch. They behave differently because the
+`CAsyncSocket` underneath is not the same class: the port's shim
+(`platform/posix_socket.h`) tolerates an invalid handle, real MFC asserts on it.
+CLAUDE.md already records *"a shim can satisfy an API's signature and not its
+protocol"* from the multi-select file dialog; this is that in reverse — **the
+shim is more permissive than the real thing, so parity-by-structure against the
+shim cannot see the difference.** Any file whose correctness argument is "it
+matches the POSIX adapter" inherits this, which is `pal/win_worldview.cpp` and
+`pal/gdi_surface.cpp` as well.
+
+#### The second finding: the bytes-sent statistic was doubled upstream
+
+Reading `CWorldSocket::OnSend` out of history to check the one-`Send`-per-
+`FD_WRITE` structure — which the adapter **does** reproduce faithfully, partial
+sends and all — turned up the line beside it: `pDoc->m_nBytesOut += count` for
+every chunk drained, on top of `SendPacket`'s `m_nBytesOut += nBufLen` for the
+whole buffer, with `SendPacket` calling `OnSend (0)` itself. Stock MUSHclient
+reports exactly double the bytes sent, on the Info page, in `world.GetInfo (217)`
+and in `world.Debug`. Received bytes are counted once and are right, so the
+statistics page shows an inflated out:in ratio that looks plausible.
+
+The relocation dropped the wire-side count deliberately and nothing recorded
+that, so it is now `docs/UPSTREAM-BUGS.md` 92 and
+`docs/UPSTREAM-DIVERGENCES.md` § 20, with
+`WinTransport.BytesSentAreCountedOncePerSendPacket` pinning it.
+
+#### `McTestAssertionsRaised ()`
+
+New in `tests/win/all_tests.cpp`, and the reason the first finding is a test
+rather than a note. MFC asserts where a Win32 handle is required and absent, so
+"did this call reach a state MFC considers illegal" is an observable — but until
+now it only reached stderr, where it is one line among hundreds and only found
+if somebody happens to read them. The counter makes it a question a test can
+put directly, the same way `McTestDialogsCancelled ()` did for modal dialogs.
+It counts `_CRT_ASSERT` reports only.
+
+#### What is NOT covered, and why
+
+- **TLS.** `startTls` wants a server with a certificate chain; a self-signed
+  loopback server exercises the failure arm and not the success one, which is
+  the arm that matters. Left out rather than half-done. This is now the largest
+  untested part of the Windows connection path.
+- **Keepalives.** `connect` applies `SIO_KEEPALIVE_VALS` when
+  `options.keepalives` is set. There is no getter, and the adapter's `SOCKET` is
+  private, so `SO_KEEPALIVE` — which that ioctl does set, and which *is*
+  readable — cannot be reached from outside. A visibility gap, not an
+  untestable mechanic.
+- **The buffered send queue, still.** `ASendTooBigForTheSocketBufferIsQueued
+  AndFullyDelivered` delivers 8 MB correctly and in order, and reports that the
+  queue **was not used**: Windows auto-tunes the send buffer on loopback and
+  absorbed the whole payload in one `send ()` even with the peer's `SO_RCVBUF`
+  pinned to 1 KB and the peer not reading for half a second. The test asserts
+  `onWritable` fired only when it can see the queue was needed, and says so when
+  it was not — an assertion that cannot distinguish "correct" from "never ran"
+  is worse than none. Forcing a partial send on Windows loopback needs a lever
+  this test does not have.

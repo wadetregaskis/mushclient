@@ -462,6 +462,24 @@ private:
     {
         if (m_outgoing.empty())
             return;
+        // No socket yet.  CreateTransport() runs at the START of a connect
+        // attempt (doc_shared.cpp ConnectSocket) and m_sock is not created
+        // until connect(), so anything the engine sends during the DNS lookup
+        // — a trigger, a timer, world.Send from a script — arrives here with
+        // nothing to write to.  Upstream could not reach this: it created and
+        // Create()d CWorldSocket before the lookup, so a non-NULL m_pSocket
+        // always had a real handle, and SendPacket's NULL check was enough.
+        //
+        // Without this guard the error branch below runs, and real MFC's
+        // CAsyncSocket::AsyncSelect ASSERTs on an invalid handle — the same
+        // hazard close() is already guarded against, five lines further on.
+        // Measured: two assertions per call (sockcore.cpp:386 and :389), which
+        // in a Debug build of the product is a modal Abort/Retry/Ignore box
+        // during an ordinary connect.  Leaving the bytes queued is also the
+        // better answer: they go out on the first FD_WRITE once connected,
+        // which is what "append and it drains on writability" promises.
+        if (m_sock.m_hSocket == INVALID_SOCKET)
+            return;
         if (m_tlsUp && m_ssl) {
             int count = SSL_write(m_ssl, m_outgoing.data(),
                                   (int)m_outgoing.length());

@@ -153,6 +153,17 @@ static void McTestPrintStack (const CONTEXT & context, int maxFrames)
 // grows a stack.  Off by default because a single suite can raise fifty, and
 // fifty stacks is not a log anyone reads.  The cap is per run, not per
 // assertion, for the same reason.
+//
+// The COUNT is exported for the same reason McTestDialogsCancelled is: an MFC
+// assertion is an observable, and some code paths have no other one.  MFC
+// asserts where a Win32 handle is required and absent -- CAsyncSocket::
+// AsyncSelect on INVALID_SOCKET is the case that prompted this -- so "did this
+// call reach a state MFC considers illegal" is a question a test can now put
+// directly, instead of a human reading stderr afterwards and hoping to notice.
+static long s_assertionsRaised = 0;
+
+long McTestAssertionsRaised () { return s_assertionsRaised; }
+
 static int  McTestAssertHook (int reportType, char * message, int * returnValue)
 {
   static int s_left = -1;             // -1 = not yet decided
@@ -161,6 +172,9 @@ static int  McTestAssertHook (int reportType, char * message, int * returnValue)
     const char * v = getenv ("MC_TEST_ASSERT_STACKS");
     s_left = (v && *v && strcmp (v, "0") != 0) ? 12 : 0;
     }
+
+  if (reportType == _CRT_ASSERT)
+    ++s_assertionsRaised;
 
   // Write the report ourselves (the hook replaces the default handling), then
   // decide whether it earns a stack.

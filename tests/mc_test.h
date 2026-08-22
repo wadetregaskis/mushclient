@@ -645,6 +645,12 @@ void McTestInstallCrashHandler();
 // hook means none of them survives long enough to be inspected.
 long McTestDialogsCancelled();
 
+// How many _CRT_ASSERT reports the process has raised so far.  MFC asserts
+// where a Win32 handle is required and absent, so a delta across one call is
+// "did this reach a state MFC considers illegal" -- a question that otherwise
+// only a human reading stderr can answer, and only if they happen to look.
+long McTestAssertionsRaised();
+
 #define MC_TEST_WIN_HOST_INIT() \
     do { \
         setvbuf(stdout, NULL, _IONBF, 0); \

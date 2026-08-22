@@ -2376,3 +2376,49 @@ accepts an empty path name. The frame came from the assertion-stack hook
 described in `docs/WINDOWS-VALIDATION.md` §10z; before that the run reported
 only `doccore.cpp(293) : Assertion failed!`, which names a line in MFC and
 nothing about the caller.
+
+## 92 — The "bytes sent" statistic is counted twice
+
+**Where:** `doc_shared.cpp`'s `CMUSHclientDoc::SendPacket` and
+`worldsock.cpp`'s `CWorldSocket::OnSend`, both as of `249534f^`.
+
+`m_nBytesOut` is incremented in **two** places on the same data:
+
+```cpp
+// SendPacket, once per call, for the whole buffer
+m_pSocket->m_outstanding_data.append (lpBuf, nBufLen);
+m_pSocket->OnSend (0);   // in case FD_WRITE message got lost, try to send again
+m_nBytesOut += nBufLen;
+
+// CWorldSocket::OnSend, again, for every chunk that drains
+count = Send (m_outstanding_data.data (), m_outstanding_data.length ());
+if (count != SOCKET_ERROR)
+  pDoc->m_nBytesOut += count; // count bytes out
+```
+
+`SendPacket` calls `OnSend (0)` itself, so both run on every send. Once the
+buffer has fully drained the two contributions are equal, and the figure is
+exactly **double** the bytes that went out. (It is not a fixed factor while data
+is still queued, which is why it never looks like an obvious 2×.)
+
+Everything that reports the number is affected: the world-properties Info page's
+`Sent: %I64d bytes` (`dialogs/world_prefs/configuration.cpp:552`), `world.GetInfo
+(217)` and its Lua twin (`scripting/methods/methods_info.cpp:633`,
+`scripting/lua_methods.cpp:3737`), and `world.Debug`'s `Sent:` line
+(`world_debug.cpp:1397`). **Bytes RECEIVED is counted once and is right**, so a
+world's own statistics page shows a plausible-looking 2:1 out:in ratio for a
+session that was actually about 1:1 — which is exactly why nobody notices.
+
+`chatsock.cpp:501` counts the chat socket's bytes once and is unaffected.
+
+**Fix:** count where the engine hands the data over, not again as it drains.
+This is what the transport relocation did (`doc_shared.cpp:1785` carries the
+note), so this build now reports the true figure on both platforms — a
+behavioural difference from stock 5.06, registered as
+`docs/UPSTREAM-DIVERGENCES.md` § 20.
+
+**Found by** reading `CWorldSocket::OnSend` out of git history while writing
+`tests/win/test_win_transport.cpp`, to check whether the adapter had reproduced
+its one-`Send`-per-`FD_WRITE` structure faithfully. It had. The byte counter
+beside it had not, deliberately, and nothing recorded that.
+`WinTransport.BytesSentAreCountedOncePerSendPacket` pins the fixed behaviour.

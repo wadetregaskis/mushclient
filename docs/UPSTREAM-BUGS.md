@@ -2995,3 +2995,39 @@ fails, which this suite has no way to arrange. That is an honest gap rather than
 a covered one.
 
 **Shared code — all three sites ship on both platforms.**
+
+## 104 — The Send-to-world line preamble loses its trailing space on every load
+
+**Where:** `scriptingoptions_alpha.inc`, the `send_to_world_line_preamble` and
+`send_to_world_line_postamble` rows.
+
+`Get_XML_string` trims leading and trailing whitespace unless the row carries
+`OPT_KEEP_SPACES` (`xml_load_world.cpp` passes
+`!(iFlags & OPT_KEEP_SPACES)` as its trim flag). The saver preserves the space —
+`Save_XML_string` only collapses newlines and escapes markup — so the bytes on
+disk are right and the loader is what changes them.
+
+And `doc.cpp` concatenates with **no separator**:
+
+```cpp
+full_line  = dlg.m_strLinePreamble;
+full_line += str;
+full_line += dlg.m_strLinePostamble;
+```
+
+so the space in `"say "` is the only thing between the verb and the text. Set
+one, save, reload, and every line is sent as `sayhello`.
+
+**These two were the only non-multiline `*amble`/prefix rows in the table
+without the flag.** The six `log_line_*amble_*`, both `paste_line_*amble`,
+`recall_line_preamble`, `chat_message_prefix`, `speed_walk_prefix` and all three
+`timestamp_*` rows have it. That is twelve to two — an omission, not a
+judgement.
+
+**Measured**, with the flag removed again: `"say "` loads as `"say"` and `" ."`
+as `"."`, while the paste twins keep theirs.
+
+**Fix:** `OPT_KEEP_SPACES` on both rows.
+`WorldLoad.ASendPreamblesTrailingSpaceSurvivesTheLoad` pins it, with the paste
+pair as the control — a test that checked only the send pair would pass on a
+build where the trim had been removed wholesale.

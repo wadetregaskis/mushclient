@@ -482,6 +482,50 @@ TEST(WorldLoad, UnlimitedScrollbackSentinelRoundTrips)
 }
 
 
+
+// ── A preamble's trailing space is the whole point of a preamble ───────────
+//
+// `Get_XML_string` trims leading and trailing whitespace unless the option row
+// carries `OPT_KEEP_SPACES`, and `doc.cpp` concatenates a Send-to-world line
+// with no separator at all:
+//
+//     full_line  = dlg.m_strLinePreamble;
+//     full_line += str;
+//     full_line += dlg.m_strLinePostamble;
+//
+// so the space in `"say "` is the only thing between the verb and the text.
+// `send_to_world_line_preamble` and `…_postamble` were the only two
+// non-multiline `*amble`/prefix rows in the whole table without the flag —
+// the six log-line ones, both paste-line ones, the recall one, the chat prefix,
+// the speedwalk prefix and all three timestamps have it. An omission, not a
+// judgement. `docs/UPSTREAM-BUGS.md` 104.
+//
+// The paste twins are the control: they were always right, so a test that only
+// checked the send pair could pass on a build where the trim had been removed
+// wholesale.
+TEST(WorldLoad, ASendPreamblesTrailingSpaceSurvivesTheLoad)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000"
+       send_to_world_line_preamble="say "
+       send_to_world_line_postamble=" ."
+       paste_line_preamble="tell bob "
+       paste_line_postamble=" !">
+</world>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    EXPECT_STREQ("say ", (const char*)doc.m_line_preamble);
+    EXPECT_STREQ(" .",   (const char*)doc.m_line_postamble);
+
+    // the control pair, which never lost theirs
+    EXPECT_STREQ("tell bob ", (const char*)doc.m_pasteline_preamble);
+    EXPECT_STREQ(" !",        (const char*)doc.m_pasteline_postamble);
+}
 // ── A meaningful zero on an option whose DEFAULT is not zero ───────────────
 //
 // The sibling of the test above, and the case its own comment did not expect to

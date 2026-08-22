@@ -67,6 +67,9 @@ unless the change is listed as intended.
 5. **§5** and **§6** list what is *supposed* to differ.  Read both before
    filing anything.
 6. **§7** for how to report.
+7. **§10af** if you are on macOS rather than Windows — it is the handoff: every
+   shared hunk this round changed, with what a `ctest` run should check.  §11
+   describes the third test surface, which is Windows-only by design.
 
 ## 1. Context in three paragraphs
 
@@ -6305,9 +6308,15 @@ and worth knowing before the technique is applied to a bigger suite.
 
 ### 10af. What round two owes macOS, file by file
 
-Everything from §10z to §10ae was written and measured on Windows. This is the
-list the macOS `ctest` run has to clear before any of it merges, sorted by how
-much attention each needs.
+Everything from §10z onwards was written and measured on Windows, and nothing in
+it has been compiled by clang. This is the list the macOS `ctest` run has to
+clear before any of it merges, sorted by how much attention each needs.
+
+**This section is the handoff.** It was written when the round reached §10ae and
+has been extended twice since; the sub-heading below still says "since §10af was
+written" for that reason. If you are picking this up on macOS, read this section
+and `docs/UPSTREAM-BUGS.md` 88-109, in that order — §10af says what to check,
+and the bug entries say why each change is what it is.
 
 #### One behavioural change to shared engine code
 
@@ -6392,8 +6401,9 @@ be selectable and must open the list.
 
 #### Shared code changed on Windows since §10af was written
 
-Five more hunks, all in files macOS compiles, none of them built here except by
-the Windows target. Listed with what a macOS run should check:
+Every hunk below is in a file macOS compiles, and none of them has been built
+here except by the Windows target. Listed with what a macOS run should check.
+The list grows as the round does — do not trust its length, trust the last row:
 
 | file | change | what to check on macOS |
 |---|---|---|
@@ -6413,9 +6423,35 @@ the Windows target. Listed with what a macOS run should check:
 | `scriptingoptions.cpp` | the `wrap_column` re-allocation now uses the UTF-8 byte count and updates `iMemoryAllocated` (`UPSTREAM-BUGS` 100) | shared, and **more likely to bite on macOS**, where a UTF-8 world is the common case. Worth an ASan run with `world.SetOption ("wrap_column", …)` on a busy world. |
 | `xml/xml_save_world.cpp` | a zero is written whenever the option's default is non-zero (`UPSTREAM-BUGS` 101) | shared. **World files saved by this build gain up to four attributes** (`pixel_offset`, `fade_output_opacity_percent`, `tool_tip_visible_time`, `tool_tip_start_time`) when any is 0 — older clients read them fine, and the §5 byte-identical check no longer holds. |
 | `methods_triggers.cpp`, `methods_aliases.cpp`, `methods_timers.cpp` | `eReplace` refuses an item whose script is on the stack (`UPSTREAM-BUGS` 102) | shared, and the defect ships there too. A plugin that re-registers itself from its own handler is the reproduction; worth an ASan run of the trigger suite. |
+| `plugins.cpp`, `dialogs/world_prefs/prefspropertypages.cpp` | the archive is closed **inside** the `try`, so a write that fails stops being reported as success over an already-truncated file (`UPSTREAM-BUGS` 103) | shared, and the defect ships there too. The third site, `evaluate.cpp`'s `Save_Set`, is inside that file's `#ifdef _WIN32` (`:599`-`:944`) and cannot reach macOS. `PluginState.SaveStateWritesVariablesToStateFile` pins the success path and runs there; the failure path has no test on either platform, and 103 says why. |
+| `scriptingoptions_alpha.inc` | `send_to_world_line_preamble` and `_postamble` gained `OPT_KEEP_SPACES` (`UPSTREAM-BUGS` 104) | shared table, so the defect ships there too — a saved `"say "` reloaded as `"say"` and every line went out as `sayhello`. `WorldLoad.ASendPreamblesTrailingSpaceSurvivesTheLoad` is a **shared** test and will run there. |
+| `scripting/methods/methods_timers.cpp` | `SetTimerOption` refuses to zero the last non-zero component of an `every` timer (`UPSTREAM-BUGS` 105) | shared, unguarded — **and this is the one row of the seven that changes what an existing script sees**: `world.SetTimerOption (t, "second", 0)` on a timer whose hour and minute are already 0 now answers `eTimeInvalid` where it used to answer `eOK`. Nothing in the macOS suite asserts the old answer; check by grep before assuming. |
+| `stdafx.h`, `xml/xml_save_world.cpp` | `Save_XML_double` takes a decimal count (defaulted to 2, so every other caller is unchanged) and the two timer-second sites pass 4 (`UPSTREAM-BUGS` 106) | shared. **Worlds saved by this build write timer seconds at up to four decimals**, which moves the §5 byte-identical baseline a second time on top of 101's four attributes. Sub-centisecond intervals previously round-tripped through the saver into a value the loader itself refuses. |
+| `doc_shared.cpp` | the SOCKS 5 connect reply's length is derived from its ATYP byte instead of assuming IPv4 (`UPSTREAM-BUGS` 107) | shared by definition (one body, every build). Only the **ATYP half** of the filed claim is fixed; a reply split across TCP segments is still mishandled, and 107 records that closing it needs a persistent proxy-phase buffer and a "need more data" return. |
+| `dialogs/world_prefs/configuration.cpp` | `LoadPrefsP23` shows the *preference* for accepting chat calls, not whether a socket happens to be listening (`UPSTREAM-BUGS` 108) | shared, and it goes wrong in **both** directions there too. Check: with "accept incoming calls" ticked and no chat server running, World prefs ▸ OK must leave the tick set — before, merely opening the pages and pressing OK rewrote the setting. Distinct from the 95 row above, which is the same function's *defaulting*. |
+| `OtherTypes.h`, `ProcessPreviousLine.cpp` | `ClipboardWildcardIndex` maps the trigger clipboard dropdown's `10` onto the whole matching line (`UPSTREAM-BUGS` 109) | shared, and the dropdown offers the same entry there. Check: a trigger with *copy to clipboard: 10* must put the whole matched line on the clipboard, where before it put nothing at all. The bound is **remapped, not widened** — `wildcards [10]` is still never read. |
 
 `pal/win_transport.cpp`'s `flushSend` guard is inside the file's own
 `#ifdef _WIN32` and cannot reach macOS.
+
+**Two new tests are in the shared suite, and clang has never seen either.**
+`tests/test_world_load.cpp` gained `WorldLoad.ASendPreamblesTrailingSpaceSurvivesTheLoad`
+(104) and `WorldLoad.AZeroSurvivesOnEveryOptionWhoseDefaultIsNotZero` (101). Both
+are outside any `#ifdef`, so `ctest` will build and run them on the first macOS
+configure; everything else added this round is under `tests/win/`, which
+`tests/CMakeLists.txt` cannot pick up — it names each executable explicitly with
+`mc_test (…)` and globs nothing. Neither test is a port assertion — each pins
+shipping behaviour that was wrong on both platforms — so a failure there is a
+real signal, not a platform difference to paper over.
+
+**The third Windows surface has no macOS counterpart, and needs none.**
+`tests/win/run_app_probes.ps1` and `tests/win/app_probes/*.lua` (§11) drive the
+shipping GUI exe. Its macOS equivalent already exists and is older: the in-app
+selftests behind `mushgui`'s hidden flags. The probes were written to reach what
+neither headless suite can — real GDI, real font metrics, the real command bar —
+which on macOS is exactly what `--pal-surface-selftest` and its siblings cover.
+Do **not** port the runner; if a probe assertion turns out to be worth having on
+both sides, its home there is a selftest harness.
 
 Two findings from the same round are **macOS-only and deliberately not fixed
 here** — `platform/mfc_collections.h`'s leaked walk cursor and `timers.cpp`'s

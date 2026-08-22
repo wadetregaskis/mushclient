@@ -193,3 +193,60 @@ TEST(PrefsP9, CommandColoursSurviveAPageChange)
 //    the arithmetic it broke does not exist in this configuration.
 
 MC_TEST_MAIN()
+
+// ── Opening World Properties must not rewrite a preference you did not touch ─
+//
+// `LoadPrefsP23` used to fill the Chat page's "Accept incoming calls on port:"
+// tick from `m_pChatListenSocket != NULL` — whether the world was *really*
+// listening — while `SavePrefsP23` copies that same tick straight back into
+// `m_bAcceptIncomingChatConnections`, the persisted preference. So OK on an
+// untouched dialog overwrote the setting with runtime state, in both
+// directions:
+//
+//   * a listen socket that failed to bind (the port already in use) cleared
+//     the saved preference, so the next launch did not even try; and
+//   * a script's `world.ChatAcceptCalls` set it on a world that had never
+//     asked for it.
+//
+// `docs/UPSTREAM-BUGS.md` 108. The bind failure is still reported when it
+// happens — `ChatAcceptCalls` sends a `ChatNote` — so showing the preference
+// costs no feedback, and OK on a world whose bind failed now retries it.
+TEST(PrefsChange, ChatAcceptTickShowsThePreferenceNotTheSocket)
+{
+    CMUSHclientDoc doc;
+    CPrefsP23 page23;
+
+    // Seed the four fields LoadPrefsP23 substitutes defaults for, so that
+    // ChangedPrefsP23 below isolates the accept tick.  Their defaulting is
+    // deliberate and its "changed" verdict is correct — see UPSTREAM-BUGS 95,
+    // whose whole point was that the page may differ from the document.
+    doc.m_strOurChatName        = "tester";
+    doc.m_IncomingChatPort      = 45123;          // not 4050: don't squat a real one
+    doc.m_cChatForegroundColour = RGB(255, 0, 0);
+    doc.m_cChatBackgroundColour = RGB(0, 0, 0);
+
+    // The preference is on and no socket is listening: a failed bind.
+    doc.m_bAcceptIncomingChatConnections = TRUE;
+    ASSERT_TRUE(doc.m_pChatListenSocket == NULL);
+
+    doc.LoadPrefsP23(page23);
+    EXPECT_TRUE(page23.m_bAcceptIncomingChatConnections);   // shown as set...
+    EXPECT_FALSE(doc.ChangedPrefsP23(page23));              // ...so OK is a no-op
+
+    doc.SavePrefsP23(page23);
+    EXPECT_TRUE(doc.m_bAcceptIncomingChatConnections);      // and survives OK
+    doc.ChatStopAcceptingCalls();   // SavePrefsP23 retries the bind; undo it
+
+    // Non-vacuous: the tick still tracks the preference when it is off, so the
+    // pass above is not "always true".
+    doc.m_bAcceptIncomingChatConnections = FALSE;
+    doc.LoadPrefsP23(page23);
+    EXPECT_FALSE(page23.m_bAcceptIncomingChatConnections);
+
+    // And a real edit still takes: ticking it is a change, and OK writes it.
+    page23.m_bAcceptIncomingChatConnections = TRUE;
+    EXPECT_TRUE(doc.ChangedPrefsP23(page23));
+    doc.SavePrefsP23(page23);
+    EXPECT_TRUE(doc.m_bAcceptIncomingChatConnections);
+    doc.ChatStopAcceptingCalls();
+}

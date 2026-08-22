@@ -3221,3 +3221,53 @@ hole all the same.
 Pinned by `Socks5R6.ConnectReplyLengthFollowsTheAddressType`, which asserts the
 returned byte count — the value the caller consumes — for all three address
 types, for an undefined one, and for a refusal.
+
+## 108 — Opening World Properties and clicking OK rewrites "accept incoming calls" to match runtime state
+
+`dialogs/world_prefs/configuration.cpp`, `LoadPrefsP23`.
+
+The Chat page's "&Accept incoming calls on port:" tick was filled from the
+**socket**, not the preference:
+
+```cpp
+// show whether we really are accepting calls
+page23.m_bAcceptIncomingChatConnections = m_pChatListenSocket != NULL;
+```
+
+while `SavePrefsP23` copies that same tick straight back into the persisted
+`m_bAcceptIncomingChatConnections`. So OK on a dialog nobody touched
+overwrites the saved preference with runtime state, and it goes wrong in
+**both** directions:
+
+- the listen socket **failed to bind** — the port is already in use, which is
+  easy to arrange with two worlds on the default 4050 — so the tick shows
+  clear, and OK turns the saved preference **off**. The next launch does not
+  even try, and nothing told the user their setting had changed.
+- a script called **`world.ChatAcceptCalls`**, so the tick shows set, and OK
+  turns the preference **on** in a world that never asked for it.
+
+The socket normally does come up at world open (`SetUpOutputWindow`
+→ `ChatAcceptCalls (0)` when the flag is set), which is why the first case
+needs a bind failure to appear and why this has gone unnoticed. The second
+needs only a plugin.
+
+**Fix:** show the preference. Nothing is lost: a bind failure is already
+reported when it happens, by `ChatNote` inside `ChatAcceptCalls` — and OK on a
+world whose bind failed now **retries** it, because `SavePrefsP23`'s "start
+accepting if required" arm runs on a flag that is still true, instead of
+falling into the `else` that stops.
+
+Pinned by `PrefsChange.ChatAcceptTickShowsThePreferenceNotTheSocket`. With the
+fix reverted it fails on three assertions, the last of which is the data loss
+itself: `m_bAcceptIncomingChatConnections` is FALSE after `SavePrefsP23` on an
+untouched page.
+
+**A note on the test, because it caught a wrong assumption of mine.** The first
+draft asserted `ChangedPrefsP23` was false on a fresh document and failed —
+not because of this bug, but because `UPSTREAM-BUGS` 95 deliberately made
+`LoadPrefsP23` put *defaults* for the chat name, port and two colours on the
+page while leaving the document alone, so the page legitimately differs from
+the document until OK. 95's own comment says exactly that. The test now seeds
+those four fields so the comparison isolates the tick. **A page-wide "did
+anything change" check is not a test of one field**, and reading it as one
+turns a documented behaviour into a phantom regression.

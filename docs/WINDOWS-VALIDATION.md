@@ -7688,7 +7688,7 @@ already written down.
 #### The leads, and what became of them
 
 The sweep produced thirteen leads beyond the seven I had already checked.
-**Six of those thirteen have since been confirmed and fixed**, each with a
+**Eight of them have since been confirmed and fixed**, each with a
 non-vacuous test — the fix reverted, the test seen to fail, the fix restored:
 
 | file | outcome |
@@ -7699,6 +7699,8 @@ non-vacuous test — the fix reverted, the test seen to fail, the fix restored:
 | `plugins.cpp` (archive flushed after success is reported) | **confirmed, fixed** — `UPSTREAM-BUGS` 103, which turned out to be three sites, not one |
 | `scripting/methods/methods_timers.cpp` (zero interval) | **confirmed, fixed** — `UPSTREAM-BUGS` 105 |
 | `xml/xml_save_world.cpp` (timer seconds at 2 decimals) | **confirmed, fixed** — `UPSTREAM-BUGS` 106, and it is the same end state as 105 reached from the other side |
+| `doc_shared.cpp` (SOCKS5 reply length) | **confirmed, fixed** — `UPSTREAM-BUGS` 107, but only the ATYP half of the claim; see below |
+| `dialogs/world_prefs/configuration.cpp` (accept-chat tick) | **confirmed, fixed** — `UPSTREAM-BUGS` 108, and worse than filed: it goes wrong in both directions |
 
 The zero-interval one is worth a note on method, because the argument and the
 proof came apart. The claim as filed was an asymmetry — `AddTimer` refuses a
@@ -7766,21 +7768,40 @@ they are not re-raised:
   `world_debug.cpp:1189` already branches on `App.m_nTimerInterval` and reports
   the real figure.
 
-#### NOT checked — leads only
+#### No leads left
 
-One remains. It has a file, a line and an argument in the sweep's own output,
-and has not been read by me. The record across both sweeps is that a
-"confirmed" label means only that one agent argued for it and a second failed to
-refute it. **Eight of the first sweep's thirteen did not survive contact.**
-Treat accordingly.
+The last one — "World Properties clears the persisted *accept chat
+connections* tick when the listen socket failed to bind" — was **confirmed and
+fixed**: `UPSTREAM-BUGS` 108. It was worse than the claim: `LoadPrefsP23` filled
+the tick from `m_pChatListenSocket != NULL` and `SavePrefsP23` writes the tick
+back into the persisted flag, so OK on an untouched page rewrote the preference
+to match runtime state in **both** directions — a failed bind turned it off,
+and a script's `world.ChatAcceptCalls` turned it on in a world that had never
+asked for it. The second needs no failure at all, only a plugin.
 
-| file | claim |
-|---|---|
-| `dialogs/world_prefs/configuration.cpp` | World Properties clears the persisted "accept chat connections" tick when the listen socket failed to bind — and this one interacts with `UPSTREAM-BUGS` 95, since that fix moved five chat defaults into locals and deliberately left this one reading live state |
+**Tally, counting the rows of the two tables above rather than the sweep's own
+numbering** (it grouped some sites and split others, and I have not gone back
+to reconcile it): eight confirmed and fixed, one confirmed and deliberately
+left alone, one refuted outright, and one — the SOCKS5 row — half of each.
 
-The seven I checked first were the seven I could reach with a test on this
-machine. That is the honest selection criterion, and it is worth saying out
-loud: the one that remains is not less serious, it is less convenient.
+The refuted one is the MCCP claim: the decompression loop does keep going after
+a script-initiated disconnect, but nothing is freed on that path
+(`OnConnectionDisconnect` nulls `m_pTransport` and the buffers live until the
+document's destructor), the connect path resets `m_bCompress` so nothing leaks
+into the next session, and what it displays is data that legitimately arrived.
+The SOCKS5 row's second clause — "and to arrive whole in one packet" — is also
+refuted as *stated*: a short reply is not over-read, because the caller guards
+with `count <= iBytesToMove`. It is dropped instead, which is a different and
+lesser bug, and `UPSTREAM-BUGS` 107 records why closing it needs a change to
+the phase machinery.
+
+Set that beside the first sweep, where **eight of thirteen did not survive
+contact**. The difference is not that this batch was better reasoned. It is
+that each was re-derived from the source by hand and given a test that fails
+without the fix — the same standard the first batch was held to, and mostly
+failed. **"Confirmed" from an agent sweep means one agent argued for it and a
+second failed to refute it, and that is all it means.**
+
 
 #### One unreproduced crash, recorded rather than dismissed
 

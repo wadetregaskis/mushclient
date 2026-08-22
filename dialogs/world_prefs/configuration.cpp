@@ -855,8 +855,19 @@ void CMUSHclientDoc:: LoadPrefsP23 (CPrefsP23 &page23)
 
   page23.m_strOurChatName                   = strChatName                        ;
   page23.m_bAutoAllowSnooping               = m_bAutoAllowSnooping               ;
-  // show whether we really are accepting calls
-  page23.m_bAcceptIncomingChatConnections   = m_pChatListenSocket != NULL         ;
+  // The PERSISTED preference, not `m_pChatListenSocket != NULL`.  This used to
+  // show whether the world was really listening, which reads well until you
+  // notice that SavePrefsP23 writes the checkbox straight back into
+  // m_bAcceptIncomingChatConnections.  That made merely opening World
+  // Properties and clicking OK rewrite the setting to match runtime state, in
+  // both directions: a listen socket that failed to bind (port in use) turned
+  // the saved preference OFF, so the next launch did not even try, and a
+  // script's world.ChatAcceptCalls turned it ON in a world that had never
+  // asked for it.  The bind failure is already reported at the time it
+  // happens, by ChatNote in ChatAcceptCalls, so nothing is lost by showing the
+  // preference here -- and OK on a world whose bind failed now RETRIES it
+  // instead of silently disabling the feature.  docs/UPSTREAM-BUGS.md 108.
+  page23.m_bAcceptIncomingChatConnections   = m_bAcceptIncomingChatConnections    ;
   page23.m_IncomingChatPort                 = iChatPort                          ;
   page23.m_bValidateIncomingCalls           = m_bValidateIncomingCalls           ;
   page23.m_bIgnoreChatColours               = m_bIgnoreChatColours               ;

@@ -6392,6 +6392,9 @@ the Windows target. Listed with what a macOS run should check:
 | `dialogs/world_prefs/prefspropertypages.cpp` | `CPrefsP11::OnSaveNotes` builds a SAVE dialog (`UPSTREAM-BUGS` 93) | The Notes page's Save… must still offer a save panel and must now warn before overwriting. This is the call site the port's `openOrCreate` shim heuristic existed for. |
 | `platform/mfc_ui.h` | comment only — records that the `openOrCreate` arm is now unreachable | nothing to run; the arm is left in place deliberately |
 | `tests/test_mxp.cpp` | the new `MXPCloseR6` case and its local gagging-trigger helper | compiles against the port's `CTriggerArray` / `regcomp` / `ConvertToRegularExpression`, all shared, but it has only ever been built by MSVC |
+| `pal/iworldview.h`, `doc.h` | the new `hasMainWindow ()` predicate and the accessor that gates on it (§10ar) | header-only; every adapter that does not override it keeps the old behaviour by construction |
+| `platform/wx_world_child.cpp` / `.h` | `hasMainWindow ()` returning true | **blind edit** — three lines. If it is missing or wrong the port silently reverts to the character-grid fallback for `GetInfo(249)/(250)`, which is what it did before, so the failure mode is quiet: check `world.GetInfo (250)` against the world window's width |
+| `tests/fake_worldview.h`, `tests/test_info.cpp`, `tests/test_pal_worldview.cpp` | the fake gained `hasMainWin`; both suites now distinguish "no window" from "a window measuring nothing" | `test_pal_worldview.cpp` is excluded here, so its two new cases have never been compiled |
 
 `pal/win_transport.cpp`'s `flushSend` guard is inside the file's own
 `#ifdef _WIN32` and cannot reach macOS.
@@ -7151,7 +7154,7 @@ Both have full entries in `docs/UPSTREAM-BUGS.md`:
   `OFN_OVERWRITEPROMPT`, then `CFile::modeCreate`. Measured on the running
   client: default button `&Open` before, `&Save` after.
 
-#### Reproduced, and deliberately NOT fixed
+#### Reproduced, and fixed the next day (§10ar)
 
 **`GetInfo (249)` and `(250)` report a fabricated size while the client is
 minimised.** `pal/win_worldview.cpp`'s `mainClientRect ()` returns
@@ -7178,13 +7181,13 @@ minimised  h=468  w=800
 miniwindows out against the main window gets a plausible-looking rectangle where
 upstream gave it a 0 it would have skipped on.
 
-**Not fixed here, on purpose.** The honest fix is to let the seam express three
-states rather than two, and that touches `pal/iworldview.h`, both adapters, the
-test fake, and a pinned assertion (`tests/test_info.cpp:373`, "A view with no
-window to measure must fall back, not report zero") — none of which can be
-compiled or run on this machine. A Windows-only patch would have to invent a
-different lie. It is a wrong number, not a crash, so it waits for a change that
-can be made on both sides at once.
+**Left unfixed when this section was written**, on the grounds that the honest
+fix needs the seam to express three states rather than two — which touches
+`pal/iworldview.h`, both adapters, the test fake and a pinned assertion, none of
+which except the Windows adapter can be compiled here. That was the right
+reading of the cost and the wrong conclusion: the change is additive, the new
+predicate defaults to the old behaviour, and the two blind edits are three lines
+each. It is fixed; §10ar is the change and the measurement.
 
 **The first draft of this measurement was wrong, and the reason generalises.**
 `world.DoCommand ("MinimiseProgram")` **posts**; reading `GetInfo` in the same
@@ -7324,3 +7327,86 @@ Both cost a run each, and both are silent-until-modal:
 
 `world.DoCommand` **posts**, as §10ap records: any effect it has is invisible
 until the message loop runs, so a probe must read it from a *later* timer.
+
+### 10ar. Giving the worldview seam a third state, and the minimised client
+
+§10ap measured `GetInfo (249)`/`(250)` answering a fabricated **468 × 800**
+while the client was minimised, and left it, reasoning that the fix needed the
+PAL seam changed on both sides at once. That was the right cost estimate and the
+wrong call — the change is *additive*, so the two edits that cannot be compiled
+here are three lines each and cannot alter existing behaviour if they are wrong.
+
+#### The defect, in one sentence
+
+`pal::IWorldView::mainClientRect ()` answered `Rect{0,0,0,0}` for **two
+different things** — "there is no main window" and "there is one and its client
+area measures nothing" — and `CMUSHclientDoc::GetMainClientRect` read the empty
+rect as the first:
+
+```cpp
+pal::Rect r = m_pWorldView->mainClientRect ();
+if (r.w <= 0 || r.h <= 0) return false;        // <- cannot tell them apart
+```
+
+A minimised main frame is the second. `GetClientRect` on it really does report
+0 × 0 — measured from another process on the live client, with `IsIconic` TRUE —
+so `methods_info.cpp` fell through to
+`(m_gui_rows + 2) * m_gui_font_height` and `m_gui_cols * m_gui_font_width`.
+Those four members are written only under `platform/`, which the Windows project
+does not compile, so on Windows they are permanently 24/80/18/10. Upstream had
+no fallback at all — `Frame.GetClientRect (&rect); … rect.bottom` — and answered
+0.
+
+#### The fix: `hasMainWindow ()`
+
+A new non-pure predicate on the seam, **defaulting to `false`**. That default is
+the load-bearing part: an adapter that does not override it behaves exactly as
+it did before the predicate existed, so the change cannot regress an implementer
+that is not updated.
+
+| | |
+|---|---|
+| `pal/iworldview.h` | `virtual bool hasMainWindow () const { return false; }` |
+| `pal/win_worldview.cpp` | `return frame () != NULL;` — `frame ()` already answers exactly this, being NULL unless `App.m_pMainWnd` is both present and *created* |
+| `platform/wx_world_child.cpp` | `return true;` — the adapter *is* the window |
+| `doc.h` | gate on `hasMainWindow ()`, not on the empty rect |
+
+Nothing else changed: `mainClientRect ()` still reports what it measures.
+
+#### Measured, three ways
+
+**In the running client**, the same two-timer probe as §10ap (the first reads
+and asks to minimise, the second reads after the message loop has run, because
+`world.DoCommand` posts):
+
+```
+                    before          after
+restored            931 x 1616      931 x 1616
+minimised           468 x 800       0 x 0        <- upstream's answer
+```
+
+**In the suite**, `MainClientRectR6` in `tests/win/test_gap_coverage.cpp` — three
+tests, and the third is the whole regression in one flag: two blocks with an
+identical empty rect, differing only in `hasMainWin`, which must now answer
+differently. Before the fix the second block answered the fallback. The first
+test drives the **real** Windows adapter and pins the arm the fix had to leave
+alone: the host's `CMainFrame` has no window, `hasMainWindow ()` is false, and
+`GetInfo (249)` still falls back.
+
+**On the port's side**, `tests/test_info.cpp` and `tests/test_pal_worldview.cpp`
+each gained the same distinction. Their existing "a view with no window must
+fall back" cases used to express that by zeroing the rect; they now set the flag,
+which is what they always meant, and each gained a case for the state the flag
+made expressible.
+
+#### Why this is the third time the same shape has come up
+
+`docs/UPSTREAM-DIVERGENCES.md` and CLAUDE.md already record two: *a shim can
+satisfy an API's signature and not its protocol* (multi-select file dialogs), and
+its mirror in §10ao (*a shim more permissive than the real thing hides a
+difference*). This is a third: **a seam that encodes two different facts in one
+value.** `Rect{0,0,0,0}` was chosen as a sentinel because "no window" and "empty"
+seemed like the same answer, and they are — right up until a real window can be
+empty. The check that finds more: for any seam value doing double duty as a
+sentinel, ask whether the sentinel is *reachable as a real measurement*. Here it
+took one keystroke to reach.

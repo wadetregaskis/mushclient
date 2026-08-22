@@ -30,6 +30,7 @@
 #include "dialogs/world_prefs/prefspropertypages.h"  // FittedLastColumnWidth,
                                                  // OutputBufferBytesNeeded, CPrefsP7/8
 #include "posix_compat.h"   // getpid / unlink, for the names-file tests
+#include "fake_worldview.h"  // the swappable pal::IWorldView — GetInfo 249/250
 
 #include <commctrl.h>   // a real WC_LISTVIEW for the Plugins dialog test
 
@@ -827,3 +828,101 @@ static_assert((int) CPrefsP7::eColumnSequence == (int) CPrefsP8::eColumnSequence
               "That is legal -- they are independent -- but LoadPrefsP7 in "
               "dialogs/world_prefs/configuration.cpp once indexed one with the "
               "other, and this assertion is what would have caught it.");
+
+// ── GetInfo(249)/(250): the main window's client rect ──────────────────────
+//
+// `tests/test_info.cpp`'s version of this is `#ifndef _WIN32`, because the
+// GetInfo codes around it dereference `Frame`.  These do not, and the
+// behaviour they pin is a WINDOWS regression, so they belong here.
+//
+// The seam could not say three things, only two.  `mainClientRect ()` answered
+// `Rect{0,0,0,0}` both for "there is no main window" and for "there is one and
+// its client area measures nothing", and `GetMainClientRect` read the empty
+// rect as the former.  A MINIMISED main frame is the latter — `GetClientRect`
+// on it really does report 0 x 0 — so `GetInfo(249)/(250)` fell through to
+// `(m_gui_rows + 2) * m_gui_font_height` and `m_gui_cols * m_gui_font_width`.
+// Those four members are written only by code under `platform/`, which the
+// Windows project does not compile, so on Windows they are permanently
+// 24/80/18/10 and the fallback is a fabricated 468 x 800.  Upstream had no
+// fallback at all: `Frame.GetClientRect (&rect); ... rect.bottom`.
+//
+// Measured in the running client before the fix, one timer reading and asking
+// to minimise and a second reading after the message loop had run:
+//
+//     restored   h=931  w=1616
+//     minimised  h=468  w=800     <- the fabrication
+//
+// `pal::IWorldView::hasMainWindow ()` is the third state, and these tests are
+// the three answers.
+namespace {
+
+// A CMUSHclientDoc whose m_pWorldView can be swapped, with the real adapter
+// put back afterwards -- the doc creates its own in the constructor and its
+// destructor expects it.
+struct InfoDoc {
+    CMUSHclientDoc doc;
+    InfoDoc()
+    {
+        doc.m_gui_rows        = 25;
+        doc.m_gui_cols        = 80;
+        doc.m_gui_font_height = 10;
+        doc.m_gui_font_width  = 6;
+    }
+};
+
+}   // namespace
+
+TEST(MainClientRectR6, TheRealAdapterFallsBackWhenTheFrameHasNoWindow)
+{
+    // The host constructs CMainFrame and never Create()s it (mc_test.h
+    // MC_TEST_WIN_MAIN_FRAME), so pal/win_worldview.cpp's frame() answers NULL
+    // and hasMainWindow() is false.  That is the genuine no-window case and it
+    // must still fall back — this is the arm the fix had to leave alone.
+    InfoDoc f;
+    ASSERT_TRUE(f.doc.m_pWorldView != NULL);
+    EXPECT_FALSE(f.doc.m_pWorldView->hasMainWindow());
+
+    int x = 1, y = 1, w = 1, h = 1;
+    EXPECT_FALSE(f.doc.GetMainClientRect(x, y, w, h));
+    EXPECT_EQ(1, x); EXPECT_EQ(1, y);          // outputs left alone
+    EXPECT_EQ(1, w); EXPECT_EQ(1, h);
+
+    EXPECT_EQ(27L * 10L, (long) f.doc.GetInfo(249).lVal);
+    EXPECT_EQ(80L * 6L,  (long) f.doc.GetInfo(250).lVal);
+}
+
+TEST(MainClientRectR6, AWindowThatMeasuresSomethingIsReportedAsMeasured)
+{
+    InfoDoc f;
+    FakeWorldView view;
+    view.hasMainWin  = true;
+    view.mainClientR = pal::Rect{ 0, 0, 793, 517 };
+    mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach(f.doc, &view);
+
+    EXPECT_EQ(517L, (long) f.doc.GetInfo(249).lVal);
+    EXPECT_EQ(793L, (long) f.doc.GetInfo(250).lVal);
+
+    // Deliberately not a multiple of the character grid, so neither number can
+    // be the fallback wearing a disguise.
+    EXPECT_NE((long) f.doc.GetInfo(250).lVal, 80L * 6L);
+}
+
+TEST(MainClientRectR6, AMinimisedWindowReportsZeroRatherThanAFabricatedSize)
+{
+    // The regression, in one flag.  Both halves have an empty rect; they differ
+    // only in whether there is a window behind it, and they must answer
+    // differently.  Before the fix the second block answered 270 and 480.
+    InfoDoc f;
+    FakeWorldView view;
+    view.mainClientR = pal::Rect{ 0, 0, 0, 0 };
+    mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach(f.doc, &view);
+
+    view.hasMainWin = false;                    // no window at all: fall back
+    EXPECT_EQ(27L * 10L, (long) f.doc.GetInfo(249).lVal);
+    EXPECT_EQ(80L * 6L,  (long) f.doc.GetInfo(250).lVal);
+
+    view.hasMainWin = true;                     // minimised: report what it is
+    EXPECT_EQ(0L, (long) f.doc.GetInfo(249).lVal);
+    EXPECT_EQ(0L, (long) f.doc.GetInfo(250).lVal);
+}
+

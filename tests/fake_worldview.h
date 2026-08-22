@@ -173,6 +173,7 @@ struct FakeWorldView : pal::IWorldView {
     // returned by mainClientRect(); deliberately NOT a multiple of the
     // m_gui_* grid, so a test cannot pass on the headless fallback by accident
     pal::Rect mainClientR{ 0, 0, 793, 517 };
+    bool hasMainWin = true;               // answered by hasMainWindow()
 
     void setMainTitle(const char* t) override { mainTitle.assign(t); }
     void moveWorldWindow(long l, long t, long w, long h) override {
@@ -184,6 +185,10 @@ struct FakeWorldView : pal::IWorldView {
     bool saveWorld() override { ++saves; return true; }
     pal::Rect mainRect() const override { return mainR; }
     pal::Rect mainClientRect() const override { return mainClientR; }
+    // Separate from the rect on purpose: the seam has to be able to say "I have
+    // a window and it measures nothing", which is a minimised main frame, and
+    // a fake that derived this from the rect could not express it either.
+    bool hasMainWindow() const override { return hasMainWin; }
 
     // ── miniwindow mouse routing ────────────────────────────────────────────
     // WindowAddHotspot's create-under-the-cursor re-detect lands here.

@@ -300,6 +300,7 @@ public:
     bool        saveWorld() override;
     pal::Rect   mainRect() const override;
     pal::Rect   mainClientRect() const override;
+    bool        hasMainWindow() const override;
     void        mouseMoveMiniWindow(long x, long y) override;
     bool        mouseCaptured() const override;
     void        infobarShow(bool visible) override;

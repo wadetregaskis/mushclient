@@ -1000,17 +1000,26 @@ public:
         // A client rect always has its origin at (0, 0), so right/bottom ARE
         // the width and height.
         //
-        // With no main window this answers an empty rect, which is what
-        // CMUSHclientDoc::GetMainClientRect (doc.h) already documents as its
-        // "the view has no window to measure" case: it returns false and the
-        // caller keeps its own character-grid approximation.  That contract was
-        // written and then never reachable on Windows.
+        // With no main window this answers an empty rect, and the caller never
+        // gets here anyway: GetMainClientRect gates on hasMainWindow() below.
+        // The two used to be the same test, which is why a MINIMISED frame --
+        // whose client area really is 0 x 0 -- was mistaken for "no window" and
+        // answered with a fabricated character-grid size.
         if (!frame())
             return Rect{0, 0, 0, 0};
 
         RECT rect;
         frame()->GetClientRect(&rect);
         return Rect{ 0, 0, (int) rect.right, (int) rect.bottom };
+    }
+
+    // There is a window to measure exactly when the main frame has one.
+    // frame() already answers that: it returns NULL unless App.m_pMainWnd is
+    // both present and created (m_hWnd non-null), which is the state the
+    // headless test host deliberately leaves it in.
+    bool hasMainWindow() const override
+    {
+        return frame() != NULL;
     }
 
     // ── miniwindow mouse routing ───────────────────────────────────────────

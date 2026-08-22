@@ -370,9 +370,20 @@ TEST(GetInfo, MainClientRectComesFromTheViewNotTheCharacterGrid)
     EXPECT_TRUE(doc.GetInfo(250).lVal != doc.GetInfo(281).lVal);
 
     // A view with no window to measure must fall back, not report zero.
+    view.hasMainWin  = false;
     view.mainClientR = pal::Rect{ 0, 0, 0, 0 };
     EXPECT_EQ(27L * 10L, doc.GetInfo(249).lVal);
     EXPECT_EQ(80L * 6L,  doc.GetInfo(250).lVal);
+
+    // ...but a view that HAS a window whose client area measures nothing must
+    // report zero, NOT fall back.  That is a minimised main frame, and it is
+    // the case the old `if (r.w <= 0) return false` test could not tell from
+    // the one above: it answered a fabricated character-grid size for a window
+    // that was not on screen.  These two blocks differ by one flag, which is
+    // exactly the distinction the seam gained.
+    view.hasMainWin = true;
+    EXPECT_EQ(0L, doc.GetInfo(249).lVal);
+    EXPECT_EQ(0L, doc.GetInfo(250).lVal);
 }
 #endif
 

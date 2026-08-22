@@ -195,9 +195,28 @@ public:
     // isFullscreen above.
     //
     // Deliberately NOT pure, for the reason isPaused gives: an adapter with no
-    // window to measure is honestly "no rect", and the doc-side accessor
-    // reports false for it so the caller keeps its own approximation.
+    // window to measure has nothing to say, and the doc-side accessor reports
+    // false for it so the caller keeps its own approximation.
     virtual Rect mainClientRect() const { return { 0, 0, 0, 0 }; }
+
+    // Is there a main window to measure at all?
+    //
+    // This exists because mainClientRect alone cannot distinguish "I have no
+    // window" from "I have one and its client area is empty", and the two need
+    // different answers.  A MINIMISED main frame is the second: GetClientRect
+    // honestly reports 0 x 0, and the right answer for GetInfo(249)/(250) is
+    // then 0 -- which is what Windows answered before this seam existed.  Read
+    // as "no window", it instead produced a number derived from m_gui_rows /
+    // m_gui_cols / m_gui_font_*, four members nothing on Windows ever writes,
+    // so a plugin laying itself out against the main window got a plausible
+    // 468 x 800 for a window that was not on screen.  Measured, and the whole
+    // story is docs/WINDOWS-VALIDATION.md 10ap / 10ar.
+    //
+    // FALSE is the safe default: an adapter that does not override this is
+    // treated exactly as it was before the predicate existed, i.e. the
+    // doc-side accessor falls back.  Only an adapter that really owns a window
+    // should say true.
+    virtual bool hasMainWindow() const { return false; }
 
     // ── core → frontend: miniwindow mouse routing ─────────────────────────
     // Re-run the miniwindow mouse-move hit test at a client-space point the

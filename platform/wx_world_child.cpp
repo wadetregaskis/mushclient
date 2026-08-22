@@ -6492,6 +6492,18 @@ pal::Rect CWorldChildFrame::mainClientRect() const
     return { 0, 0, w, h };
 }
 
+// ...and yes, there is always one to measure: this object IS the window, so it
+// exists for as long as the adapter does.  The predicate is not redundant --
+// pal/iworldview.h defaults it to FALSE precisely so that an adapter with no
+// window keeps the old fall-back-to-the-character-grid behaviour, and an
+// adapter that does own a window has to say so.  Saying so is what lets a
+// window whose client area measures 0 x 0 (minimised, or mid-construction)
+// report 0 instead of a fabricated grid size.
+bool CWorldChildFrame::hasMainWindow() const
+{
+    return true;
+}
+
 // Re-run the miniwindow mouse-move hit test at a point the pane is not
 // reporting right now — WindowAddHotspot's "the pointer is already over the
 // hotspot I just created" case.  The engine site used to walk the doc's view

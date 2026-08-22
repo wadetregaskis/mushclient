@@ -1861,10 +1861,17 @@ public:
   // Fills the CLIENT rect of the main window (GetInfo 249/250).  false —
   // outputs untouched — when no view is attached OR the view has no window to
   // measure, so the caller keeps its own approximation for the headless case.
+  //
+  // The gate is hasMainWindow(), NOT an empty rect.  It used to be
+  // `if (r.w <= 0 || r.h <= 0) return false;`, which cannot tell "no window"
+  // from "a real window that measures 0 x 0" — and a minimised main frame is
+  // exactly the second.  That made GetInfo(249)/(250) answer a fabricated
+  // 468 x 800 while the client was minimised, where Windows had always
+  // answered 0.  See pal/iworldview.h's hasMainWindow.
   bool GetMainClientRect(int& x, int& y, int& w, int& h) {
       if (!m_pWorldView) return false;
+      if (!m_pWorldView->hasMainWindow()) return false;
       pal::Rect r = m_pWorldView->mainClientRect();
-      if (r.w <= 0 || r.h <= 0) return false;
       x = r.x; y = r.y; w = r.w; h = r.h;
       return true;
   }

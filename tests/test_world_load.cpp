@@ -481,6 +481,81 @@ TEST(WorldLoad, UnlimitedScrollbackSentinelRoundTrips)
     remove(path);
 }
 
+
+// ── A meaningful zero on an option whose DEFAULT is not zero ───────────────
+//
+// The sibling of the test above, and the case its own comment did not expect to
+// exist. `Save_XML_number` omits an attribute whose value is 0, and the loader
+// keeps the member as constructed — i.e. the table default — when an attribute
+// is absent. Those two rules only compose correctly when the default IS zero.
+//
+// `max_output_lines` was the one row anybody had noticed, and it was given
+// `OPT_ZERO_UNLIMITED` to force the write. But four more rows accept a
+// meaningful 0 against a non-zero default and had no such flag:
+//
+//     pixel_offset                  default 1      range 0-20
+//     fade_output_opacity_percent   default 20     range 0-100
+//     tool_tip_visible_time         default 5000   range 0-120000
+//     tool_tip_start_time           default 400    range 0-120000
+//
+// Set any of them to 0, save, reload, and the value is silently back to its
+// default. `docs/UPSTREAM-BUGS.md` 101.
+//
+// The saver now writes a 0 whenever the option's default is non-zero, which is
+// exactly the condition under which omitting it loses information. A row whose
+// default is 0 is written exactly as before.
+TEST(WorldLoad, AZeroSurvivesOnEveryOptionWhoseDefaultIsNotZero)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000">
+</world>
+</muclient>)";
+
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_zero_%d.mcl", (int)getpid());
+
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+
+        // The defaults, so a later 0 cannot be mistaken for "it was already 0".
+        ASSERT_EQ(1L,    (long)doc.m_iPixelOffset);
+        ASSERT_EQ(20L,   (long)doc.m_FadeOutputOpacityPercent);
+        ASSERT_EQ(5000L, (long)doc.m_iToolTipVisibleTime);
+        ASSERT_EQ(400L,  (long)doc.m_iToolTipStartTime);
+
+        EXPECT_EQ(eOK, doc.SetOption("pixel_offset", 0));
+        EXPECT_EQ(eOK, doc.SetOption("fade_output_opacity_percent", 0));
+        EXPECT_EQ(eOK, doc.SetOption("tool_tip_visible_time", 0));
+        EXPECT_EQ(eOK, doc.SetOption("tool_tip_start_time", 0));
+
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+
+    // The zeros must be ON DISK.  Checking only the reload would pass on a
+    // build where the loader happened to zero an absent attribute, which is the
+    // behaviour the boolean and alpha arms have and the numeric one does not.
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    std::string content; char buf[4096]; size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) content.append(buf, n);
+    fclose(f);
+    EXPECT_NE(content.find("pixel_offset=\"0\""),                std::string::npos);
+    EXPECT_NE(content.find("fade_output_opacity_percent=\"0\""), std::string::npos);
+    EXPECT_NE(content.find("tool_tip_visible_time=\"0\""),       std::string::npos);
+    EXPECT_NE(content.find("tool_tip_start_time=\"0\""),         std::string::npos);
+
+    CMUSHclientDoc reloaded;
+    ASSERT_TRUE(reloaded.LoadWorldFromFile(path));
+    EXPECT_EQ(0L, (long)reloaded.m_iPixelOffset);
+    EXPECT_EQ(0L, (long)reloaded.m_FadeOutputOpacityPercent);
+    EXPECT_EQ(0L, (long)reloaded.m_iToolTipVisibleTime);
+    EXPECT_EQ(0L, (long)reloaded.m_iToolTipStartTime);
+
+    remove(path);
+}
 TEST(WorldLoad, MaxOutputLinesRangeAcceptsZeroButNotOneToOneNinetyNine)
 {
     // The range is "200 lines at least, OR none at all", which a plain min/max

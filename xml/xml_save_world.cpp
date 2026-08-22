@@ -261,10 +261,26 @@ void CMUSHclientDoc::Save_World_Numeric_Options_XML (CArchive& ar)
       if (OptionsTable [i].iFlags & OPT_RGB_COLOUR)
         Save_XML_colour (ar, OptionsTable [i].pName, iValue);
       else
-        // OPT_ZERO_UNLIMITED options mean something by 0, so it must be written
-        // rather than left to the loader's "absent = keep the default".
+        // A zero has to be written whenever the loader would not otherwise
+        // arrive at it, and the loader's rule for an absent numeric attribute
+        // is "keep the member as constructed", i.e. the table DEFAULT.  So:
+        //
+        //   default 0  -> omitting a 0 is exact; keep omitting it
+        //   default !0 -> omitting a 0 reloads as the default, losing the
+        //                 setting, so it must be written
+        //
+        // The flag alone was not enough: it is on exactly one row
+        // (max_output_lines), while pixel_offset (default 1, range 0-20),
+        // fade_output_opacity_percent (20, 0-100), tool_tip_visible_time
+        // (5000, 0-120000) and tool_tip_start_time (400, 0-120000) all accept a
+        // meaningful 0 and all silently reverted to their defaults on the next
+        // load.  docs/UPSTREAM-BUGS.md 101.
+        //
+        // Nothing else in the file changes: a row whose default is 0 is written
+        // exactly as before, and a non-zero value was always written.
         Save_XML_number (ar, OptionsTable [i].pName, iValue, false,
-                         (OptionsTable [i].iFlags & OPT_ZERO_UNLIMITED) != 0);
+                         (OptionsTable [i].iFlags & OPT_ZERO_UNLIMITED) != 0 ||
+                         OptionsTable [i].iDefault != 0);
 
     } // end of looping through each option
 

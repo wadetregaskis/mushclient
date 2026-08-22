@@ -2848,3 +2848,48 @@ non-vacuous.
 
 **Shared code — the same defect ships on macOS**, where a UTF-8 world is the
 common case rather than the unusual one.
+
+## 101 — Four world options silently revert to their defaults when set to zero
+
+**Where:** `xml/xml_save_world.cpp`, the numeric arm of the option loop.
+
+Two rules that only compose when the default is zero:
+
+- `Save_XML_number` omits an attribute whose value is 0, unless the caller asks
+  for it (`bWriteZero`).
+- The loader keeps the member **as constructed** when a numeric attribute is
+  absent — `Get_XML_number` with `bUseDefault` leaves its output untouched, and
+  the constructor value is the table default.
+
+So an option whose default is non-zero loses a deliberate 0 on every save.
+
+`max_output_lines` is the one row anybody had noticed; it was given
+`OPT_ZERO_UNLIMITED` to force the write, and both `docs/AUDIT-2026-08.md` and
+`docs/WINDOWS-VALIDATION.md` close that story with *"Any **future** option where
+0 is a real setting rather than 'unset' has the same trap"*. **Four existing
+rows already had it:**
+
+| option | default | range |
+|---|---|---|
+| `pixel_offset` | 1 | 0–20 |
+| `fade_output_opacity_percent` | 20 | 0–100 |
+| `tool_tip_visible_time` | 5000 | 0–120000 |
+| `tool_tip_start_time` | 400 | 0–120000 |
+
+Every one of them accepts 0 from `world.SetOption` and from its prefs page, and
+0 means something in each: no offset, fade to transparent, show immediately.
+
+**Measured**, with the fix reverted: set all four to 0, save, and none of the
+four attributes is in the file; reload and they read 1, 20, 5000 and 400.
+
+**Fix:** write a zero whenever the option's default is non-zero, which is
+exactly the condition under which omitting it loses information. A row whose
+default is 0 is written exactly as before, and a non-zero value always was —
+so no existing world file changes except by gaining the four attributes it
+should always have carried.
+
+`WorldLoad.AZeroSurvivesOnEveryOptionWhoseDefaultIsNotZero` pins all four,
+checking both the bytes on disk and the reload. The two checks are not
+redundant: the boolean and alpha arms of the loader *do* zero an absent
+attribute, so a reload-only test could pass on a build where the numeric arm
+started doing the same.

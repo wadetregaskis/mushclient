@@ -6084,3 +6084,71 @@ character too far left). The general form is worth stating, because this project
 keeps meeting it: **an asymmetry in code is evidence of nothing until the two
 halves are measured against a control.** The control here was the single-byte
 character next door, and it took eight lines.
+
+### 10ac. Why this host has no dialog templates, and why that is load-bearing
+
+Two comments written during §10z and §10aa said the test binary "links no
+resources" and that `CG_IDD_PROGRESS` is "a resource this console target does
+not link". Both were reasoning, not measurement, and both are wrong in the
+letter — which matters, because the correct explanation points somewhere useful.
+
+**The target does compile `MUSHclient.rc`.** The generator has emitted a
+`<ResourceCompile Include="MUSHclient.rc" />` all along. That file is 144 lines
+and carries a cursor, three icons and a version block — *nothing else*.
+Confirmed by enumerating the built `MUSHclient.exe`'s resource types:
+`CURSOR`, `ICON`, `GROUP_CURSOR`, `GROUP_ICON`, `VERSION`, and no others. No
+`MENU`, no `DIALOG`, no `STRING`, no `ACCELERATOR`.
+
+That is not damage and it is not the port's doing — `git log --follow` shows the
+file has been 143 lines since the first commit in this repository. **On Windows
+MUSHclient keeps its dialogs, menus, string table and accelerators in
+`locale\EN.dll`** and loads them at runtime: `CMUSHclientApp::I18N_Setup` ends in
+`AfxSetResourceHandle (m_hInstDLL)` (`MUSHclient.cpp:1832`). It is the same DLL
+`tools/decompile_dialogs.py` recovered `platform/mushclient_dialogs.rc` from for
+the wx bridge, and that file's own header says so in its second paragraph.
+
+#### The experiment, and its result
+
+Six lines will give the host those resources: `LoadLibrary ("locale\en.dll")` —
+`run_tests.ps1` already sets the working directory to the staged runtime assets,
+which is exactly where `ExtractDirectory` of an unset `m_strMUSHclientFileName`
+points the real code — then `AfxSetResourceHandle`. `I18N_Setup` itself is not
+callable, because its failure arms are plain `::MessageBox`, which nothing
+routes.
+
+Measured: **four suites went from green to `BLOCKED` at the runner's clock** —
+`LifecycleArms`, `LuaScripting`, `SpellCheckTest`, `SweepR4`.
+
+The reason is worth stating plainly, because it inverts an assumption this
+target has been running on:
+
+> This host's safety from modal dialogs has never come from routing them. It
+> comes from there being **no dialog template to instantiate**.
+
+`McTestMessageBox` covers `AfxMessageBox` and `UMessageBox` — §10q worked out
+that those are two funnels and hooked both. `McTestCancelDialog` covers the
+common dialogs, one call site at a time (§10z). **Nothing covers a `CDialog`**,
+and until now nothing had to, because `CDialog::Create` could not find a
+template and failed.
+
+So the resources are worth having only together with a way to decline every
+`DoModal`, and that is a change to the shim rather than to this host. The
+experiment is reverted and the finding recorded at both sites. A missing dialog
+template is load-bearing; anything that would supply one has to bring a policy
+for answering dialogs with it.
+
+#### What it costs, stated so the next attempt starts here
+
+Without resources this target cannot reach: `CProgressDlg` and therefore the
+Lua `progress` library's create path; anything `AfxMessageBox (nIDPrompt)` says;
+`CMultiDocTemplate`'s title/filter strings (one assertion per template on every
+run, and the reason `world.Open` cannot report a proper failure); the
+accelerator tables `AcceleratorTo` copies from; and every dialog in
+`dialogs/**`, which is most of what §10h still owes.
+
+The route in, if it is ever taken: give the MFC shim a `MUSHCLIENT_TESTS` arm on
+`CDialog::DoModal` that answers `IDCANCEL` without creating a window — the same
+answer `McTestCancelDialog` gives, applied at the one place every modal passes
+through — and then load the DLL. That is a smaller change than it looks, and it
+would open the dialog half of the campaign to unit testing rather than to a
+GUI-driving session.

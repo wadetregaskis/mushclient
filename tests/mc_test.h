@@ -490,10 +490,16 @@ void Generate256colours(void);
 //                         rather than broken.
 //
 // Constructing one creates no window: CDocTemplate's constructor stores the
-// three runtime classes and loads a string resource.  This binary links no
-// resources, so that load fails and reports one assertion per template on
-// stderr -- accepted, because the alternative is compiling the app's .rc into
-// the test target for two strings nothing reads.
+// three runtime classes and loads a string resource.  That load fails and
+// reports one assertion per template on stderr -- accepted.
+//
+// It fails for a reason worth stating exactly, because the obvious guess is
+// wrong: the target DOES compile MUSHclient.rc.  That file carries a cursor,
+// three icons and version info and nothing else -- confirmed by enumerating the
+// built exe's resource types.  The dialogs, menus, string table and
+// accelerators live in locale\EN.dll and are loaded at runtime by
+// CMUSHclientApp::I18N_Setup (MUSHclient.cpp:1832).  See the note above
+// MC_TEST_WIN_MAIN_FRAME for why this host does not do that.
 //
 // Deliberately NOT AddDocTemplate: that hands the template to the app's
 // document manager and makes File>New and the OLE server reachable, which this
@@ -510,6 +516,36 @@ void Generate256colours(void);
                 IDR_MUSHCLTYPE, RUNTIME_CLASS(CMUSHclientDoc), \
                 RUNTIME_CLASS(CChildFrame), RUNTIME_CLASS(CMUSHView)); \
     } while(0)
+
+// ── the localisation resource DLL ──────────────────────────────────────────
+// MUSHclient.rc carries a cursor, three icons and version info and NOTHING
+// else -- no dialogs, no menus, no string table, no accelerators.  That is not
+// an omission: on Windows they live in locale\EN.dll and are loaded at runtime
+// by CMUSHclientApp::I18N_Setup, which ends in AfxSetResourceHandle
+// (MUSHclient.cpp:1832).  Confirmed by enumerating the built exe's resource
+// types: CURSOR, ICON, GROUP_CURSOR, GROUP_ICON, VERSION, and no others.
+//
+// Without that step the process has no dialog templates at all, so
+// CDialog::Create fails _AfxCheckDialogTemplate, CMultiDocTemplate cannot load
+// the title/filter string its constructor asks for, and AfxMessageBox(nID) has
+// no text to find.
+//
+// It would be six lines to add -- LoadLibrary ("locale\\en.dll") next to the
+// staged runtime assets, then AfxSetResourceHandle; I18N_Setup itself is not
+// callable here because its failure arms are plain ::MessageBox, which nothing
+// routes.  **It is deliberately NOT done, and this is the measurement.**
+//
+// With the resource handle set, four suites went from green to BLOCKED at the
+// runner's clock -- LifecycleArms, LuaScripting, SpellCheckTest, SweepR4 --
+// because CDialog::DoModal stops failing and starts putting up a window.  This
+// host's safety from modal dialogs has never come from routing them; it comes
+// from there being no dialog templates to instantiate.  McTestMessageBox covers
+// AfxMessageBox and UMessageBox, and NOTHING covers a CDialog.
+//
+// So the resources are worth having only together with a way to decline every
+// DoModal, which is a change to the shim, not to this host.  Until then a
+// missing dialog template is load-bearing, and the tests that would otherwise
+// need one say so at their own site.
 
 // ── a CMainFrame object, with no window in it ──────────────────────────────
 // `Frame` is a MACRO -- *((CMainFrame *) App.m_pMainWnd) (stdafx.h:271) -- so

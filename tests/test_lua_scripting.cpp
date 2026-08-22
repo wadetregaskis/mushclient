@@ -1996,13 +1996,20 @@ TEST(LuaScripting, ProgressDialogLibraryIsRegistered)
         "assert(type(progress.new) == 'function', 'progress.new missing')\n";
 #ifndef _WIN32
     // progress.new CREATES the dialog, and on Windows that is a real
-    // CProgressDlg from IDD_PROGRESS -- a resource this console target does not
-    // link (it compiles the engine sources, not the .rc).  MFC's
-    // _AfxCheckDialogTemplate then fails the template lookup (dlgcore.cpp:210)
-    // and the create path throws out of the binding.  What the test is named
-    // for -- the library being REGISTERED at all, which was #ifdef _WIN32 and
-    // therefore missing from the port until 2026-08-12 -- is asserted above and
-    // holds on both platforms.
+    // CProgressDlg from CG_IDD_PROGRESS.  This host has no dialog templates:
+    // MUSHclient.rc holds a cursor, three icons and version info, and the
+    // dialogs live in locale\EN.dll, which only CMUSHclientApp::I18N_Setup
+    // loads.  So _AfxCheckDialogTemplate fails the lookup (dlgcore.cpp:210) and
+    // the create path throws out of the binding.
+    //
+    // Setting the resource handle here was tried and MEASURED as a regression:
+    // with templates available, four suites go from green to blocked, because
+    // CDialog::DoModal stops failing and starts putting up a window nothing can
+    // answer (tests/mc_test.h, above MC_TEST_WIN_MAIN_FRAME).
+    //
+    // What the test is named for -- the library being REGISTERED at all, which
+    // was #ifdef _WIN32 and therefore missing from the port until 2026-08-12 --
+    // is asserted above and holds on both platforms.
     script +=
         "local dlg = progress.new('working...')\n"
         "assert(dlg ~= nil, 'progress.new returned nothing')\n"

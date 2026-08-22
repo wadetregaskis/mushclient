@@ -7401,6 +7401,27 @@ fall back" cases used to express that by zeroing the rect; they now set the flag
 which is what they always meant, and each gained a case for the state the flag
 made expressible.
 
+
+#### The rest of the sentinels, checked
+
+Having found two, the obvious question is how many more there are. Every
+non-pure default across the three PAL seams was checked against *"can a real
+measurement also produce this value, and does any caller care?"*:
+
+| seam value | verdict |
+|---|---|
+| `mainClientRect () -> {0,0,0,0}` | **the bug** — a minimised window measures exactly that |
+| `isPaused () -> false`, `mouseCaptured () -> false` | a real adapter answers false too, and "not paused" / "not captured" is the safe reading either way |
+| `setCommandWindowHeight () -> false`, `setOutputWidthPixels () -> false` | false means "did not happen", which is true of both the default and a refusal |
+| `outputRect ()` returning zeros | its only two callers are `#ifndef _WIN32`, so it is unused on Windows entirely |
+| `outputAreaChars ()` returning zeros | "dormant on every platform" by its own comment; the engine reads `m_gui_cols`/`m_gui_rows` instead |
+| `ITransport::lastResolveError () -> 0` | a Winsock failure code is never 0, so 0 unambiguously means "nothing to report" |
+| `ISurface::contentGeneration () -> 0` | the hazard is stated at the declaration *and* honoured at the one call site (`gen != 0 && …` in the miniwindow mask cache) |
+
+So: one real instance, one near-miss that its author had already written a
+warning for, and the rest sound. The check is cheap enough to be worth running
+again whenever a seam gains a non-pure default.
+
 #### Why this is the third time the same shape has come up
 
 `docs/UPSTREAM-DIVERGENCES.md` and CLAUDE.md already record two: *a shim can

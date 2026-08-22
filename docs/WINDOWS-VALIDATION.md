@@ -7987,3 +7987,102 @@ only the setter's maximum would leave a value that a world file can still hold
 and the script API can no longer set; and making `10` mean "the whole line" is
 a behaviour change to a documented option. Recorded for a decision rather than
 guessed at.
+
+## §11 — The in-app probe suite
+
+```
+powershell -File tests\win\run_app_probes.ps1              # build + run all
+powershell -File tests\win\run_app_probes.ps1 -NoBuild
+powershell -File tests\win\run_app_probes.ps1 -Probe imageops
+```
+
+**99 assertions across 4 probes, all passing.**
+
+There are now **three** Windows test surfaces, not two:
+
+| surface | what it links | what it can reach |
+|---|---|---|
+| `ctest --test-dir build` | `mushcore` + `mushcore_testsupport` | the engine, headless, on macOS/Linux |
+| `tests\win\run_tests.ps1` | the same 286 engine sources as the app, real MFC, real COM | the engine, headless, **on Windows** — 1683 assertions, 194 suites |
+| `tests\win\run_app_probes.ps1` | **the shipping `MUSHclient.exe`** | everything that needs a `CMUSHView`, a `CSendView`, a `CMainFrame` and real GDI *at the same time* |
+
+The third exists because the second cannot reach any of it. `run_tests.ps1`
+constructs a `CMUSHclientDoc` with no window — deliberately, and
+`tests/win/test_win_worldview.cpp` pins the "no view" answers as a contract —
+so the miniwindow drawing ops, the `GetInfo` window family, the command bar and
+the clipboard have no coverage there at all. This is the Windows counterpart of
+the macOS in-app selftests, and it is kept **separate from `run_tests.ps1` on
+purpose**: that runner drives a headless console binary whose failure mode is a
+bad assertion, while this one launches a windowed app whose failure mode is a
+stuck modal. Folding them together would let one hung dialog take down 194
+healthy suites.
+
+### How a probe works
+
+`tests/win/app_probes/<name>.lua` defines a global `probeMain` and nothing
+else. The runner generates a world file and a bootstrap script; the bootstrap
+`dofile`s the probe and registers a **one-shot `active_closed` timer** that
+calls `probeMain` two seconds later — after the view exists, which is the whole
+point. The probe writes `PASS`/`FAIL` lines and one `SUMMARY`, and the runner
+counts them. **A missing `SUMMARY` is a crash, not a pass.**
+
+`harness.lua` carries the assertion helpers. Write every assertion so that "the
+code did nothing" FAILS: the clipboard probe seeds the clipboard with
+`SENTINEL` before each match, and the image probe paints a green ground under
+its alpha-mask test so that "failed to draw" and "correctly transparent" cannot
+look alike.
+
+### The four probes
+
+- **`imageops`** (29) — the five operations `CLAUDE.md` lists as having no
+  assertions anywhere, against real GDI. Includes `MergeImageAlpha`'s mask
+  variant and the `Filter` direction-selector pair from §10ax.
+- **`fontmetrics`** (36) — the two facts §9 of `docs/FONT-PARITY-2026-08.md`
+  established by measurement: `tmHeight − tmInternalLeading == MulDiv(pt,96,72)`
+  exactly, and the `pitchAndFamily` substitution rule *including* the half that
+  bounds it (a known face beats the hint).
+- **`worldview`** (22) — the `GetInfo` window family and the command bar,
+  asserted on internal consistency and bounds rather than absolute pixels so it
+  passes on any screen.
+- **`clipboard`** (12) — `clipboard_arg` end to end through a real trigger
+  match, saving and restoring the machine's clipboard around itself. This is
+  the call-site coverage `tests/win/test_gap_coverage.cpp` deliberately does
+  not attempt.
+
+### Five hazards, each of which cost a run
+
+All five are commented at their sites in the runner, because every one of them
+presents as an unexplained timeout:
+
+1. **The world attribute is `script_filename`, not `script_file`.**
+2. **A hand-written world file must say `defaults="y"`** or every omitted
+   boolean loads FALSE, `enable_timers` included, so the deferred probe never
+   runs. Deliberate; reason at `xml/xml_load_world.cpp:1046`.
+3. **Never `SendMessage(BM_CLICK)` into a modal from outside the process** — it
+   ends the modal loop inside the send and MFC trips `ASSERT(ContinueModal())`
+   at `wincore.cpp:4659`. Post `WM_LBUTTONDOWN`/`UP`.
+4. **No BOM on generated Lua.** Windows PowerShell 5.1's
+   `Set-Content -Encoding utf8` writes one and Lua's loader rejects the file.
+   This surfaces *only* as a "Scripting Error" box whose child controls expose
+   the field labels (`Error number:`, `Description:`) and never the message —
+   so the runner now prints the full contents of any dialog whose title is not
+   on a benign list, and the generated bootstrap `pcall`s its `dofile` and
+   **writes a report on failure** instead of leaving a silent timeout.
+5. **Preferences.** This is the only mode that runs the app far enough to write
+   them. The runner backs them up before the first launch and restores them in
+   a `finally`, so a failing probe cannot leave them modified.
+
+### What building it found
+
+Nothing broken in the app — but two contracts that a reader would get wrong,
+both caught because a probe asserted the opposite and failed:
+
+- **`SetCommand` refuses a command bar that is not empty**, returning
+  `eCommandNotEmpty`. Upstream, not a port quirk: the
+  `if (strCurrent.IsEmpty ())` guard is in `e362b37`. The first draft of
+  `worldview` read the refusal as a stale selection.
+- **`Filter`'s `Options` is a direction selector for the convolutions**, not a
+  strength (§10ax).
+
+Both are now pinned, which is the point: a contract that surprised the person
+writing the test is exactly the one worth a test.

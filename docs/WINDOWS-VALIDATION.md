@@ -6146,9 +6146,22 @@ run, and the reason `world.Open` cannot report a proper failure); the
 accelerator tables `AcceleratorTo` copies from; and every dialog in
 `dialogs/**`, which is most of what §10h still owes.
 
-The route in, if it is ever taken: give the MFC shim a `MUSHCLIENT_TESTS` arm on
-`CDialog::DoModal` that answers `IDCANCEL` without creating a window — the same
-answer `McTestCancelDialog` gives, applied at the one place every modal passes
-through — and then load the DLL. That is a smaller change than it looks, and it
-would open the dialog half of the campaign to unit testing rather than to a
-GUI-driving session.
+The route in is **not** the one that first suggests itself. "Give the MFC shim a
+`MUSHCLIENT_TESTS` arm on `CDialog::DoModal`" is what the port would do and is
+meaningless here: on Windows `CDialog` is real MFC, in a static library nobody
+in this tree edits. There is no single place every modal passes through.
+
+So the only honest route is the one `McTestCancelDialog` already takes — a
+`#ifdef MUSHCLIENT_TESTS` arm at the call site — and the size of that job is
+now measured rather than guessed: **159 `DoModal ()` call sites across 52 files**
+in the engine and `dialogs/**`. Which is to say the dialog half of §10h is not
+going to be unit-tested into existence one `#ifdef` at a time; the ones worth
+doing are the handful a specific test actually reaches, exactly as `Load_Set`'s
+was.
+
+A cheaper alternative exists and is untried: a `WH_CBT` hook posted for the
+duration of a test, cancelling any dialog the process creates. That is one
+mechanism rather than 159 edits, it needs no change to shipping source, and it
+would let the resource DLL be loaded. It also silently changes what every
+existing green test is running against, so it wants its own measurement before
+anyone relies on it.

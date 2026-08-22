@@ -46,7 +46,6 @@ $excluded = [ordered]@{
   'test_pal_transport.cpp' = 'drives platform/posix_transport.cpp; the Windows adapter is pal/win_transport.cpp'
   'test_mc_test_framework.cpp' = 'uses dup2 to capture the harness own output'
   # --- needs a port-only seam; re-enterable once that seam has a Windows half
-  'test_lua_surface.cpp'     = 'ACCESS VIOLATION in LuaSurface.UdpFamily, after 3 failures in the arms before it (UtilityMiscArms, ChangeDirRoundTrip, SoundFamilyHeadless -- chdir/getcwd shapes and the miniaudio backend, which is the non-Windows sound path). The notepad_fixture dependency it used to be excluded for is guarded now and was not the blocker; this suite drives a lot of port-only surface and wants its own pass'
   'test_notepad_methods.cpp' = 'every one of its 18 tests IS the notepad: notepad_fixture.h is #ifndef _WIN32 because a notepad on Windows is a real CEditView from the MFC doc/view framework, so guarding the users would leave an empty file'
   'test_sound.cpp'           = 'drives the miniaudio backend, which is the non-Windows sound path'
   'test_chat_sockets.cpp'    = 'builds real AF_UNIX/loopback pairs with socketpair, which Windows does not have'

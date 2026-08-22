@@ -5864,3 +5864,171 @@ documents, both correct with `ScopedWorldView`.
 its first line because `GetFirstViewPosition()` is NULL, and a `CView` attached
 to a document is a window, not a registry entry. The frame does not supply one.
 The other fifteen exclusions are unchanged.
+
+### 10aa. `test_lua_surface.cpp`, and the two host settings that were quietly wrong
+
+The fourth big suite is in: 94 tests, **1,597 passing across 176 suites**. Its
+stated exclusion reason — an access violation in `LuaSurface.UdpFamily` after
+three earlier failures — was already stale when §10z landed, because the
+`Frame` fix removed that whole class of crash. What was left was 41 failures and
+two modals, and almost all of it came from two things the host was not doing.
+
+#### `InstallGdiSurfaceBridge` is an InitInstance step, and nobody ran it
+
+`pal::g_surface` is NULL until `MUSHclient.cpp:254` runs. Without it every
+`CMiniWindow` drawing operation — the whole `world.Window*` family, both image
+loaders, the DIB store, text measurement — fails at the seam rather than at
+anything it is being asked about. Adding one call to `MC_TEST_WIN_APP_STATE`
+cleared **thirty** failures at once and, more to the point, made the miniwindow
+tests run against **real GDI**: the image ops, the alpha merges, the filters,
+the blends and the PNG/BMP round-trips now have a second surface to disagree
+with, which `pal::CpuRaster` has never had.
+
+This is the third InitInstance step this host has had to be taught, after
+`LoadGlobalsFromDatabase` and `MUSHCLIENT_VERSION`. The pattern is worth naming:
+**anything `InitInstance` does before the first document exists is something the
+engine afterwards assumes has happened**, and a console host that skips it fails
+somewhere else entirely.
+
+#### The test binary was DPI-aware and the client is not
+
+`MUSHclient.vcxproj` sets `<EnableDpiAwareness>false</EnableDpiAwareness>` in
+both configurations, and its manifest declares no `dpiAware` element. The
+shipping client is therefore DPI-**unaware**: Windows lies to it about the
+display and `GetDeviceCaps (LOGPIXELSY)` answers 96 whatever the monitor is
+doing. MSBuild's default for a VC project is DPI-**aware**, and the generator
+had never said otherwise — so the test binary read this machine's real 216 dpi.
+
+`CMiniWindow::Font` computes `MulDiv (points, srf->dpi (), 72)`, so an 8-point
+font produced a 24-pixel cell in the tests and 11 in the client, and D-21's
+font-parity pin failed against a client that was never wrong.
+
+**The generalisation:** the generator's whole purpose is that there are not two
+definitions of "how this builds on Windows", and until now it copied the source
+list and the preprocessor defines. Manifest settings are equally part of that,
+and this one silently changes what every *pixel* measurement in the suite means.
+`tests/check_win_test_sources.py` pins the `<ClCompile>` lists; nothing pins
+this, and the next such setting will go the same way.
+
+#### A test that could not put the working directory back
+
+`LuaSurface.ChangeDirRoundTrip` built its restore path into a Lua literal:
+
+```cpp
+"assert(world.ChangeDir('" + std::string(orig) + "') == 1)\n"
+```
+
+`getcwd` returns backslashes here, and **Lua 5.1 does not reject an unknown
+escape — it silently drops the backslash**, so `C:\Users\shive` became
+`C:Usersshive` and the restore failed. That is not a local failure: the test
+left the **process** at `C:\`, and later tests in the file failed for reasons
+that had nothing to do with them. It now escapes the path and `chdir`s back in C
+regardless, so a failure costs one test instead of the rest of the suite.
+
+Worth carrying: a test that mutates process-wide state must restore it in a way
+that cannot itself fail, and a path is never safe to paste into a string
+literal.
+
+#### Font parity: the size half is now closed exactly, and the face half measured
+
+`docs/FONT-PARITY-2026-08.md` left two things open. Both moved.
+
+**Size.** The pin asserted `MulDiv (pt, 96, 72) == tmHeight`, and on real GDI
+that is the wrong quantity. `pal/gdi_surface.cpp` hands the em to
+`CreateFont` as a **negative** `lfHeight`, which asks the mapper to match the
+character height; the `tmHeight` it reports back is that em **plus the font's
+internal leading**. Measured at 96 dpi: 8pt → a 14-pixel `tmHeight` over an
+11-pixel em, and the same three-pixel gap at every size.
+
+`pal::CpuRaster` reports the em *as* `tmHeight` and leaves `internalLeading` at
+its zero default — which is exactly the "under-constrains the headless parity
+assertions" note in CLAUDE.md, now measured rather than suspected. The pin is
+now `tmHeight - tmInternalLeading`, an **exact** equality on both surfaces (zero
+leading on CpuRaster, three-ish on GDI), and it pins the arithmetic D-21 was
+about instead of a quantity that legitimately differs.
+
+**Face.** `WindowFontInfo (w, f, 21)` returns the *realised* face, so GDI can be
+asked directly what it substitutes. Measured: **`"NoSuchFaceAtAll"` resolves to
+`"Arial"`** — a proportional face. CLAUDE.md's note at `CFont::CreateFont` says
+the port's shim drops `pitchAndFamily` "so an unknown face does not fall back to
+monospace as GDI's mapper does". With a zero pitch/family hint GDI does not fall
+back to monospace either; it falls back to Arial. The hint is what would change
+that, and the port drops it — so the gap is real, but its consequence is not the
+one the comment states.
+
+The same measurement is why the test now names `Courier New` on Windows: `Menlo`
+is a macOS font, GDI substitutes Arial for it, and every width assertion below
+was therefore measuring a *proportional* face while claiming to measure a
+fixed-pitch one.
+
+#### A stretch test that asserted a colour it was told not to
+
+`pal/cpu_raster.cpp`'s stretch branch carries this, in as many words:
+
+> This will NOT match the wx adapter's HALFTONE (`BlitQuality::Smooth`) output,
+> and it is not meant to: the shipping rasteriser is the parity bearer for
+> interpolated colour. […] Tests over a stretch must assert those and never an
+> interpolated colour value.
+
+`DrawImageStretchModeDrawsAndHonoursItsSourceRect` asserted interpolated colour
+values, and passed only because CpuRaster does not interpolate.
+`world.WindowDrawImage` mode 2 requests `BlitQuality::Smooth`, which is
+`::StretchBlt` with `HALFTONE` — the mode the call site's own comment records
+upstream using — so shrinking nine source columns into three **blends** on
+Windows. Measured: the leftmost destination cell is `0x0048D0`, a colour that is
+not in the image.
+
+Measured too, and recorded because it is the shape of the difference: the
+horizontal magnify came out `GGGGGGGGGGGGGGGBBBB` where CpuRaster's
+`floor (X * srcW / dstW)` gives sixteen greens, and the vertical band split
+identically on both. So the divergence is one pixel of boundary on magnify and
+genuine interpolation on minify.
+
+The Windows arm now asserts placement and extent — the bands are contiguous and
+in the right order, all three minified cells are painted, nothing spills — and
+the port keeps its exact nearest-neighbour columns, which is legitimate there
+and is not a parity claim. **A comment that tells you what a test may not assert
+is worth reading before writing the test**; this one had been there all along.
+
+#### The rest, by cause
+
+- **`world.AddFont` fails differently, and the difference is the macOS gap read
+  from the other side.** Windows resolves `AddFontResourceExA`, calls it, and
+  gets 0 back for a missing file → `eFileNotFound`. The port's
+  `LoadLibrary ("gdi32")` answers nullptr, so it never reaches the file →
+  `eNoSuchCommand`, i.e. `world.AddFont` there can never register anything.
+- **`world.GetRecentLines (3000000000)`** is the second instance of the 32-bit
+  `long` class (§10z's palette constant was the first). The value does not fit,
+  the double→long conversion saturates to `LONG_MIN`, `Count > 0` is false and
+  the method returns empty — so the out-of-bounds read the test exists to guard
+  is never reached. Two billion is positive in 32 bits, still past the buffer,
+  and still makes `size() - Count` wrap. The out-of-range value is asserted
+  separately on Windows, where the answer must be a harmless empty string.
+- **`world.Open` reaches `CWinApp::OpenDocumentFile`,** whose first act is
+  `ASSERT_VALID (m_pDocManager)`. This host has the document *templates* but
+  deliberately never calls `AddDocTemplate` — that is what creates the manager,
+  and it also makes File▸New and the OLE server reachable. A bare
+  `new CDocManager` with no templates registered would make the line answer
+  `false` without any of that reach; noted, not done, because it changes a
+  framework global for the whole target.
+- **Accelerators need a `CView`, not a frame.** `world.Accelerator` refuses at
+  its first line for the same reason `tests/test_accelerators.cpp` stays out,
+  and the CMainFrame did not change that — measured.
+- **Sound is real here, and audible.** `CMainFrame::PlaySoundFile` hands a `.wav`
+  to `::PlaySound`, which reports success for a file that does not exist *and
+  plays the system default sound while it is at it*; the rest of the family
+  opens DirectSound. The parameter check (`Sound ("")`) runs before any device
+  and is asserted on both; the backend assertions are the port's and stay there.
+  A unit test does not make a noise on the machine it runs on.
+- **`utils.glyph_available` and `utils.menufontsize`** read the real system here
+  and get real answers; both arms are asserted rather than either being skipped.
+- **`utils.*` dialogs are the one thing with no Windows answer at all.**
+  `utils.filepicker` is a `CFileDialog` and `utils.directorypicker` is
+  `::SHBrowseForFolder`, both measured putting up a window nothing can answer.
+  Unlike every other view-bound case in this campaign, "what does it answer with
+  no GUI" has no answer — it does not return until a user acts. That test is the
+  port's null-hook seam and is skipped here, explicitly.
+- **`world.ChatPasteEverybody` reads the machine's clipboard**, so its answer
+  depends on what the user last copied. The assertion now accepts either
+  `eClipboardEmpty` or `eNoChatConnections` and still rules out `eOK`. Clearing
+  the real clipboard to force the empty case is not something a unit test may do.

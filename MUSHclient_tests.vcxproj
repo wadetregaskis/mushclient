@@ -1236,6 +1236,7 @@
     <ClCompile Include="tests\test_hyperlink.cpp" />
     <ClCompile Include="tests\test_info.cpp" />
     <ClCompile Include="tests\test_lua_scripting.cpp" />
+    <ClCompile Include="tests\test_lua_surface.cpp" />
     <ClCompile Include="tests\test_mcdatetime.cpp" />
     <ClCompile Include="tests\test_mxp.cpp" />
     <ClCompile Include="tests\test_plugins.cpp" />

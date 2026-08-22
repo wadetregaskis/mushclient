@@ -97,7 +97,8 @@ TEST(LuaSurface, UtilityMiscArms)
         "assert(world.SendPkt('x') == error_code.eWorldClosed)\n"  // not connected
         "assert(world.Disconnect() == error_code.eWorldClosed)\n"
         "assert(world.Menu('a|b', 'a') == '')\n"           // hook null headless
-        "assert(world.Open('/no/such/file.mcl') == false)\n" // stub OpenDocumentFile
+        // world.Open is asserted separately below -- on Windows it reaches the
+        // real framework and needs something this host does not have.
         "world.SetChanged(false)\n"
         "world.SetNotes('remember me')\n"
         "assert(world.GetNotes() == 'remember me')\n"
@@ -110,6 +111,22 @@ TEST(LuaSurface, UtilityMiscArms)
         "world.Help('lua')\n"
         "world.Help('Send')\n"
     ));
+
+#ifndef _WIN32
+    // world.Open goes straight to CWinApp::OpenDocumentFile, and the FIRST
+    // thing that does is ASSERT_VALID (m_pDocManager).  This host has the two
+    // document TEMPLATES but deliberately never calls AddDocTemplate -- that is
+    // what creates the manager, and it also makes File>New and the OLE server
+    // reachable, which a console test host has no business doing
+    // (mc_test.h, MC_TEST_WIN_DOC_TEMPLATES).  So the assertion fails, the
+    // routed report returns, and the next line dereferences the null manager.
+    //
+    // Giving the host a bare `new CDocManager` with no templates registered
+    // would make this line answer false without any of that reach; it is not
+    // done here because it changes a framework global for the whole target and
+    // wants its own measurement.
+    EXPECT_TRUE(run(f.L, "assert(world.Open('/no/such/file.mcl') == false)\n"));
+#endif
 }
 
 TEST(LuaSurface, ChangeDirRoundTrip)
@@ -117,11 +134,27 @@ TEST(LuaSurface, ChangeDirRoundTrip)
     LuaDoc f; ASSERT_NE(nullptr, f.L);
     char orig[1024];
     ASSERT_NE(nullptr, getcwd(orig, sizeof orig));
+
+    // Escape the path before it goes into a Lua literal.  On Windows getcwd
+    // returns backslashes, and Lua 5.1 does not reject an unknown escape -- it
+    // silently drops the backslash -- so "C:\Users\shive" became "C:Usersshive"
+    // and the restore failed.  That is not a local failure: this test then left
+    // the PROCESS at C:\, and every later test in the file that touched a
+    // relative path failed for a reason that had nothing to do with it.
+    std::string quoted;
+    for (const char* p = orig; *p; ++p) {
+        if (*p == '\\' || *p == '\'') quoted += '\\';
+        quoted += *p;
+    }
     std::string code =
         "assert(world.ChangeDir('/') == 1)\n"
         "assert(world.ChangeDir('/no/such/dir/xyz') == 0)\n"
-        "assert(world.ChangeDir('" + std::string(orig) + "') == 1)\n";
-    EXPECT_TRUE(run(f.L, code.c_str()));
+        "assert(world.ChangeDir('" + quoted + "') == 1)\n";
+    bool ok = run(f.L, code.c_str());
+    // ...and put it back in C regardless, so a failure above costs one test
+    // rather than the rest of the suite.
+    if (chdir(orig) != 0) { /* nothing more we can do */ }
+    EXPECT_TRUE(ok);
     char now[1024];
     ASSERT_NE(nullptr, getcwd(now, sizeof now));
     EXPECT_STREQ(orig, now);
@@ -132,8 +165,18 @@ TEST(LuaSurface, ChangeDirRoundTrip)
 TEST(LuaSurface, SoundFamilyHeadless)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
+    // The name check runs before any device does, so it is the same everywhere.
     EXPECT_TRUE(run(f.L,
-        "assert(world.Sound('') == error_code.eNoNameSpecified)\n"
+        "assert(world.Sound('') == error_code.eNoNameSpecified)\n"));
+
+#ifndef _WIN32
+    // Everything below is the PORT's audio backend answering "there isn't one".
+    // On Windows these are real: CMainFrame::PlaySoundFile hands a .wav to
+    // ::PlaySound, which reports SUCCESS for a file that does not exist and
+    // plays the system default sound while it is at it -- so the assertions
+    // would be wrong AND the run would make a noise on the machine.  The
+    // remaining calls open DirectSound.  A unit test does neither.
+    EXPECT_TRUE(run(f.L,
         "assert(world.Sound('nofile.wav') == error_code.eCannotPlaySound)\n"
         "assert(world.PlaySound(0, 'f.wav', false, 0, 0) == error_code.eCannotPlaySound)\n"
         "assert(world.PlaySoundMemory(0, 'notawav') == error_code.eCannotPlaySound)\n"
@@ -141,6 +184,7 @@ TEST(LuaSurface, SoundFamilyHeadless)
         "assert(world.GetSoundStatus(1) == -3)\n"     // no audio backend
         "assert(world.GetSoundStatus(0) == -3)\n"
     ));
+#endif
 }
 
 // ── methods_udp.cpp ───────────────────────────────────────────────────────
@@ -739,13 +783,27 @@ TEST(LuaSurface, OutputStateSettersWriteTheDocument)
 TEST(LuaSurface, GuiOnlySettersStillValidateTheirArguments)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
+    // AddFont on a file that is not there.  The two platforms fail for DIFFERENT
+    // reasons, and the difference is the recorded macOS product gap read from
+    // the other side: Windows resolves AddFontResourceExA, calls it, and gets 0
+    // back -> eFileNotFound.  The port's LoadLibrary("gdi32") answers nullptr,
+    // so it never reaches the file at all -> eNoSuchCommand, which is to say
+    // world.AddFont there can never register anything.
+#ifdef _WIN32
+    EXPECT_TRUE(run(f.L,
+        "assert(world.AddFont('/no/such/font.ttf') == error_code.eFileNotFound)\n"));
+#else
+    EXPECT_TRUE(run(f.L,
+        "assert(world.AddFont('/no/such/font.ttf') == error_code.eNoSuchCommand)\n"));
+#endif
+
     EXPECT_TRUE(run(f.L,
         "local bad = error_code.eBadParameter\n"
         // AddFont: `if (strlen (PathName) <= 0) return eBadParameter`
         "assert(world.AddFont('') == bad)\n"
-        // eNoSuchCommand, not eOK: AddFont cannot register a font on this
-        // platform at all — see the note below the test.
-        "assert(world.AddFont('/no/such/font.ttf') == error_code.eNoSuchCommand)\n"
+        // AddFont on a missing file is asserted separately, just above: the two
+        // platforms fail there for different reasons and the line has to be
+        // chosen outside this chunk.
         // SetCursor: the range gate is -1 .. 12
         "assert(world.SetCursor(-2) == bad)\n"
         "assert(world.SetCursor(13) == bad)\n"
@@ -805,8 +863,12 @@ TEST(LuaSurface, FrameDependentMethodsAnswerWithoutAMainWindow)
         // A null lightuserdata — the same "no window" answer the stub gave, and
         // the honest one: the product hands back a wxWindow* here, which is not
         // an HWND and cannot be used as one.
+        // ...and the two runtimes SPELL a null lightuserdata differently:
+        // "userdata: 0x0" where Lua's %p goes through glibc/BSD printf,
+        // "userdata: 00000000" through MSVC's.  Match the value, not the text.
         "local h = world.GetFrame()\n"
-        "assert(h == nil or tostring(h) == 'userdata: 0x0', tostring(h))\n"
+        "local s = (h == nil) and 'nil' or tostring(h)\n"
+        "assert(s == 'nil' or s:match('^userdata: 0x?0+$') ~= nil, s)\n"
         // FALSE, matching the PRODUCT — MakeWindowTransparent bails at its
         // LoadLibrary('user32') before touching a window.
         "assert(world.Transparency(0, 1) == false)\n"
@@ -885,7 +947,21 @@ TEST(LuaSurface, GetRecentLinesClampsACountBiggerThanTheBuffer)
     f.doc.m_sRecentLines.push_back("c");
 
     // The discriminator: out of bounds before the arithmetic went to full width.
-    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(3000000000) == 'a\\nb\\nc')\n"));
+    //
+    // Two billion, not three: the API takes a `long`, and MUSHclient is a
+    // 32-bit app on Windows, so 3,000,000,000 does not fit one.  The Lua
+    // binding's double-to-long conversion saturates to LONG_MIN there, Count is
+    // then NEGATIVE, and the method returns empty without ever reaching the
+    // subscript -- so the original defect is not exercised at all.  Two billion
+    // is positive in 32 bits, still far past a three-line buffer, and still
+    // makes `size() - Count` wrap, which is the arithmetic under test.
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(2000000000) == 'a\\nb\\nc')\n"));
+#ifdef _WIN32
+    // The out-of-range value is still worth asking about where it is out of
+    // range: the answer has to be a harmless empty string, not the read that
+    // started this.
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(3000000000) == '')\n"));
+#endif
 
     // Controls.  A modest overshoot always worked (its wrapped difference stayed
     // negative in 32 bits), an exact Count must be unchanged, and asking for
@@ -2142,33 +2218,81 @@ TEST(LuaSurface, WindowFilterKernelIsCentredAndCoversTheLastColumn)
 // miniwindow edge.  Deliberately several sizes: MulDiv rounds to nearest, so 8pt
 // (10.67 -> 11) and 14pt (18.67 -> 19) catch a truncating conversion that the
 // exactly-divisible 9/12pt would let through.
+// **The quantity that has to match is the EM, and tmHeight is not it.**  Real
+// GDI is handed the em as a NEGATIVE lfHeight (pal/gdi_surface.cpp:156), which
+// asks the mapper to match the character height; the tmHeight it reports back
+// is that em PLUS the font's internal leading.  Measured on Windows at 96 dpi:
+// 8pt -> a 14-pixel tmHeight over an 11-pixel em, and so on for every size.
+// pal::CpuRaster reports the em AS tmHeight and leaves internalLeading at its
+// zero default, which is the "under-constrains the headless parity assertions"
+// note in CLAUDE.md, now measured rather than suspected.
+//
+// So subtract the leading.  The result is an EXACT equality on both surfaces --
+// zero on CpuRaster, three-ish on GDI -- and it pins the arithmetic D-21 was
+// about instead of a quantity that legitimately differs.
 TEST(LuaSurface, MiniWindowFontIsWindowsSized)
 {
     CMUSHclientDoc doc;
     const char* PW = "d21font";
+    // A fixed-pitch face the platform's font mapper will actually honour.
+    // GDI substitutes for a face it does not have, and it substitutes a
+    // PROPORTIONAL one -- Menlo is a macOS font, so on Windows every width
+    // below would be measuring Arial.  CpuRaster does not resolve faces at all
+    // (its metrics come from the spec), so the name only matters here.
+#ifdef _WIN32
+    const char* FACE = "Courier New";
+#else
+    const char* FACE = "Menlo";
+#endif
     ASSERT_EQ(eOK, doc.WindowCreate(PW, 0, 0, 240, 56, 0, 0, 0x000000L));
 
     for (int pt : { 8, 9, 10, 12, 14 })
     {
-        ASSERT_EQ(eOK, doc.WindowFont(PW, "f", "Menlo", (double) pt,
+        ASSERT_EQ(eOK, doc.WindowFont(PW, "f", FACE, (double) pt,
                                       FALSE, FALSE, FALSE, FALSE, 0, 0));
-        VARIANT vh = doc.WindowFontInfo(PW, "f", 1);   // tmHeight
+        VARIANT vh  = doc.WindowFontInfo(PW, "f", 1);   // tmHeight
+        VARIANT vil = doc.WindowFontInfo(PW, "f", 4);   // tmInternalLeading
         ASSERT_EQ(VT_I4, vh.vt);
-        if (vh.lVal != MulDiv(pt, 96, 72))
-            printf("  D-21: %dpt gives a %ld px cell; Windows gives %d\n",
-                   pt, (long) vh.lVal, MulDiv(pt, 96, 72));
-        EXPECT_EQ(MulDiv(pt, 96, 72), vh.lVal);
+        ASSERT_EQ(VT_I4, vil.vt);
+        const long em = vh.lVal - vil.lVal;
+        if (em != MulDiv(pt, 96, 72))
+            printf("  D-21: %dpt gives a %ld px em (tmHeight %ld, leading %ld);"
+                   " Windows gives %d\n",
+                   pt, em, (long) vh.lVal, (long) vil.lVal, MulDiv(pt, 96, 72));
+        EXPECT_EQ(MulDiv(pt, 96, 72), em);
     }
 
     // The em must also be what the WIDTHS are built from: ten characters of a
     // fixed-pitch font advance ten cells.  Without this, a mutation that fixed
     // the height and left the width scaled would survive every check above.
-    ASSERT_EQ(eOK, doc.WindowFont(PW, "f", "Menlo", 10.0,
+    ASSERT_EQ(eOK, doc.WindowFont(PW, "f", FACE, 10.0,
                                   FALSE, FALSE, FALSE, FALSE, 0, 0));
     VARIANT vavg = doc.WindowFontInfo(PW, "f", 6);     // tmAveCharWidth
     ASSERT_EQ(VT_I4, vavg.vt);
     EXPECT_EQ(vavg.lVal * 10,
               doc.WindowTextWidth(PW, "f", "MMMMMMMMMM", FALSE));
+
+#ifdef _WIN32
+    // Face substitution, the half docs/FONT-PARITY-2026-08.md left open because
+    // "only a Windows measurement can close it".  Ask GDI what it actually
+    // resolved: a face it HAS comes back verbatim, and a face it does not have
+    // comes back as whatever the mapper chose -- which is the mechanism the
+    // port's CFont::CreateFont cannot reproduce, since it drops the
+    // pitchAndFamily hint the mapper falls back on.
+    VARIANT vface = doc.WindowFontInfo(PW, "f", 21);
+    ASSERT_EQ(VT_BSTR, vface.vt);
+    EXPECT_STREQ(FACE, (const char*) CString(vface.bstrVal));
+
+    ASSERT_EQ(eOK, doc.WindowFont(PW, "nf", "NoSuchFaceAtAll", 10.0,
+                                  FALSE, FALSE, FALSE, FALSE, 0, 0));
+    VARIANT vsub = doc.WindowFontInfo(PW, "nf", 21);
+    ASSERT_EQ(VT_BSTR, vsub.vt);
+    CString substituted(vsub.bstrVal);
+    printf("  face substitution: \"NoSuchFaceAtAll\" resolved to \"%s\"\n",
+           (LPCTSTR) substituted);
+    EXPECT_TRUE(!substituted.IsEmpty());
+    EXPECT_TRUE(substituted != "NoSuchFaceAtAll");   // the mapper really ran
+#endif
 
     EXPECT_EQ(eOK, doc.WindowDelete(PW));
 }
@@ -4231,6 +4355,11 @@ TEST(LuaSurface, DrawImageStretchModeDrawsAndHonoursItsSourceRect)
     const std::string png = fixture_png_path ("stretch");
 
     const std::string code = fixture_png_lua (png.c_str ()) +
+#ifdef _WIN32
+        "local WIN = true\n"
+#else
+        "local WIN = false\n"
+#endif
         "local BG = 0x123456\n"
         // 20 x 14 — both non-square and different from the 9 x 5 image, so a
         // window/image extent mix-up cannot come out right by luck.
@@ -4272,13 +4401,39 @@ TEST(LuaSurface, DrawImageStretchModeDrawsAndHonoursItsSourceRect)
         // so the two halves must differ — dropping SrcTop would give six
         // identical blue/green rows.
         "assert(world.WindowDrawImage('w', 'img', 1, 8, 0, 0, 2, 2, 2, -2, -1) == 0)\n"
-        "assert(world.WindowGetPixel('w',  1,  8) == GREEN, 'SrcLeft ignored')\n"
-        "assert(world.WindowGetPixel('w', 16,  8) == GREEN, 'src x=5 column')\n"
-        "assert(world.WindowGetPixel('w', 17,  8) == BLUE,  'src x=6 column')\n"
-        "assert(world.WindowGetPixel('w', 19,  8) == BLUE,  'stretch stopped short')\n"
-        "assert(world.WindowGetPixel('w',  1, 10) == GREEN, 'row 2 band too thin')\n"
-        "assert(world.WindowGetPixel('w',  1, 11) == RED,   'SrcTop ignored')\n"
-        "assert(world.WindowGetPixel('w', 19, 13) == RED,   'stretch stopped short')\n"
+        // The exact sample positions are CpuRaster's rule, and GDI does not use
+        // it: ::StretchBlt picks its own nearest-neighbour positions (and
+        // COLORONCOLOR "drops" rather than replicating), so the green/blue and
+        // green/red boundaries land a pixel or two elsewhere on Windows.  That
+        // is a measured parity difference in the port's own rasteriser, not a
+        // defect in this test -- see docs/WINDOWS-VALIDATION.md.  What both
+        // surfaces MUST agree on is the shape: the sub-rectangle was honoured,
+        // it was stretched, and each band is contiguous and in the right order.
+        "if WIN then\n"
+        "  local row = ''\n"
+        "  for X = 1, 19 do\n"
+        "    local p = world.WindowGetPixel('w', X, 8)\n"
+        "    row = row .. (p == GREEN and 'G' or (p == BLUE and 'B'"
+        "                  or (p == RED and 'R' or '?')))\n"
+        "  end\n"
+        "  local col = ''\n"
+        "  for Y = 8, 13 do\n"
+        "    local p = world.WindowGetPixel('w', 1, Y)\n"
+        "    col = col .. (p == GREEN and 'G' or (p == RED and 'R'"
+        "                  or (p == BLUE and 'B' or '?')))\n"
+        "  end\n"
+        "  world.SetVariable('stretch_shape', row .. ' / ' .. col)\n"
+        "  assert(row:match('^G+B+$') ~= nil, 'row bands not contiguous: ' .. row)\n"
+        "  assert(col:match('^G+R+$') ~= nil, 'col bands not contiguous: ' .. col)\n"
+        "else\n"
+        "  assert(world.WindowGetPixel('w',  1,  8) == GREEN, 'SrcLeft ignored')\n"
+        "  assert(world.WindowGetPixel('w', 16,  8) == GREEN, 'src x=5 column')\n"
+        "  assert(world.WindowGetPixel('w', 17,  8) == BLUE,  'src x=6 column')\n"
+        "  assert(world.WindowGetPixel('w', 19,  8) == BLUE,  'stretch stopped short')\n"
+        "  assert(world.WindowGetPixel('w',  1, 10) == GREEN, 'row 2 band too thin')\n"
+        "  assert(world.WindowGetPixel('w',  1, 11) == RED,   'SrcTop ignored')\n"
+        "  assert(world.WindowGetPixel('w', 19, 13) == RED,   'stretch stopped short')\n"
+        "end\n"
         // ...and it really SCALED rather than copying 1:1 at the origin, which
         // is what this adapter did until the stretch was implemented: at 1:1
         // the source is only 5 wide and 2 tall, so (6,8) and (1,10) would both
@@ -4325,9 +4480,31 @@ TEST(LuaSurface, DrawImageStretchModeDrawsAndHonoursItsSourceRect)
         // so the three destination columns sample image x = 0, 3, 6 — blue,
         // green, blue — which no monotone smear could produce.
         "assert(world.WindowDrawImage('s', 'img', 14, 8, 17, 10, 2, 0, 0, 9, 5) == 0)\n"
-        "assert(world.WindowGetPixel('s', 14, 8) == BLUE,  'minify src x=0')\n"
-        "assert(world.WindowGetPixel('s', 15, 8) == GREEN, 'minify src x=3')\n"
-        "assert(world.WindowGetPixel('s', 16, 8) == BLUE,  'minify src x=6')\n"
+        // Mode 2 asks for BlitQuality::Smooth, which IS ::StretchBlt with
+        // HALFTONE -- the mode this call site's own comment records upstream
+        // using.  Shrinking nine source columns into three therefore
+        // INTERPOLATES on Windows: the leftmost destination cell measured
+        // 0x0048D0, a blend, not any colour in the image.  pal::cpu_raster.cpp
+        // says so at the stretch branch in as many words -- "the shipping
+        // rasteriser is the parity bearer for interpolated colour ... tests over
+        // a stretch must assert PLACEMENT and EXTENT and never an interpolated
+        // colour value" -- and this test was asserting colour, which only
+        // survived because CpuRaster does not interpolate.  So assert what both
+        // surfaces owe: three cells painted, in the right place, spilling
+        // nowhere.  The port additionally pins its own nearest-neighbour
+        // columns, which is legitimate there and is not a parity claim.
+        "if WIN then\n"
+        "  local a = world.WindowGetPixel('s', 14, 8)\n"
+        "  local b = world.WindowGetPixel('s', 15, 8)\n"
+        "  local c = world.WindowGetPixel('s', 16, 8)\n"
+        "  world.SetVariable('minify_cols',\n"
+        "    string.format('%06X,%06X,%06X', a, b, c))\n"
+        "  assert(a ~= BG and b ~= BG and c ~= BG, 'minify painted nothing')\n"
+        "else\n"
+        "  assert(world.WindowGetPixel('s', 14, 8) == BLUE,  'minify src x=0')\n"
+        "  assert(world.WindowGetPixel('s', 15, 8) == GREEN, 'minify src x=3')\n"
+        "  assert(world.WindowGetPixel('s', 16, 8) == BLUE,  'minify src x=6')\n"
+        "end\n"
         "assert(world.WindowGetPixel('s', 17, 8) == BG,    'minify spilled right')\n"
         "assert(world.WindowGetPixel('s', 14, 10) == BG,   'minify spilled down')\n"
 
@@ -4343,6 +4520,17 @@ TEST(LuaSurface, DrawImageStretchModeDrawsAndHonoursItsSourceRect)
         "assert(world.WindowGetPixel('c', 11, 9) == BLUE, 'mode 2 drew nothing')\n";
 
     EXPECT_TRUE(run(f.L, code.c_str ()));
+
+#ifdef _WIN32
+    // Print what ::StretchBlt actually did, so the divergence from CpuRaster is
+    // a recorded measurement rather than "it differs somehow".
+    VARIANT vs = f.doc.GetVariable("stretch_shape");
+    VARIANT vm = f.doc.GetVariable("minify_cols");
+    if (vs.vt == VT_BSTR)
+        printf("  StretchBlt bands: %s\n", (LPCTSTR) CString(vs.bstrVal));
+    if (vm.vt == VT_BSTR)
+        printf("  StretchBlt minify columns: %s\n", (LPCTSTR) CString(vm.bstrVal));
+#endif
     ::unlink (png.c_str ());
 }
 
@@ -4476,6 +4664,15 @@ TEST(LuaSurface, ImageOpTilesAColourImageAcrossARectangle)
 TEST(LuaSurface, AcceleratorFamilyBindsThroughLua)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
+#ifdef _WIN32
+    // world.Accelerator refuses at its first line here: the Windows body walks
+    // the document's views to find the one to bind against, and this host has
+    // none.  That is the same reason tests/test_accelerators.cpp stays out of
+    // this target, and it is a WINDOW the frame cannot supply -- measured when
+    // the host gained a CMainFrame and these eleven were unchanged.
+    mc_test::skip_current("world.Accelerator binds against a CView this host has none of");
+    return;
+#endif
     EXPECT_TRUE(run(f.L,
         "assert(world.AcceleratorList() == nil)\n"          // nothing bound yet
         "assert(world.Accelerator('F9', 'send this') == 0)\n"
@@ -4636,8 +4833,15 @@ TEST(LuaSurface, ChatFamilyWithNoConnections)
         "assert(world.ChatPersonal('w', 'hi', false) == error_code.eChatPersonNotFound)\n"
 
         // Fails on the CLIPBOARD, before it ever looks for a peer — so the stub's
-        // 30044 was reporting the wrong subsystem entirely.
-        "assert(world.ChatPasteEverybody() == error_code.eClipboardEmpty)\n"
+        // 30044 was reporting the wrong subsystem entirely.  On Windows the
+        // clipboard is the MACHINE's and whatever the user last copied is in
+        // it, so the answer there is eClipboardEmpty or eNoChatConnections
+        // depending on that; what must never happen either way is eOK or the
+        // one code this line exists to rule out.  (Clearing the real clipboard
+        // to force the empty case is not something a unit test may do.)
+        "local pe = world.ChatPasteEverybody()\n"
+        "assert(pe == error_code.eClipboardEmpty or"
+        "       pe == error_code.eNoChatConnections, tostring(pe))\n"
 
         // Not an error code at all: a COUNT of how many were closed.  The stub
         // returned 30044 here, so `if world.ChatDisconnectAll() > 0` was true
@@ -4992,17 +5196,42 @@ TEST(LuaSurface, UtilsPureFunctions)
         "assert(type(fl) == 'table' and type(fa) == 'table' and type(cb) == 'table')\n"
         "assert(#cb > 10)\n"
         "assert(type(utils.getfontfamilies()) == 'table')\n"
-        "assert(utils.glyph_available('Courier', 65) == 0)\n"
         "local info = utils.info()\n"
         "assert(type(info) == 'table' and type(info.current_directory) == 'string')\n"
-        "assert(utils.menufontsize() == nil)\n"   // nil, not a fabricated 0
         "utils.showdebugstatus(false)\n"
     ));
+
+    // Two of these read the real system, and on Windows the real system
+    // answers.  glyph_available asks GDI whether the face has the codepoint --
+    // 'A' in Courier, which it does -- where the port has no font engine to ask
+    // and reports 0.  menufontsize is D-25: SystemParametersInfo works here and
+    // is an unconditional FALSE on the port, so nil is the port's answer and a
+    // real size is Windows'.  Both arms asserted, neither skipped.
+#ifdef _WIN32
+    EXPECT_TRUE(run(f.L,
+        "assert(utils.glyph_available('Courier', 65) ~= 0)\n"
+        "assert(type(utils.menufontsize()) == 'number' and utils.menufontsize() > 0)\n"));
+#else
+    EXPECT_TRUE(run(f.L,
+        "assert(utils.glyph_available('Courier', 65) == 0)\n"
+        "assert(utils.menufontsize() == nil)\n"));   // nil, not a fabricated 0
+#endif
 }
 
 TEST(LuaSurface, UtilsDialogsHeadlessInert)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
+#ifdef _WIN32
+    // Every line below is a REAL modal here -- utils.filepicker is a
+    // CFileDialog and utils.directorypicker is ::SHBrowseForFolder, both
+    // measured putting up a window this host cannot answer.  The name says
+    // what the test is: the PORT's null-hook seam.  Windows has no such seam,
+    // so there is nothing here to assert from the other side; unlike the
+    // view-bound cases elsewhere in this campaign, "what does it answer with no
+    // GUI" has no answer at all, because it does not return until a user acts.
+    mc_test::skip_current("utils.* dialogs are real modals on Windows");
+    return;
+#endif
     EXPECT_TRUE(run(f.L,
         // hook-backed dialogs: null hooks headless → nil / false
         "assert(utils.inputbox('t', 'p', 'd') == nil)\n"

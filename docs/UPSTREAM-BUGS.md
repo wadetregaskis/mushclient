@@ -2760,3 +2760,91 @@ was verified non-vacuous.
 
 **Shared code — the same defect ships on macOS.** Same family as 96, found in
 the same function's neighbourhood by the same sweep.
+
+## 99 — `CTimer`'s constructor leaves `bEnabled` uninitialised
+
+**Where:** `OtherTypes.h`, `CTimer::CTimer`.
+
+The constructor assigns twenty-one members and not `bEnabled`. Its two
+siblings — `CAlias` and `CTrigger` — both do `bEnabled = TRUE;`.
+
+That is not cosmetic, because `Get_XML_boolean` leaves its output **untouched**
+when the attribute is absent and defaults are wanted:
+
+```cpp
+if (!Get_XML_string (node, sName, strValue, bUseDefault))
+  if (bUseDefault)
+    return false;          // bValue never assigned
+```
+
+and the timer loader reads it through that path
+(`GET_BOOL_BOOL ("enabled", t->bEnabled)`, with `bUseDefault` coming either
+from the element's own `defaults="y"` or from the enclosing `<include>`). So a
+`<timer defaults="y">` with no `enabled=` attribute — ordinary hand-written
+plugin XML — took whatever was on the heap. Under a Debug CRT that is `0xCD`
+fill, i.e. reliably true; under a Release allocator it is whatever the previous
+occupant left.
+
+**Fix:** `bEnabled = TRUE;`, matching the siblings. Pinned by
+`ConstructorDefaultsR6.ATimerIsEnabledOnConstructionJustLikeAnAliasAndATrigger`,
+which asserts all three together — a timer that loaded *disabled* where an
+identically-written alias loaded enabled would be a subtler bug than the
+uninitialised read.
+
+## 100 — `world.SetOption ("wrap_column", n)` under-allocates the line buffer and then lies about it
+
+**Where:** `scriptingoptions.cpp`, the `OPT_FIX_WRAP_COLUMN` arm of
+`SetOptionItem`.
+
+```cpp
+delete [] m_pCurrentLine->text;
+m_pCurrentLine->text = new char [MAX (m_pCurrentLine->len, Value)];
+```
+
+Two things wrong, and the second is what makes the first dangerous.
+
+**The size is in the wrong unit.** `CLine`'s own constructor sizes the buffer in
+BYTES from a wrap column counted in CHARACTERS, and a UTF-8 world needs four
+bytes each:
+
+```cpp
+if (bUnicode) iMemoryAllocated = nWrapColumn * 4;
+else          iMemoryAllocated = nWrapColumn;
+```
+
+This site used the raw column count, so on a UTF-8 world the re-allocated buffer
+is **a quarter** of what the wrap logic is entitled to fill.
+
+**And `iMemoryAllocated` was never updated.** `DisplayMsg`'s emergency bail-out
+is
+
+```cpp
+// in the Unicode case we are allocating 4 bytes per character so we shouldn't
+// overshoot the allocated memory, but just in case, we test that we don't
+if (((iLineLength >= m_nWrapColumn) && bNewCharacter) ||
+    (m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated))
+```
+
+— the single guard against overrunning this buffer, and it was answering for the
+allocation the line used to have. The other site that re-allocates the same
+buffer (`doc_shared.cpp`, the end-of-line shrink) updates `iMemoryAllocated`
+first and allocates from it; only this one did not.
+
+**Measured**, with the update removed: a UTF-8 line built at wrap 80 has
+`iMemoryAllocated == 320`; after `SetOption ("wrap_column", 200)` the buffer is
+**200 bytes** and the record still reads **320**. The guard therefore permits
+120 bytes of writing that the allocation cannot take, and MUD output is what
+does the writing.
+
+**Reachable from a script**: `world.SetOption ("wrap_column", n)` is a
+documented API, and the world-properties Output page changes the same option.
+Shrinking is the dangerous direction and is the ordinary one — 80 columns from a
+wider default.
+
+**Fix:** compute the size once, into `iMemoryAllocated`, with the constructor's
+own arithmetic, and allocate from it. Pinned by
+`WrapColumnResizeR6.TheLineBufferAndItsRecordedSizeStayInStep`, verified
+non-vacuous.
+
+**Shared code — the same defect ships on macOS**, where a UTF-8 world is the
+common case rather than the unusual one.

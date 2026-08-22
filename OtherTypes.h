@@ -645,6 +645,12 @@ class CTimer : public CObject
      fOffsetSecond = 0.0;
      iType = eInterval;
      bOneShot = FALSE;
+     // As CAlias and CTrigger both do, and for a reason that is not cosmetic:
+     // Get_XML_boolean leaves its output UNTOUCHED when the attribute is absent
+     // and defaults are wanted, so a hand-written <timer defaults="y"> with no
+     // enabled= attribute -- which is ordinary plugin XML -- read whatever was
+     // on the heap.  docs/UPSTREAM-BUGS.md 99.
+     bEnabled = TRUE;
      dispid = DISPID_UNKNOWN;
      tFireTime = CmcDateTime::GetTimeNow();
      bTemporary = false;

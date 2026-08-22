@@ -6399,6 +6399,8 @@ the Windows target. Listed with what a macOS run should check:
 | `chatsock.cpp` | `Process_File_block` refuses a block shorter than the size the peer promised (`UPSTREAM-BUGS` 96) | shared, and the defect ships there too. Worth one **ASan** run of the chat suite: this is a heap-buffer-overflow read, and `tests/test_chat_sockets.cpp` runs on macOS where the Windows target excludes it. |
 | `scripting/scriptengine.cpp` | the `Trace` format-string fix (`UPSTREAM-BUGS` 97) | inside the file's own `#ifdef _WIN32`, so it cannot reach macOS — the Lua path there was already correct |
 | `chatsock.cpp` | `Process_File_start` refuses a second offer while one is running, and nulls `m_pFile` after deleting it (`UPSTREAM-BUGS` 98) | shared, and the defect ships there too. The same ASan run that covers 96 covers this. |
+| `OtherTypes.h` | `bEnabled = TRUE` in `CTimer`'s constructor (`UPSTREAM-BUGS` 99) | shared header; the defect ships there too, and the reachable route is plugin-authored `<timer defaults="y">` XML |
+| `scriptingoptions.cpp` | the `wrap_column` re-allocation now uses the UTF-8 byte count and updates `iMemoryAllocated` (`UPSTREAM-BUGS` 100) | shared, and **more likely to bite on macOS**, where a UTF-8 world is the common case. Worth an ASan run with `world.SetOption ("wrap_column", …)` on a busy world. |
 
 `pal/win_transport.cpp`'s `flushSend` guard is inside the file's own
 `#ifdef _WIN32` and cannot reach macOS.
@@ -7642,13 +7644,15 @@ it.**
 So the list below is split by what I did, and nothing in the second half should
 be treated as established.
 
-#### Checked by hand, and fixed
+#### Checked by hand, and fixed (five)
 
 | finding | outcome |
 |---|---|
 | `chatsock.cpp` — zChat file block written at the promised size, not the received one | `UPSTREAM-BUGS` 96. Independently re-found by this sweep after I had already fixed it from the early snapshot, which is a reassuring cross-check. |
 | `chatsock.cpp` — `Process_File_start` has no in-progress guard, and its catch deletes `m_pFile` without nulling | `UPSTREAM-BUGS` 98. Verified by reading the whole function for the guard the claim said was missing; it was. The sharper half is mine, not the agent's: `m_iFileSize = atol (strSize)` runs *before* the accept prompt, so a **refused** second offer still corrupts the running transfer's size. |
 | `scripting/scriptengine.cpp` — a script routine name used as a printf format | `UPSTREAM-BUGS` 97. Verified by reading `Trace`'s declaration (`MC_PRINTF_FORMAT(2, 3)`) and body (`FormatV`), and by finding the Lua twin already fixed with the reasoning spelled out at three sites. A tree-wide grep for the same shape now returns only the two legitimate `va_list` forwarders in `exceptions.cpp`. |
+| `OtherTypes.h` — `CTimer`'s constructor never initialises `bEnabled` | `UPSTREAM-BUGS` 99. Verified by reading all three constructors (the two siblings do set it) and `Get_XML_boolean`, which leaves its output untouched when the attribute is absent and defaults are wanted. |
+| `scriptingoptions.cpp` — `wrap_column` re-allocates the line buffer without the UTF-8 ×4 factor and leaves `iMemoryAllocated` stale | `UPSTREAM-BUGS` 100, and worse than the claim: the stale record is what `DisplayMsg`'s only overrun guard tests against. Measured — a UTF-8 line at wrap 80 keeps `iMemoryAllocated == 320` while its buffer becomes 200. |
 
 #### Checked by hand, and deliberately not fixed
 
@@ -7669,9 +7673,9 @@ already written down.
 
 #### NOT checked — leads only
 
-Thirteen remain. Each has a file, a line and an argument in the sweep's own
-output; none has been read by me, and the first sweep's record is that **eight
-of thirteen such claims did not survive contact.** Treat accordingly.
+Ten remain. Each has a file, a line and an argument in the sweep's own
+output; none has been read by me, and the first sweep's record is that **eight of thirteen such
+claims did not survive contact.** Treat accordingly.
 
 | file | claim |
 |---|---|
@@ -7681,16 +7685,14 @@ of thirteen such claims did not survive contact.** Treat accordingly.
 | `xml/xml_save_world.cpp` | timer seconds saved with 2 decimals, so a sub-0.005 s "every" timer is dropped on the next load |
 | `scripting/methods/methods_triggers.cpp` (×2) | `Add*Ex` with `eReplace` deletes an item without the `bExecutingScript` guard every `Delete*` path has — i.e. deletes an item whose script is on the stack |
 | `scripting/methods/methods_timers.cpp` | `SetTimerOption` can set a zero interval; the timer then re-fires on every poll |
-| `OtherTypes.h` | `CTimer`'s constructor never initialises `bEnabled`, and the XML `defaults="y"` path relies on the constructor value |
 | `plugins.cpp` | plugin state save reports success before the archive is flushed — the write happens at `delete ar`, outside every catch, over an already-truncated file |
-| `scriptingoptions.cpp` | `world.SetOption ("wrap_column", n)` shrinks the current line's buffer without the UTF-8 ×4 factor and leaves `iMemoryAllocated` stale |
 | `pal/win_worldview.cpp` | `outputSelection ()` reports the *first* `CMUSHView`'s selection while `CMUSHView::OnEditCopy` copies `this` view's |
 | `doc_shared.cpp` | the MCCP decompression loop keeps inflating and displaying after `DisplayMsg` has closed the world |
 | `doc_shared.cpp` | the SOCKS5 CONNECT reply is assumed to be exactly 10 bytes and to arrive whole in one packet |
 
-The three I did check were the three I could reach with a test on this machine.
+The five I did check were the five I could reach with a test on this machine.
 That is the honest selection criterion, and it is worth saying out loud: the
-untouched thirteen are not less serious, they are less convenient.
+untouched ten are not less serious, they are less convenient.
 
 #### One unreproduced crash, recorded rather than dismissed
 

@@ -1058,3 +1058,110 @@ TEST(ChatFileBlockR6, ASecondFileStartIsRefusedWhileATransferIsRunning)
     delete f;
     ::DeleteFileA(path);
 }
+
+// ── A freshly constructed timer must be enabled, like its two siblings ─────
+//
+// `CAlias` and `CTrigger` both do `bEnabled = TRUE;` in their constructors.
+// `CTimer`'s did not initialise `bEnabled` at all, and that is not cosmetic:
+// `Get_XML_boolean` leaves its output **untouched** when the attribute is
+// absent and defaults are wanted —
+//
+//     if (!Get_XML_string (node, sName, strValue, bUseDefault))
+//       if (bUseDefault)
+//         return false;          // bValue never assigned
+//
+// — so a `<timer defaults="y">` with no `enabled=` attribute, which is ordinary
+// hand-written plugin XML, read whatever was on the heap. `docs/UPSTREAM-BUGS.md`
+// 99.
+//
+// Asserted against the siblings rather than against `TRUE` alone, because the
+// value that matters is *the same one the other two use*: a timer that loaded
+// disabled where an identically-written alias loaded enabled would be a subtler
+// bug than the uninitialised read.
+TEST(ConstructorDefaultsR6, ATimerIsEnabledOnConstructionJustLikeAnAliasAndATrigger)
+{
+    CTimer   timer;
+    CAlias   alias;
+    CTrigger trigger;
+
+    EXPECT_TRUE(timer.bEnabled != FALSE);
+    EXPECT_TRUE(alias.bEnabled != 0);
+    EXPECT_TRUE(trigger.bEnabled != 0);
+
+    // ...and the same on the heap, which is the path the XML loader takes and
+    // the one where an uninitialised member picks up allocator fill rather than
+    // whatever the stack happened to hold.
+    CTimer* heap = new CTimer;
+    EXPECT_TRUE(heap->bEnabled != FALSE);
+    delete heap;
+}
+
+// ── Changing wrap_column must resize the line buffer honestly ──────────────
+//
+// `CLine`'s constructor sizes the text buffer in BYTES from a wrap column
+// counted in CHARACTERS, so a UTF-8 world gets four bytes each
+// (`Line.cpp`: `iMemoryAllocated = nWrapColumn * 4`). The `OPT_FIX_WRAP_COLUMN`
+// arm of `SetOptionItem` reallocated the *current* line's buffer when the
+// column changed, and did it with the raw column count — a quarter of what the
+// wrap logic is entitled to fill on a UTF-8 world.
+//
+// Worse, it never updated `iMemoryAllocated`. `DisplayMsg`'s emergency
+// bail-out is
+//
+//     (m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated)
+//
+// under a comment saying it exists so the UTF-8 case "shouldn't overshoot the
+// allocated memory" — so the one guard against overrunning this buffer was
+// answering for the allocation the line used to have. Set a *smaller* wrap
+// column and the guard permits writing past the end of the new buffer;
+// `world.SetOption ("wrap_column", n)` is all it takes.
+// `docs/UPSTREAM-BUGS.md` 100.
+//
+// The assertion is `iMemoryAllocated` against the constructor's own arithmetic,
+// because that member is simultaneously the size of the allocation and the
+// thing the guard trusts — if they agree, both halves are right.
+TEST(WrapColumnResizeR6, TheLineBufferAndItsRecordedSizeStayInStep)
+{
+    // Non-UTF-8 first: one byte per column, and the record must follow.
+    {
+        CMUSHclientDoc doc;
+        doc.m_bUTF_8 = false;
+        doc.m_pCurrentLine = new CLine(1, 80, 0, WHITE, BLACK, false);
+        doc.m_LineList.AddTail(doc.m_pCurrentLine);
+        ASSERT_EQ(80, doc.m_pCurrentLine->iMemoryAllocated);
+
+        doc.SetOption("wrap_column", 200);
+        EXPECT_EQ(200, doc.m_pCurrentLine->iMemoryAllocated);
+    }
+
+    // UTF-8: four bytes per column, which is where the old arithmetic was a
+    // quarter short.
+    {
+        CMUSHclientDoc doc;
+        doc.m_bUTF_8 = true;
+        doc.m_pCurrentLine = new CLine(1, 80, 0, WHITE, BLACK, true);
+        doc.m_LineList.AddTail(doc.m_pCurrentLine);
+        ASSERT_EQ(320, doc.m_pCurrentLine->iMemoryAllocated);   // 80 * 4
+
+        doc.SetOption("wrap_column", 200);
+        if (doc.m_pCurrentLine->iMemoryAllocated != 800)
+            printf("      (UTF-8 buffer recorded as %d bytes, not 800)\n",
+                   doc.m_pCurrentLine->iMemoryAllocated);
+        EXPECT_EQ(800, doc.m_pCurrentLine->iMemoryAllocated);   // 200 * 4
+    }
+
+    // Shrinking is the dangerous direction: the record must come DOWN too, or
+    // the bail-out keeps clearing writes the buffer can no longer take.
+    {
+        CMUSHclientDoc doc;
+        doc.m_bUTF_8 = false;
+        doc.m_pCurrentLine = new CLine(1, 500, 0, WHITE, BLACK, false);
+        doc.m_LineList.AddTail(doc.m_pCurrentLine);
+        ASSERT_EQ(500, doc.m_pCurrentLine->iMemoryAllocated);
+
+        doc.SetOption("wrap_column", 60);
+        EXPECT_TRUE(doc.m_pCurrentLine->iMemoryAllocated <= 500);
+        EXPECT_TRUE(doc.m_pCurrentLine->iMemoryAllocated >=
+                    doc.m_pCurrentLine->len);
+    }
+}

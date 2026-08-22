@@ -213,14 +213,30 @@ long iResult = SetBaseOptionItem (iItem,
       // save current line text
       CString strLine = CString (m_pCurrentLine->text, m_pCurrentLine->len);
 
+      // The buffer is sized in BYTES and the wrap column counts CHARACTERS, so
+      // a UTF-8 world needs four bytes each -- the arithmetic CLine's own
+      // constructor does (Line.cpp: `iMemoryAllocated = nWrapColumn * 4`).
+      // This site used the raw column count, so world.SetOption
+      // ("wrap_column", n) on a UTF-8 world left a buffer a quarter the size
+      // the wrap logic is entitled to fill.
+      //
+      // And iMemoryAllocated MUST be updated with it.  DisplayMsg's emergency
+      // bail-out (doc_shared.cpp) is `m_pCurrentLine->len >=
+      // m_pCurrentLine->iMemoryAllocated`, under a comment saying it exists so
+      // the UTF-8 case "shouldn't overshoot the allocated memory".  Left stale
+      // it reports the OLD allocation, so the one guard against overrunning
+      // this buffer was answering for a buffer that no longer existed.
+      // docs/UPSTREAM-BUGS.md 100.
+      m_pCurrentLine->iMemoryAllocated =
+            MAX (m_pCurrentLine->len, Value * (m_bUTF_8 ? 4 : 1));
+
 #ifdef USE_REALLOC
-      m_pCurrentLine->text  = (char *) 
-            realloc (m_pCurrentLine->text, 
-                     MAX (m_pCurrentLine->len, Value) 
-                     * sizeof (char));  
+      m_pCurrentLine->text  = (char *)
+            realloc (m_pCurrentLine->text,
+                     m_pCurrentLine->iMemoryAllocated * sizeof (char));
 #else
       delete [] m_pCurrentLine->text;
-      m_pCurrentLine->text = new char [MAX (m_pCurrentLine->len, Value)];
+      m_pCurrentLine->text = new char [m_pCurrentLine->iMemoryAllocated];
 #endif
 
       // put text back

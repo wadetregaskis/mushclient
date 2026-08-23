@@ -219,6 +219,19 @@ zero-leading reference should not be expected to match a leaded face on the asce
 when both agree on the em. Until someone reads codes 2 and 3 for the scalable faces on
 Windows there is nothing to compare against, so this is left alone knowingly.
 
+**The probe for it is now written and has never been run** (2026-08-23).
+`tests/win/app_probes/fontmetrics.lua` gained a block that reads codes 1, 2, 3 and 4 for
+Courier New, Arial, Consolas and Lucida Console at 8/10/12/24 pt and emits one `SPLIT`
+line each. It records the **realized** face beside the requested one, because this machine
+may not carry Consolas or Lucida Console and GDI substitutes silently — logging Arial's
+split under the label "Consolas" is precisely the mistake §9c caught the first pass
+making. Its two assertions are the Win32 contract rather than an expected value, so they
+are falsifiable today without knowing the answer: `tmHeight == tmAscent + tmDescent`, and
+`tmAscent >= tmInternalLeading` (the leading is the part of the ascent above the em).
+**Written on macOS, so nothing has executed it** — the syntax is checked against the Lua
+5.1 the app embeds and no more than that. Paste the `SPLIT` lines back into this section
+when it runs; only then is there anything to say about `cellH / 5`.
+
 ---
 
 ## 4. Why the coverage never caught any of this

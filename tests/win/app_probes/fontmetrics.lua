@@ -59,6 +59,40 @@ function probeMain ()
   H.eq (load ("Arial", 10, FIXED), 0, "WindowFont Arial + FIXED_PITCH")
   H.eq (info (21), "Arial", "a known proportional face survives a fixed hint")
 
+  -- 2b. The ascent/descent split -- the one font quantity still unmeasured on
+  --     Windows, and the one pal::CpuRaster still invents
+  --     (pal/cpu_raster.cpp:519-520 hands back descent = cellH / 5 and nothing
+  --     pins it).  Section 9's run read codes 1 and 4 and never read 2 and 3,
+  --     so docs/FONT-PARITY-2026-08.md section 3 has nothing to compare that
+  --     invention against.
+  --
+  -- Two halves, deliberately.  The assertions are the Win32 contract, so they
+  -- are falsifiable today without knowing the answer: GetTextMetrics guarantees
+  -- tmHeight == tmAscent + tmDescent, and tmInternalLeading is the part of the
+  -- ascent ABOVE the em, so the ascent can never be smaller than it.  The
+  -- H.say lines are the measurement -- record the numbers here rather than
+  -- writing another probe once somebody wants them.
+  for _, face in ipairs {"Courier New", "Arial", "Consolas", "Lucida Console"} do
+    for _, pts in ipairs {8, 10, 12, 24} do
+      if load (face, pts) == 0 then
+        local h, asc, desc, il = info (1), info (2), info (3), info (4)
+        H.eq (asc + desc, h,
+              "tmAscent + tmDescent == tmHeight for " .. face .. " " .. pts)
+        H.ok (asc >= il,
+              "tmAscent covers tmInternalLeading for " .. face .. " " .. pts,
+              "ascent " .. asc .. " < internalLeading " .. il)
+        -- The REALIZED face, not the requested one: this machine may not have
+        -- Consolas or Lucida Console, and GDI substitutes silently.  Recording
+        -- Arial's split under the label "Consolas" is exactly the mistake
+        -- section 9c caught the first pass making.
+        H.say ("SPLIT ", face, " -> ", info (21), " ", pts,
+               "pt: height=", h, " ascent=", asc, " descent=", desc,
+               " internalLeading=", il, " em=", h - il,
+               " descent/height=", desc / h)
+      end
+    end
+  end
+
   -- 3. Text measurement agrees with the metrics on a monospaced face and does
   --    not on a proportional one -- which is what proves TextWidth is really
   --    measuring rather than multiplying.

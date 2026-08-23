@@ -4161,6 +4161,18 @@ real MUD or a second machine.
   `0dae192`** — the leak and use-after-free rows; none was exercised.~~
   **All seven are now exercised on Windows (§10p)**: four by tests in suites
   this target already compiles, three by `tests/win/test_gap_coverage.cpp`.
+- **The font ascent/descent split** — §10g read font-info codes 1 and 4 and
+  answered the size question with them, but never read **2 and 3**, so
+  `pal::CpuRaster`'s invented `descent = cellH / 5`
+  (`pal/cpu_raster.cpp:519-520`) still has nothing to be compared against and
+  no assertion pins it. `tests/win/app_probes/fontmetrics.lua` now takes that
+  measurement — a `SPLIT` line per face and size, recording the **realized**
+  face beside the requested one — alongside two assertions that hold by the
+  Win32 contract without knowing the answer (`tmHeight == tmAscent +
+  tmDescent`, and `tmAscent >= tmInternalLeading`). Added on macOS and
+  therefore **never run**: it is Lua rather than C++, and its syntax is checked
+  against the Lua 5.1 the app embeds, but nothing here can execute it. Run the
+  probe and paste the `SPLIT` lines into `docs/FONT-PARITY-2026-08.md` §3.
 - **§4c-quintricies item 6** — a real xterm-256 world, live, for a session.
 - **§4a's outstanding half** — keepalives and a long idle session.
 - **`world.Debug("commands")`** — reports `0 commands.` on **both** clients

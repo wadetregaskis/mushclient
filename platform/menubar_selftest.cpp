@@ -735,6 +735,34 @@ int RunMenuBarSelfTest()
             check(statusBar && probeUi(frame, statusBar->id).enabled,
                   "...and is live with no world open, as it is on Windows");
 
+            // ID_GAME_FUNCTIONSLIST is the command the Windows round moved out
+            // of the world-only list (docs/WINDOWS-VALIDATION.md 10am): besides
+            // CSendView and CTextView, CMainFrame::OnGameFunctionslist
+            // (scripting/functionlist.cpp:602) opens the same dialog with no
+            // context at all, so it must stay live with nothing open.  The rules
+            // TABLE is pinned by tests/test_menu_rules.cpp; this is the other
+            // half of that fix -- the real wx menu bar, on the real frame, which
+            // is where the item was actually greyed.
+            // ID_GAME_FUNCTIONSLIST is the command the Windows round moved out
+            // of the world-only list (docs/WINDOWS-VALIDATION.md 10am): besides
+            // CSendView and CTextView, CMainFrame::OnGameFunctionslist
+            // (scripting/functionlist.cpp:602) opens the same dialog with no
+            // context at all, so Windows leaves it live with nothing open.
+            //
+            // Read as "nobody greyed it", NOT as `.enabled`.  wxUpdateUIEvent
+            // constructs with m_enabled FALSE and m_setEnabled false, and wx
+            // only applies the answer when setEnabled is true -- so an id no arm
+            // claims reports enabled==false here while the real menu item stays
+            // exactly as built, i.e. live.  Asserting `.enabled` fails for a
+            // correctly-live item, which is a trap this check walked into once.
+            // The discriminator is real: while 33046 sat in kNeedsWorld,
+            // MenuCommandUiState claimed it and called Enable(false), so
+            // setEnabled was 1 and enabled 0 -- exactly what this rejects.  The
+            // ID_FILE_IMPORT check above is the live negative control.
+            const UiAnswer funcs = probeUi(frame, 33046 /*ID_GAME_FUNCTIONSLIST*/);
+            check(!(funcs.setEnabled && !funcs.enabled),
+                  "no arm greys Game > Functions List with no world open");
+
             // Stop Sound Playing survives with no world because CMainFrame
             // handles it too ('M' falls back to the frame); its two halves are
             // document commands and correctly grey out.

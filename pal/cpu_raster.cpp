@@ -456,17 +456,30 @@ static size_t decodeUtf8(const char* s, size_t len, size_t& i) {
 FontId CpuRaster::createFont(const FontSpec& spec) {
     Font f;
     f.spec  = spec;
-    // KNOWN GAP, deliberately unfixed -- see docs/FONT-PARITY-2026-08.md section 3.
-    // dpi() here is 96, so spec.pixelHeight arrives as the Windows EM
-    // (MulDiv(points, 96, 72)).  Storing it as cellH and reporting cellH as
-    // FontMetrics::height -- i.e. as tmHeight, a CELL -- makes this reference
-    // short by the internal leading: 11 at 8pt where Windows reports ~13, a
-    // ratio of about 1.18.  The number looks right because it IS a real
-    // quantity, which is what makes it dangerous: the headless parity
-    // assertions pin it, so they under-constrain the contract and anyone
-    // treating them as the parity target would "fix" the GUI toward a wrong
-    // number.  Correcting it means carrying an em and synthesising a cell, and
-    // will turn several existing assertions red.  It changes nothing a user sees.
+    // MEASURED on Windows 2026-08-22 -- docs/FONT-PARITY-2026-08.md section 3's
+    // update and section 9b.  dpi() here is 96, so spec.pixelHeight arrives as
+    // the Windows EM (MulDiv(points, 96, 72)).  Storing it as cellH and
+    // reporting cellH as FontMetrics::height IS short of a leaded face's
+    // tmHeight -- Courier New measures tmInternalLeading 3 at 8pt, so Windows
+    // says 14 where this says 11.  (The comment here used to guess "~13, ratio
+    // 1.18"; it is 14 and 1.27.  Guessed arithmetic in a comment reads as a
+    // measurement -- do not do it.)
+    //
+    // Deliberately NOT "corrected" by synthesising a leading.  fontMetrics()
+    // never assigns internalLeading, so it keeps isurface.h's 0, and that pair
+    // is self-consistent AND a real face: Lucida Console at 10pt measures
+    // internalLeading 0, height 13, em 13 -- this arithmetic exactly.  Internal
+    // leading is face- and size-dependent (0..4 across the faces measured), so
+    // any constant here would invent a face that does not exist, and would do
+    // it invisibly: height = em + IL with internalLeading = IL satisfies the
+    // parity identity for ANY IL.
+    //
+    // The identity is what the assertions pin now, and it is the real contract:
+    // tmHeight - tmInternalLeading == MulDiv(points, 96, 72), exact on Windows
+    // for every scalable face measured.  See test_lua_surface.cpp's
+    // MiniWindowFontIsWindowsSized.  What is still unpinned and still invented
+    // is the ascent/descent split just below -- no Windows measurement of codes
+    // 2 and 3 exists for a scalable face.
     f.cellH = spec.pixelHeight > 0 ? spec.pixelHeight : 10;
     f.cellW = std::max(1, f.cellH * 3 / 5);
     std::uint32_t id = m_nextFont++;

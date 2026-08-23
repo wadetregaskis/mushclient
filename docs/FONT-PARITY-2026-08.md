@@ -160,11 +160,64 @@ assertions under-constrain the contract**, and anyone using them as a parity tar
 `platform/miniwindow_selftest.cpp` expectations added in `bc6ad30`/`0c1820b` with that in
 mind.
 
-Correcting it is one line plus its fallout: carry `f.emH = spec.pixelHeight` and report
-`m.height = emH + internalLeading` with `m.internalLeading = emH * 3 / 20` (~15%), keeping
-`m.ascent`/`m.descent` consistent. **It will turn several existing assertions red** —
-those pin the current, wrong value, which is the "stubs defend wrong contracts" trap. It
-changes nothing a user sees. Left undone deliberately; recorded so it is not rediscovered.
+### Updated 2026-08-22, after the Windows run (§9)
+
+**The observation above stands. The prescription that used to follow it was wrong, and
+the fallout it predicted has already been dealt with by other means.** Taking the three
+apart, because they were tangled:
+
+**1. The observation holds — §7's falsifier for this section did NOT fire.** §7 said §3
+would be refuted if `tmInternalLeading` measured 0 on Windows for the common faces. It
+does not: §9b measured 3 for Courier New at 8 and 10 pt, 2 at 12, 4 at 24, 3 for Arial at
+10. So a reference reporting `height == em` really is short of those faces' `tmHeight` by
+2–4 px. Two of the numbers stated above are wrong, though, and they read as measurements
+when they were estimates: at 8 pt Windows reports `tmHeight` **14** for Courier New, not
+"~13", so the ratio is 14/11 ≈ **1.27**, not 1.18. (The line references have also drifted:
+`createFont` is now `pal/cpu_raster.cpp:470` and `fontMetrics` `:518`.)
+
+**2. The proposed fix is refuted — do not apply it.** It said to report
+`m.internalLeading = emH * 3 / 20` (~15%). §9b's numbers say internal leading is **face-
+and size-dependent, not a ratio**:
+
+| face | pt | em | measured `tmInternalLeading` | what `emH * 3 / 20` gives |
+|---|---|---|---|---|
+| Courier New | 8 | 11 | 3 | 1 |
+| Courier New | 10 | 13 | 3 | 1 |
+| Courier New | 12 | 16 | 2 | 2 ✓ |
+| Courier New | 24 | 32 | 4 | 4 ✓ |
+| Consolas | 10 | 13 | 2 | 1 |
+| Lucida Console | 10 | 13 | **0** | 1 |
+| Arial | 10 | 13 | 3 | 1 |
+
+Two of seven. Worse, the substitution would be invisible: `height = em + IL` with
+`internalLeading = IL` satisfies the identity in item 3 below **whatever IL is**, so no
+assertion would have objected to an invented number matching no real face. That is this
+document's own *golden adapter, plausible-wrong* shape, one level up — the fix would have
+been the plausible-wrong answer, and it would have been pinned.
+
+What CpuRaster reports today is at least a real point in the space: it never assigns
+`internalLeading`, so it keeps `pal/isurface.h:135`'s **0**, and §9b measured **Lucida
+Console at 10 pt with `internalLeading = 0`**, height 13, em 13 — CpuRaster's arithmetic
+exactly. It models a zero-leading scalable face. Atypical, but not fabricated.
+
+**3. The under-constraint is already closed, by round two rather than by this.** The
+concern was that the parity assertions pinned `tmHeight` alone, so a cell could pass as an
+em. `MiniWindowFontIsWindowsSized` now reads font-info codes 1 **and** 4 and pins
+`tmHeight - tmInternalLeading == MulDiv (pt, 96, 72)`
+(`tests/test_lua_surface.cpp:2253-2262`) — which is precisely the identity §9b then
+measured as exact for every scalable face and size. A CpuRaster reporting `height = em + 3`
+while still claiming zero leading now **fails**; one reporting both passes, correctly. So
+the "several existing assertions" this section expected to turn red are the wrong worry:
+the assertion was made identity-shaped instead, and it constrains the contract properly.
+
+**What is genuinely left**, and it needs a measurement nobody has taken: the ascent/descent
+split. `pal/cpu_raster.cpp:519-520` invents `descent = cellH / 5`, `ascent = cellH -
+descent`, and **no assertion pins either**. §9's run recorded ascent and descent for
+exactly one face — Dina at 8 pt, ascent 10, descent 3 — which is a bitmap face and
+excluded from the identity. Windows also folds `tmInternalLeading` *into* `tmAscent`, so a
+zero-leading reference should not be expected to match a leaded face on the ascent even
+when both agree on the em. Until someone reads codes 2 and 3 for the scalable faces on
+Windows there is nothing to compare against, so this is left alone knowingly.
 
 ---
 
@@ -258,6 +311,11 @@ further "make it bigger" dial is the fudge factor coming back.
 * **§3 (`CpuRaster` is wrong):** `tmInternalLeading` measured as 0 on Windows for the
   common faces — then `tmHeight == em` and `CpuRaster` is right. Unlikely, since the
   macOS measurement already shows a 1.17 ratio, but it is the honest test.
+  **Run 2026-08-22 (§9b): it did NOT fire** — Courier New measures 3 / 3 / 2 / 4 at
+  8 / 10 / 12 / 24 pt and Arial 3 at 10 pt, so §3's observation survives its own
+  falsifier. One face did come back 0 (Lucida Console at 10 pt), which is why §3's
+  update calls CpuRaster's zero a legal model rather than a fudge. What the run
+  *did* refute is §3's proposed fix, not §3's premise — see §3's update.
 
 ## 8. One plugin defect found in passing
 

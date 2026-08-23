@@ -1806,6 +1806,13 @@ itself if `DrawFocusRect` is ever implemented.
 
 ### 4c-quaterquadragies. Miniwindow font parity: what a Windows run must measure (2026-08-19)
 
+> **ANSWERED (round 2), §10g** — all four measurements taken, and written up in
+> `docs/FONT-PARITY-2026-08.md` §9. The size pipeline is exact; the
+> `pitchAndFamily` gap is real but far narrower than §2 assumed; and §3's
+> proposed `CpuRaster` fix is **refuted** — see §3's update before acting on it.
+> Still open: the ascent/descent split needs font-info codes 2 and 3 read for a
+> scalable face, which this run did not take.
+
 See `docs/FONT-PARITY-2026-08.md` for the full derivation. Nothing in canonical source
 changed — `d02c4b9` deleted a block that was inside `#ifndef _WIN32`, and
 `pal::GdiSurface::createFont` is untouched — so **Windows behaviour is unchanged by

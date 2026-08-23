@@ -28,8 +28,18 @@ unless the change is listed as intended.
 > are answered (§10g)** and so is §4c-quintricies except its live-world item.
 > **One new defect was found in round-two code, and fixed: §10e** — the
 > subnegotiation cap was not one-shot, so one hostile stream raised eight modal
-> dialogs and put the attacker's filler in the output window.  It touches three
-> shared files, so **the macOS side must run `ctest` before that merges**.
+> dialogs and put the attacker's filler in the output window.
+>
+> **The macOS side has now run (2026-08-22), and round two is merged.**  All 95
+> commits compiled by clang on the first try; `ctest` 77/77 and ASan clean, once
+> two things were dealt with.  `lint_doc_sections` was red — round two added
+> twenty-one `UPSTREAM-BUGS` write-ups without their index rows, and that
+> checker only runs here.  And `UPSTREAM-BUGS` 90's remaining half, the one
+> thing §10af said only macOS could fix, is fixed: a no-return MXP handler no
+> longer vetoes every tag in the five embedded engines.  Both blind edits
+> §10af flagged turned out to be correct, and both are pinned now.  The full
+> record, including three §10af claims that are wrong and one new defect this
+> found, is the last subsection of **§10af**.
 >
 > **§10i is the one to read if you only read one.**  A spike measured what it
 > would take to run the suite on Windows, and the answer is *days, not the six
@@ -6441,7 +6451,7 @@ The list grows as the round does — do not trust its length, trust the last row
 | `platform/mfc_ui.h` | comment only — records that the `openOrCreate` arm is now unreachable | nothing to run; the arm is left in place deliberately |
 | `tests/test_mxp.cpp` | the new `MXPCloseR6` case and its local gagging-trigger helper | compiles against the port's `CTriggerArray` / `regcomp` / `ConvertToRegularExpression`, all shared, but it has only ever been built by MSVC |
 | `pal/iworldview.h`, `doc.h` | the new `hasMainWindow ()` predicate and the accessor that gates on it (§10ar) | header-only; every adapter that does not override it keeps the old behaviour by construction |
-| `platform/wx_world_child.cpp` / `.h` | `hasMainWindow ()` returning true | **blind edit** — three lines. If it is missing or wrong the port silently reverts to the character-grid fallback for `GetInfo(249)/(250)`, which is what it did before, so the failure mode is quiet: check `world.GetInfo (250)` against the world window's width |
+| `platform/wx_world_child.cpp` / `.h` | `hasMainWindow ()` returning true | **blind edit** — three lines, and it is **correct**: measured on macOS 2026-08-22, `selftest_world_frame` green. The row's "the failure mode is quiet" is wrong twice over, and the correction is worth keeping. *Missing* is loud: `platform/world_frame_selftest.cpp:3941-3944` asserts `GetInfo(249)/(250)` against the frame's real client rect, after a nudge loop at `:3910` that resizes until the character grid and the client rect **differ** — so the fallback fails the test rather than passing quietly. *Wrong* cannot be silent either: the declaration carries `override` (`wx_world_child.h:303`), so a signature mismatch is a compile error, not a new function. And "which is what it did before" names the wrong before — the grid answer is what macOS did before `6b13a53`, three days earlier; between `6b13a53` and `e6fcbee` it reported the real rect, so a missing override would regress that feature rather than restore a status quo |
 | `tests/fake_worldview.h`, `tests/test_info.cpp`, `tests/test_pal_worldview.cpp` | the fake gained `hasMainWin`; both suites now distinguish "no window" from "a window measuring nothing" | `test_pal_worldview.cpp` is excluded here, so its two new cases have never been compiled |
 | `pal/win_worldview.cpp` | `saveWorld ()` now returns true on success and false for no path, matching the contract and the wx adapter (§10as) | `#ifdef _WIN32` — cannot reach macOS. Nothing calls the seam yet on either side, so nothing there changes. |
 | `chatsock.cpp` | `Process_File_block` refuses a block shorter than the size the peer promised (`UPSTREAM-BUGS` 96) | shared, and the defect ships there too. Worth one **ASan** run of the chat suite: this is a heap-buffer-overflow read, and `tests/test_chat_sockets.cpp` runs on macOS where the Windows target excludes it. |
@@ -6462,15 +6472,19 @@ The list grows as the round does — do not trust its length, trust the last row
 `pal/win_transport.cpp`'s `flushSend` guard is inside the file's own
 `#ifdef _WIN32` and cannot reach macOS.
 
-**Two new tests are in the shared suite, and clang has never seen either.**
-`tests/test_world_load.cpp` gained `WorldLoad.ASendPreamblesTrailingSpaceSurvivesTheLoad`
-(104) and `WorldLoad.AZeroSurvivesOnEveryOptionWhoseDefaultIsNotZero` (101). Both
-are outside any `#ifdef`, so `ctest` will build and run them on the first macOS
-configure; everything else added this round is under `tests/win/`, which
-`tests/CMakeLists.txt` cannot pick up — it names each executable explicitly with
-`mc_test (…)` and globs nothing. Neither test is a port assertion — each pins
-shipping behaviour that was wrong on both platforms — so a failure there is a
-real signal, not a platform difference to paper over.
+**NINE new tests are in the shared suite, not two — and all nine now compile and
+pass on macOS.** This paragraph used to name only the two in
+`tests/test_world_load.cpp`, `WorldLoad.ASendPreamblesTrailingSpaceSurvivesTheLoad`
+(104) and `WorldLoad.AZeroSurvivesOnEveryOptionWhoseDefaultIsNotZero` (101), and
+say that "everything else added this round is under `tests/win/`". It is not:
+`git diff ab34492~1..HEAD -- tests/ ':(exclude)tests/win' | grep '^+TEST'` returns
+nine. The other seven are the three `MxpVetoR5` cases and `MXPCloseR6` in
+`tests/test_mxp.cpp` and three in `tests/test_plugins.cpp` — which the table two
+rows above contradicts this sentence about, its `tests/test_mxp.cpp` row saying
+the new case "has only ever been built by MSVC". Re-derive such a count; do not
+re-read the narrative for it. None is a port assertion — each pins shipping
+behaviour that was wrong on both platforms — so a failure there is a real signal,
+not a platform difference to paper over.
 
 **The third Windows surface has no macOS counterpart, and needs none.**
 `tests/win/run_app_probes.ps1` and `tests/win/app_probes/*.lua` (§11) drive the
@@ -6518,6 +6532,66 @@ falls off the end returns the empty string with `rc == TCL_OK`; the boolean
 conversion then fails and leaves the seeded 1, so the one-armed veto arrived at
 "keep processing" through the *success* path. Fixing only the arm named here
 would have left Tcl broken while every other language looked fixed.
+
+#### What the macOS run found (2026-08-22)
+
+Round two merged into the port and was compiled by clang for the first time.
+**It built clean on the first try** — 95 commits, no errors — and `ctest` came
+back **76 of 77**, ASan **70 of 71**, with the same single failure in both.
+
+- **`lint_doc_sections` was red, and only macOS could see it.** Round two added
+  `## 89` … `## 109` to `docs/UPSTREAM-BUGS.md` without their index rows. The
+  checker is a registered ctest entry, and §10i's Windows spike never reached
+  the lint entries, so nothing there could have said so. Twenty-one rows
+  restored; two of them disagree with their write-up and say why in the commit.
+- **`docs/UPSTREAM-BUGS.md` 90's remaining half is closed** — see the amended
+  subsection above. One correction landed with it: the Tcl pointer named the
+  wrong arm.
+- **Both blind edits are correct.** Functions List is not greyed with no world
+  open, and the dispatch arm links and is reached; `hasMainWindow ()` is
+  overridden and `GetInfo(249)/(250)` report the real client rect. Neither had a
+  test, and neither would have been noticed breaking — putting `33046` back into
+  `kNeedsWorld` left the whole suite green — so `menubar_selftest.cpp` now pins
+  the first, and `world_frame_selftest.cpp` already pinned the second.
+- **No sanitizer findings** from the round's five memory fixes (94, 96, 98, 100,
+  102). `test_mxp`, `test_triggers`, `test_chat_sockets` and `test_chat_protocol`
+  all ran under ASan. Read that as "the instrument found nothing", not as proof
+  of absence — `docs/SANITIZERS.md` says why, and Guard Malloc rather than ASan
+  is what made the last heap bug here deterministic.
+- **Three guard-table rows are literally false and harmlessly so**, re-derived
+  rather than re-read: `pal/win_worldview.cpp`'s header comment is outside its
+  `#ifdef _WIN32` (and CMake never opens the file anyway);
+  `platform/wx_mfc_hooks.h`'s `HeadlessMessageBoxAnswer` sits at depth 0, having
+  been *moved* out of `#ifndef _WIN32` rather than added, byte-identical; and
+  `MUSHclient.cpp` / `MUSHclient.h` / `doc_construct.cpp` each have one added
+  **blank** line past the `#endif`. No token reaches macOS in any of them. The
+  claims about `mainfrm.cpp`, `evaluate.cpp`, `scriptengine.cpp`,
+  `win_transport.cpp` and `Utilities.cpp` are exactly right.
+- **§10ap's "cannot be compiled here" blocker has expired.**
+  `platform/mfc_collections.h`'s leaked walk cursor was left unfixed on the
+  grounds that the header could not be compiled on the Windows host — true
+  there, false here: it builds into `mushcore`, both adapter sets and all 43
+  test executables, and `tests/test_collections.cpp` already includes it. The
+  *other* half of that caution stands (11 map instantiations, 122
+  `GetStartPosition` sites, and `5cb6681`'s history of a complexity regression
+  in the sibling class), so the fix wants the allocation-free O(1) form and a
+  timing pin, not the `find ()` form on its own. §10ap's rate is also an
+  overstatement: it is one leak per *fired, matching* alias, not one per user
+  command.
+
+**And one new defect, found while checking a round-two fix rather than by
+running it.** `docs/UPSTREAM-BUGS.md` 105 closed the route by which
+`world.SetTimerOption` could leave an "every" timer at 0/0/0.0 — but it guards
+only the `hour` / `minute` / `second` rows. `at_time` is a boolean mapped
+straight onto `iType`, and setting it to 0 on a midnight at-timer runs
+`SetBaseOptionItem`, flips the type to `eInterval`, and then *copies*
+`iAtHour`/`iAtMinute`/`fAtSecond` into the `every` fields
+(`methods_timers.cpp:896-911`) — arriving at exactly the 0/0/0.0 state the new
+guard exists to prevent, and answering `eOK`. Verified by reading the code at
+HEAD, not run. No test on either platform covers it: the two macOS `at_time`
+sites (`test_lua_scripting.cpp:2441`, `test_timers.cpp:340`) both set it to 1.
+Recorded rather than fixed, because closing it changes what an existing script
+sees from a *second* method — that is a decision, not a follow-up.
 
 ### 10ag. `aca2478`, the last §10h row with no test anywhere
 

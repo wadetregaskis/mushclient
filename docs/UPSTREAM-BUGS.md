@@ -3138,6 +3138,19 @@ either, so a hand-edited world file can still contain a zero-interval timer.
 Rejecting one at load time would fail to open a file that opens today, which is
 a different risk from refusing a script call, and belongs in its own change.
 
+**Still open: `at_time` is a second route to the same state** (found on macOS
+2026-08-22, while checking this fix rather than by running it). The guard above
+covers the `hour`, `minute` and `second` rows. `at_time` is a boolean mapped
+straight onto `iType` (`{"at_time", false, TMRO(iType)}`), so
+`world.SetTimerOption (t, "at_time", 0)` on an at-timer set to midnight runs
+`SetBaseOptionItem`, flips the type to `eInterval`, and then *copies*
+`iAtHour` / `iAtMinute` / `fAtSecond` into the `every` fields
+(`methods_timers.cpp:896-911`) — reaching 0/0/0.0 and answering `eOK`. Not
+fixed: closing it changes what an existing script sees from a second method, so
+it is a decision rather than a follow-up. Nothing covers it on either platform —
+both macOS `at_time` tests (`test_lua_scripting.cpp:2441`, `test_timers.cpp:340`)
+set it to 1.
+
 ## 106 — The world saver rounds a timer's interval to a value its own loader refuses
 
 `xml/xml_save_world.cpp`, `Save_XML_double`.

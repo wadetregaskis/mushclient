@@ -4,9 +4,10 @@
 #include "mc_test.h"
 #include <set>
 #include <ctime>
-#include "platform/compat.h"
+#include "stdafx.h"
 #include "mcdatetime.h"
 #include "pal/iclock.h"        // pal::g_clock — must be null for the real path
+#include "posix_compat.h"    // usleep
 
 // mcdatetime.cpp keeps this private; the test needs it to read m_dt as seconds.
 static const double kSecsInDay = 60.0 * 60.0 * 24.0;
@@ -83,8 +84,8 @@ TEST(CmcDateTimeTest, GetTimeNowHasSubSecondPrecision) {
     const CmcDateTime t0 = CmcDateTime::GetTimeNow();
     for (int i = 0; i < 40; i++) {
         seen.insert(CmcDateTime::GetTimeNow().m_dt);
-        struct timespec req = { 0, 5 * 1000 * 1000 };   // 5 ms
-        nanosleep(&req, nullptr);
+        usleep(5 * 1000);   // 5 ms; posix_compat.h maps this to ::Sleep on Windows
+
     }
     const CmcDateTime t1 = CmcDateTime::GetTimeNow();
 
@@ -277,6 +278,7 @@ TEST(CmcDateTimeR5, InequalityAndOrderingOperators)
     EXPECT_FALSE(a >= b);
 }
 
+#ifndef _WIN32   // CmcDateTime::Format is a port addition (mcdatetime.cpp, #ifndef _WIN32) -- Windows formats through COleDateTime, so there is nothing here to call
 TEST(CmcDateTimeR5, DayOfYearAndFormat)
 {
     CmcDateTime feb2(2024, 2, 2, 3, 4, 5.0);
@@ -285,6 +287,7 @@ TEST(CmcDateTimeR5, DayOfYearAndFormat)
     CString s = feb2.Format("%Y-%m-%d %H:%M:%S");
     EXPECT_STREQ("2024-02-02 03:04:05", (LPCTSTR)s);
 }
+#endif  // !_WIN32
 
 TEST(CmcDateTimeR5, InvalidComponentDatesAreRejected)
 {

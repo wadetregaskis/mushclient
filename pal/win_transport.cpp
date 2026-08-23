@@ -400,12 +400,15 @@ private:
             stepTls();
             return;
         }
-        // Must be at least COMPRESS_BUFFER_LENGTH: OnBytesReceived's MCCP
-        // Z_STREAM_END path copies the post-stream residue (up to avail_in,
-        // capped there at COMPRESS_BUFFER_LENGTH) back into this buffer, so a
-        // smaller one overflows the stack on a crafted two-packet stream.
-        char buff[COMPRESS_BUFFER_LENGTH];
-        static_assert (sizeof buff >= COMPRESS_BUFFER_LENGTH,
+        // Sized at COMPRESS_BUFFER_LENGTH (doc.h == 10000): OnBytesReceived's
+        // MCCP Z_STREAM_END path copies the post-stream residue (up to
+        // avail_in, capped there at COMPRESS_BUFFER_LENGTH) back into this
+        // buffer, so a smaller one overflows the stack on a crafted stream.
+        // The literal, not the macro: a transport adapter does not include
+        // doc.h, which is why platform/posix_transport.cpp spells it this way
+        // too.
+        char buff[10000];
+        static_assert (sizeof buff >= 10000,
                        "receive buffer must hold the MCCP Z_STREAM_END residue");
         int count;
         std::shared_ptr<bool> alive = m_alive;
@@ -458,6 +461,24 @@ private:
     void flushSend()
     {
         if (m_outgoing.empty())
+            return;
+        // No socket yet.  CreateTransport() runs at the START of a connect
+        // attempt (doc_shared.cpp ConnectSocket) and m_sock is not created
+        // until connect(), so anything the engine sends during the DNS lookup
+        // — a trigger, a timer, world.Send from a script — arrives here with
+        // nothing to write to.  Upstream could not reach this: it created and
+        // Create()d CWorldSocket before the lookup, so a non-NULL m_pSocket
+        // always had a real handle, and SendPacket's NULL check was enough.
+        //
+        // Without this guard the error branch below runs, and real MFC's
+        // CAsyncSocket::AsyncSelect ASSERTs on an invalid handle — the same
+        // hazard close() is already guarded against, five lines further on.
+        // Measured: two assertions per call (sockcore.cpp:386 and :389), which
+        // in a Debug build of the product is a modal Abort/Retry/Ignore box
+        // during an ordinary connect.  Leaving the bytes queued is also the
+        // better answer: they go out on the first FD_WRITE once connected,
+        // which is what "append and it drains on writability" promises.
+        if (m_sock.m_hSocket == INVALID_SOCKET)
             return;
         if (m_tlsUp && m_ssl) {
             int count = SSL_write(m_ssl, m_outgoing.data(),

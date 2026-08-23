@@ -1062,6 +1062,23 @@ BOOL CAboutDlg::OnInitDialog()
 
 extern int gdoccount;
 
+#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
+#include "platform/wx_mfc_hooks.h"   // McTestMessageBox / HeadlessMessageBoxAnswer
+
+// The answer numbers in wx_mfc_hooks.h are written out rather than named,
+// because that header is deliberately free of the MFC/Win32 shim.  Pin them
+// against the real <winuser.h> values here, exactly as the two non-Windows
+// callers pin them against the shim's.
+static_assert (IDOK == 1 && IDCANCEL == 2 && IDABORT == 3 && IDNO == 7,
+               "ID* constants moved: fix HeadlessMessageBoxAnswer");
+
+int CMUSHclientApp::DoMessageBox (LPCTSTR lpszPrompt, UINT nType, UINT /*nIDPrompt*/)
+{
+  return McTestMessageBox (lpszPrompt, nType, "MUSHclient");
+}
+#endif  // _WIN32 && MUSHCLIENT_TESTS
+
+
 BOOL CMUSHclientApp::SaveAllModified() 
 {
 

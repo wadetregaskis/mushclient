@@ -718,9 +718,15 @@ class CMUSHclientDoc : public CDocument
   friend class CScriptEngine;
   
   protected: // create from serialization only
-#ifndef _WIN32
+#if !defined(_WIN32) || defined(MUSHCLIENT_TESTS)
   // On non-Windows there is no MFC doc/view factory; the wx layer creates
   // CMUSHclientDoc directly with `new`.  Make the constructor public for it.
+  // A Windows TEST build needs the same thing for the same reason — the tests
+  // construct documents directly, not through DECLARE_DYNCREATE.  Note that
+  // MUSHCLIENT_TESTS must be defined for the WHOLE build, not just the test
+  // TU: access is part of the mangled name, so a half-applied define makes
+  // doc.obj reference the protected ctor and doc_construct.obj define the
+  // public one, and the link fails on a symbol that looks identical.
   public:
 #endif
 	CMUSHclientDoc();
@@ -1855,10 +1861,17 @@ public:
   // Fills the CLIENT rect of the main window (GetInfo 249/250).  false —
   // outputs untouched — when no view is attached OR the view has no window to
   // measure, so the caller keeps its own approximation for the headless case.
+  //
+  // The gate is hasMainWindow(), NOT an empty rect.  It used to be
+  // `if (r.w <= 0 || r.h <= 0) return false;`, which cannot tell "no window"
+  // from "a real window that measures 0 x 0" — and a minimised main frame is
+  // exactly the second.  That made GetInfo(249)/(250) answer a fabricated
+  // 468 x 800 while the client was minimised, where Windows had always
+  // answered 0.  See pal/iworldview.h's hasMainWindow.
   bool GetMainClientRect(int& x, int& y, int& w, int& h) {
       if (!m_pWorldView) return false;
+      if (!m_pWorldView->hasMainWindow()) return false;
       pal::Rect r = m_pWorldView->mainClientRect();
-      if (r.w <= 0 || r.h <= 0) return false;
       x = r.x; y = r.y; w = r.w; h = r.h;
       return true;
   }
@@ -1956,6 +1969,7 @@ public:
   void Phase_SB (const unsigned char c); 
   void Phase_SUBNEGOTIATION (const unsigned char c); 
   void Phase_SUBNEGOTIATION_IAC (const unsigned char c); 
+  void AbandonSubnegotiation (void);   // past MAX_SUBNEGOTIATION_LENGTH: reset, then close
   void Phase_COMPRESS (const unsigned char c);    
   void Phase_COMPRESS_WILL (const unsigned char c);    
   bool Handle_Telnet_Request (const int iNumber, const string sType);
@@ -2111,6 +2125,22 @@ public:
   // canonical bodies (scripting/scripting.cpp, in mushcore) use
   // FindAllEntryPoints and m_timeScriptFileMod, which are the members Windows
   // uses, so the port no longer keeps a second mtime that nothing read.
+#endif
+
+#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
+  // The same entry point for the Windows unit-test host, and NOT a second copy
+  // of the body above.  On Windows the canonical loader is
+  // CMUSHclientDoc::Serialize's loading branch (serialize.cpp), which the
+  // framework reaches through CDocument::OnOpenDocument -- something a console
+  // host has no window to drive.  This is a dozen lines that open the file,
+  // hand Serialize a load archive, and then run the OpenSession scripting steps
+  // doc.cpp performs once a world is open.  Defined in tests/win/all_tests.cpp.
+  //
+  // The port's own body (platform/doc_port_glue.cpp) transcribes that same
+  // branch because it has no CArchive-driven framework at all; its comment
+  // calls itself "the test suite's canonical loader until the Stage-7 Serialize
+  // rewire", and this is that rewire arriving on one platform first.
+  BOOL LoadWorldFromFile (const char * path);
 #endif
 
   void StartNewLine (const bool hard_break, const int flags);

@@ -57,7 +57,17 @@ char * p = "?";
       nparams.push_back (m_LineList.GetCount ());  // line
       sparams.push_back (p);    // level (a character)
       sparams.push_back ((LPCTSTR) strMessage);    // message
-      bool result;
+      // The same two seeds as mxpStart.cpp, for the same reason and with the
+      // same consequence one step further on: this site reads "keep
+      // processing?" as "suppress the error", and the early return below skips
+      // BOTH the ON_PLUGIN_MXP_ERROR broadcast to every loaded plugin AND the
+      // debug-window display.  So a world whose Lua handler merely LOGS MXP
+      // errors -- no return statement anywhere, which is what a logging handler
+      // looks like -- silenced every plugin's error callback as well as its own
+      // output.  The COM arm below carries on for a VT_EMPTY result.
+      // docs/UPSTREAM-BUGS.md 90.
+      bool result = false;
+      bool bReturnedAValue = true;
       GetScriptEngine ()->ExecuteLua (m_dispidOnMXP_Error, 
                                      m_strOnMXP_Error, 
                                      eWorldAction,
@@ -67,8 +77,10 @@ char * p = "?";
                                      sparams, 
                                      nInvocationCount,
                                      NULL, NULL, NULL,
-                                     &result);
-      if (result)
+                                     &result,
+                                     false,
+                                     &bReturnedAValue);
+      if (bReturnedAValue && result)
          return;
       }   // end of Lua
    else

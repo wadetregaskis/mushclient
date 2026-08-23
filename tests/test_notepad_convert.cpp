@@ -25,7 +25,7 @@
 
 #include <cstdio>
 #include <string>
-#include <unistd.h>
+#include "posix_compat.h"
 
 // Convenience: run an op over a C string and return the result as std::string.
 static std::string Convert(int op, const char* src)

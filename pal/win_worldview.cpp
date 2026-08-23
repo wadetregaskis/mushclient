@@ -56,8 +56,11 @@
 // from the port's DisplayMsg path).  They exist so the adapter satisfies the
 // interface; the port's push flow is the one that carries the SOutputLine.
 //
-// CANNOT be compiled here (no MSVC) — by-reasoning parity, reviewed as a
-// diff against the site forks named above.
+// Written without a compiler (no MSVC on the development machine) — by-reasoning
+// parity, reviewed as a diff against the site forks named above.  That is no
+// longer the whole story: the Windows unit-test target (tests/win) compiles this
+// file and runs it against a real document, and the first thing that run found
+// was the null-frame fault the `frame()` accessor below now answers.
 
 #ifdef _WIN32
 
@@ -196,10 +199,39 @@ public:
         }
     }
 
+    // ── the main frame, asked for rather than assumed ──────────────────────
+    // `Frame` is a MACRO -- *((CMainFrame *) App.m_pMainWnd), stdafx.h:271 --
+    // so every use of it in this file is a DEREFERENCE, and it faults rather
+    // than no-opping when the app has no main window.  The product always has
+    // one (InitInstance creates the frame before any world document exists),
+    // which is why the engine sites these bodies came from never checked.
+    //
+    // The Windows unit-test host is a console app with no frame at all, and it
+    // reaches this adapter through the real document: world.Debug('info') ->
+    // GetInfo 249 -> GetMainClientRect -> mainClientRect took the process down
+    // inside CWnd::GetClientRect, reading m_hWnd off a null `this`.
+    //
+    // Note that the infobar bodies below all open with
+    // `if (!Frame.m_wndInfoBar.m_hWnd) return;` -- that read is ITSELF through
+    // the null pointer, so "already guarded" was never true for the one case
+    // where the guard would have mattered.  A guard that has to dereference the
+    // thing it is guarding is not a guard.
+    // Note the SECOND half: a frame OBJECT is not a frame WINDOW.  The unit
+    // test host constructs a CMainFrame and never Create()s it, so every
+    // embedded control has m_hWnd == NULL and MFC asserts the moment one is
+    // written to.  "Is there a main window" is the question every body below
+    // is really asking, so ask it once, here.
+    static CMainFrame * frame()
+    {
+        CMainFrame * f = (CMainFrame *) App.m_pMainWnd;
+        return (f && f->m_hWnd) ? f : NULL;
+    }
+
     void flash() override
     {
         // FlashIcon (methods_output.cpp)
-        Frame.FlashWindow(TRUE);
+        if (frame())
+            frame()->FlashWindow(TRUE);
     }
 
     // ── pulls ──────────────────────────────────────────────────────────────
@@ -861,7 +893,8 @@ public:
     {
         // SetMainTitle (methods_output.cpp — reads m_strMainWindowTitle,
         // already stored by the engine site)
-        Frame.FixUpTitleBar();
+        if (frame())
+            frame()->FixUpTitleBar();
     }
 
     void moveWorldWindow(long left, long top,
@@ -917,25 +950,48 @@ public:
     void activateClient() override
     {
         // ActivateClient (methods_output.cpp)
-        if (Frame.IsIconic())
-            Frame.ShowWindow(SW_RESTORE);
+        CMainFrame * f = frame();
+        if (!f)
+            return;
 
-        Frame.SetForegroundWindow();
-        Frame.SetFocus();
+        if (f->IsIconic())
+            f->ShowWindow(SW_RESTORE);
+
+        f->SetForegroundWindow();
+        f->SetFocus();
     }
 
     bool isFullscreen() const override
     {
         // GetInfo 125 (methods_info.cpp)
-        return Frame.IsFullScreen() != 0;
+        return frame() && frame()->IsFullScreen() != 0;
     }
 
     bool saveWorld() override
     {
-        // Save with no name (methods_utilities.cpp): !DoSave == success.
-        // GetPathName() is CDocument's public accessor for m_strPathName,
-        // which the original reached directly as a member of the doc.
-        return !m_pDoc->DoSave(m_pDoc->GetPathName(), TRUE);
+        // TRUE on success, and false when there is no path to save to — the
+        // contract pal/iworldview.h states ("false = no path") and the one
+        // platform/wx_world_child.cpp implements.
+        //
+        // This used to be `return !m_pDoc->DoSave (GetPathName (), TRUE);`,
+        // under a comment reading "!DoSave == success".  That is true of
+        // CMUSHclientDoc::Save (methods_utilities.cpp), whose own comment says
+        // "returns zero if no error" — it is an ERROR CODE, and world.Save
+        // hands it straight to the script.  Copying the expression into a seam
+        // whose return is a BOOLEAN inverted it: this adapter answered false
+        // for a save that worked and true for one that failed, the exact
+        // opposite of the wx adapter and of the test fake.
+        //
+        // Latent rather than live — nothing calls CMUSHclientDoc::
+        // SaveWorldViaView yet, world.Save still reaching DoSave directly — so
+        // it cost nothing so far and would have cost an inverted world.Save
+        // result to whoever wired the seam up.  The empty-path early return
+        // was missing too: DoSave with no name prompts, which is not what
+        // "save the world file to its current path" means.
+        const CString strPath = m_pDoc->GetPathName();
+        if (strPath.IsEmpty())
+            return false;
+        return m_pDoc->DoSave(strPath, TRUE) != FALSE;
     }
 
     Rect mainRect() const override
@@ -944,7 +1000,10 @@ public:
         Rect out{0, 0, 0, 0};
         CWindowPlacement wp;
 
-        Frame.GetWindowPlacement(&wp);
+        if (!frame())
+            return out;   // no main window: an all-zero rect, not a fault
+
+        frame()->GetWindowPlacement(&wp);
         out.x = wp.rcNormalPosition.left;
         out.y = wp.rcNormalPosition.top;
         out.w = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
@@ -959,9 +1018,27 @@ public:
         // used to run inline, moved here so the engine has no platform arm.
         // A client rect always has its origin at (0, 0), so right/bottom ARE
         // the width and height.
+        //
+        // With no main window this answers an empty rect, and the caller never
+        // gets here anyway: GetMainClientRect gates on hasMainWindow() below.
+        // The two used to be the same test, which is why a MINIMISED frame --
+        // whose client area really is 0 x 0 -- was mistaken for "no window" and
+        // answered with a fabricated character-grid size.
+        if (!frame())
+            return Rect{0, 0, 0, 0};
+
         RECT rect;
-        Frame.GetClientRect(&rect);
+        frame()->GetClientRect(&rect);
         return Rect{ 0, 0, (int) rect.right, (int) rect.bottom };
+    }
+
+    // There is a window to measure exactly when the main frame has one.
+    // frame() already answers that: it returns NULL unless App.m_pMainWnd is
+    // both present and created (m_hWnd non-null), which is the state the
+    // headless test host deliberately leaves it in.
+    bool hasMainWindow() const override
+    {
+        return frame() != NULL;
     }
 
     // ── miniwindow mouse routing ───────────────────────────────────────────
@@ -995,21 +1072,21 @@ public:
     void infobarShow(bool visible) override
     {
         // ShowInfoBar (methods_infobar.cpp)
-        if (Frame.m_wndInfoBar.m_hWnd)
-            Frame.ShowControlBar(&Frame.m_wndInfoBar, visible, FALSE);
+        if (frame() && frame()->m_wndInfoBar.m_hWnd)
+            frame()->ShowControlBar(&frame()->m_wndInfoBar, visible, FALSE);
     }
 
     void infobarClear() override
     {
         // InfoClear (methods_infobar.cpp)
-        if (!Frame.m_wndInfoBar.m_hWnd)
+        if (!frame() || !frame()->m_wndInfoBar.m_hWnd)
             return;
 
         CRichEditCtrl* pRichEdit =
-            (CRichEditCtrl*)Frame.m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
+            (CRichEditCtrl*)frame()->m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
 
         // back to default colour, font etc.
-        pRichEdit->SetDefaultCharFormat(Frame.m_defaultInfoBarFormat);
+        pRichEdit->SetDefaultCharFormat(frame()->m_defaultInfoBarFormat);
 
         // select all
         pRichEdit->SetSel(0, -1);
@@ -1021,11 +1098,11 @@ public:
     void infobarText(const char* text) override
     {
         // Info (methods_infobar.cpp)
-        if (!Frame.m_wndInfoBar.m_hWnd)
+        if (!frame() || !frame()->m_wndInfoBar.m_hWnd)
             return;
 
         CRichEditCtrl* pRichEdit =
-            (CRichEditCtrl*)Frame.m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
+            (CRichEditCtrl*)frame()->m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
 
         pRichEdit->ReplaceSel(text);
     }
@@ -1034,13 +1111,13 @@ public:
     {
         // InfoColour (methods_infobar.cpp) — the seam carries the resolved
         // COLORREF (the engine resolves the colour name before emitting)
-        if (!Frame.m_wndInfoBar.m_hWnd)
+        if (!frame() || !frame()->m_wndInfoBar.m_hWnd)
             return;
 
         CHARFORMAT cf;
 
         CRichEditCtrl* pRichEdit =
-            (CRichEditCtrl*)Frame.m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
+            (CRichEditCtrl*)frame()->m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
 
         memset(&cf, 0, sizeof(cf));
         cf.cbSize = sizeof(cf);
@@ -1052,11 +1129,11 @@ public:
     void infobarBackground(Colour c) override
     {
         // InfoBackground (methods_infobar.cpp) — resolved COLORREF as above
-        if (!Frame.m_wndInfoBar.m_hWnd)
+        if (!frame() || !frame()->m_wndInfoBar.m_hWnd)
             return;
 
         CRichEditCtrl* pRichEdit =
-            (CRichEditCtrl*)Frame.m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
+            (CRichEditCtrl*)frame()->m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
 
         pRichEdit->SetBackgroundColor(FALSE, c);
     }
@@ -1064,13 +1141,13 @@ public:
     void infobarFont(const char* face, int pointSize, int style) override
     {
         // InfoFont (methods_infobar.cpp)
-        if (!Frame.m_wndInfoBar.m_hWnd)
+        if (!frame() || !frame()->m_wndInfoBar.m_hWnd)
             return;
 
         CHARFORMAT cf;
 
         CRichEditCtrl* pRichEdit =
-            (CRichEditCtrl*)Frame.m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
+            (CRichEditCtrl*)frame()->m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
 
         memset(&cf, 0, sizeof(cf));
         cf.cbSize = sizeof(cf);
@@ -1118,10 +1195,11 @@ public:
         // GetInfo 257/258 pixel size; (0,0) when hidden — the Windows cases
         // measured the control bar's window rect
         Size s{0, 0};
-        if (Frame.m_wndInfoBar.m_hWnd && Frame.m_wndInfoBar.IsWindowVisible())
+        if (frame() && frame()->m_wndInfoBar.m_hWnd &&
+            frame()->m_wndInfoBar.IsWindowVisible())
         {
             CRect r;
-            Frame.m_wndInfoBar.GetWindowRect(&r);
+            frame()->m_wndInfoBar.GetWindowRect(&r);
             s.w = r.Width();
             s.h = r.Height();
         }

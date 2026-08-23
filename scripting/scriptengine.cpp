@@ -72,7 +72,15 @@ bool CScriptEngine::Execute (DISPID & dispid,  // dispatch ID, will be set to DI
   // do not trace OnPluginDrawOutputWindow or OnPluginTick because they can spam the output window
   if (ON_PLUGIN_DRAW_OUTPUT_WINDOW != szProcedure &&
       ON_PLUGIN_TICK != szProcedure)
-    m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
+    // Trace takes a FORMAT (doc.h declares it `MC_PRINTF_FORMAT(2, 3)`), and
+    // szProcedure is a script routine name out of a world file or
+    // world.AddTrigger.  Handing the COMPOSED string straight in made a '%' in
+    // that name a conversion specifier, read by FormatV against an empty
+    // vararg list.  scripting/lua_scripting.cpp fixed this three times over
+    // and says so at each site; the COM path is `#ifdef _WIN32`, so the port
+    // never saw it and it stayed.  docs/UPSTREAM-BUGS.md 97.
+    m_pDoc->Trace ("%s",
+      (LPCTSTR) TFormat ("Executing %s script \"%s\"", szType, szProcedure));
 
   //  Frame.SetStatusMessageNow (TFormat ("Executing %s subroutine \"%s\"", szType, szProcedure));
 

@@ -783,7 +783,20 @@ bool bError = true;
                MB_ICONSTOP);
 
     // BROWSE FOR STATE FOLDER
-#ifdef _WIN32
+#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
+    // The unit-test host answers this browse as CANCELLED, and it has to.
+    // ::SHBrowseForFolder is a SHELL dialog rather than a message box, so the
+    // host's AfxMessageBox / UMessageBox interception cannot reach it and there
+    // is no hook to substitute: it simply blocks, with no window a test can
+    // find or close.  It is the one modal in this tree with no way out
+    // (docs/WINDOWS-VALIDATION.md 10r).
+    //
+    // Cancelling is not a fabricated outcome.  A NULL pidl is exactly what a
+    // user pressing Cancel produces, and the code below already handles it by
+    // leaving the folder alone and letting the save fail -- which is the arm
+    // PluginState.StateFolderIsAFileFails asserts.  Skipping the dialog keeps
+    // that assertion running on Windows instead of guarding it away.
+#elif defined(_WIN32)
     // Gets the Shell's default allocator
     LPMALLOC pMalloc;
     if (::SHGetMalloc(&pMalloc) == NOERROR)
@@ -877,6 +890,23 @@ bool bError = true;
                 (LPCTSTR) m_pDoc->m_mush_name);
 
     m_pDoc->Save_World_XML (*ar, XML_VARIABLES, strComment);
+
+    // Flush INSIDE the try, before declaring success.  Save_World_XML only
+    // fills the archive's buffer; the bytes reach the file when the CArchive is
+    // destroyed, which happens after every catch arm below.  Two consequences,
+    // and both were live:
+    //
+    //   * bError was cleared before anything had been written, so SaveState
+    //     returned success for a save that then failed -- over a file
+    //     CFile::modeCreate had already TRUNCATED, so the user's plugin state
+    //     was gone and world.SaveState() said it had worked.
+    //   * ~CArchive calls Close() -> Flush() with no guard of its own, so a
+    //     failing write throws out of a destructor.  Under C++11 that is a
+    //     noexcept destructor and the client terminates.
+    //
+    // Closing here leaves ~CArchive with m_pFile == NULL, so it does nothing.
+    // docs/UPSTREAM-BUGS.md 103.
+    ar->Close ();
 
     bError = false;
 

@@ -357,8 +357,10 @@ class CLine : public CObject
          const COLORREF       iBackColour,
          const bool bUnicode
          );   // constructor
-#ifndef _WIN32
-  // Default constructor for non-Windows scratch/stub lines (doc_portable.cpp).
+#if !defined(_WIN32) || defined(MUSHCLIENT_TESTS)
+  // Default constructor for non-Windows scratch/stub lines (doc_portable.cpp),
+  // and for test fixtures on every platform — several of them want a blank
+  // line to hang a document off without inventing a wrap column and a palette.
   CLine() : hard_return(false), flags(0), len(0), text(nullptr),
             iMemoryAllocated(0), m_nLineNumber(0), m_iPreambleOffset(0)
   { m_lineHighPerformanceTime.QuadPart = 0; }
@@ -481,6 +483,28 @@ typedef map <CAlias*, string> CAliasRevMap;
 #define TRIGGER_COLOUR_CHANGE_BOTH 0
 #define TRIGGER_COLOUR_CHANGE_FOREGROUND 1
 #define TRIGGER_COLOUR_CHANGE_BACKGROUND 2
+
+// Which entry of CTrigger::wildcards does a trigger's clipboard_arg name?
+//
+// 0 is "(none)"; 1..9 are %1..%9; and 10 is the WHOLE MATCHING LINE, which
+// lives at wildcards [0].  That last one is not an invention here -- it is the
+// convention the array handed to scripts already uses: it is built 1-relative
+// with MAX_WILDCARDS elements and its final element is deliberately
+// wildcards [0] ("the whole matching line", doc_shared.cpp:4500 and
+// evaluate.cpp:1195).  The Trigger dialog's IDC_WILDCARD_CLIPBOARD dropdown
+// offers 1..10, so before this the last entry it offered silently copied
+// nothing.  docs/UPSTREAM-BUGS.md 109.
+//
+// Returns -1 for "copy nothing", which covers both 0 and anything above 10
+// (the option table and the world loader both accept 0..10, so out-of-range
+// cannot arrive from either, but a hand-edited value should not index past
+// the vector).
+inline int ClipboardWildcardIndex (const unsigned short iClipboardArg)
+  {
+  if (iClipboardArg == 0 || iClipboardArg > MAX_WILDCARDS)
+    return -1;
+  return (iClipboardArg == MAX_WILDCARDS) ? 0 : (int) iClipboardArg;
+  }
 
 
 // when adding new fields, update operator==
@@ -643,6 +667,12 @@ class CTimer : public CObject
      fOffsetSecond = 0.0;
      iType = eInterval;
      bOneShot = FALSE;
+     // As CAlias and CTrigger both do, and for a reason that is not cosmetic:
+     // Get_XML_boolean leaves its output UNTOUCHED when the attribute is absent
+     // and defaults are wanted, so a hand-written <timer defaults="y"> with no
+     // enabled= attribute -- which is ordinary plugin XML -- read whatever was
+     // on the heap.  docs/UPSTREAM-BUGS.md 99.
+     bEnabled = TRUE;
      dispid = DISPID_UNKNOWN;
      tFireTime = CmcDateTime::GetTimeNow();
      bTemporary = false;

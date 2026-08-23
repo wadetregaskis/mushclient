@@ -22,7 +22,7 @@
 #include <cstring>
 #include <string>
 #include <sys/stat.h>
-#include <unistd.h>
+#include "posix_compat.h"
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -528,6 +528,13 @@ TEST(PluginState, ReentrantSaveStateRejected)
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d_reent/", (int)getpid());
+    // Create it, as the other state tests in this file do.  A MISSING state
+    // folder is not benign on Windows: plugins.cpp warns and then opens a real
+    // ::SHBrowseForFolder, a Shell dialog no message-box hook can intercept, so
+    // the run stops dead with an invisible window nothing can answer.  The port
+    // tolerates the absence, which is why this went unnoticed -- the folder was
+    // never part of what this test is about.
+    mkdir(dir, 0755);
     App.m_strDefaultStateFilesDirectory = dir;
 
     ASSERT_TRUE(load_plugin(doc, write_plugin("reent", IDA, "ReentPlugin",
@@ -548,6 +555,7 @@ TEST(PluginState, ReentrantSaveStateRejected)
 // plugins.cpp: "Auto-create the plugin-state folder (mkdir -p) rather than
 // blocking with a modal on a fresh setup" — and the state file is named
 // exactly <worldID>-<pluginID>-state.xml (the ecosystem contract).
+#ifndef _WIN32   // the mkdir -p auto-create is a PORT addition (plugins.cpp is #ifndef _WIN32 there, with the comment saying so); on Windows a missing state folder warns and opens a real ::SHBrowseForFolder, which no message-box hook can intercept and which stops the run dead
 TEST(PluginState, SaveStateAutoCreatesFolderAndNamesFile)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -572,6 +580,7 @@ TEST(PluginState, SaveStateAutoCreatesFolderAndNamesFile)
 
     App.m_strDefaultStateFilesDirectory.Empty();
 }
+#endif  // !_WIN32
 
 // plugins.cpp SendToAll/SendToFirst dispatchers: "ignore disabled plugins" —
 // every dispatch variant must skip a disabled plugin, and run it again once
@@ -814,6 +823,7 @@ TEST(PluginState, SaveStateSkippedWithoutWorldID)
 
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_noworld_%d/", (int)getpid());
+    mkdir(dir, 0755);   // Windows does not auto-create it (plugins.cpp is #ifndef _WIN32)
     App.m_strDefaultStateFilesDirectory = dir;
     CPlugin* p = doc.GetPlugin(IDA);
     ASSERT_NE(nullptr, p);
@@ -832,6 +842,7 @@ TEST(PluginState, OnPluginSaveStateRunsBeforeSerialization)
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_cborder_%d/", (int)getpid());
+    mkdir(dir, 0755);   // ditto
     App.m_strDefaultStateFilesDirectory = dir;
 
     ASSERT_TRUE(load_plugin(doc, write_plugin("cborder", IDA, "CbOrderPlugin",
@@ -864,6 +875,7 @@ TEST(PluginState, OnPluginSaveStateRunsBeforeSerialization)
 // directory raises the error path; headless there is no directory picker,
 // so the save proceeds with the unchanged (file) prefix — the state file
 // lands beside it with the concatenated name.
+#ifndef _WIN32   // same reason: the "is not a directory" arm reaches the same ::SHBrowseForFolder on Windows
 TEST(PluginState, SaveStateFolderNotADirectoryStillSavesBesideIt)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -894,6 +906,7 @@ TEST(PluginState, SaveStateFolderNotADirectoryStillSavesBesideIt)
 
     App.m_strDefaultStateFilesDirectory.Empty();
 }
+#endif  // !_WIN32
 
 // plugins.cpp ~CPlugin: "delete our arrays" — an array created inside a
 // plugin lives in that plugin's own m_Arrays map (not the world's), and is
@@ -913,6 +926,16 @@ TEST(PluginLifecycle, PluginArrayLivesInPluginScope)
 }
 
 // ═══ ExecutePluginScript argument-marshalling variants ═════════════════════
+// Headless only.  The whole family drives CScriptEngine::Execute's NON-embedded
+// arm, and "headless" is what makes that arm reachable: the port answers a
+// dispatch-language plugin by consuming the dispid and returning true, so the
+// argument packing can be asserted with no engine behind it.  On Windows
+// "vbscript" is a real COM language and Execute goes to m_pDispatch->Invoke --
+// with m_pDispatch NULL here, because these plugins never call
+// CreateScriptEngine, that is a null dereference, and it took the process down
+// before the first test in the family could print.  A Windows version wants a
+// real COM engine, which is a different fixture.
+#ifndef _WIN32
 // The non-embedded (dispatch) arms: a plugin whose engine is a COM-style
 // language (here "vbscript", which has no embedded engine on this platform)
 // routes through CScriptEngine::Execute.  Headless, Execute's non-embedded
@@ -1010,6 +1033,7 @@ TEST(PluginDispatch, UnknownDispidShortCircuitsAsApproval)
     EXPECT_TRUE(p->ExecutePluginScript(ci, "line"));
     EXPECT_EQ(0, (int)d._count);                    // not invoked at all
 }
+#endif  // !_WIN32 -- end of the dispatch-arm family
 
 // ═══ Lua arms of the argument variants ═════════════════════════════════════
 
@@ -1111,6 +1135,173 @@ TEST(PluginCallback, MxpTagAndEntityCallbacksReachPlugins)
     EXPECT_TRUE(CString(plugin_var(p, "err")).Find("E,") == 0);
 }
 
+// ═══ The MXP open-tag veto, arriving from a PLUGIN ═════════════════════════
+//
+// 3095c2a ("vetoing an atomic MXP tag now also undoes the tag's bookkeeping")
+// listed six things to check, and five of them are MxpD20.* in test_mxp.cpp.
+// All five drive the WORLD's own OnMXP_OpenTag.  The sixth is this route, and
+// it is a different call: MXP_StartTagScript asks the plugins FIRST, through
+// SendToAllPluginCallbacks(ON_PLUGIN_MXP_OPENTAG, "name,args", bStopOnFalse),
+// and only then the world's handler.
+//
+// The two routes disagree about which answer means "no".  A world handler
+// vetoes by returning TRUE ("not wanted"); a plugin vetoes by returning FALSE,
+// because the plugin call is a stop-on-FALSE broadcast whose result is negated
+// into MXP_StartTagScript's "not wanted" return.  A test that got that
+// backwards would pass for the wrong reason -- the wrong value simply does not
+// veto, and a tag that was never vetoed opens normally -- so the control below
+// returns nothing at all, which is neither answer.
+
+TEST(PluginCallback, PluginVetoOfAnMxpOpenTagUnwindsTheTagBookkeeping)
+{
+    {   // Control FIRST, same plugin shape, handler returns nothing: <b> really
+        // does reach MXP_StartTag and record itself, so the assertion below
+        // cannot pass merely because the tag never got there.
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.m_bMXP = true;
+        doc.m_iUseMXP = eUseMXP;
+        doc.m_iMXP_mode = eMXP_secure;
+        ASSERT_TRUE(load_plugin(doc, write_plugin("mxpok", IDA, "MxpOk",
+            "function OnPluginMXPopenTag(text) world.SetVariable('saw', text) end\n")));
+        ASSERT_TRUE(doc.m_bPluginProcessesOpenTag);
+
+        const char* t = "<b>bold";
+        doc.DisplayMsg(t, (int)strlen(t), 0);
+
+        EXPECT_STREQ("b,", (const char*)plugin_var(doc.GetPlugin(IDA), "saw"));
+        EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());
+    }
+
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bMXP = true;
+    doc.m_iUseMXP = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+    ASSERT_TRUE(load_plugin(doc, write_plugin("mxpveto", IDA, "MxpVeto",
+        "function OnPluginMXPopenTag(text)\n"
+        "  world.SetVariable('saw', text)\n"
+        "  return false\n"
+        "end\n")));
+    ASSERT_TRUE(doc.m_bPluginProcessesOpenTag);
+
+    const char* t = "<b>bold";
+    doc.DisplayMsg(t, (int)strlen(t), 0);
+
+    // Assert the DECLINE and not merely the absence: the plugin was asked...
+    EXPECT_STREQ("b,", (const char*)plugin_var(doc.GetPlugin(IDA), "saw"));
+    // ...and the tag was unwound rather than left dangling on the active list,
+    // which is what 3095c2a fixed for the world route.
+    EXPECT_EQ(0, (int)doc.m_ActiveTagList.GetCount());
+}
+
+namespace {
+
+// Both halves of the test below, differing only in what the plugin returns.
+// Returns what the world's own handler saw; the active-tag count comes back
+// through `activeTags`.
+std::string mxp_world_handler_saw(const char* pluginTag, const char* pluginBody,
+                                  int& activeTags)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bMXP = true;
+    doc.m_iUseMXP = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+
+    doc.m_ScriptEngine = new CScriptEngine(&doc, "Lua");
+    EXPECT_FALSE(doc.m_ScriptEngine->CreateScriptEngine());
+    EXPECT_FALSE(doc.m_ScriptEngine->Parse(CString(
+        "worldSaw = 'never asked'\n"
+        "function OnMXPopenTag(name, args, t) worldSaw = tostring(name) return false end\n"),
+        "<t>"));
+    doc.m_strOnMXP_OpenTag = "OnMXPopenTag";
+    doc.FindAllEntryPoints();
+
+    EXPECT_TRUE(load_plugin(doc, write_plugin(pluginTag, IDA, "MxpOrder",
+                                              pluginBody)));
+    EXPECT_TRUE(doc.m_bPluginProcessesOpenTag);
+
+    const char* t = "<b>bold";
+    doc.DisplayMsg(t, (int)strlen(t), 0);
+
+    activeTags = (int) doc.m_ActiveTagList.GetCount();
+
+    lua_getglobal(doc.m_ScriptEngine->L, "worldSaw");
+    const char* saw = lua_tostring(doc.m_ScriptEngine->L, -1);
+    std::string out = saw ? saw : "(nil)";
+    lua_pop(doc.m_ScriptEngine->L, 1);
+    return out;
+}
+
+}   // namespace
+
+// A plugin's veto is asked BEFORE the world's own handler and short-circuits
+// it: MXP_StartTagScript returns as soon as the plugin broadcast says no, so
+// OnMXP_OpenTag never runs at all.  Worth pinning because it is invisible from
+// either side alone -- the plugin cannot tell it pre-empted anything, and the
+// world handler cannot tell it was skipped -- and because that ordering is what
+// lets a plugin suppress a tag the world was configured to handle.
+TEST(PluginCallback, PluginVetoShortCircuitsTheWorldsOwnOpenTagHandler)
+{
+    int tags = -1;
+
+    // Control: the same two handlers, with the plugin returning nothing.  The
+    // world handler IS reached and the tag DOES open, so neither half of the
+    // veto assertion below can pass vacuously.
+    EXPECT_EQ(std::string("b"),
+              mxp_world_handler_saw("mxporder1",
+                  "function OnPluginMXPopenTag(text) end\n", tags));
+    EXPECT_EQ(1, tags);
+
+    EXPECT_EQ(std::string("never asked"),
+              mxp_world_handler_saw("mxporder2",
+                  "function OnPluginMXPopenTag(text) return false end\n", tags));
+    EXPECT_EQ(0, tags);
+}
+
+// The same defect at the other MXP site, and here it swallows diagnostics
+// rather than markup.
+//
+// MXP_error asks the world's OnMXP_Error handler first and, if it says so,
+// returns early -- skipping BOTH the plugin ON_PLUGIN_MXP_ERROR broadcast and
+// the debug-window display.  The COM arm treats a VT_EMPTY result as "no
+// opinion" and carries on; the Lua arm is `if (result) return;` over a result
+// ExecuteLua has already set to true.  So a world that merely LOGS MXP errors
+// in Lua silenced every plugin's error callback as well as its own display.
+// docs/UPSTREAM-BUGS.md 90.
+TEST(PluginCallback, WorldErrorHandlerThatReturnsNothingStillTellsThePlugins)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bMXP = true;
+    doc.m_iUseMXP = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+
+    doc.m_ScriptEngine = new CScriptEngine(&doc, "Lua");
+    ASSERT_FALSE(doc.m_ScriptEngine->CreateScriptEngine());
+    ASSERT_FALSE(doc.m_ScriptEngine->Parse(CString(
+        // A handler that only records.  No return statement at all -- which is
+        // what a logging handler looks like.
+        "seen = 0\n"
+        "function OnMXPerror(num, line, level, msg) seen = seen + 1 end\n"),
+        "<err>"));
+    doc.m_strOnMXP_Error = "OnMXPerror";
+    doc.FindAllEntryPoints();
+
+    ASSERT_TRUE(load_plugin(doc, write_plugin("mxperr", IDA, "MxpErr",
+        "function OnPluginMXPerror(text) world.SetVariable('err', text) end\n")));
+    ASSERT_TRUE(doc.m_bPluginProcessesError);
+
+    const char* t = "<nosuchtag>";
+    doc.DisplayMsg(t, (int)strlen(t), 0);
+
+    // The world handler ran -- so the plugin's silence below cannot be because
+    // no error happened.
+    lua_getglobal(doc.m_ScriptEngine->L, "seen");
+    EXPECT_GT((int)lua_tonumber(doc.m_ScriptEngine->L, -1), 0);
+    lua_pop(doc.m_ScriptEngine->L, 1);
+
+    // ...and the plugin was told about it too.
+    EXPECT_TRUE(CString(plugin_var(doc.GetPlugin(IDA), "err")).Find("E,") == 0);
+}
+
 // The MXP open-tag CALL SITE, end to end: real plugin, real MUD text, real
 // mxpStart.cpp.  Everything else in the scripting suite calls CScriptEngine
 // directly, which leaves the code that BUILDS the callback's arguments
@@ -1159,12 +1350,12 @@ TEST(MxpWorldScript, OpenTagHandlerGetsTagArgumentsAndTable)
 
     VARIANT v;
     v = doc.GetVariable("tag");
-    EXPECT_TRUE(CString(v.bstrVal ? v.bstrVal : "").Find("font") == 0);
+    EXPECT_TRUE((v.bstrVal ? CString(v.bstrVal) : CString("")).Find("font") == 0);
     v = doc.GetVariable("args");
-    EXPECT_TRUE(CString(v.bstrVal ? v.bstrVal : "").Find("color") >= 0);
+    EXPECT_TRUE((v.bstrVal ? CString(v.bstrVal) : CString("")).Find("color") >= 0);
     // The third argument is the tell: the COM arm cannot deliver it.
     v = doc.GetVariable("ttype");
-    EXPECT_STREQ("table", v.bstrVal ? v.bstrVal : "");
+    EXPECT_STREQ("table", v.bstrVal ? (const char*) CString(v.bstrVal) : "");
 }
 
 // The other half: a plugin with no MXP callbacks must leave the flags alone.
@@ -1249,6 +1440,7 @@ TEST(PluginState, SaveStateSkippedWithoutStateFolderOrWorldId)
 
 static char* s_pickedDir;
 
+#ifndef _WIN32   // g_wxhook_directorypicker is port-only: on Windows the fallback opens a real SHBrowseForFolder, which a test host must never do
 TEST(PluginState, MissingStateFolderFallsBackToDirectoryPicker)
 {
     char dir[128];
@@ -1283,6 +1475,7 @@ TEST(PluginState, MissingStateFolderFallsBackToDirectoryPicker)
     App.m_strDefaultStateFilesDirectory = savedDir;
     rmdir(dir);
 }
+#endif  // !_WIN32
 
 // ═══ Round-4 coverage: CallPlugin marshalling arms, disabled-plugin skip
 //     arms, SaveState folder errors, the wizard's headless prefix ═══════════
@@ -1456,8 +1649,17 @@ TEST(PluginState, StateFolderIsAFileFails)
     unlink(filePath);
 }
 
-// The plugin wizard headless: DoModal cancels, but the preparation runs —
+// The plugin wizard headless: DoModal cancels, but the preparation runs --
 // everything gets pre-selected and the script file is loaded.
+//
+// Headless only, and "Headless" in the name is load-bearing.  What makes this
+// testable is that CDialog::DoModal degrades to IDCANCEL through a null hook on
+// the port, so the wizard's preparation runs and its window never does.  On
+// Windows DoModal is a real CPropertySheet: there is nothing to assert about
+// afterwards without driving it, and driving a modal is what this whole target
+// exists to avoid.  (Measured: it does not hang here, it throws -- but that is
+// an accident of the resource lookup, not a contract.)
+#ifndef _WIN32
 TEST(WizardTest, HeadlessWizardSelectsEverythingThenCancels)
 {
     CMUSHclientDoc doc;
@@ -1491,6 +1693,7 @@ TEST(WizardTest, HeadlessWizardSelectsEverythingThenCancels)
     ASSERT_TRUE(doc.GetVariableMap().Lookup("wv", v));
     EXPECT_TRUE(v->bSelected);
 }
+#endif
 
 // ═══ Round-4 sweep: GetPluginInfo cases, load/reload error arms, the
 //     doc-level CallPlugin ═══════════════════════════════════════════════════
@@ -1688,6 +1891,12 @@ TEST(PluginInfoR4, LineReceivedFalseOmitsLineFromOutput)
     EXPECT_TRUE(!output_contains(doc, "secret line"));   // omitted
 }
 
+// Headless only.  Windows' Execute checks `if (L)` first and returns through
+// ExecuteLua with EMPTY parameter lists, so a LUA engine never reaches the
+// Invoke that carries rgvarg -- which is fine there because every caller asks
+// UsesEmbeddedCallback() first and routes Lua elsewhere.  Full reasoning in the
+// section comment above the same family in tests/test_scriptengine.cpp.
+#ifndef _WIN32
 // The non-Windows CScriptEngine::Execute used to declare its DISPPARAMS
 // parameter WITHOUT A NAME and hand ExecuteLua two empty argument lists, so
 // every argument a caller packed was dropped: world.CallPlugin's argument for a
@@ -1722,6 +1931,7 @@ TEST(ScriptEngineExecute, DispparamsReachTheCallee)
     doc.m_ScriptEngine = nullptr;
     delete engine;
 }
+#endif
 
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
@@ -1845,6 +2055,14 @@ TEST(PluginState, DocSaveStateWithCurrentPluginReturnsOk)
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d_docok/", (int)getpid());
+    // Make the folder rather than leaning on SaveState to make it.  The port
+    // auto-creates a missing state folder (mkdir -p, plugins.cpp); Windows
+    // does not -- it reports "does not exist", offers a browse, and fails the
+    // save.  Creating it here is not a workaround for that difference: it is
+    // what this test should have done anyway, because it is about SaveState
+    // WRITING the file, and the auto-create has its own test
+    // (SaveStateAutoCreatesFolderAndNamesFile).  One test, one behaviour.
+    mkdir(dir, 0755);
     App.m_strDefaultStateFilesDirectory = dir;
 
     ASSERT_TRUE(load_plugin(doc, write_plugin("docok", IDA, "DocOkPlugin",
@@ -1862,6 +2080,8 @@ TEST(PluginState, DocSaveStateWithCurrentPluginReturnsOk)
     struct stat st;
     EXPECT_EQ(0, stat(expected, &st));              // state file was written
 
+    unlink(expected);
+    rmdir(dir);
     App.m_strDefaultStateFilesDirectory.Empty();
 }
 
@@ -2189,15 +2409,21 @@ TEST(WizardTest, RemovingSelectedItemsSortsOncePerCategory)
     };
 
     run(200);                              // warm
-    const double small = run(400);
-    const double big   = run(2400);        // 6x the items
+    // NOT `small`: the Windows SDK's rpcndr.h has `#define small char`, so
+    // `const double small = ...` becomes `const double char = ...` and the
+    // compiler reports "'double' followed by 'char' is illegal" -- an error
+    // that names neither the macro nor the header.  This one line is why the
+    // whole suite sat excluded as "preprocesses oddly under MSVC"
+    // (docs/WINDOWS-VALIDATION.md §10r).
+    const double smallRun = run(400);
+    const double big      = run(2400);        // 6x the items
 
     // one sort each: ~6x the work.  One per surviving entry: ~36x, and the
     // ratio keeps climbing with the size.  Twice as loose as the measured
     // 6x, so ordinary machine noise cannot fail it.
-    EXPECT_TRUE(big <= small * 12 + 25.0);
-    if (big > small * 12 + 25.0)
-        printf("    400 items %.3fms vs 2400 items %.3fms\n", small, big);
+    EXPECT_TRUE(big <= smallRun * 12 + 25.0);
+    if (big > smallRun * 12 + 25.0)
+        printf("    400 items %.3fms vs 2400 items %.3fms\n", smallRun, big);
 }
 
 MC_TEST_MAIN()

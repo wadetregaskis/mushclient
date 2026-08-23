@@ -1589,7 +1589,16 @@ CString strValue;
 
     } // end of having a time
 
-  tValue = CTime (iYear, iMonth, iDay, iHour, iMinute, iSecond, 0);
+  // nDST = -1 ("work it out"), not 0 ("standard time").  MFC's CTime hands this
+  // straight to mktime as tm_isdst, so a 0 tells the CRT that a wall-clock time
+  // written during daylight saving is NOT during daylight saving -- and reading
+  // the hour back through localtime then returns it one hour later.  Measured on
+  // Windows, 2026-08-21: "2020-05-06 07:08:09" parsed back as hour 8, and every
+  // other hour in the suite was off by exactly one the same way.  The port never
+  // saw it because platform/mfc_time.h's CTime ignores the argument and always
+  // passes -1, so this is Windows-only and the port's answer is the right one.
+  // The one caller that matters is a plugin's date_written (xml_load_world.cpp).
+  tValue = CTime (iYear, iMonth, iDay, iHour, iMinute, iSecond, -1);
 
   return true;
 

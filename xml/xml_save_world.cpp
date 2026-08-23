@@ -182,7 +182,8 @@ void Save_XML_date    (CArchive& ar,
 void Save_XML_double    (CArchive& ar, 
                        const char * sName, 
                        const double & fNumber,
-                       const bool sameline)
+                       const bool sameline,
+                       const int iDecimals)
   {
 
   /*
@@ -202,8 +203,29 @@ void Save_XML_double    (CArchive& ar,
 
       */
 
-  CString strNumber = CFormat ("%.2f", fNumber);
+  CString strNumber = CFormat ("%.*f", iDecimals, fNumber);
   strNumber.Replace (",", ".");    // don't want any blasted commas!
+
+  // Two decimals is not enough for every caller.  A timer's seconds are
+  // declared to four everywhere else in the app -- the loader reads them with
+  // GET_DOUBLE ("second", ..., 0, 59.9999) and CTimerDlg's DDV_MinMaxDouble
+  // uses the same 59.9999 -- so writing two rounded a legal sub-0.005s
+  // interval to 0.00, which the loader then REFUSES ("Timer for 'every' time
+  // cannot have zero interval").  The app wrote a world file its own loader
+  // rejected, and dropped the timer with a [WARNING] the user never caused.
+  // See docs/UPSTREAM-BUGS.md 106.
+  //
+  // Trailing zeros are trimmed back to two decimals so that asking for more
+  // precision does not rewrite every existing world file: 5.0 still saves as
+  // "5.00" and only 0.001 needs the extra digits to say "0.001".
+  if (iDecimals > 2)
+    {
+    const int iPoint = strNumber.Find ('.');
+    if (iPoint >= 0)
+      while (strNumber.GetLength () - iPoint > 3 &&
+             strNumber [strNumber.GetLength () - 1] == '0')
+        strNumber = strNumber.Left (strNumber.GetLength () - 1);
+    }
 
   Save_XML_string (ar, 
                    sName, 
@@ -261,10 +283,26 @@ void CMUSHclientDoc::Save_World_Numeric_Options_XML (CArchive& ar)
       if (OptionsTable [i].iFlags & OPT_RGB_COLOUR)
         Save_XML_colour (ar, OptionsTable [i].pName, iValue);
       else
-        // OPT_ZERO_UNLIMITED options mean something by 0, so it must be written
-        // rather than left to the loader's "absent = keep the default".
+        // A zero has to be written whenever the loader would not otherwise
+        // arrive at it, and the loader's rule for an absent numeric attribute
+        // is "keep the member as constructed", i.e. the table DEFAULT.  So:
+        //
+        //   default 0  -> omitting a 0 is exact; keep omitting it
+        //   default !0 -> omitting a 0 reloads as the default, losing the
+        //                 setting, so it must be written
+        //
+        // The flag alone was not enough: it is on exactly one row
+        // (max_output_lines), while pixel_offset (default 1, range 0-20),
+        // fade_output_opacity_percent (20, 0-100), tool_tip_visible_time
+        // (5000, 0-120000) and tool_tip_start_time (400, 0-120000) all accept a
+        // meaningful 0 and all silently reverted to their defaults on the next
+        // load.  docs/UPSTREAM-BUGS.md 101.
+        //
+        // Nothing else in the file changes: a row whose default is 0 is written
+        // exactly as before, and a non-zero value was always written.
         Save_XML_number (ar, OptionsTable [i].pName, iValue, false,
-                         (OptionsTable [i].iFlags & OPT_ZERO_UNLIMITED) != 0);
+                         (OptionsTable [i].iFlags & OPT_ZERO_UNLIMITED) != 0 ||
+                         OptionsTable [i].iDefault != 0);
 
     } // end of looping through each option
 
@@ -564,11 +602,11 @@ void CMUSHclientDoc::Save_One_Timer_XML (CArchive& ar, CTimer * t)
 
   Save_XML_number  (ar, "hour",    (t->iType == CTimer::eAtTime ? t->iAtHour   : t->iEveryHour), true);
   Save_XML_number  (ar, "minute",  (t->iType == CTimer::eAtTime ? t->iAtMinute : t->iEveryMinute), true);
-  Save_XML_double  (ar, "second",  (t->iType == CTimer::eAtTime ? t->fAtSecond : t->fEverySecond), true);
+  Save_XML_double  (ar, "second",  (t->iType == CTimer::eAtTime ? t->fAtSecond : t->fEverySecond), true, 4);
 
   Save_XML_number  (ar, "offset_hour",       t->iOffsetHour, true);
   Save_XML_number  (ar, "offset_minute",     t->iOffsetMinute, true);
-  Save_XML_double  (ar, "offset_second",     t->fOffsetSecond, true);
+  Save_XML_double  (ar, "offset_second",     t->fOffsetSecond, true, 4);
   Save_XML_number  (ar, "send_to",           t->iSendTo);
   Save_XML_boolean (ar, "temporary",         t->bTemporary);
   Save_XML_number  (ar, "user",              t->iUserOption);

@@ -22,7 +22,7 @@
 #include <cstdio>
 #include <set>
 #include <string>
-#include <unistd.h>
+#include "posix_compat.h"
 
 static void make_doc(CMUSHclientDoc& doc)
 {
@@ -76,11 +76,26 @@ TEST(GetInfo, BooleanCodesAnswerVtBool)
     CMUSHclientDoc doc; make_doc(doc);
     static const int codes[] = {
         101,102,103,104,105,106,107,108,109,110,111,112,113,114,
-        115,118,119,120,121,122,123,124,125 };
+        115,118,119,120,121,122,123,124 };
     expect_all_vt(doc, codes, VT_BOOL, "VT_BOOL");
     // 116/117 were never allocated: they fall to the VT_NULL default
     EXPECT_EQ(VT_NULL, (int)doc.GetInfo(116).vt);
     EXPECT_EQ(VT_NULL, (int)doc.GetInfo(117).vt);
+
+#ifndef _WIN32
+    // 125 is IsClientFullscreen, and on Windows it is the one boolean code that
+    // cannot be asked here: the seam's Windows adapter answers it with
+    // `Frame.IsFullScreen()` (pal/win_worldview.cpp), and `Frame` is
+    // `*((CMainFrame*)App.m_pMainWnd)` (stdafx.h) -- a null dereference in a
+    // host that never creates a main frame.  It segfaulted the whole suite,
+    // silently, from inside a loop over 23 other codes.
+    //
+    // Left OUT of the list rather than wrapped in something clever, because the
+    // fix is not a guard: it is a main frame, and that is a host capability this
+    // target does not have yet.  Not a product defect -- a script can only run
+    // in a world, and a world has a frame.
+    EXPECT_EQ(VT_BOOL, (int)doc.GetInfo(125).vt);
+#endif
 }
 
 // methods_info.cpp GetInfo: the numeric group answers VT_I4 (a few arms are
@@ -91,11 +106,44 @@ TEST(GetInfo, NumericCodesAnswerVtI4)
     static const int codes[] = {
         201,202,203,204,205,206,207,208,209,210,
         211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,
-        226,227,228,229,230,231,235,238,240,241,242,243,244,
-        245,246,247,248,249,250,251,252,253,254,255,256,257,258,259,
-        260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,
-        275,276,277,278,279,280,281,282,283,284,286,287,288,289,290,
-        291,292,293,294,295,298,299,300,310 };
+        226,227,228,229,230,231,235,240,241,242,243,244,
+        245,246,247,248,
+#ifndef _WIN32
+        // ── Codes that need a frame or a view, and answer nothing without ──
+        //
+        // 249-260 reach `Frame`.  251-260 say so in the open --
+        // `&Frame.m_wndSomething` -- while 249/250 get there one level down,
+        // through GetMainClientRect into the seam adapter's mainClientRect,
+        // which is `Frame.GetClientRect` (pal/win_worldview.cpp).  `Frame` is a
+        // MACRO, *((CMainFrame*)App.m_pMainWnd) (stdafx.h), so with no main
+        // frame these are not calls that quietly do nothing: they are null
+        // dereferences, and they segfaulted this whole suite from inside this
+        // loop, with no assertion and nothing naming the code that did it.
+        //
+        // Giving the host a main frame OBJECT (never Created, so every embedded
+        // CWnd has a null m_hWnd and MFC's own guards answer 0) looks like the
+        // obvious fix and was tried.  MEASURED: it took the target from 1053
+        // passed / 1 failed to 1006 / 71, with plugin loading failing across the
+        // board on an MFC assertion in winocc.cpp plus a CArchive badSchema, in
+        // suites with no connection to frames at all.  Reverted, undiagnosed; a
+        // main frame is its own piece of work and is not free the way it looks.
+        // See docs/WINDOWS-VALIDATION.md 10v.
+        //
+        // The rest need a VIEW.  238 wants a CSendView, 261-264 a CChildFrame,
+        // and 280/281/290-293 a CMUSHView; each Windows arm walks the document's
+        // views, finds none, and falls out leaving vaResult VT_EMPTY.  The port
+        // derives all of them from its m_gui_* fields instead, which is why they
+        // have a value here and not there.  The Windows contract is asserted
+        // positively below rather than left as a hole in this list.
+        238,
+        249,250,251,252,253,254,255,256,257,258,259,260,
+        261,262,263,264,
+        280,281,
+        290,291,292,293,
+#endif
+        265,266,267,268,269,270,271,272,273,274,
+        275,276,277,278,279,282,283,284,286,287,288,289,
+        294,295,298,299,300,310 };
     expect_all_vt(doc, codes, VT_I4, "VT_I4");
     EXPECT_EQ(VT_I2,   (int)doc.GetInfo(239).vt);   // action source is a short
     EXPECT_EQ(VT_BOOL, (int)doc.GetInfo(285).vt);   // output-window-available
@@ -105,9 +153,29 @@ TEST(GetInfo, NumericCodesAnswerVtI4)
     // the trigger/alias time arms have no fallback and stay VT_EMPTY
     EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(233).vt);
     EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(234).vt);
+
+#ifdef _WIN32
+    // The other half of the guard above: assert that the view-dependent codes
+    // really do answer VT_EMPTY with none attached, rather than silently
+    // dropping out of the suite.  A hole in a list is invisible; a failing
+    // expectation is not.  (249-260 are NOT here -- reading them is the null
+    // dereference, so there is nothing safe to assert about them at all.)
+    static const int noViewCodes[] = { 238, 261,262,263,264, 280,281,
+                                       290,291,292,293 };
+    expect_all_vt(doc, noViewCodes, VT_EMPTY, "VT_EMPTY (no view attached)");
+    // 236/237 are the command-selection pair, and they are NOT in that list:
+    // they go through the seam on both platforms, and on Windows the document
+    // constructs its own adapter (doc_construct.cpp), so `if (m_pWorldView)` is
+    // TRUE here and they answer a real VT_I4 for the empty selection.  On the
+    // port nothing is attached, so they stay VT_EMPTY.  Same code, two answers,
+    // for a reason that has nothing to do with the code.
+    EXPECT_EQ(VT_I4, (int)doc.GetInfo(236).vt);
+    EXPECT_EQ(VT_I4, (int)doc.GetInfo(237).vt);
+#else
     // no world view attached: the command-selection arms stay VT_EMPTY
     EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(236).vt);
     EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(237).vt);
+#endif
     EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(296).vt);  // scroll position, no sink
 }
 
@@ -145,13 +213,18 @@ TEST(GetInfo, StringArmsReflectDocumentFields)
     EXPECT_STREQ(sqlite3_libversion(), vstr(doc.GetInfo(83)).c_str());
 }
 
-// GetInfo(64) is the current working directory WITH a trailing slash.
+// GetInfo(64) is the current working directory WITH a trailing separator --
+// the platform's own, which methods_info.cpp appends under an #ifdef.
 TEST(GetInfo, CurrentDirectoryHasTrailingSlash)
 {
     CMUSHclientDoc doc; make_doc(doc);
     std::string dir = vstr(doc.GetInfo(64));
     ASSERT_TRUE(!dir.empty());
+#ifdef _WIN32
+    EXPECT_EQ((char)0x5C, dir[dir.size() - 1]);   // backslash
+#else
     EXPECT_EQ('/', dir[dir.size() - 1]);
+#endif
 
     char cwd[1024];
     ASSERT_NE(nullptr, (void*)getcwd(cwd, sizeof cwd));
@@ -218,6 +291,9 @@ TEST(GetInfo, OutputAvailableMirrorsCurrentLine)
     EXPECT_TRUE(doc.GetInfo(285).boolVal);
 }
 
+// Headless only: these read GetInfo codes that dereference `Frame` on
+// Windows (see NumericCodesAnswerVtI4 above for the whole story).
+#ifndef _WIN32
 // headless GUI metric arms: toolbars don't exist (0), world-frame metrics
 // derive from the m_gui_* fields, and the text rectangle answers its fields.
 TEST(GetInfo, HeadlessGuiMetricsDeriveFromGuiFields)
@@ -254,7 +330,11 @@ TEST(GetInfo, HeadlessGuiMetricsDeriveFromGuiFields)
     EXPECT_EQ(5L, doc.GetInfo(274).lVal);
     EXPECT_EQ(6L, doc.GetInfo(275).lVal);
 }
+#endif
 
+// Headless only: these read GetInfo codes that dereference `Frame` on
+// Windows (see NumericCodesAnswerVtI4 above for the whole story).
+#ifndef _WIN32
 // 249/250 are the MAIN WINDOW's client rect, which only the frontend knows.
 // They used to be a hand-written platform pair: Frame.GetClientRect on Windows,
 // and off it a guess derived from the output pane's character grid -- which
@@ -270,12 +350,16 @@ TEST(GetInfo, MainClientRectComesFromTheViewNotTheCharacterGrid)
     doc.m_gui_font_height = 10;
     doc.m_gui_font_width  = 6;
 
-    // Control: no view -> the old derivation, so the checks below cannot be
-    // passing because everything answers the view.
+    // Control: the FAKE view is not attached yet, so this is the old grid
+    // derivation and the checks below cannot be passing merely because
+    // everything answers a view.  (On Windows the doc always has its own
+    // adapter here, but with no window to measure its mainClientRect comes
+    // back empty and GetMainClientRect reports failure, which is the same
+    // fallback -- so the control holds on both platforms, for two reasons.)
     EXPECT_EQ(27L * 10L, doc.GetInfo(249).lVal);
     EXPECT_EQ(80L * 6L,  doc.GetInfo(250).lVal);
 
-    doc.m_pWorldView = &view;
+    mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach(doc, &view);
     EXPECT_EQ(517L, doc.GetInfo(249).lVal);          // view.mainClientR.h
     EXPECT_EQ(793L, doc.GetInfo(250).lVal);          // view.mainClientR.w
 
@@ -286,10 +370,22 @@ TEST(GetInfo, MainClientRectComesFromTheViewNotTheCharacterGrid)
     EXPECT_TRUE(doc.GetInfo(250).lVal != doc.GetInfo(281).lVal);
 
     // A view with no window to measure must fall back, not report zero.
+    view.hasMainWin  = false;
     view.mainClientR = pal::Rect{ 0, 0, 0, 0 };
     EXPECT_EQ(27L * 10L, doc.GetInfo(249).lVal);
     EXPECT_EQ(80L * 6L,  doc.GetInfo(250).lVal);
+
+    // ...but a view that HAS a window whose client area measures nothing must
+    // report zero, NOT fall back.  That is a minimised main frame, and it is
+    // the case the old `if (r.w <= 0) return false` test could not tell from
+    // the one above: it answered a fabricated character-grid size for a window
+    // that was not on screen.  These two blocks differ by one flag, which is
+    // exactly the distinction the seam gained.
+    view.hasMainWin = true;
+    EXPECT_EQ(0L, doc.GetInfo(249).lVal);
+    EXPECT_EQ(0L, doc.GetInfo(250).lVal);
 }
+#endif
 
 // GetInfo(294): headless there is no keyboard hook, so no modifier bits.
 // GetInfo(299)/(300): the shim code pages are the classic Windows defaults.
@@ -595,6 +691,14 @@ TEST(GlobalOptions, ListEnumeratesEveryOptionName)
 // headless database plumbing: PopulateDatabase / SaveGlobalsToDatabase are
 // inert (writes swallowed, SQLITE_OK), and LoadGlobalsFromDatabase resolves
 // every option back to its table default.
+//
+// Headless only, and the name says so.  On Windows these are the REAL sqlite
+// calls against the real preferences database, so PopulateDatabase answers
+// SQLITE_CANTOPEN (14) rather than SQLITE_OK, and the failure cascades into
+// MFC assertions and an escaping exception.  A Windows version of this test is
+// worth having but is a different test: it wants a temporary database injected
+// through App.m_PreferencesDatabaseName, not this one with a guard removed.
+#ifndef _WIN32
 TEST(GlobalOptions, HeadlessDatabaseRoundTripRestoresDefaults)
 {
     EXPECT_EQ(SQLITE_OK, App.PopulateDatabase());
@@ -604,6 +708,7 @@ TEST(GlobalOptions, HeadlessDatabaseRoundTripRestoresDefaults)
     App.LoadGlobalsFromDatabase();
     EXPECT_EQ(1L, App.GetGlobalOption("AutoConnectWorlds").lVal);
 }
+#endif
 
 // ShowGlobalOptions notes every option (name = value) into the world.
 // The one candidate skipped in the intent-comment sweep, now testable: the
@@ -643,6 +748,7 @@ TEST(GlobalOptions, PerturbAutoExpandBeforeDatabaseReset)
     App.m_bAutoExpand = 0;   // compiled default (AutoExpandConfig) is 1
 }
 
+#ifndef _WIN32   // g_pWinApp is the port-only app pointer (platform/); Windows has AfxGetApp
 TEST(GlobalOptions, FreshDatabaseSeedAndReadShareDirectoryDefaults)
 {
     const char* dbPath = "/tmp/mc_test_prefs_seed.sqlite";
@@ -673,6 +779,7 @@ TEST(GlobalOptions, FreshDatabaseSeedAndReadShareDirectoryDefaults)
 
     remove(dbPath);
 }
+#endif  // !_WIN32
 
 // See PerturbAutoExpandBeforeDatabaseReset above: the perturbed value must
 // have survived FreshDatabaseSeedAndReadShareDirectoryDefaults running in
@@ -749,20 +856,28 @@ TEST(GetInfoR4, SelectionAndScrollThroughWorldView)
     view.cmdSel.start = 2;
     view.cmdSel.end = 7;
     view.scroll = 42;
-    doc.m_pWorldView = &view;
+    mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach(doc, &view);
 
     VARIANT v = doc.GetInfo(236);
     EXPECT_EQ((int)VT_I4, (int)v.vt);
     EXPECT_EQ(3, (int)v.lVal);         // 1-based start
     v = doc.GetInfo(237);
     EXPECT_EQ(7, (int)v.lVal);
+    // 296 is the scroll position, and it is the ONE member of this group that
+    // is not single-sourced through the seam: 236 and 237 above ask
+    // m_pWorldView on both platforms, while 296's Windows arm reaches for
+    // GetFirstOutputWindow() -- a real CMUSHView -- and leaves the result
+    // VT_EMPTY when there is none (methods_info.cpp).  So the fake view is
+    // consulted for the selection and ignored for the scroll.  Worth knowing
+    // that the inconsistency is in the engine and not in this test.
+#ifndef _WIN32
     v = doc.GetInfo(296);
     EXPECT_EQ(42, (int)v.lVal);
-
-    doc.m_pWorldView = nullptr;
+#endif
 }
 
 // Virtual-key state bitmask (294) through the key-state hook.
+#ifndef _WIN32   // g_wxhook_get_key_state is port-only; Windows calls ::GetKeyState directly, so there is no hook to substitute
 TEST(GetInfoR4, KeyStateBitmaskThroughHook)
 {
     g_wxhook_get_key_state = [](int vk) -> short {
@@ -783,6 +898,7 @@ TEST(GetInfoR4, KeyStateBitmaskThroughHook)
     EXPECT_EQ(0x7EFFF & ~0x1000, (int)(v.lVal & 0x7FFFF));
     g_wxhook_get_key_state = nullptr;
 }
+#endif  // !_WIN32
 
 // Date codes 302/303 answer VT_DATE once the timestamps are non-zero.
 TEST(GetInfoR4, FlushAndScriptModDates)
@@ -911,7 +1027,15 @@ TEST(GetInfoR5, StyleInfoRunActionVariable)
 // m_bScrollBarWanted has no other writer besides its initialisation
 // (doc_construct.cpp:136) and GetInfo(120) reports it, so a script that turned
 // the scrollbar off still read back "true".  Windows records it
-// (methods_output.cpp:771) before touching the control.
+// (methods_output.cpp) before touching the control.
+//
+// Headless only, and NOT because Windows gets it wrong.  The Windows arm does
+// record the flag -- but from INSIDE the loop over the document's views, so a
+// document with no CMUSHView attached records nothing at all.  That is fine in
+// the product, where a world always has a view, and it means this test needs a
+// real view rather than a guard removed.  The port's arm records it before the
+// view is consulted, which is what makes it testable here.
+#ifndef _WIN32
 TEST(InfoTest, SetScrollRecordsTheScrollbarWantedFlag)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -930,6 +1054,7 @@ TEST(InfoTest, SetScrollRecordsTheScrollbarWantedFlag)
     doc.SetScroll(-1, FALSE);
     EXPECT_TRUE(doc.GetInfo(120).boolVal == 0);
 }
+#endif
 
 // FormatTime translates the MSVC-only %# flag (no leading zero; POSIX %-).
 // The bare `#define _tcsftime strftime` fed it through raw, so the Activity
@@ -950,6 +1075,7 @@ TEST(InfoTest, FormatTimeTranslatesTheWindowsNoLeadingZeroFlag)
 // CTimeSpan&) -- which real MFC's CTime does have (it cost an earlier agent a
 // compile). Pin its semantics: CTime - CTimeSpan == CTime, moved earlier by
 // exactly the span's total seconds, and it inverts CTime + CTimeSpan.
+#ifndef _WIN32   // this tests the PORT CTime shim by name. On Windows CTime is MFC own, which has BOTH operator-(CTimeSpan) and operator-(CTime), so the LONGLONG from GetTotalSeconds() is ambiguous rather than missing -- the mirror image of the shim gap recorded in CLAUDE.md verification debt
 TEST(CTimeShim, MinusCTimeSpanSubtractsTotalSeconds)
 {
     const CTime t(2026, 7, 16, 5, 4, 30);
@@ -975,6 +1101,7 @@ TEST(CTimeShim, MinusCTimeSpanSubtractsTotalSeconds)
     // A zero span is a no-op.
     EXPECT_TRUE((t - CTimeSpan(0)) == t);
 }
+#endif  // !_WIN32
 
 // headless_app.cpp's App ctor comment claims its printer margin defaults are
 // "the Windows table defaults" (globalregistryoptions.cpp: PrinterLeftMargin /
@@ -986,6 +1113,7 @@ TEST(CTimeShim, MinusCTimeSpanSubtractsTotalSeconds)
 // them off the live App here would pass regardless of what the ctor itself
 // seeds.  See the comment above FreshDatabaseSeedAndReadShareDirectoryDefaults
 // for the g_pWinApp save/restore this pattern requires.
+#ifndef _WIN32   // g_pWinApp, as above
 TEST(AppDefaults, PrinterMarginsMatchTheGlobalOptionsTable)
 {
     CWinApp* savedWinApp = g_pWinApp;
@@ -995,6 +1123,7 @@ TEST(AppDefaults, PrinterMarginsMatchTheGlobalOptionsTable)
     EXPECT_EQ(15, scratch.m_nPrinterLeftMargin);
     EXPECT_EQ(15, scratch.m_nPrinterTopMargin);
 }
+#endif  // !_WIN32
 
 // GetUniqueString is supposed to share ONE uniqueness sequence with
 // GetUniqueNumber()/m_nUniqueNumber (world.GetUniqueNumber, trigger/alias/timer
@@ -1005,6 +1134,7 @@ TEST(AppDefaults, PrinterMarginsMatchTheGlobalOptionsTable)
 // throwaway `scratch` object (see the test above) so the sequence starts
 // from the ctor's own m_nUniqueNumber = 0 instead of whatever the live App's
 // counter happens to be after earlier tests.
+#ifndef _WIN32   // g_pWinApp, as above
 TEST(AppDefaults, GetUniqueStringSharesTheGetUniqueNumberSequence)
 {
     CWinApp* savedWinApp = g_pWinApp;
@@ -1020,6 +1150,7 @@ TEST(AppDefaults, GetUniqueStringSharesTheGetUniqueNumberSequence)
     EXPECT_STREQ(expected, (LPCTSTR) s);
     EXPECT_EQ(n + 2, n2);
 }
+#endif  // !_WIN32
 
 // InfoTypes[] (the descriptive table behind GetInfoTypesList and friends,
 // methods_info.cpp) must have a unique iInfoType per row and cover every

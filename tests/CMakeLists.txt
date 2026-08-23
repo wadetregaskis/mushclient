@@ -228,6 +228,29 @@ else()
     message(WARNING "Python3 not found; duplicate-test-helper lint SKIPPED")
 endif()
 
+# ── Source lint: the Windows test project matches the app's source list ─────
+# MUSHclient_tests.vcxproj builds this suite on Windows.  It cannot share the
+# app's object files, because MUSHCLIENT_TESTS turns CMUSHclientDoc's
+# constructor from protected into public and access is part of the mangled
+# name -- so it compiles its own copy of every engine TU, and the two
+# <ClCompile> lists have to agree.  Two lists of the same thing drift, and a
+# source added on one side only would surface as an unresolved external at
+# some later Windows session, far from the commit that caused it.  Runs here
+# rather than on Windows because this is where ctest runs; it reads XML and
+# needs no toolchain.  Second entry is the checker's own fixture, as above.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME lint_win_test_sources
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_win_test_sources.py
+                     ${CMAKE_SOURCE_DIR})
+    add_test(NAME lint_win_test_sources_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_win_test_sources.py
+                     --selftest)
+else()
+    message(WARNING "Python3 not found; Windows-test-sources lint SKIPPED")
+endif()
+
 # ── In-app conformance selftests ────────────────────────────────────────────
 # The hidden --pal-*-selftest flags run inside the real app binary (real wx
 # adapter, real transport, real world.Window* engine) and exit before the GUI

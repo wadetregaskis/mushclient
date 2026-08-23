@@ -2,7 +2,7 @@
 // Unit tests for the CColor class and COLORREF helper macros.
 
 #include "mc_test.h"
-#include "platform/compat.h"
+#include "stdafx.h"   // real MFC on Windows, platform/compat.h off it
 #include "Color.h"
 
 // ── COLORREF macro helpers ────────────────────────────────────────────────

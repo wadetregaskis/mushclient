@@ -33,6 +33,17 @@ static size_t live_heap_blocks()
     malloc_statistics_t st;
     malloc_zone_statistics(malloc_default_zone(), &st);
     return (size_t) st.blocks_in_use;
+#elif defined(_WIN32)
+    // The debug CRT's own accounting, which is the Windows equivalent of asking
+    // the allocator rather than the OS.  Counts, matching the Apple arm --
+    // note the glibc arm below returns uordblks, which is BYTES, so the three
+    // are not interchangeable and only the delta is ever compared.
+    _CrtMemState st;
+    _CrtMemCheckpoint(&st);
+    size_t n = 0;
+    for (int i = 0; i < _MAX_BLOCKS; ++i)
+        n += (size_t) st.lCounts[i];
+    return n;
 #else
     struct mallinfo2 mi = mallinfo2();
     return (size_t) mi.uordblks;
@@ -336,6 +347,11 @@ TEST(GetWordTest, UnclosedQuoteEmptyContentLeavesEmptyRemainder)
 #include "pal/itransport.h"
 #include "fake_transport.h"
 #include <string>
+// The notepad fixture is #ifndef _WIN32 (see its own header): a notepad on
+// Windows is a real CEditView from the MFC doc/view framework, with no
+// callback seam to substitute and no doc template in this host.  The cases
+// below that use it are guarded one by one so the other 115 tests in this file
+// still run there.
 #include "notepad_fixture.h"
 
 using MxpFakeTransport = RecordingTransport;
@@ -1056,10 +1072,28 @@ TEST(MXPOpenAtomic, SecureTagRejectedInOpenMode)
 // g_wxhook_create_text_window instead, which is the seam the product actually
 // uses, and hands the engine a real registered CTextDocument so the append path
 // runs for real too.
+// ── Why so many #ifndef _WIN32 in this file ───────────────────────────────
+// MXP writes its errors and debug output to a NOTEPAD (mxpError.cpp:142 ->
+// AppendToTheNotepad), and creating one is real MDI window creation on
+// Windows: CMDIChildWnd::Create looks up AfxGetThread()->m_pMainWnd and
+// ENSURE_VALIDs it (winmdi.cpp:490), and a console host has no main frame.
+// Before the host had a document template that path was an access violation
+// on a NULL App.m_pNormalDocTemplate; with the template it gets one step
+// further and throws instead, which the runner reports as a failed test.
+//
+// So two disjoint sets are guarded here, for opposite reasons:
+//   * the 16 cases using MxpDebugCapture below -- because NotepadCapture hooks
+//     g_wxhook_create_text_window, which exists only off Windows;
+//   * the 12 cases that produce debug output WITHOUT installing a capture --
+//     because nothing intercepts the creation and the framework really tries.
+// The second set is the counter-intuitive one: intercepting the notepad is
+// what makes a test safe, so it was the tests WITHOUT the harness that broke.
+#ifndef _WIN32   // notepad fixture -- see the note above
 struct MxpDebugCapture {
     NotepadCapture cap;
     bool contains(const char* s) const { return cap.contains(s); }
 };
+#endif  // !_WIN32
 
 // A doc wired for full-stream MXP: secure mode, all debug levels captured.
 static void make_stream_doc(CMUSHclientDoc& doc)
@@ -1082,6 +1116,7 @@ static std::string current_line(CMUSHclientDoc& doc)
         : std::string();
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, ElementDefinitionRegistersCustomElement)
 {
     MxpDebugCapture dbg;
@@ -1098,7 +1133,9 @@ TEST(MXPDefs, ElementDefinitionRegistersCustomElement)
     EXPECT_TRUE(dbg.contains("Got Definition"));
     EXPECT_EQ(0LL, (long long)doc.m_iMXPerrors);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, EmptyKeywordMakesCommandElement)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1108,7 +1145,9 @@ TEST(MXPDefs, EmptyKeywordMakesCommandElement)
     EXPECT_TRUE(el->bCommand);
     EXPECT_FALSE(el->bOpen);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, TagNumberOutOfRangeIsIgnored)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1117,7 +1156,9 @@ TEST(MXPDefs, TagNumberOutOfRangeIsIgnored)
     ASSERT_TRUE(doc.m_CustomElementMap.Lookup("overtag", el));
     EXPECT_EQ(0, el->iTag);   // 150 outside 20..99
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
 {
     MxpDebugCapture dbg;
@@ -1132,7 +1173,9 @@ TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
     EXPECT_TRUE(el->strFlag.IsEmpty());            // rejected by name check
     EXPECT_TRUE(dbg.contains("Bad variable name"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, DeleteRemovesCustomElement)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1142,7 +1185,9 @@ TEST(MXPDefs, DeleteRemovesCustomElement)
     stream(doc, "<!ELEMENT deleteme DELETE>");
     EXPECT_FALSE(doc.m_CustomElementMap.Lookup("deleteme", el));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, CannotRedefineBuiltinElement)
 {
     MxpDebugCapture dbg;
@@ -1152,6 +1197,7 @@ TEST(MXPDefs, CannotRedefineBuiltinElement)
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
     EXPECT_TRUE(dbg.contains("Cannot redefine built-in MXP element"));
 }
+#endif  // !_WIN32
 
 // mxpDefs.cpp: MXP_Element's function-static ArgumentList used to leak on
 // two of its early returns -- "cannot redefine built-in element" (the arm
@@ -1195,6 +1241,7 @@ TEST(MXPDefs, RedefinitionEarlyReturnsDoNotLeakTheArgumentList)
     EXPECT_EQ(before2, after2);
 }
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, DefinitionRefusedOutsideSecureMode)
 {
     MxpDebugCapture dbg;
@@ -1205,7 +1252,9 @@ TEST(MXPDefs, DefinitionRefusedOutsideSecureMode)
     EXPECT_FALSE(doc.m_CustomElementMap.Lookup("sneaky", el));
     EXPECT_TRUE(dbg.contains("MXP definition ignored when not in secure mode"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, UnknownDefinitionTypeAndBadNames)
 {
     MxpDebugCapture dbg;
@@ -1215,7 +1264,9 @@ TEST(MXPDefs, UnknownDefinitionTypeAndBadNames)
     stream(doc, "<!ELEMENT 1bad '<B>'>");
     EXPECT_TRUE(dbg.contains("Invalid MXP element/entity name"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1228,7 +1279,9 @@ TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
     ASSERT_TRUE(doc.m_CustomEntityMap.Lookup("glyph", v));
     EXPECT_STREQ("<x>", (LPCTSTR)v);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, EntityErrorsAndDeletion)
 {
     MxpDebugCapture dbg;
@@ -1243,7 +1296,9 @@ TEST(MXPDefs, EntityErrorsAndDeletion)
     stream(doc, "<!ENTITY gone>");           // blank contents deletes
     EXPECT_FALSE(doc.m_CustomEntityMap.Lookup("gone", v));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, CustomEntityExpandsInStreamText)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1251,7 +1306,9 @@ TEST(MXPDefs, CustomEntityExpandsInStreamText)
     stream(doc, "greet &who;!");
     EXPECT_TRUE(current_line(doc).find("greet Gandalf!") != std::string::npos);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
 {
     MxpDebugCapture dbg;
@@ -1265,7 +1322,9 @@ TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
     stream(doc, "<!ATTLIST missingel x=1>");
     EXPECT_TRUE(dbg.contains("Cannot add attributes to undefined MXP element"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPDefs, SecureOnceModeRestoredAfterDefinition)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1276,6 +1335,7 @@ TEST(MXPDefs, SecureOnceModeRestoredAfterDefinition)
     EXPECT_TRUE(doc.m_CustomElementMap.Lookup("onceonly", el));   // was secure
     EXPECT_EQ(eMXP_open, doc.m_iMXP_mode);                        // restored
 }
+#endif  // !_WIN32
 
 // ═══ Custom element open/close through the stream (mxpStart / mxpClose) ════
 
@@ -1287,6 +1347,7 @@ static CStyle* last_style(CMUSHclientDoc& doc)
     return doc.m_pCurrentLine->styleList.GetTail();
 }
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1306,11 +1367,13 @@ TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
     EXPECT_TRUE(current_line(doc).find("loud") != std::string::npos);
     EXPECT_TRUE(current_line(doc).find("quiet") != std::string::npos);
 }
+#endif  // !_WIN32
 
 // Merged (audit §3): a closing tag with no matching open both (a) warns to the
 // debug notepad and (b) leaves the surrounding literal text on the line untouched.
 // Formerly split across MXPCustom.CloseWithoutOpenWarns (warning text) and
 // MxpR4.CloseWithoutOpenWarns (text passthrough).
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, CloseWithoutOpenWarns)
 {
     MxpDebugCapture dbg;
@@ -1323,7 +1386,9 @@ TEST(MXPCustom, CloseWithoutOpenWarns)
     // raw onto the line, e.g. "text</b>").
     EXPECT_EQ(std::string("text"), current_line(doc));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, UnterminatedElementAtNewlineIsAnError)
 {
     MxpDebugCapture dbg;
@@ -1333,7 +1398,9 @@ TEST(MXPCustom, UnterminatedElementAtNewlineIsAnError)
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
     EXPECT_TRUE(dbg.contains("Unterminated MXP element"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, UnknownTagIsAnError)
 {
     MxpDebugCapture dbg;
@@ -1342,7 +1409,9 @@ TEST(MXPCustom, UnknownTagIsAnError)
     stream(doc, "<nosuchtag>");
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPCustom, AttributeSubstitutionSuppliedNamed)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1353,7 +1422,9 @@ TEST(MXPCustom, AttributeSubstitutionSuppliedNamed)
     EXPECT_EQ(COLOUR_RGB, (int)(s->iFlags & COLOURTYPE));
     EXPECT_EQ(RGB(0, 0, 255), s->iForeColour);   // supplied value substituted
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPCustom, AttributeSubstitutionPositional)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1363,7 +1434,9 @@ TEST(MXPCustom, AttributeSubstitutionPositional)
     ASSERT_NE(nullptr, s);
     EXPECT_EQ(RGB(0, 255, 0), s->iForeColour);   // positional argument
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPCustom, AttributeSubstitutionDefault)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -1373,7 +1446,9 @@ TEST(MXPCustom, AttributeSubstitutionDefault)
     ASSERT_NE(nullptr, s);
     EXPECT_EQ(RGB(255, 0, 0), s->iForeColour);   // ATT default used
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, MissingNonDefaultArgumentWarns)
 {
     MxpDebugCapture dbg;
@@ -1382,7 +1457,9 @@ TEST(MXPCustom, MissingNonDefaultArgumentWarns)
     stream(doc, "<needy>x");
     EXPECT_TRUE(dbg.contains("Non-default argument \"c\" not supplied to <needy>"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, UnterminatedEntityInElementArgument)
 {
     MxpDebugCapture dbg;
@@ -1391,7 +1468,9 @@ TEST(MXPCustom, UnterminatedEntityInElementArgument)
     stream(doc, "<brokearg>x");
     EXPECT_TRUE(dbg.contains("No closing \";\" in MXP element argument"));
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPCustom, DebugLevelFiltersNotepadOutput)
 {
     // Info-level messages are suppressed when the level only admits errors.
@@ -1403,6 +1482,7 @@ TEST(MXPCustom, DebugLevelFiltersNotepadOutput)
     stream(doc, "<!WOTSIT bad>");
     EXPECT_TRUE(dbg.contains("Unknown definition type"));   // errors shown
 }
+#endif  // !_WIN32
 
 // ═══ Round-4 coverage: element-name validation, tag script callbacks,
 //     definition error arms, colour errors, headers, AFK ═══════════════════
@@ -1961,6 +2041,130 @@ TEST(MxpR4, OpenTagVetoDoesNotLeakTheArgumentList)
 
     EXPECT_EQ(before, after);
 }
+
+// ═══ 3095c2a: vetoing a BUILT-IN MXP tag must undo its bookkeeping ═════════
+//
+// docs/WINDOWS-VALIDATION.md §10h listed this as needing "a plugin implementing
+// OnPluginMXPopenTag; the plugin was not written" — but the veto is equally
+// reachable from a world's own OnMXP_OpenTag script routine, which the suite
+// already installs a few tests above.  No plugin required.
+//
+// MXP_StartTag records a tag as open — an m_ActiveTagList entry plus a
+// START_TAG marker style — BEFORE calling MXP_OpenAtomicTag, which is where a
+// built-in tag's veto is asked.  It cannot be asked earlier: the argument list
+// handed to the handler is only rebuilt inside MXP_OpenAtomicTag.  A CUSTOM
+// element's veto returns before that bookkeeping exists, so the two paths
+// disagreed and a vetoed BUILT-IN tag stayed on the active list.
+//
+// That is what makes the built-in/custom distinction load-bearing here, and why
+// MxpR4.OpenTagVetoDoesNotLeakTheArgumentList above does not cover it: that one
+// vetoes a custom <mytag>, i.e. the path that always worked.
+
+namespace {
+
+// A doc whose OnMXP_OpenTag vetoes every tag whose name is in `vetoNames`.
+// Returns the engine so the caller can keep it alive; the doc owns it after.
+CScriptEngine* install_veto(CMUSHclientDoc& doc, const char* luaBody)
+{
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    if (engine->CreateScriptEngine())  return NULL;
+    if (engine->Parse(CString(luaBody), "<veto>"))  return NULL;
+    doc.m_ScriptEngine     = engine;
+    doc.m_strOnMXP_OpenTag = "OnOpen";
+    doc.FindAllEntryPoints();
+    return engine;
+}
+
+}   // namespace
+
+// Check 1 of six: the active-tag record itself.  This is the fix's subject —
+// everything else in the commit message is a consequence of the entry being
+// left behind.
+TEST(MxpVetoR5, VetoedBuiltInTagLeavesNoActiveTagEntry)
+{
+    {   // the control, FIRST: an un-vetoed <b> really does record itself, so a
+        // gutted "always empty" would not pass the assertion below.
+        CMUSHclientDoc doc; make_pipe_doc(doc);
+        mud(doc, "<b>bold");
+        EXPECT_EQ(1, (int) doc.m_ActiveTagList.GetCount());
+    }
+
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    ASSERT_TRUE(install_veto(doc, "function OnOpen(name, a) return true end\n") != NULL);
+
+    mud(doc, "<b>bold");
+    EXPECT_EQ(0, (int) doc.m_ActiveTagList.GetCount());   // was: 1, left dangling
+}
+
+// Check 2 of six: the spurious line break.  With the <p> still on the active
+// list, </p> found it and ran MXP_CloseAtomicTag's MXP_ACTION_P arm, which
+// calls StartNewLine — so a vetoed paragraph still broke the line.
+TEST(MxpVetoR5, VetoedParagraphCloseDoesNotBreakTheLine)
+{
+    int linesWithVeto = 0, linesWithout = 0;
+
+    {   // control: no veto, so <p>…</p> behaves normally
+        CMUSHclientDoc doc; make_pipe_doc(doc);
+        mud(doc, "one<p>two</p>three");
+        linesWithout = (int) doc.m_LineList.GetCount();
+    }
+
+    {
+        CMUSHclientDoc doc; make_pipe_doc(doc);
+        ASSERT_TRUE(install_veto(doc,
+            "function OnOpen(name, a) return name == 'p' end\n") != NULL);
+        mud(doc, "one<p>two</p>three");
+        linesWithVeto = (int) doc.m_LineList.GetCount();
+    }
+
+    // Vetoing the open must suppress the close's line break too: the vetoed
+    // run can only produce FEWER lines than the un-vetoed one, never the same
+    // or more.  Asserted as a strict inequality against the control rather
+    // than against a literal, so it does not encode how many lines <p> makes.
+    EXPECT_TRUE(linesWithVeto < linesWithout);
+}
+
+// ── A handler that returns NOTHING ──────────────────────────────────────────
+//
+// Every other test of these callbacks returns an explicit boolean, so the case
+// a real script hits most often has never been exercised: the one-armed veto.
+//
+//     function OnOpen (name, args)
+//       if name == 'u' then return true end
+//     end
+//
+// That is the natural way to write "suppress <u>", and for every other tag it
+// falls off the end of the function and returns nothing at all.
+//
+// mxpStart.cpp's COM arm is explicit about what that should mean -- "if the
+// function returns a non-zero result, don't go ahead", and a VT_EMPTY result
+// falls through to `return false` -- but the Lua arm is `return result`, and
+// ExecuteLua writes `*result = true` before it looks at the stack.  So the
+// handler above suppressed EVERY tag, not just <u>, and the same handler
+// written in VBScript did not.  docs/UPSTREAM-BUGS.md 90.
+TEST(MxpVetoR5, OpenTagHandlerThatReturnsNothingDoesNotVetoTheTag)
+{
+    CMUSHclientDoc doc; make_pipe_doc(doc);
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnOpen(name, args)\n"
+        "  if name == 'u' then return true end\n"
+        "end\n"), "<noreturn>"));
+    doc.m_ScriptEngine     = engine;
+    doc.m_strOnMXP_OpenTag = "OnOpen";
+    doc.FindAllEntryPoints();
+
+    // The tag the handler says nothing about: it opens.
+    mud(doc, "<b>bold");
+    EXPECT_EQ(1, (int) doc.m_ActiveTagList.GetCount());
+
+    // The tag it explicitly vetoes: it does not.  Both halves in one test, so
+    // neither can be satisfied by a handler that is simply never consulted.
+    mud(doc, "<u>plain");
+    EXPECT_EQ(1, (int) doc.m_ActiveTagList.GetCount());
+    EXPECT_STREQ("b", (LPCTSTR) doc.m_ActiveTagList.GetTail()->strName);
+}
 #endif
 
 // mxpStart.cpp: MXP_StartTag's custom-element expansion path builds a LOCAL
@@ -2114,6 +2318,7 @@ TEST(MXPPhaseR5, WrappedHyperlinkKeepsActionOnNextLine)
 
 // A colour-change trigger whose match splits an MXP action style AddRefs the
 // action into the split-off runs.
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPPhaseR5, TriggerColouringSplitsActionStyle)
 {
     CMUSHclientDoc doc; make_doc_e2e(doc);
@@ -2131,6 +2336,7 @@ TEST(MXPPhaseR5, TriggerColouringSplitsActionStyle)
     feed(doc, "<send>middleman</send>\n");
     EXPECT_EQ(1L, t->nMatched);
 }
+#endif  // !_WIN32
 
 
 // mxpEntities.cpp MXP_GetEntity: hex numeric entities (&#xNN;) go through the
@@ -2183,6 +2389,7 @@ TEST(MXPEntity, UnknownEntityRejected)
 // mxpEntities.cpp MXP_GetEntity: the hex arm's 'iResult & 0xF0' guard rejects a
 // third hex digit with the distinctive "maximum of 2 hex digits" message (which
 // separates this arm from the later "Disallowed number" > 255 check).
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPEntity, HexNumericEntityTooManyDigitsRejected)
 {
     MxpDebugCapture dbg;
@@ -2191,6 +2398,7 @@ TEST(MXPEntity, HexNumericEntityTooManyDigitsRejected)
     EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(big));
     EXPECT_TRUE(dbg.contains("maximum of 2 hex digits"));
 }
+#endif  // !_WIN32
 
 // mxpEntities.cpp:89-91 -- the hex arm folds a letter digit with toupper()
 // and then `iNewDigit -= 7`, so BOTH cases must decode alike.  The existing
@@ -2232,6 +2440,7 @@ TEST(MXPEntity, HexNumericEntityLowerCaseDigitsFold)
 // and mxpDefs.cpp:446, which expand entities inside element arguments and
 // <!ENTITY> values without consulting IsValidName.  Those keep working, which is
 // exactly why this route needs its own test.)
+#ifndef _WIN32   // creates a notepad for real -- see the note at MxpDebugCapture
 TEST(MXPEntity, HexNumericEntityDecodesInTheByteStream)
 {
     CMUSHclientDoc doc; make_stream_doc(doc);
@@ -2248,6 +2457,7 @@ TEST(MXPEntity, HexNumericEntityDecodesInTheByteStream)
     EXPECT_EQ(ents + 3, doc.m_iMXPentities);  // all three reached the collector
     EXPECT_EQ(NONE, doc.m_phase);             // ';' closed the entity phase
 }
+#endif  // !_WIN32
 
 // mxpEntities.cpp:36-42 -- MXP_collected_entity rejects a name that is neither a
 // valid MXP name nor a '#' numeric form.  An error-COUNT assertion cannot see
@@ -2259,6 +2469,7 @@ TEST(MXPEntity, HexNumericEntityDecodesInTheByteStream)
 // invalid-name wording IS present and the unknown-entity wording is NOT.
 // (The guard is an &&: simply DELETING the operand leaves `Left (1) != "#"`,
 // still true for "9bad", so that mutation is not the one this test catches.)
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPEntity, InvalidEntityNameShortCircuitsBeforeLookup)
 {
     MxpDebugCapture dbg;
@@ -2277,6 +2488,7 @@ TEST(MXPEntity, InvalidEntityNameShortCircuitsBeforeLookup)
     // "&9bad;" leaked onto the line).
     EXPECT_EQ(std::string("xy"), current_line(doc));
 }
+#endif  // !_WIN32
 
 // mxpEntities.cpp:92-99 and :116-124 -- where the hex arm's two guards actually
 // sit, and where each edge is:
@@ -2295,6 +2507,7 @@ TEST(MXPEntity, InvalidEntityNameShortCircuitsBeforeLookup)
 //   0x1F -- the hex arm falling THROUGH to the shared :116-124 range check (the
 //     check itself is already covered on the decimal side at line 507); the
 //     paired message assertions pin which of the two error arms fired.
+#ifndef _WIN32   // notepad fixture -- see the note at the include
 TEST(MXPEntity, HexNumericEntityValueBoundaries)
 {
     MxpDebugCapture dbg;
@@ -2320,6 +2533,101 @@ TEST(MXPEntity, HexNumericEntityValueBoundaries)
     EXPECT_TRUE(dbg.contains("Disallowed number in MXP entity: &#x1F;"));
     // ...and it is the RANGE check that rejected it, not the hex guard
     EXPECT_FALSE(dbg.contains("maximum of 2 hex digits"));
+}
+#endif  // !_WIN32
+
+
+// ── MXP </p> across a gagging trigger ─────────────────────────────────────
+//
+// MXP_CloseTag (mxp/mxpClose.cpp:20) opens by scanning BACKWARDS through
+// m_LineList for the matching start tag, caching four things about where it
+// found it:
+//
+//     CLine  * pLine;         POSITION oldlinepos;
+//     CStyle * pStyle;        POSITION oldstylepos;
+//
+// It then dispatches the tag, and afterwards — at :337, :350 and :353 — uses
+// all four again, unconditionally and without re-checking any of them.
+//
+// For </p> the dispatch is MXP_CloseAtomicTag's MXP_ACTION_P arm
+// (mxp/mxpCloseAtomic.cpp:116), whose entire body is
+//
+//     m_bInParagraph = false;
+//     StartNewLine (true, 0);
+//
+// and StartNewLine with hard_break calls ProcessPreviousLine, which is where
+// a trigger with "omit from output" does this (ProcessPreviousLine.cpp:800):
+//
+//     delete pLine;                // delete contents of tail iten
+//     m_LineList.RemoveTail ();    // get rid of the line
+//
+// The line MXP_CloseTag is holding is the tail — that is where the backwards
+// scan started — so a gagging trigger frees it, and the CStyle that lives in
+// its styleList, from underneath the caller.  Everything after the dispatch
+// then reads and WRITES freed memory: RemoveAt on a dead list, AddTail of a
+// dead style onto the live line, and `pStyle->iFlags &= ~START_TAG`.
+//
+// Reachable from a MUD: any server sending <p>…</p> in secure mode to a world
+// with a gagging trigger.  `p` is secure-only (mxp/mxpinit.cpp:63 gives it no
+// TAG_OPEN), which is why this fixture asks for eMXP_secure.
+//
+// The test cannot assert "it did not corrupt the heap" — it asserts the
+// observable consequences, which are cheap and specific: the process survives,
+// the trigger fired, the gagged text is gone, and the surviving line's style
+// list is walkable and self-consistent.  Under a Debug CRT the freed CLine is
+// 0xDD-filled, so the unfixed code reliably faults or asserts here rather than
+// passing quietly.
+static CTrigger* mxp_add_gag(CMUSHclientDoc& doc, const char* match)
+{
+    CTrigger* t     = new CTrigger();
+    t->trigger      = CString(match);
+    t->contents     = CString("");
+    t->bEnabled     = TRUE;
+    t->bRegexp      = false;
+    t->iSendTo      = eSendToOutput;
+    t->iSequence    = DEFAULT_TRIGGER_SEQUENCE;
+    t->bOmitFromOutput = TRUE;
+    t->strLabel     = CString(match);
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    CString pattern = ConvertToRegularExpression(t->trigger, true, true);
+    try { t->regexp = regcomp(pattern, 0); }
+    catch (CException* e) { e->Delete(); }
+    return t;
+}
+
+TEST(MXPCloseR6, ParagraphCloseSurvivesAGaggingTrigger)
+{
+    CMUSHclientDoc doc;
+    make_doc_e2e(doc);
+    doc.m_iMXP_mode = eMXP_secure;          // <p> is a secure-only tag
+
+    CTrigger* gag = mxp_add_gag(doc, "*gagme*");
+
+    // <p> opens a paragraph and leaves its START_TAG style on the tail line;
+    // </p> closes it, and the StartNewLine inside that close is what runs the
+    // trigger that deletes the very line the close is still holding.
+    feed(doc, "<p>gagme</p>");
+
+    EXPECT_EQ(1L, gag->nMatched);           // the gag really ran
+
+    // The gagged text is gone, and every line left is intact enough to walk.
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        ASSERT_TRUE(l != NULL);
+        EXPECT_EQ((const void*) NULL, (const void*) memchr(l->text, 0xDD, l->len));
+        int covered = 0;
+        for (POSITION sp = l->styleList.GetHeadPosition(); sp; ) {
+            CStyle* s = l->styleList.GetNext(sp);
+            ASSERT_TRUE(s != NULL);
+            EXPECT_GE(s->iLength, 0);
+            covered += s->iLength;
+        }
+        // A style run that claims more characters than the line has is the
+        // signature of a style from a freed line being spliced onto a live one.
+        EXPECT_LE(covered, l->len);
+    }
 }
 
 MC_TEST_MAIN()

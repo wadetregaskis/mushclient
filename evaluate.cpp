@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
+#include "platform/wx_mfc_hooks.h"   // McTestCancelDialog (Load_Set's CFileDialog)
+#endif
 
 // command evaluation
 
@@ -679,9 +682,22 @@ if (strFileName.IsEmpty ())
     else
       lstrcpyn (filedlg.m_ofn.lpstrFile, suggested_name, _MAX_PATH);
 
+#ifdef MUSHCLIENT_TESTS
+    // The unit-test host has no user to answer this and no message pump behind
+    // it, so DoModal does not return an answer -- it never returns at all, and
+    // the suite dies on the runner's clock.  Decline, which is the same thing
+    // ::TMessageBox already does here through McTestMessageBox, and the same
+    // answer the port's own headless Load_Set gives an empty name
+    // (platform/doc_port_glue.cpp: "TRUE = cancelled, matching the GUI cancel
+    // path").  What that leaves under test is the arm below -- the Windows
+    // cancel convention -- which is exactly what the two suites assert.
+    static_assert (IDCANCEL == 2, "McTestCancelDialog answers IDCANCEL");
+    int nResult = McTestCancelDialog (title);
+#else
     ChangeToFileBrowsingDirectory ();
     int nResult = filedlg.DoModal();
     ChangeToStartupDirectory ();
+#endif
 
     if (nResult!= IDOK)
       return TRUE;    // cancelled dialog
@@ -879,7 +895,16 @@ CString filename;
       case TIMER:     Save_World_XML (*ar, XML_TIMERS); break;
 
       } // end of switch
-    
+
+    // Flush inside the try, before clearing `error`.  Save_World_XML only fills
+    // the archive's buffer; the bytes reach the file when the CArchive is
+    // destroyed, after every catch arm below.  So this reported a successful
+    // export for a write that had not happened yet, over a file
+    // CFile::modeCreate had already truncated -- and ~CArchive flushes with no
+    // guard, so the failure throws out of a noexcept destructor.
+    // docs/UPSTREAM-BUGS.md 103.
+    ar->Close ();
+
     error = FALSE;
     } // end of try block
 

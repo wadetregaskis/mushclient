@@ -25,7 +25,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#include "scripting.h"
+#include "scripting/scripting.h"
 #include "scripting/errors.h"
 
 #include <list>
@@ -145,6 +145,15 @@ TEST(ScriptEngine, EverySupportedLanguageSpellingIsRecognised)
 
 // VBScript is COM-only and PHP has no embeddable engine here.  Both must say so
 // out loud rather than leaving the user with a world whose scripts never run.
+//
+// Headless only: the message is the PORT'S, and so is the list of languages it
+// offers instead.  Windows hosts VBScript through COM, so it is supported
+// there and says nothing; an unknown name fails at CLSIDFromProgID with a COM
+// error instead.  Its sibling above (SupportedLanguagesAreAccepted) is
+// deliberately left unguarded even though it asserts the ABSENCE of this
+// message, which Windows satisfies vacuously -- it still earns its keep there
+// as a smoke test that CreateScriptEngine runs at all for each name.
+#ifndef _WIN32
 TEST(ScriptEngine, UnsupportedLanguagesSaySo)
 {
     for (const char* name : { "VBScript", "vbscript", "PHP", "php", "Brainfuck" }) {
@@ -156,6 +165,7 @@ TEST(ScriptEngine, UnsupportedLanguagesSaySo)
         EXPECT_TRUE(saw(doc, "Lua"));                // and lists what does work
     }
 }
+#endif
 
 // A world with scripting switched off has an empty language and must stay quiet.
 TEST(ScriptEngine, NoLanguageIsNotAnError)
@@ -294,7 +304,7 @@ TEST(ScriptEngine, ValuesPassedToTheWorldApiKeepTheirBytes)
     for (auto& c : cases) {
         e.simple(d, "store", c.in);
         VARIANT v = e.doc.GetVariable("echoed");
-        EXPECT_EQ(c.in, CString(v.bstrVal ? v.bstrVal : ""));
+        EXPECT_EQ(c.in, (v.bstrVal ? CString(v.bstrVal) : CString("")));
     }
 }
 
@@ -376,11 +386,11 @@ TEST(ScriptEngine, RichCallbackReceivesNumericThenStringParameters)
     ASSERT_FALSE(e.rich(d, "got", keep, { 7, 8 }, { "first", "second" }));
 
     VARIANT v;
-    v = e.doc.GetVariable("n");   EXPECT_EQ(CString("4"), CString(v.bstrVal ? v.bstrVal : ""));
-    v = e.doc.GetVariable("a1");  EXPECT_EQ(CString("7"), CString(v.bstrVal ? v.bstrVal : ""));
-    v = e.doc.GetVariable("a2");  EXPECT_EQ(CString("8"), CString(v.bstrVal ? v.bstrVal : ""));
-    v = e.doc.GetVariable("a3");  EXPECT_EQ(CString("first"),  CString(v.bstrVal ? v.bstrVal : ""));
-    v = e.doc.GetVariable("a4");  EXPECT_EQ(CString("second"), CString(v.bstrVal ? v.bstrVal : ""));
+    v = e.doc.GetVariable("n");   EXPECT_EQ(CString("4"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
+    v = e.doc.GetVariable("a1");  EXPECT_EQ(CString("7"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
+    v = e.doc.GetVariable("a2");  EXPECT_EQ(CString("8"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
+    v = e.doc.GetVariable("a3");  EXPECT_EQ(CString("first"),  (v.bstrVal ? CString(v.bstrVal) : CString("")));
+    v = e.doc.GetVariable("a4");  EXPECT_EQ(CString("second"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
 
 // The optional `table` (named wildcards, plugin callback details) arrives as an
@@ -397,14 +407,14 @@ TEST(ScriptEngine, RichCallbackReceivesTheOptionalTableOnlyWhenGiven)
 
     ASSERT_FALSE(e.rich(d, "count", keep, {}, { "one" }));
     VARIANT v = e.doc.GetVariable("n");
-    EXPECT_EQ(CString("1"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("1"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 
     std::map<std::string, std::string> t{ { "key", "value" } };
     ASSERT_FALSE(e.rich(d, "count", keep, {}, { "one" }, &t));
     v = e.doc.GetVariable("n");
-    EXPECT_EQ(CString("2"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("2"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
     v = e.doc.GetVariable("k");
-    EXPECT_EQ(CString("value"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("value"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
 
 // ── errors ────────────────────────────────────────────────────────────────
@@ -437,7 +447,7 @@ TEST(ScriptEngine, ADisabledHandlerIsNotCalledAgain)
     // ...and the function really did not run: calls is still 1.
     ASSERT_FALSE(e.eng->Parse(CString("world.SetVariable('calls', tostring(calls))\n"), "<read>"));
     VARIANT v = e.doc.GetVariable("calls");
-    EXPECT_EQ(CString("1"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("1"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
 
 // The same on the simple overload, where "did not run" must not blank the
@@ -491,7 +501,7 @@ TEST(ScriptEngine, ActionSourceIsSetDuringTheCallAndClearedAfter)
     ASSERT_FALSE(e.rich(d, "probe", keep, {}, {}, nullptr, eTriggerFired));
 
     VARIANT v = e.doc.GetVariable("src");
-    EXPECT_EQ(CString("6"), CString(v.bstrVal ? v.bstrVal : ""));   // eTriggerFired
+    EXPECT_EQ(CString("6"), (v.bstrVal ? CString(v.bstrVal) : CString("")));   // eTriggerFired
     EXPECT_EQ((int) eUnknownActionSource, (int) e.doc.m_iCurrentActionSource);
 }
 
@@ -504,7 +514,7 @@ TEST(ScriptEngine, DontChangeActionLeavesTheSourceAlone)
     ASSERT_FALSE(e.rich(d, "probe", keep, {}, {}, nullptr, eDontChangeAction));
 
     VARIANT v = e.doc.GetVariable("src");
-    EXPECT_EQ(CString("8"), CString(v.bstrVal ? v.bstrVal : ""));   // eInputFromServer
+    EXPECT_EQ(CString("8"), (v.bstrVal ? CString(v.bstrVal) : CString("")));   // eInputFromServer
     EXPECT_EQ((int) eInputFromServer, (int) e.doc.m_iCurrentActionSource);
 }
 
@@ -516,6 +526,23 @@ TEST(ScriptEngine, DontChangeActionLeavesTheSourceAlone)
 // say so in their own comments -- so the LAST array slot is the FIRST argument.
 //
 // It used to ignore its DISPPARAMS entirely, so every argument arrived as nil.
+//
+// The three tests below are headless-only, and the reason is worth stating
+// precisely because "Windows hands rgvarg to Invoke" is true and still not the
+// whole story.  Windows' Execute checks `if (L)` FIRST and, for a Lua engine,
+// returns through ExecuteLua with two EMPTY parameter lists -- it never reaches
+// the Invoke that would have carried the arguments.  These tests drive a Lua
+// engine, because that is the one language both platforms embed, so on Windows
+// they exercise the early return rather than the marshalling.
+//
+// That early return is not a defect: every caller of this entry point in the
+// product asks UsesEmbeddedCallback() first and sends Lua to ExecuteLua with
+// typed lists instead (plugins.cpp x6, methods_plugins.cpp CallPlugin), so a
+// Lua engine never arrives here with arguments.  The port needs the
+// marshalling because FIVE more languages are embedded rather than COM-hosted,
+// and they all come through here.  Testing the Windows path needs a COM engine
+// -- a different fixture, not this one with a guard removed.
+#ifndef _WIN32
 
 TEST(ScriptEngine, ExecuteUnpacksDispparamsInDeclarationOrder)
 {
@@ -538,9 +565,9 @@ TEST(ScriptEngine, ExecuteUnpacksDispparamsInDeclarationOrder)
     EXPECT_EQ(1L, count);
 
     VARIANT v;
-    v = e.doc.GetVariable("n");  EXPECT_EQ(CString("2"), CString(v.bstrVal ? v.bstrVal : ""));
-    v = e.doc.GetVariable("a1"); EXPECT_EQ(CString("first"),  CString(v.bstrVal ? v.bstrVal : ""));
-    v = e.doc.GetVariable("a2"); EXPECT_EQ(CString("second"), CString(v.bstrVal ? v.bstrVal : ""));
+    v = e.doc.GetVariable("n");  EXPECT_EQ(CString("2"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
+    v = e.doc.GetVariable("a1"); EXPECT_EQ(CString("first"),  (v.bstrVal ? CString(v.bstrVal) : CString("")));
+    v = e.doc.GetVariable("a2"); EXPECT_EQ(CString("second"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
 
 // Numbers survive the same trip, as their own type rather than as text.
@@ -561,8 +588,9 @@ TEST(ScriptEngine, ExecuteMarshalsNumericArguments)
                                 params, count, nullptr));
 
     VARIANT v = e.doc.GetVariable("t");
-    EXPECT_EQ(CString("number:42"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("number:42"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
+#endif
 
 // Execute reports the handler's keep-processing answer through its COleVariant
 // out-parameter -- that is how the MXP callbacks decide whether to suppress.
@@ -599,12 +627,12 @@ TEST(ScriptEngine, TwoEnginesDoNotShareGlobals)
     bool keep = false;
     ASSERT_FALSE(a.rich(da, "read", keep));
     VARIANT v = a.doc.GetVariable("v");
-    EXPECT_EQ(CString("from A"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("from A"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 
     DISPID db = b.id("read");
     ASSERT_FALSE(b.rich(db, "read", keep));
     v = b.doc.GetVariable("v");
-    EXPECT_EQ(CString("nil"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("nil"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
 
 // State inside one engine persists between calls -- plugins keep their world
@@ -617,7 +645,7 @@ TEST(ScriptEngine, StatePersistsBetweenCallsInOneEngine)
     for (int i = 0; i < 3; i++) ASSERT_FALSE(e.rich(d, "bump", keep));
 
     VARIANT v = e.doc.GetVariable("n");
-    EXPECT_EQ(CString("3"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("3"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
 
 // The world object a script sees is ITS OWN world, not some other one.
@@ -633,9 +661,9 @@ TEST(ScriptEngine, EachEngineTalksToItsOwnWorld)
     DISPID db = b.id("tag"); ASSERT_FALSE(b.rich(db, "tag", keep));
 
     VARIANT v = a.doc.GetVariable("who");
-    EXPECT_EQ(CString("aaaaaaaaaaaaaaaaaaaaaaaa"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("aaaaaaaaaaaaaaaaaaaaaaaa"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
     v = b.doc.GetVariable("who");
-    EXPECT_EQ(CString("bbbbbbbbbbbbbbbbbbbbbbbb"), CString(v.bstrVal ? v.bstrVal : ""));
+    EXPECT_EQ(CString("bbbbbbbbbbbbbbbbbbbbbbbb"), (v.bstrVal ? CString(v.bstrVal) : CString("")));
 }
 
 MC_TEST_MAIN()

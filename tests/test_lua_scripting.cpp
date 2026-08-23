@@ -19,7 +19,7 @@
 #ifdef MUSHCLIENT_LUA_SCRIPTING
 
 #include "mc_test.h"
-#include <sys/resource.h>
+#include "posix_compat.h"
 // B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -1991,21 +1991,32 @@ TEST(LuaScripting, ProgressDialogLibraryIsRegistered)
     CMUSHclientDoc doc;
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
-    ASSERT_TRUE(!engine->Parse(CString(
+    CString script =
         "assert(type(progress) == 'table', 'progress library missing')\n"
-        "assert(type(progress.new) == 'function', 'progress.new missing')\n"
+        "assert(type(progress.new) == 'function', 'progress.new missing')\n";
+    // progress.new CREATES the dialog, and on Windows that is a real
+    // CProgressDlg from CG_IDD_PROGRESS -- which this host has, because
+    // MC_TEST_WIN_RESOURCE_DLL loads locale\en.dll where the templates live.
+    // It is safe to create because the WH_CBT hook in tests/win/all_tests.cpp
+    // closes every dialog the process makes, so nothing can block on one.
+    script +=
         "local dlg = progress.new('working...')\n"
         "assert(dlg ~= nil, 'progress.new returned nothing')\n"
         "dlg:range(0, 10)\n"
         "dlg:position(3)\n"
-        "dlg:close()\n"), "<test>"));
+        "dlg:close()\n";
+    ASSERT_TRUE(!engine->Parse(script, "<test>"));
     delete engine;
 }
 
 
 // ── Intent-comment tests, tail batch (candidate mining, 2026-07) ──────────
 
+#ifdef _WIN32
+#include <sys/utime.h>   // and posix_compat.h aliases utime/utimbuf onto it
+#else
 #include <utime.h>
+#endif
 
 // methods_triggers.cpp AddTriggerEx: "must have a label for 'send to label'
 // (eSendToVariable)" — a blank trigger name (auto-assigned '*trigger...'
@@ -2056,9 +2067,23 @@ TEST(LuaScripting, GetLineInfoTimeUsesLockedLocalFormat)
     lua_setglobal(L, "captured");
     lua_settop(L, 0);
 
+    // The zero-padded, English, 12-hour shape is the PORT's, and deliberately
+    // so: MakeTableItem (COleDateTime) in lua_utils_portable.cpp renders
+    // "%m/%d/%Y %I:%M:%S %p" precisely to lock it.  Windows renders the same
+    // instant through COleDateTime::Format (0, 0), i.e. VarBstrFromDate with
+    // the USER's locale -- "8/21/2026 3:04:05 PM" in en-US, day-first in en-GB,
+    // 24-hour in most of Europe.  So the strict pattern cannot be asserted
+    // here; assert instead that the field is a non-empty string carrying both
+    // halves of a timestamp, which is the part a plugin can rely on anywhere.
+#ifdef _WIN32
+    n = run_ret(L,
+        "return captured ~= '' and captured:find('%d+[/%-%.]%d+') ~= nil"
+        "   and captured:find('%d+:%d%d') ~= nil");
+#else
     n = run_ret(L,
         "return string.match(captured,"
         " '^%d%d/%d%d/%d%d%d%d %d%d:%d%d:%d%d [AP]M$') ~= nil");
+#endif
     ASSERT_EQ(1, n);
     EXPECT_TRUE(lua_toboolean(L, -1));
     lua_settop(L, 0);
@@ -2286,6 +2311,13 @@ TEST(LuaScripting, CreateScriptEngineRefusesToReplaceALiveEngine)
 static int  g_askCount = 0;
 static int  CountingAsk(const char*, const char*, unsigned) { ++g_askCount; return IDNO; }
 
+// Headless only: g_wxhook_message_box is the PORT'S seam for the reload prompt
+// (platform/wx_mfc_hooks.h).  On Windows the prompt is a real ::MessageBox, and
+// what this host substitutes instead is CWinApp::DoMessageBox (mc_test.h) -- a
+// different interception point with no per-call counting, so the "asked exactly
+// once" assertions below have nothing to count.  Answering that properly wants
+// the host to count its own DoMessageBox calls, which is its own change.
+#ifndef _WIN32
 TEST(LuaScripting, ReloadNeverDoesNotEvenAsk)
 {
     char path[256];
@@ -2346,6 +2378,7 @@ TEST(LuaScripting, ReloadNeverDoesNotEvenAsk)
 
     ::unlink(path);
 }
+#endif
 
 // ── world.Metaphone ──────────────────────────────────────────────────────
 // CMUSHclientDoc::Metaphone joins primary+","+secondary; the BSTR→Lua
@@ -2757,13 +2790,21 @@ TEST(LuaScripting, ColourNameAndRgbConversions)
     lua_close(L);
 }
 
+// The masked value is 0x7F......, not 0xFF......, and the difference is not
+// cosmetic: SetNormalColour takes a `long`, MUSHclient is a 32-bit app on
+// Windows, and 0xFF123456 (4,279,383,126) is past LONG_MAX there.  The Lua
+// binding converts a double to that long, so on Win32 the conversion saturates
+// to 0x80000000 and `& 0x00FFFFFF` yields 0 -- while on the 64-bit port the
+// value survives and masks to 0x123456.  A test constant above LONG_MAX
+// therefore asserts a platform, not a contract.  0x7F123456 is in range
+// everywhere and still has a high byte for the mask to drop.
 TEST(LuaScripting, PaletteAccessorsRoundTripAndRejectOutOfRange)
 {
     CMUSHclientDoc doc;
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
     EXPECT_LUA_OK(L, R"lua(
-        world.SetNormalColour(3, 0xFF123456)      -- masked to 24 bits
+        world.SetNormalColour(3, 0x7F123456)      -- masked to 24 bits
         assert(world.GetNormalColour(3) == 0x123456)
         world.SetBoldColour(8, 0x0000FF)
         assert(world.GetBoldColour(8) == 0x0000FF)
@@ -3509,6 +3550,20 @@ TEST(SweepR4, UtilsCompressRoundTripAndHexArms)
     lua_close(L);
 }
 
+// ── world.Debug's command vocabulary is NOT the same in the two builds ───────
+//
+// This came out of the Windows run and is worth stating plainly, because the
+// three tests below were written against the wrong body.  `world.Debug` on
+// Windows (world_debug.cpp) understands `triggers`, `aliases`, `variables`,
+// `plugins`, `info`, `summary`, `options`, ... and NOT `triggerlist`: that name
+// and its siblings belong to CMUSHclientDoc::DebugHelper, the handler behind
+// the hyperlinks `Debug ('summary')` prints.  scripting/world_debug_portable.cpp
+// -- which is in mushcore_testsupport ONLY, so the product never runs it --
+// merged the two vocabularies, so on the port `world.Debug ('triggerlist')`
+// works and on Windows it prints the help.
+//
+// Both arms are therefore real, and both are kept: each drives the listing code
+// its own platform actually has.  docs/WINDOWS-VALIDATION.md 10z.
 TEST(SweepR4, DebugListingsCoverEachAction)
 {
     CMUSHclientDoc doc;
@@ -3520,7 +3575,19 @@ TEST(SweepR4, DebugListingsCoverEachAction)
         "world.AddTriggerEx('dt', 'match', 'resp', 1, -1, 0, '', '', 0, 100)\n"
         "world.AddAlias('da', 'match', 'resp', 1, '')\n"
         "world.AddTimer('dm', 0, 1, 0, 'resp', 1, '')\n"
-        "world.SetVariable('dv', 'val')\n"
+        "world.SetVariable('dv', 'val')\n"));
+
+#ifdef _WIN32
+    EXPECT_TRUE(run(L,
+        "world.Debug('')\n"                // help arm
+        "world.Debug('triggers')\n"
+        "world.Debug('aliases')\n"
+        "world.Debug('variables')\n"
+        "world.Debug('plugins')\n"
+        "world.Debug('summary')\n"
+        "world.Debug('info')\n"));
+#else
+    EXPECT_TRUE(run(L,
         "world.Debug('')\n"                // help arm
         "world.Debug('triggerlist')\n"
         "world.Debug('aliaslist')\n"
@@ -3529,18 +3596,24 @@ TEST(SweepR4, DebugListingsCoverEachAction)
         "world.Debug('telnetlist')\n"
         "world.Debug('pluginlist')\n"
         "world.Debug('info')\n"));
+#endif
 
-    // the listings noted things into the output
-    bool sawTrigger = false;
+    // the listings noted things into the output.  Concatenate rather than
+    // scanning line by line: the label can land across a wrap boundary, and a
+    // per-line search would then be asserting the wrap column.
+    std::string all;
     for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
         CLine* l = doc.m_LineList.GetNext(pos);
-        if (std::string(l->text, l->len).find("dt") != std::string::npos)
-            sawTrigger = true;
+        all.append(l->text, l->len);
     }
-    EXPECT_TRUE(sawTrigger);
+    EXPECT_NE(std::string::npos, all.find("dt"));   // the trigger's label
 
     // plugin-scoped debug with an unknown plugin id notes the failure
+#ifdef _WIN32
+    EXPECT_TRUE(run(L, "world.Debug('@ffffffffffffffffffffffff triggers')"));
+#else
     EXPECT_TRUE(run(L, "world.Debug('@ffffffffffffffffffffffff triggerlist')"));
+#endif
     lua_close(L);
 }
 
@@ -3559,15 +3632,24 @@ TEST(SweepR4, DebugListingsTruncateAtNarrowWrapColumn)
     ASSERT_NE(nullptr, L);
 
     EXPECT_TRUE(run(L,
-        "world.AddTriggerEx('dt', 'zzmatchzz', 'resp', 1, -1, 0, '', '', 0, 100)\n"
-        "world.Debug('triggerlist')\n"));
+        "world.AddTriggerEx('dt', 'zzmatchzz', 'resp', 1, -1, 0, '', '', 0, 100)\n"));
+#ifdef _WIN32
+    // `triggerlist` is DebugHelper's, not Debug's — see the comment on
+    // SweepR4.DebugListingsCoverEachAction.  Calling it directly is what
+    // reaches TruncateDebugValue, which is the whole point of this test.
+    doc.DebugHelper("triggerlist", "");
+#else
+    EXPECT_TRUE(run(L, "world.Debug('triggerlist')\n"));
+#endif
 
-    bool sawMatch = false;
+    // Concatenated, not per-line: at a 20-column wrap the match text can span
+    // two CLines, and this test is about the TRUNCATION, not the wrap.
+    std::string listing;
     for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
         CLine* l = doc.m_LineList.GetNext(pos);
-        if (std::string(l->text, l->len).find("zzmatchzz") != std::string::npos)
-            sawMatch = true;
+        listing.append(l->text, l->len);
     }
+    bool sawMatch = listing.find("zzmatchzz") != std::string::npos;
     EXPECT_TRUE(sawMatch);
 
     lua_close(L);
@@ -3591,8 +3673,12 @@ TEST(SweepR4, DebugListingsTruncateLongValueToTheWrapBudget)
     const std::string kFull = std::string(17, 'Q') + "XYZ" + std::string(20, 'W');
     EXPECT_TRUE(run(L,
         "world.AddTriggerEx('dt', string.rep('Q', 17) .. 'XYZ' .. string.rep('W', 20),"
-        " 'resp', 1, -1, 0, '', '', 0, 100)\n"
-        "world.Debug('triggerlist')\n"));
+        " 'resp', 1, -1, 0, '', '', 0, 100)\n"));
+#ifdef _WIN32
+    doc.DebugHelper("triggerlist", "");   // Debug's vocabulary does not have it
+#else
+    EXPECT_TRUE(run(L, "world.Debug('triggerlist')\n"));
+#endif
 
     // The listing wraps at column 20, so a single match token spans several
     // CLines — reconstruct the whole output before matching.
@@ -3694,6 +3780,12 @@ TEST(SweepR4, ExportXmlPerTypeAndImportErrors)
     lua_close(L);
 }
 
+// Headless only: CArchiveException::s_iLiveCount is an instrument the PORT'S
+// shim adds (platform/mfc_ui.h) so a leaked exception can be seen at all.  Real
+// MFC has no such counter, and there is no way to observe the same thing here --
+// which is exactly why the Windows target grows its own leak checks instead
+// (tests/win/test_gap_coverage.cpp uses the debug CRT block count).
+#ifndef _WIN32
 // methods_xml.cpp CMUSHclientDoc::ImportXML: the catch (CArchiveException*)
 // clause used to have no parameter name and so never called e->Delete() -
 // every failed import (bad schema, as here) leaked the exception object.
@@ -3717,6 +3809,7 @@ TEST(LuaScripting, ImportXMLDeletesArchiveExceptionOnFailure)
 
     lua_close(L);
 }
+#endif
 
 TEST(SweepR4, DefaultAndCurrentAlphaOptions)
 {
@@ -4156,7 +4249,7 @@ TEST(SweepR4, ScriptErrorLogFileAppended)
     char dir[128];
     snprintf(dir, sizeof dir, "/tmp/mc_test_r4_errlog_%d/", (int)getpid());
     mkdir(dir, 0755);
-    std::string savedDir = (const char*)App.m_strDefaultLogFileDirectory.c_str();
+    std::string savedDir = (const char*)(LPCTSTR) App.m_strDefaultLogFileDirectory;
     App.m_strDefaultLogFileDirectory = dir;
 
     CMUSHclientDoc doc;
@@ -4191,7 +4284,7 @@ TEST(SweepR4, ScriptErrorLogFileIncludesContextBlock)
     char dir[128];
     snprintf(dir, sizeof dir, "/tmp/mc_test_r4_errlog_ctx_%d/", (int)getpid());
     mkdir(dir, 0755);
-    std::string savedDir = (const char*)App.m_strDefaultLogFileDirectory.c_str();
+    std::string savedDir = (const char*)(LPCTSTR) App.m_strDefaultLogFileDirectory;
     App.m_strDefaultLogFileDirectory = dir;
 
     CMUSHclientDoc doc;
@@ -4378,7 +4471,10 @@ TEST(LuaR5, WindowPositionsWithWorldView)
 {
     CMUSHclientDoc doc;
     FakeWorldView view;
-    doc.m_pWorldView = &view;
+    // Not `doc.m_pWorldView = &view` then `= nullptr`: on Windows the document
+    // constructs and OWNS a real adapter, so nulling the pointer leaks it and
+    // leaving the fake in place runs delete over a stack object.
+    mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach(doc, &view);
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
@@ -4394,14 +4490,25 @@ TEST(LuaR5, WindowPositionsWithWorldView)
     // canonical (string) variants
     BSTR b1 = doc.GetMainWindowPosition();
     CString s1(b1);
-    EXPECT_NE(-1, s1.Find("1024"));   // width from FakeWorldView mainRect
     SysFreeString(b1);
     BSTR b2 = doc.GetWorldWindowPosition();
     CString s2(b2);
-    EXPECT_NE(-1, s2.Find("640"));    // width from FakeWorldView outputRect
     SysFreeString(b2);
+#ifdef _WIN32
+    // GetWorldWindowPositionX does NOT go through the seam on Windows: it walks
+    // the view list for a CSendView and asks its parent frame
+    // (methods_output.cpp:190-210).  This host has no views, so the honest
+    // assertion is that it answers an EMPTY string rather than inventing one --
+    // and that the main-window variant, which DOES go through the seam, still
+    // answers something.  GetMainWindowPosition is measured from the (uncreated)
+    // CMainFrame here, so its numbers are the frame's, not the fake's.
+    EXPECT_TRUE(s2.IsEmpty());
+    EXPECT_TRUE(s1.Find(",") != -1);
+#else
+    EXPECT_NE(-1, s1.Find("1024"));   // width from FakeWorldView mainRect
+    EXPECT_NE(-1, s2.Find("640"));    // width from FakeWorldView outputRect
+#endif
 
-    doc.m_pWorldView = nullptr;
     lua_close(L);
 }
 
@@ -4417,15 +4524,24 @@ TEST(SpellCheckTest, SpellCheckCommandAppliesCorrectionThroughView)
     CMUSHclientDoc doc;
     FakeWorldView view;
     view.cmd = "teh cat";
-    doc.m_pWorldView = &view;
+    mc_test::ScopedWorldView<CMUSHclientDoc, FakeWorldView> attach(doc, &view);
 
+#ifdef _WIN32
+    // The comment above is the whole Windows story too, from the other side:
+    // the Windows arm reaches the command bar through the CSendView list, not
+    // through m_pWorldView, so attaching a world view buys it nothing and a
+    // host with no views cannot spell-check.  -1 (eNoSpellCheckWindow) is the
+    // right answer, and the command must come back untouched -- a half-applied
+    // correction would be far worse than a refusal.
+    EXPECT_EQ(-1L, doc.SpellCheckCommand(1, 3));
+    EXPECT_STREQ("teh cat", view.cmd.c_str());
+#else
     // 1-based [1,3] selects "teh" (StartCol decrements to the 0-based start,
     // EndCol is already the 0-based exclusive end -- see the SpellCheckCommand
     // comment on re-encoding through SetCommandSelectionRange).
     EXPECT_EQ(1L, doc.SpellCheckCommand(1, 3));
     EXPECT_STREQ("the cat", view.cmd.c_str());
-
-    doc.m_pWorldView = nullptr;
+#endif
 }
 
 TEST(LuaR5, GetScriptTimeWithCounter)
@@ -4765,37 +4881,71 @@ TEST(LuaScripting, Utf8SubFourByteAstral)
 // not a valid UTF-8 lead byte, so valid_utf8 returns 1 and utf8decode raises
 // "Bad UTF-8 string. Error at column 2".  No existing test drives utf8decode's
 // error path (they only decode well-formed strings).
+// ── The utils.* table has TWO implementations, and they disagree ────────────
+//
+// scripting/lua_utils.cpp is the shipping one: it is in mushgui_adapters on the
+// port and in the app on Windows, so it is what every real plugin calls.
+// scripting/lua_utils_portable.cpp is in mushcore_testsupport ONLY -- it exists
+// so the headless test executables have a utils table at all, and NOTHING in
+// the product ever runs it.
+//
+// These two tests were written against the fixture.  The Windows target links
+// the shipping body, which is how the divergence was found; both arms are kept
+// as POSITIVE assertions so neither platform's behaviour is merely skipped.
+// (docs/WINDOWS-VALIDATION.md 10z.)  The fix that removes the fork -- hoisting
+// the pure-computation half of lua_utils.cpp into mushcore -- is its own change.
 TEST(LuaScripting, Utf8DecodeBadStringErrors)
 {
     CMUSHclientDoc doc;
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
+#ifdef _WIN32
+    // The shipping utf8decode ("Nick's second version", lua_utils.cpp:1323)
+    // validates as it walks and `return 0`s on the first bad byte -- no error,
+    // no results.  The pcre-based version that raises "Bad UTF-8 string. Error
+    // at column N" is COMMENTED OUT two definitions above it, and that is the
+    // one the portable fixture reimplemented.
+    EXPECT_TRUE(run(L,
+        "local ok, a = pcall(utils.utf8decode, '\\255')\n"
+        "assert(ok, 'shipping utf8decode does not raise: ' .. tostring(a))\n"
+        "assert(a == nil, 'expected no results, got ' .. tostring(a))\n"));
+#else
     EXPECT_TRUE(run(L,
         "local ok, err = pcall(utils.utf8decode, '\\255')\n"
         "assert(not ok, 'utf8decode should reject 0xFF')\n"
         "assert(type(err) == 'string', 'err not a string')\n"
         "assert(err:find('Bad UTF-8', 1, true) ~= nil, 'msg: ' .. err)\n"
         "assert(err:find('column 2', 1, true) ~= nil, 'col: ' .. err)\n"));
+#endif
 
     lua_close(L);
 }
 
-// utils.utf8encode table-element type check (lua_utils_portable.cpp:251-252):
-// a non-numeric element inside a table argument raises "Index [2] of table
-// arg #1 must be a number".  No existing test drives this error arm.
+// utils.utf8encode table-element type check: a non-numeric element inside a
+// table argument is refused by BOTH implementations -- with different wording.
+// Shipping (lua_utils.cpp:1106): "Index [2] of table at argument #1 to
+// 'utf8encode' is not a number".  Fixture (lua_utils_portable.cpp:252):
+// "Index [2] of table arg #1 must be a number".  Same contract, different text;
+// a plugin that matches on the message sees only the first.
 TEST(LuaScripting, Utf8EncodeTableNonNumberErrors)
 {
     CMUSHclientDoc doc;
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    EXPECT_TRUE(run(L,
+#ifdef _WIN32
+    const char* kWording = "is not a number";
+#else
+    const char* kWording = "must be a number";
+#endif
+    std::string chunk =
         "local ok, err = pcall(utils.utf8encode, {72, 'x'})\n"
         "assert(not ok, 'utf8encode should reject non-number element')\n"
         "assert(type(err) == 'string', 'err not a string')\n"
-        "assert(err:find('must be a number', 1, true) ~= nil, 'msg: ' .. err)\n"
-        "assert(err:find('Index [2]', 1, true) ~= nil, 'idx: ' .. err)\n"));
+        "assert(err:find('" + std::string(kWording) + "', 1, true) ~= nil, 'msg: ' .. err)\n"
+        "assert(err:find('Index [2]', 1, true) ~= nil, 'idx: ' .. err)\n";
+    EXPECT_TRUE(run(L, chunk.c_str()));
 
     lua_close(L);
 }
@@ -5000,18 +5150,45 @@ TEST(LuaScripting, MenuFontSizeIsNilWhenItCannotBeDetermined)
 
     int n = run_ret(f.L, "return utils.menufontsize()");
     ASSERT_EQ(1, n);
+#ifdef _WIN32
+    // On Windows the metrics CAN be read -- SystemParametersInfo is the real
+    // one, not the port's unconditional-FALSE shim -- so the premise in the
+    // test's name does not hold here and nil would be the bug.  Assert the
+    // other side of the same contract rather than skipping: a REAL size, and
+    // never the 0 that D-25 was about.
+    EXPECT_TRUE(lua_isnumber(f.L, -1));
+    EXPECT_TRUE(lua_tonumber(f.L, -1) > 0);
+#else
     EXPECT_TRUE(lua_isnil(f.L, -1));
     EXPECT_FALSE(lua_isnumber(f.L, -1));    // specifically NOT 0
+#endif
     lua_settop(f.L, 0);
 
+#ifdef _WIN32
+    // Read-only on purpose.  utils.menufontsize(n) is not a getter with a
+    // parameter -- it calls SystemParametersInfo (SPI_SETNONCLIENTMETRICS),
+    // which changes the MACHINE's menu font, and a unit test has no business
+    // doing that even for the microsecond before it puts it back.  So assert
+    // what can be asserted without writing: the value is stable across reads,
+    // which is what the read-modify-restore idiom below depends on.
+    EXPECT_LUA_OK(f.L,
+        "local a = utils.menufontsize()\n"
+        "local b = utils.menufontsize()\n"
+        "assert(a ~= nil and a > 0, 'no menu font size')\n"
+        "return a == b\n");
+#else
     // The plugin idiom must be able to DETECT that it cannot restore.  A 0 would
     // sail past the nil check and fall through to the `return false` below.
+    // Calling the setter is safe here only because the port's
+    // SystemParametersInfo is an unconditional FALSE, so the arm above returns
+    // before reaching it -- see the Windows branch.
     EXPECT_LUA_OK(f.L,
         "local old = utils.menufontsize()\n"
         "if old == nil then return true end\n"   // detected: nothing to restore
         "utils.menufontsize(12)\n"
         "utils.menufontsize(old)\n"
         "return false\n");
+#endif
 }
 
 MC_TEST_MAIN()

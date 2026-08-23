@@ -17,7 +17,9 @@
                                  // encodeBase64, decodeBase64
 #include <cstring>
 #include <set>
-#include <sys/utsname.h>       // OSVersionString's oracle (tests never build on Windows)
+#ifndef _WIN32
+#include <sys/utsname.h>       // the uname oracle below; Windows has no uname
+#endif
 
 extern CString OSVersionString (void);   // utilities_shared.cpp
 
@@ -35,11 +37,20 @@ lua_State* MakeLuaState();   // scripting/lua_utils_portable.cpp
 
 // Recorder installed in the headless ShowFunctionslist stub
 // (platform/doc_headless_stubs.cpp) purely for this test.
+// Port-only observation globals.  platform/doc_headless_stubs.cpp records what
+// ShowFunctionslist was asked for, because headless there is no dialog to open.
+// On Windows ShowFunctionslist IS the real modal Function List dialog
+// (scripting/functionlist.cpp), so there is nothing to record and nothing a
+// console host may open -- re-entering the test below needs a Windows-side
+// observable, not a guard.  This is docs/WINDOWS-VALIDATION.md §10h's 2e54bba
+// row, and it stays owed.
+#ifndef _WIN32
 extern int  g_ShowFunctionslistCallCount;
 extern int  g_ShowFunctionslistLastStartChar;
 extern int  g_ShowFunctionslistLastEndChar;
 extern bool g_ShowFunctionslistLastBLua;
 extern CString g_ShowFunctionslistLastFilter;
+#endif  // !_WIN32
 #endif
 
 // ── encodeBase64 / decodeBase64 ─────────────────────────────────────────────
@@ -499,17 +510,31 @@ TEST(Utilities, MakeAbsolutePathStripsLeadingDotSlash)
     EXPECT_STREQ("c:x",  Make_Absolute_Path("c:x"));
 }
 
-// utilities_shared.cpp ExtractDirectory: "On POSIX paths use '/' but also
-// accept '\' in case of cross-platform world files ... if no slash: './'".
+// utilities_shared.cpp ExtractDirectory: both separator kinds are accepted on
+// BOTH platforms, and the later one wins.  The Windows arm used to look for a
+// backslash only, so a plugin path written with forward slashes -- a shape the
+// world loader expressly expects -- resolved to the current directory instead
+// of the plugin's own.  See the function, and docs/UPSTREAM-BUGS.md 89.
 TEST(Utilities, ExtractDirectoryAcceptsBackslashSeparators)
 {
     EXPECT_STREQ("plugins\\images\\",
                  (const char*)ExtractDirectory("plugins\\images\\x.png"));
     EXPECT_STREQ("plugins/images/",
                  (const char*)ExtractDirectory("plugins/images/x.png"));
-    // the LATER of the two separator kinds wins in a mixed path
+    // the LATER of the two separator kinds wins in a mixed path, whichever
+    // kind it is -- so assert BOTH orders, not just one.  Only the first of
+    // these two distinguishes the arms: a backslash-only search answers the
+    // second correctly by accident, because there the backslash IS the later
+    // separator.  The pair is what pins the rule rather than one example of it.
     EXPECT_STREQ("a\\b/", (const char*)ExtractDirectory("a\\b/c.png"));
+    EXPECT_STREQ("a/b\\", (const char*)ExtractDirectory("a/b\\c.png"));
+    // With no separator at all there is nothing to split, so the answer names
+    // the current directory with the platform's own separator.
+#ifdef _WIN32
+    EXPECT_STREQ(".\\", (const char*)ExtractDirectory("noslash.png"));
+#else
     EXPECT_STREQ("./", (const char*)ExtractDirectory("noslash.png"));
+#endif
 }
 
 // ── DefaultWorldFileName ────────────────────────────────────────────────────
@@ -569,20 +594,45 @@ TEST(Utilities, DefaultWorldFileNameNeverContainsAPathSeparator)
     }
 }
 
-// ── TipsFileName ────────────────────────────────────────────────────────────
-// Where CTipDlg looks for the Tip of the Day text.  It used to build this in a
-// `char [MAX_PATH]` with strcpy + strcat, so a long enough install path ran the
-// suffix off the end of the array — Help ▸ Tip of the Day, and the tip shown at
-// startup, smashed the stack.  The 250-character directory below is what proves
-// the fixed array is gone: 250 + 22 is past MAX_PATH, so the old code could not
-// have produced this answer at all.
+// ── TipsFileName ─────────────────────────────────────────────
+// The suffix TipsFileName appends, and the separator it splits on, are both
+// platform-specific by design (utilities_shared.cpp): Windows keeps tips.txt
+// beside the executable and splits on a backslash, a .app bundle has to reach
+// ../Resources/ because code signing allows only the executable in
+// Contents/MacOS/, and plain Unix keeps the file beside the executable.
+//
+// What is NOT platform-specific is the property these two tests exist for --
+// that the answer is built with CString rather than the `char [MAX_PATH]` the
+// original used -- so both run everywhere, against the local shape.
+#ifdef _WIN32
+  #define MC_TIPS_SEP  "\\"
+  #define MC_TIPS_TAIL "\\tips.txt"
+#elif defined (__APPLE__)
+  #define MC_TIPS_SEP  "/"
+  #define MC_TIPS_TAIL "/../Resources/tips.txt"
+#else
+  #define MC_TIPS_SEP  "/"
+  #define MC_TIPS_TAIL "/tips.txt"
+#endif
+
+// dialogs/TipDlg.cpp built this path in a `char [MAX_PATH]` with strcpy +
+// strcat, so a long enough install path ran the suffix off the end of the array
+// - Help > Tip of the Day, and the tip shown at startup, smashed the stack.
+// The long directory below is what proves the fixed array is gone: the answer
+// is past MAX_PATH, so the old code could not have produced it at all.
+//
+// 300 rather than the 250 this started with, because the suffix is the SHORTEST
+// part and it differs per platform.  250 + "/../Resources/tips.txt" clears 260
+// on the Mac; 250 + "\tips.txt" is 259, and the assertion below quietly stopped
+// meaning anything the moment the test ran somewhere with a shorter suffix.  A
+// length that depends on the platform's constant is not a length to hard-code
+// close to it.
 TEST(Utilities, TipsFileNameSurvivesADirectoryLongerThanMAX_PATH)
 {
-    const CString strDir = CString('d', 250);
-    const CString got = TipsFileName(strDir + "/MUSHclient");
+    const CString strDir = CString('d', 300);
+    const CString got = TipsFileName(strDir + MC_TIPS_SEP "MUSHclient");
 
-    EXPECT_STREQ((const char*) (strDir + "/../Resources/tips.txt"),
-                 (const char*) got);
+    EXPECT_STREQ((const char*) (strDir + MC_TIPS_TAIL), (const char*) got);
     EXPECT_GT(got.GetLength(), MAX_PATH);
 }
 
@@ -591,17 +641,20 @@ TEST(Utilities, TipsFileNameSurvivesADirectoryLongerThanMAX_PATH)
 // keeps everything (the behaviour the `if (p)` guard gave).
 TEST(Utilities, TipsFileNameDropsTheExecutableName)
 {
-    EXPECT_STREQ("/Applications/MUSHclient.app/Contents/MacOS"
-                 "/../Resources/tips.txt",
-                 (const char*) TipsFileName(
-                     "/Applications/MUSHclient.app/Contents/MacOS/MUSHclient"));
+    EXPECT_STREQ((const char*) (CString("C:" MC_TIPS_SEP "Program Files"
+                                        MC_TIPS_SEP "MUSHclient") + MC_TIPS_TAIL),
+                 (const char*) TipsFileName("C:" MC_TIPS_SEP "Program Files"
+                                            MC_TIPS_SEP "MUSHclient"
+                                            MC_TIPS_SEP "MUSHclient.exe"));
 
-    EXPECT_STREQ("MUSHclient/../Resources/tips.txt",
+    // No separator at all: nothing is dropped, the suffix goes on the whole
+    // string.  This is the `if (p)` guard's behaviour, kept deliberately.
+    EXPECT_STREQ((const char*) (CString("MUSHclient") + MC_TIPS_TAIL),
                  (const char*) TipsFileName("MUSHclient"));
 
     // Only the LAST separator counts, so a directory with a dot in it is safe.
-    EXPECT_STREQ("/opt/mc.1.2/../Resources/tips.txt",
-                 (const char*) TipsFileName("/opt/mc.1.2/MUSHclient"));
+    EXPECT_STREQ((const char*) (CString("mc.1.2") + MC_TIPS_TAIL),
+                 (const char*) TipsFileName("mc.1.2" MC_TIPS_SEP "MUSHclient"));
 }
 
 // utilities_shared.cpp: the CommandIDs[] lookups are case-insensitive and
@@ -633,6 +686,7 @@ TEST(Utilities, CommandIDLookupIsCaseInsensitiveRoundTrip)
 // doc_portable.cpp AllocateLinePositions: "Trim FIRST so the index can never
 // be smaller than the list it indexes" — after lowering m_maxlines the list
 // is trimmed before the new index is built, so entries never point past it.
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, AllocateLinePositionsTrimsListBeforeRebuildingIndex)
 {
     CMUSHclientDoc doc;
@@ -660,6 +714,7 @@ TEST(Utilities, AllocateLinePositionsTrimsListBeforeRebuildingIndex)
     EXPECT_STREQ("line 350", (const char*)CString(v.bstrVal));
     VariantClear(&v);
 }
+#endif  // !_WIN32
 
 // The eviction path, which is what DropFirstChunk replaced.  RemoveChunk drops
 // JUMP_SIZE lines off the head, so chunk 1 becomes chunk 0 and so on; the array
@@ -667,6 +722,7 @@ TEST(Utilities, AllocateLinePositionsTrimsListBeforeRebuildingIndex)
 // renumbering error here would not crash — GetLinePosition would start from the
 // WRONG chunk head and walk forward, silently returning a line off by a
 // multiple of 100, which world.GetLineInfo and every Recall/Find would inherit.
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, LinePositionsSurviveRepeatedEviction)
 {
     CMUSHclientDoc doc;
@@ -703,6 +759,7 @@ TEST(Utilities, LinePositionsSurviveRepeatedEviction)
     }
     EXPECT_EQ(500L, firstNum + committed - 1);   // ...and the last is the newest
 }
+#endif  // !_WIN32
 
 // ── Unlimited scrollback actually keeps everything ──────────────────────────
 //
@@ -710,6 +767,7 @@ TEST(Utilities, LinePositionsSurviveRepeatedEviction)
 // is the only thing that discards lines, so this pins that it is skipped — and,
 // with the counterpart below, that a real cap still evicts.  Without both arms
 // a build that never trims, or one that always does, passes half of this.
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, UnlimitedScrollbackNeverEvicts)
 {
     CMUSHclientDoc doc;
@@ -738,7 +796,9 @@ TEST(Utilities, UnlimitedScrollbackNeverEvicts)
     EXPECT_STREQ(buf, (const char*)CString(v.bstrVal));
     VariantClear(&v);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, ABoundedCapStillEvicts)
 {
     // The control for the test above.
@@ -754,7 +814,9 @@ TEST(Utilities, ABoundedCapStillEvicts)
     }
     EXPECT_TRUE((long)doc.m_LineList.GetCount() <= 301);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, UnlimitedScrollbackAppendRateStaysFlat)
 {
     // A complexity pin.  With the old fixed index, "unlimited" was unreachable;
@@ -789,6 +851,7 @@ TEST(Utilities, UnlimitedScrollbackAppendRateStaysFlat)
         printf("    append of 5000 lines: at start %.1fms, at 50k %.1fms\n",
                first, later);
 }
+#endif  // !_WIN32
 
 // ── Coverage gaps from the 2026-07 test audit, section 1 ──────────────────
 //
@@ -879,6 +942,7 @@ TEST(Utilities, ConvertToRegularExpressionPassesHighBytesThrough)
 // input) are both that operation with different cut points, and both are the
 // only clear that genuinely returns memory on a long unlimited session --
 // Clear Output Buffer frees everything, Clear Screen frees nothing.
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, DeleteHeadLinesDropsTheOldestAndRenumbers)
 {
     CMUSHclientDoc doc;
@@ -908,7 +972,9 @@ TEST(Utilities, DeleteHeadLinesDropsTheOldestAndRenumbers)
     EXPECT_STREQ("line 500", (const char*)CString(v.bstrVal));
     VariantClear(&v);
 }
+#endif  // !_WIN32
 
+#ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, DeleteHeadLinesNeverTakesTheInProgressLine)
 {
     // The in-progress line is the list's tail and the drain has not emitted it,
@@ -935,6 +1001,7 @@ TEST(Utilities, DeleteHeadLinesNeverTakesTheInProgressLine)
     doc.DeleteHeadLines(-1);
     EXPECT_EQ(1, (int)doc.m_LineList.GetCount());
 }
+#endif  // !_WIN32
 
 // ── CountLinesBeforePromptBlock: the cut point for "Clear to Start" ────────
 //
@@ -948,7 +1015,15 @@ static void make_buffer_doc(CMUSHclientDoc& doc)
 {
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_maxlines = 0;                      // unlimited: nothing else may trim
+#ifndef _WIN32
+    // Apply the new cap.  Port-only, and only needed there: this is the port's
+    // unbounded-scrollback entry point (platform/doc_port_glue.cpp), and what
+    // it does for m_maxlines == 0 is "trim nothing", which is also what Windows
+    // does by not having it.  The index itself is already allocated on both --
+    // headless in doc_construct.cpp's ctor arm, on Windows in the same file's
+    // MUSHCLIENT_TESTS arm.
     doc.AllocateLinePositions();
+#endif
 }
 
 static void mud_text(CMUSHclientDoc& doc, const char* s)
@@ -1573,6 +1648,15 @@ TEST(MacroCommandIds, EveryMacroCommandIdMapsToItsOwnSlot)
     EXPECT_EQ(-1, MacroCommandIdToSlot(0));
 }
 
+// ── Port-only from here to the end of the Sounds family ───────────────────
+// The whole g_wxhook_sound_* / g_wxhook_play_sound seam exists only off
+// Windows: it is the miniaudio backend the port substituted for DirectSound,
+// and platform/wx_mfc_hooks.h declares those pointers inside #ifndef _WIN32.
+// On Windows methods_sounds.cpp talks to the real thing, so there is no
+// function pointer to fake and no way for a console host to observe a call.
+// Re-entering these means a Windows-side observable for "a sound was asked
+// for", which is a different piece of work from a guard.
+#ifndef _WIN32
 // ═══ world.Sound / PlaySound / StopSound / GetSoundStatus ══════════════════
 // The _NOSOUND fork of methods_sounds.cpp: the Lua sound API drives the
 // g_wxhook_sound_* seam (miniaudio in the product).  Fakes here record the
@@ -1866,6 +1950,7 @@ TEST(Sounds, SoundRoutesThroughPlaySoundFile)
     EXPECT_EQ((long)eCannotPlaySound, doc.Sound("/tmp/beep.wav"));
     g_wxhook_play_sound = nullptr;
 }
+#endif  // !_WIN32
 
 
 TEST(Utilities, FixupEscapeSequences_SimpleAndHexLetter)
@@ -2202,6 +2287,8 @@ TEST(Utf8NextCharTest, CharacterCountMatchesLeadByteCountWhenWellFormed) {
 // / major 10 — so running the Windows version switch over it answered
 // "Windows 10" on macOS.  The answer has to come from the kernel instead, and
 // pinning it against uname is what makes a fall-back to that switch fail.
+#ifndef _WIN32   // pins OSVersionString against uname; on Windows it IS the
+                 // GetVersionEx switch, so there is nothing to contrast with
 TEST(Utilities, OSVersionString_ReportsThisKernelNotWindows) {
     struct utsname u;
     ASSERT_EQ(0, uname(&u));
@@ -2215,6 +2302,7 @@ TEST(Utilities, OSVersionString_ReportsThisKernelNotWindows) {
     EXPECT_TRUE(strstr((const char*) sVersion, "Windows") == NULL);
     EXPECT_TRUE(strstr((const char*) sVersion, "Unknown (Platform") == NULL);
 }
+#endif   // !_WIN32
 
 // methods_utilities.cpp CMUSHclientDoc::Help: on a Lua-enabled world, a filter
 // that isn't an exact function match falls through to
@@ -2224,6 +2312,7 @@ TEST(Utilities, OSVersionString_ReportsThisKernelNotWindows) {
 // list) and fed GetSelectedFunction a bogus 1/0 start/end pair that blanked
 // the filter.
 #ifdef MUSHCLIENT_LUA_SCRIPTING
+#ifndef _WIN32   // the g_ShowFunctionslist* observation globals are port-only -- see the note at their declaration
 TEST(Utilities, HelpPassesBLuaAndZeroOffsetsToShowFunctionslist) {
     CMUSHclientDoc doc;
 
@@ -2252,6 +2341,7 @@ TEST(Utilities, HelpPassesBLuaAndZeroOffsetsToShowFunctionslist) {
     doc.m_ScriptEngine = nullptr;
     delete engine;   // ~CScriptEngine -> DisableScripting -> CloseLua
 }
+#endif  // !_WIN32
 #endif
 
 // strnrchr must honour its length bound: the historical body wrote `n < count++`,

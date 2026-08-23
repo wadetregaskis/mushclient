@@ -5228,11 +5228,18 @@ CString str;
   suggested_name = m_doc->m_mush_name;
   suggested_name += " notes";
 
-  CFileDialog filedlg (TRUE,   // loading the file
+  // FALSE = a SAVE panel.  This said TRUE for twenty years -- copy-pasted from
+  // OnLoadNotes just above, comment and all -- which made OFN_OVERWRITEPROMPT
+  // inert, because an open panel has no overwrite confirmation to give.  The
+  // write below is CFile::modeCreate, so choosing an existing file truncated it
+  // with no warning at all.  Measured on the running client: the panel titled
+  // "File to save notes into" came up with its default button captioned
+  // "&Open".  See docs/UPSTREAM-BUGS.md 93.
+  CFileDialog filedlg (FALSE,  // SAVING the file
                        "txt",    // default extension
                        "",  // suggested name
                        OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-                       "Text files (*.txt)|*.txt||",    // filter 
+                       "Text files (*.txt)|*.txt||",    // filter
                        NULL);  // parent window
 
   filedlg.m_ofn.lpstrTitle = "File to save notes into";
@@ -8037,6 +8044,14 @@ CArchive * ar = NULL;
     ar = new CArchive(f, CArchive::store);
 
     m_doc->Save_World_XML (*ar, XML_VARIABLES);
+
+    // Flush inside the try.  Save_World_XML only fills the archive's buffer;
+    // the bytes reach the file when the CArchive is destroyed, which is after
+    // the catch below -- so a failing write is reported to nobody, over a file
+    // CFile::modeCreate has already truncated.  And ~CArchive calls Flush with
+    // no guard of its own, so that failure throws out of a noexcept destructor.
+    // docs/UPSTREAM-BUGS.md 103.
+    ar->Close ();
 
     }   // end of try
 	catch (CException* e)

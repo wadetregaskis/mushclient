@@ -831,3 +831,36 @@ and in `docs/DECISION-QUEUE-2026-08.md` instead:
   a right-click that moved it first would make Copy copy the wrong thing. The branch
   reached this conclusion itself and placed the note at the site; it is repeated here
   so the exclusion is visible from this file.
+
+## 20 — "Bytes sent" is counted once, where upstream counts it twice
+
+**Where:** `doc_shared.cpp`, `CMUSHclientDoc::SendPacket`.
+
+**Was:** `m_nBytesOut += nBufLen` in `SendPacket` **and**
+`pDoc->m_nBytesOut += count` in `CWorldSocket::OnSend` for every chunk that
+drained — and `SendPacket` calls `OnSend (0)` itself, so both ran on every send.
+The reported figure is double the bytes actually sent
+(`docs/UPSTREAM-BUGS.md` 92).
+
+**Now:** counted once, at the point the engine hands the buffer to the
+transport. The wire-side count went with `CWorldSocket` in the T5 relocation and
+was deliberately not reinstated; the comment at the site says so.
+
+**Why it is here rather than only in UPSTREAM-BUGS:** it changes a number the
+user can see. Anyone comparing this build's world-properties Info page, or
+`world.GetInfo (217)`, against stock 5.06 on the same session will get half the
+figure — and half is the correct half. Received bytes were always counted once
+and are unchanged, so the visible effect is that the out:in ratio stops being
+inflated.
+
+**Note on WHERE it is counted.** Upstream's second count was at the wire;
+counting once at `SendPacket` means the figure is "bytes handed to the
+transport", which can briefly exceed "bytes on the wire" while the send queue is
+draining, and permanently so if a session drops with data still queued. That is
+the right trade for a statistics display — the alternative reinstates the
+double-count — but it is a real difference from "bytes the peer could have
+received", so it is written down.
+
+**Verification:** `WinTransport.BytesSentAreCountedOncePerSendPacket` sends 5
+then 6 bytes through a real `pal::WinTransport` over loopback, asserts the
+counter reads 5 then 11, and then asserts the drain does not add any more.

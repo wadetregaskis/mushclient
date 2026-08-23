@@ -1724,8 +1724,21 @@ CString TFormat (const char * sFormat, ...)
 
 // display message box - using UTF-8
 #ifdef _WIN32
+#ifdef MUSHCLIENT_TESTS
+#include "platform/wx_mfc_hooks.h"   // McTestMessageBox
+#endif
 int UMessageBox (const char * sText, UINT nType, const char * sTitle)
   {
+#ifdef MUSHCLIENT_TESTS
+  // The unit-test host has no user to answer this and no message pump to
+  // dismiss it, and ::MessageBoxW below would block the run forever.  Note
+  // that this is NOT covered by CMUSHclientApp::DoMessageBox (MUSHclient.h):
+  // AfxMessageBox routes through that virtual, UMessageBox does not -- it
+  // builds its own UTF-16 box and calls ::MessageBoxW directly, four lines
+  // from the bottom of this function.  Off Windows the two funnel together,
+  // which is exactly why one hook covers both there and two are needed here.
+  return McTestMessageBox (sText, nType, sTitle);
+#endif
 
   int iBad;     // column in error in UTF8 validation
   int iLength;  // length of UTF8 message

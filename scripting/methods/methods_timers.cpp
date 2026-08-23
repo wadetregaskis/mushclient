@@ -155,10 +155,20 @@ bool bReplace = false;
 
   // if it already exists, error
   if (GetTimerMap ().Lookup (strTimerName, timer_item))
+    {
     if (Flags & eReplace)
+      {
+      // Not while its own script is on the stack -- the eReplace arm below
+      // deletes this object and the caller writes bExecutingScript = false into
+      // it when the script returns.  DeleteTimer refuses it with eItemInUse
+      // (:255); the replace path never did.  docs/UPSTREAM-BUGS.md 102.
+      if (timer_item->bExecutingScript)
+        return eItemInUse;
       bReplace = true;
+      }
     else
       return eTimerAlreadyExists;
+    }
 
 
   if (Hour < 0 || Hour > 23)
@@ -810,7 +820,34 @@ bool bChanged;
     	return ePluginCannotSetOption;  // not available to plugin
 
     if (TimerOptionsTable [iItem].iFlags & OPT_CANNOT_WRITE)
-    	return ePluginCannotSetOption;  // not available for writing at all    
+    	return ePluginCannotSetOption;  // not available for writing at all
+
+    // An "every" timer with a zero interval fires on EVERY poll, forever.
+    // CheckTimers adds the interval to tFireTime, which leaves it in the past,
+    // and its own guard -- "make sure timer will be due to fire in the future,
+    // not the past, or it might go mad and keep firing" -- calls ResetOneTimer,
+    // which adds the same zero.  The comment predicted the symptom; the guard
+    // cannot reach this case.
+    //
+    // AddTimer refuses the combination outright ("can't have a zero time for
+    // 'every' timers", :184).  SetTimerOption never did, so setting the last
+    // non-zero component to 0 one call at a time got there anyway.  Checked
+    // BEFORE SetBaseOptionItem so a refusal leaves nothing half-written.
+    // docs/UPSTREAM-BUGS.md 105.
+    if (Timer_item->iType == CTimer::eInterval &&
+        (strOptionName == "hour" || strOptionName == "minute" ||
+         strOptionName == "second"))
+      {
+      const int    iNewHour   = (strOptionName == "hour")   ? (int) iValue
+                                                            : Timer_item->iEveryHour;
+      const int    iNewMinute = (strOptionName == "minute") ? (int) iValue
+                                                            : Timer_item->iEveryMinute;
+      const double fNewSecond = (strOptionName == "second") ? fValue
+                                                            : Timer_item->fEverySecond;
+
+      if (iNewHour == 0 && iNewMinute == 0 && fNewSecond == 0.0)
+        return eTimeInvalid;
+      }
 
     iResult = SetBaseOptionItem (iItem,
                         TimerOptionsTable,

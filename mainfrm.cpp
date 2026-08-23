@@ -500,6 +500,10 @@ void CMainFrame::SetStatusMessage(const CString& msg)
     if (g_wxhook_set_status)
       g_wxhook_set_status(static_cast<const char*>(msg));
 #else
+    // See SetStatusMessageNow below: m_pMainWnd says a frame OBJECT exists, not
+    // that the status bar has a window.
+    if (m_wndStatusBar.m_hWnd == NULL)
+      return;
     m_wndStatusBar.SetWindowText(msg);
 #endif
     }
@@ -514,6 +518,12 @@ void CMainFrame::SetStatusMessageNow(const CString& msg)
     if (g_wxhook_set_status)
       g_wxhook_set_status(static_cast<const char*>(msg));
 #else
+    // m_pMainWnd says a frame OBJECT exists.  It does NOT say the status bar
+    // has a window -- CMainFrame's constructor creates neither, OnCreate does
+    // -- and CWnd::SetWindowText on an uncreated control asserts.  Ask the
+    // control, not the app.
+    if (m_wndStatusBar.m_hWnd == NULL)
+      return;
     m_wndStatusBar.SetWindowText(msg);
     m_wndStatusBar.UpdateWindow ();   // draw now
 #endif

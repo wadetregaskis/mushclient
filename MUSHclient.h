@@ -232,6 +232,27 @@ public:
 	virtual int ExitInstance();
 	//}}AFX_VIRTUAL
 
+#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
+  // The unit-test host (MUSHclient_tests.vcxproj) has no user and no message
+  // pump, so a real modal box blocks the run forever on something nothing can
+  // answer -- observed: one AfxMessageBox stopped the whole suite dead, and
+  // the process looked merely slow rather than stuck.
+  //
+  // AfxMessageBox routes through this virtual, so overriding it neutralises
+  // EVERY ::AfxMessageBox in the engine at once (29 sites across 16 files),
+  // plus MFC's own internal ones (DDV failures and the like).  ::UMessageBox
+  // does not come through here -- it calls ::MessageBoxW itself -- so it has
+  // its own arm in Utilities.cpp; both answer from the one shared decision in
+  // platform/wx_mfc_hooks.h, so this host and the macOS headless host cannot
+  // disagree about what a box was answered with.
+  //
+  // Guarded on _WIN32 as well as MUSHCLIENT_TESTS: off Windows CWinApp is the
+  // shim's own class and has no such virtual.  MUSHCLIENT_TESTS is defined
+  // project-wide in the test target, so this cannot change the vtable in one
+  // TU and not another.
+  virtual int DoMessageBox (LPCTSTR lpszPrompt, UINT nType, UINT nIDPrompt);
+#endif
+
 // Implementation
 
   void RestoreColumnConfiguration (LPCTSTR strName, 

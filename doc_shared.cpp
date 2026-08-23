@@ -355,7 +355,44 @@ int iBytesToMove;
       return -1;
 
       } // end of error result
-    iBytesToMove = 10;
+    // How long is the reply?  RFC 1928 s6 says
+    //
+    //   +----+-----+-------+------+----------+----------+
+    //   |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+    //   | 1  |  1  |   1   |  1   | Variable |    2     |
+    //
+    // and BND.ADDR's length depends on ATYP: 4 for IPv4, 16 for IPv6, and
+    // 1 + N for a domain name.  Only the IPv4 case is ten bytes.  This used
+    // to be an unconditional 10, so a proxy answering with an IPv6 or
+    // domain-name bind address had the remainder of its reply memmove'd to
+    // the front of the buffer and shown as MUD output -- binary garbage on
+    // the first line of the session.  docs/UPSTREAM-BUGS.md 107.
+    iBytesToMove = 4 + 4 + 2;                     // ATYP 1 (IPv4)
+
+    if (count >= 4)
+      switch ((unsigned char) buff [3])
+        {
+        case 1:                                   // IPv4
+          break;                                  // already right
+        case 4:                                   // IPv6
+          iBytesToMove = 4 + 16 + 2;
+          break;
+        case 3:                                   // domain name: 1 + N
+          if (count >= 5)
+            iBytesToMove = 4 + 1 + (unsigned char) buff [4] + 2;
+          break;
+        default:
+          break;    // not an ATYP RFC 1928 defines; nothing better to guess
+        }
+
+    // NOT handled, and it needs more than a length calculation: a reply split
+    // across TCP segments.  There is no accumulation buffer for the proxy
+    // phase -- each ProcessProxyResponse* sees one packet and must answer from
+    // it -- so a short read still reports success off buff [1] and the rest of
+    // the reply arrives in the next packet, by which time the phase is
+    // eConnectConnectedToMud and it is displayed.  Fixing that means giving
+    // the proxy phase a persistent buffer and a "need more" return, which is
+    // a change to the phase machinery rather than to this arm.
     } // SOCKS 5
   
   if (m_bUseSSL)
@@ -3186,7 +3223,25 @@ CString strLine (lpszText, size);
         case HAVE_DO:             Phase_DO (c); continue;
         case HAVE_DONT:           Phase_DONT (c); continue;
         case HAVE_SB:             Phase_SB (c); continue;
-        case HAVE_SUBNEGOTIATION: Phase_SUBNEGOTIATION (c); continue;
+        case HAVE_SUBNEGOTIATION:
+            {
+            // A subnegotiation past MAX_SUBNEGOTIATION_LENGTH closes the world
+            // (telnet_phases.cpp AbandonSubnegotiation).  Abandon the rest of
+            // the packet when that happens, the same way the two MCCP arms
+            // below return rather than carrying on — otherwise the bytes after
+            // the cap are rendered as ordinary MUD output, which on a hostile
+            // stream means attacker-chosen text in the window after we have
+            // said we are closing.
+            //
+            // The before/after comparison, rather than a bare "are we
+            // connected?" test, because world.Simulate feeds this loop on a
+            // world that is legitimately disconnected.
+            bool bWasConnected = m_iConnectPhase != eConnectNotConnected;
+            Phase_SUBNEGOTIATION (c);
+            if (bWasConnected && m_iConnectPhase == eConnectNotConnected)
+              return;
+            }
+            continue;
         case HAVE_COMPRESS:       Phase_COMPRESS (c); continue;
         
         case HAVE_COMPRESS_WILL:  
@@ -3220,10 +3275,15 @@ CString strLine (lpszText, size);
             }
             continue;
             
-        case HAVE_SUBNEGOTIATION_IAC: 
+        case HAVE_SUBNEGOTIATION_IAC:
           {
             bool bWasCompressing = m_bCompress;
-            Phase_SUBNEGOTIATION_IAC (c); 
+            // The escaped-IAC path caps on the same bound; see the
+            // HAVE_SUBNEGOTIATION arm above for why the packet is abandoned.
+            bool bWasConnected = m_iConnectPhase != eConnectNotConnected;
+            Phase_SUBNEGOTIATION_IAC (c);
+            if (bWasConnected && m_iConnectPhase == eConnectNotConnected)
+              return;
             // just turned on compression?  special case, can't keep treating the
             // data as it it was not compressed
             if (!bWasCompressing && m_bCompress)

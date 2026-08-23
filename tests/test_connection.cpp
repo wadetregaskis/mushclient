@@ -26,16 +26,49 @@
 #include "resource.h"                // ID_FILE_LOGSESSION / IDD_LINE_COUNT
 #include "dialogs/logdlg.h"          // CLogDlg — seeded by the handler, answered
                                      // by the hook below
+// The notepad fixture is #ifndef _WIN32 (see its own header): a notepad on
+// Windows is a real CEditView from the MFC doc/view framework, with no
+// callback seam to substitute and no doc template in this host.  The few cases
+// below that use it are guarded individually so the rest of the file still
+// runs there.
 #include "notepad_fixture.h"   // FakeNotepad / NotepadCapture
 
 #include <zlib.h>
 
 #include <cstring>
 #include <string>
-#include <unistd.h>
+#include "posix_compat.h"
 
 // telnet bytes (numeric to avoid macro clashes)
 static const unsigned char T_IAC = 255, T_WILL = 251, T_SB = 250, T_SE = 240;
+
+// ── the line ending a LOG FILE actually gets ────────────────────────────────
+// The log is a stdio stream opened in TEXT mode (doc_shared.cpp:940, fopen with
+// "w" / "a+"), so on Windows every '\n' the engine writes lands in the file as
+// CRLF -- and these tests read the bytes back in binary, which is the only way
+// to see that.  The difference is real and deliberate: logs are LF on the port
+// and CRLF on Windows (CLAUDE.md, macOS notes), a cosmetic parity gap left
+// alone on purpose.  So the expected separator follows the platform instead of
+// the assertion being weakened to ignore the bytes between the two halves.
+#ifdef _WIN32
+#define MC_LOG_NL "\r\n"
+#else
+#define MC_LOG_NL "\n"
+#endif
+
+// ── where the NAWS row count comes from ─────────────────────────────────────
+// SendWindowSizes (doc_shared.cpp) is forked, and the fork is not cosmetic:
+// Windows walks the view list for a CMUSHView and measures its text rectangle,
+// the port reads m_gui_rows (which its wx frame keeps up to date).  A console
+// host has no views, so on Windows the loop finds nothing and the function
+// returns having sent NOTHING -- which is the right answer for a world with no
+// window, and the only NAWS assertion this host can make.  The tests below
+// drive m_gui_rows, so each says so and stops.
+#ifdef _WIN32
+static const bool kNawsNeedsAView = true;
+#else
+static const bool kNawsNeedsAView = false;
+#endif
 
 // ── recording transport ─────────────────────────────────────────────────────
 // Derives from the shared RecordingTransport (tests/fake_transport.h) for the
@@ -311,11 +344,26 @@ TEST(ConnectStatus, AllPhasesHaveNames)
     EXPECT_STREQ("<unknown>", (LPCTSTR)GetConnectionStatus(999));
 }
 
+// The two platforms answer this from different tables, and neither is a
+// fallback for the other: Windows switches on the WSAE* codes its sockets
+// actually report and returns translated prose, while the port hands the POSIX
+// errno to strerror.  Passing a POSIX errno on Windows is not a near miss, it is
+// a different number space -- ECONNREFUSED is 107 there and WSAECONNREFUSED is
+// 10061 -- so it falls through to "Unknown error code".  Each arm asks its own
+// platform for a code that platform can actually deliver.
 TEST(ConnectStatus, SocketErrorUsesStrerror)
 {
     CMUSHclientDoc* doc = make_doc();
+#ifdef _WIN32
+    EXPECT_STREQ("Connection refused", (LPCTSTR)doc->GetSocketError(WSAECONNREFUSED));
+    EXPECT_STREQ("Connection timed out", (LPCTSTR)doc->GetSocketError(WSAETIMEDOUT));
+    // and a code from the OTHER space really is unknown, which is what makes
+    // the two assertions above mean something
+    EXPECT_STREQ("Unknown error code", (LPCTSTR)doc->GetSocketError(ECONNREFUSED));
+#else
     EXPECT_STREQ(strerror(ECONNREFUSED), (LPCTSTR)doc->GetSocketError(ECONNREFUSED));
     EXPECT_STREQ(strerror(ETIMEDOUT), (LPCTSTR)doc->GetSocketError(ETIMEDOUT));
+#endif
     delete doc;
 }
 
@@ -327,10 +375,20 @@ TEST(ConnectFail, NotifiesWithPhaseAndAddress)
     CMUSHclientDoc* doc = make_doc();
     doc->m_iConnectPhase = eConnectConnectingToMud;
     doc->m_sockAddr.sin_addr.s_addr = inet_addr("10.11.12.13");
+    // The refusal code from the platform's OWN space -- see
+    // ConnectStatus.SocketErrorUsesStrerror for why they are not interchangeable.
+#ifdef _WIN32
+    doc->OnConnect(WSAECONNREFUSED);
+#else
     doc->OnConnect(ECONNREFUSED);
+#endif
     EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
     EXPECT_TRUE(saw(doc, "Unable to connect to \"TestWorld\""));
+#ifdef _WIN32
+    EXPECT_TRUE(saw(doc, "Connection refused"));
+#else
     EXPECT_TRUE(saw(doc, strerror(ECONNREFUSED)));
+#endif
     EXPECT_TRUE(saw(doc, "Connecting to world"));
     EXPECT_TRUE(saw(doc, "10.11.12.13"));
     EXPECT_TRUE(saw(doc, "port 4000"));
@@ -693,7 +751,7 @@ TEST(Login, AutoLogWritesPreambleAndWorldName)
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
     std::string log = buf;
-    EXPECT_TRUE(log.find("PREAMBLE\nLINE2") != std::string::npos);
+    EXPECT_TRUE(log.find("PREAMBLE" MC_LOG_NL "LINE2") != std::string::npos);
     EXPECT_TRUE(log.find("TestWorld - ") != std::string::npos);
     EXPECT_TRUE(log.find("----") != std::string::npos);   // hyphen underline
     unlink(path);
@@ -744,6 +802,15 @@ TEST(Login, AutoLogHtmlModeUsesBreaks)
 // accepts whatever OnFileLogsession seeded it with -- which is the world's own
 // logging options, so accepting is what "the user pressed OK" means here.
 
+// ── Port-only: the Log Session harness ────────────────────────────────────
+// Everything from here to the end of LogSessionHooks drives two seams the port
+// owns and Windows does not: g_wxhook_file_dialog (the port's stand-in for the
+// Save panel) and g_run_mfc_dialog (its stand-in for CDialog::DoModal), plus
+// AfxDispatchCommand, which is the shim's name for what the real MFC message
+// map does.  On Windows the command opens a real CFileDialog and there is no
+// pointer to answer it with, so the two tests that use this harness are guarded
+// too -- the rest of this file's 152 tests run there unaffected.
+#ifndef _WIN32
 static std::string g_logSessionPath;
 
 // Answer the Save panel with g_logSessionPath.
@@ -832,10 +899,12 @@ struct LogSessionHooks {
         g_wxhook_file_dialog = savedFile;
     }
 };
+#endif  // !_WIN32
 
 // The command opens a log, writes the preamble, and closes it again writing the
 // postamble -- reached through the message map, which is how every menu reaches
 // it.  This is the whole of what the port's second implementation replaced.
+#ifndef _WIN32   // the Log Session harness above is port-only
 TEST(LogSession, TheCanonicalCommandOpensAndClosesWithPreambleAndPostamble)
 {
     LogSessionHooks hooks;
@@ -857,11 +926,13 @@ TEST(LogSession, TheCanonicalCommandOpensAndClosesWithPreambleAndPostamble)
     EXPECT_NE(std::string::npos, log.find("OUT:"));
     delete doc;
 }
+#endif  // !_WIN32
 
 // ...and it consults the world's three logging options rather than writing
 // whatever it is handed.  Each is turned off ALONE, so a handler that ignored
 // one of them (as the port's own implementation ignored all three) fails on
 // that option only.
+#ifndef _WIN32   // the Log Session harness above is port-only
 TEST(LogSession, TheCanonicalCommandHonoursLogOutputInputAndNotes)
 {
     LogSessionHooks hooks;
@@ -900,6 +971,7 @@ TEST(LogSession, TheCanonicalCommandHonoursLogOutputInputAndNotes)
         delete doc;
     }
 }
+#endif  // !_WIN32
 
 // ── logging: CloseLog postamble + LogCommand colour spans ──────────────────
 
@@ -917,7 +989,7 @@ TEST(Logging, ClosePostambleAndDoubleCloseCode)
     char buf[512] = {};
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
-    EXPECT_TRUE(strstr(buf, "END\nOF LOG") != nullptr);
+    EXPECT_TRUE(strstr(buf, "END" MC_LOG_NL "OF LOG") != nullptr);
     unlink(path);
     delete doc;
 }
@@ -938,7 +1010,7 @@ TEST(Logging, LogCommandStripsEndlineAndAppliesPreamble)
     char buf[512] = {};
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
-    EXPECT_TRUE(strstr(buf, ">> look <<\n") != nullptr);
+    EXPECT_TRUE(strstr(buf, ">> look <<" MC_LOG_NL) != nullptr);
     unlink(path);
     delete doc;
 }
@@ -1168,13 +1240,21 @@ TEST(TabComplete, ShiftTabCompleteItemContract)
 
 // ── GetStyleRGB ────────────────────────────────────────────────────────────
 
-static CStyle make_style(unsigned short flags, COLORREF fore, COLORREF back)
+// Fills a caller-owned CStyle rather than returning one.
+//
+// CStyle derives from CObject, and MFC's real CObject declares its copy
+// constructor private with no implementation -- a CObject is deliberately not
+// copyable.  Returning one by value therefore does not compile on Windows,
+// while the port's CObject shim (platform/mfc_object.h) has no such
+// declaration and gets an implicit copy constructor, so it compiled here for
+// months.  That divergence is worth knowing about beyond this helper: any
+// port-authored code that copies a CObject subclass builds on macOS and breaks
+// the Windows build, and only building on Windows finds it.
+static void fill_style(CStyle& s, unsigned short flags, COLORREF fore, COLORREF back)
 {
-    CStyle s;
     s.iFlags = flags;
     s.iForeColour = fore;
     s.iBackColour = back;
-    return s;
 }
 
 TEST(StyleRgb, CustomColourAndInverse)
@@ -1182,7 +1262,7 @@ TEST(StyleRgb, CustomColourAndInverse)
     CMUSHclientDoc* doc = make_doc();
     doc->m_customtext[3] = RGB(1, 2, 3);
     doc->m_customback[3] = RGB(4, 5, 6);
-    CStyle s = make_style(COLOUR_CUSTOM, 3, 0);
+    CStyle s; fill_style(s, COLOUR_CUSTOM, 3, 0);
     COLORREF fg = 0, bg = 0;
     doc->GetStyleRGB(&s, fg, bg);
     EXPECT_EQ(RGB(1, 2, 3), fg);
@@ -1197,7 +1277,7 @@ TEST(StyleRgb, CustomColourAndInverse)
 TEST(StyleRgb, RgbColourAndInverse)
 {
     CMUSHclientDoc* doc = make_doc();
-    CStyle s = make_style(COLOUR_RGB, RGB(10, 20, 30), RGB(40, 50, 60));
+    CStyle s; fill_style(s, COLOUR_RGB, RGB(10, 20, 30), RGB(40, 50, 60));
     COLORREF fg = 0, bg = 0;
     doc->GetStyleRGB(&s, fg, bg);
     EXPECT_EQ(RGB(10, 20, 30), fg);
@@ -1218,22 +1298,22 @@ TEST(StyleRgb, AnsiClassicInverseAndHilite)
     doc->m_boldcolour[1] = RGB(200, 0, 0);
     COLORREF fg = 0, bg = 0;
 
-    CStyle plain = make_style(COLOUR_ANSI, 1, 2);
+    CStyle plain; fill_style(plain, COLOUR_ANSI, 1, 2);
     doc->GetStyleRGB(&plain, fg, bg);
     EXPECT_EQ(RGB(100, 0, 0), fg);
     EXPECT_EQ(RGB(0, 100, 0), bg);
 
-    CStyle bold = make_style(COLOUR_ANSI | HILITE, 1, 2);
+    CStyle bold; fill_style(bold, COLOUR_ANSI | HILITE, 1, 2);
     doc->GetStyleRGB(&bold, fg, bg);
     EXPECT_EQ(RGB(200, 0, 0), fg);   // bold palette for hilite fg
 
-    CStyle inverse = make_style(COLOUR_ANSI | INVERSE, 1, 2);
+    CStyle inverse; fill_style(inverse, COLOUR_ANSI | INVERSE, 1, 2);
     doc->GetStyleRGB(&inverse, fg, bg);
     EXPECT_EQ(RGB(0, 100, 0), fg);   // swapped: fg from back colour
     EXPECT_EQ(RGB(100, 0, 0), bg);
 
     // xterm-256 indices bypass the palettes entirely
-    CStyle xterm = make_style(COLOUR_ANSI, 196, 21);
+    CStyle xterm; fill_style(xterm, COLOUR_ANSI, 196, 21);
     doc->GetStyleRGB(&xterm, fg, bg);
     EXPECT_EQ(xterm_256_colours[196], fg);
     EXPECT_EQ(xterm_256_colours[21], bg);
@@ -1250,19 +1330,19 @@ TEST(StyleRgb, AnsiAlternativeInverse)
     COLORREF fg = 0, bg = 0;
 
     // alternative inverse keeps the fore colour boldable while swapping roles
-    CStyle inv = make_style(COLOUR_ANSI | INVERSE | HILITE, 1, 2);
+    CStyle inv; fill_style(inv, COLOUR_ANSI | INVERSE | HILITE, 1, 2);
     doc->GetStyleRGB(&inv, fg, bg);
     EXPECT_EQ(RGB(200, 0, 0), bg);   // hilited fore colour becomes background
     EXPECT_EQ(RGB(0, 100, 0), fg);   // back colour becomes foreground
 
     // xterm indices on the alternative-inverse path
-    CStyle invx = make_style(COLOUR_ANSI | INVERSE, 196, 21);
+    CStyle invx; fill_style(invx, COLOUR_ANSI | INVERSE, 196, 21);
     doc->GetStyleRGB(&invx, fg, bg);
     EXPECT_EQ(xterm_256_colours[196], bg);
     EXPECT_EQ(xterm_256_colours[21], fg);
 
     // non-inverse alternative path
-    CStyle plain = make_style(COLOUR_ANSI | HILITE, 1, 21);
+    CStyle plain; fill_style(plain, COLOUR_ANSI | HILITE, 1, 21);
     doc->GetStyleRGB(&plain, fg, bg);
     EXPECT_EQ(RGB(200, 0, 0), fg);
     EXPECT_EQ(xterm_256_colours[21], bg);
@@ -1272,7 +1352,7 @@ TEST(StyleRgb, AnsiAlternativeInverse)
 TEST(StyleRgb, RememberStyleStoresFlagsAndColours)
 {
     CMUSHclientDoc* doc = make_doc();
-    CStyle s = make_style(COLOUR_RGB | HILITE, RGB(9, 9, 9), RGB(7, 7, 7));
+    CStyle s; fill_style(s, COLOUR_RGB | HILITE, RGB(9, 9, 9), RGB(7, 7, 7));
     doc->RememberStyle(&s);
     EXPECT_EQ((int)(COLOUR_RGB | HILITE), (int)(doc->m_iFlags & STYLE_BITS));
     EXPECT_EQ(RGB(9, 9, 9), (COLORREF)doc->m_iForeColour);
@@ -1308,7 +1388,7 @@ TEST(SendToTest, OutputStatusVariableAndLog)
     char buf[128] = {};
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
-    EXPECT_TRUE(strstr(buf, "logged line\n") != nullptr);
+    EXPECT_TRUE(strstr(buf, "logged line" MC_LOG_NL) != nullptr);
     unlink(path);
     delete doc;
 }
@@ -1345,6 +1425,14 @@ TEST(SendToTest, EmptyTextDoesNothingForMostDestinations)
 // on it never distinguished append from replace in terms of RESULTING CONTENT —
 // it only checked which flag was passed.  Driving the real bodies over a real
 // registered CTextDocument makes the distinction observable, which is the point.
+// Port-only observation seam.  The notepad fixture drives CTextDocument's
+// m_fn_* callbacks and hooks g_wxhook_create_text_window, and both are
+// #ifndef _WIN32: on Windows a notepad IS a real CEditView created through the
+// MFC doc/view framework, so there is no function pointer to substitute and no
+// window for this host to make.  Re-entering it means giving the test host a
+// document template and a frame -- the same thing test_accelerators.cpp needs
+// (docs/WINDOWS-VALIDATION.md 10k) -- not deleting the guard.
+#ifndef _WIN32
 TEST(SendToTest, NotepadDestinations)
 {
     NotepadCapture cap;
@@ -1381,6 +1469,7 @@ TEST(SendToTest, NotepadDestinations)
     EXPECT_EQ(1u, (unsigned) cap.count());
     delete doc;
 }
+#endif  // !_WIN32
 
 TEST(SendToTest, SpeedwalkEvaluationAndExecute)
 {
@@ -1878,7 +1967,7 @@ TEST(LoggingArms, ClosePostambleFormatted)
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
     unlink(path);
-    EXPECT_TRUE(strstr(buf, "end\nyear=2") != nullptr);   // %n and %Y expanded
+    EXPECT_TRUE(strstr(buf, "end" MC_LOG_NL "year=2") != nullptr);   // %n and %Y expanded
     delete doc;
 }
 
@@ -1991,7 +2080,7 @@ TEST(LifecycleArms, EstablishAutoLogWritesPreambleAndBanner)
     fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
     unlink(path);
-    EXPECT_TRUE(strstr(buf, "PRE\nAMBLE") != nullptr);
+    EXPECT_TRUE(strstr(buf, "PRE" MC_LOG_NL "AMBLE") != nullptr);
     EXPECT_TRUE(strstr(buf, "BannerWorld - ") != nullptr);
     EXPECT_TRUE(strstr(buf, "----") != nullptr);   // hyphen banner line
     delete doc;
@@ -2106,13 +2195,31 @@ TEST(SendToTest, CommandDestinationFillsEmptyBarOnly)
 {
     CMUSHclientDoc* doc = make_doc();
     FakeWorldView view;
+    // Save and restore by hand rather than with mc_test::ScopedWorldView: the
+    // document here is on the HEAP and is deleted inside this scope, so a guard
+    // declared after it would still be holding the fake when ~CMUSHclientDoc
+    // ran -- and that destructor DELETES m_pWorldView, over a stack object.
+    // (Nulling it instead, as this test used to, merely leaks the adapter the
+    // document built for itself.)
+    auto savedView = doc->m_pWorldView;
     doc->m_pWorldView = &view;
     CString out;
     doc->SendTo(eSendToCommand, "go north", false, false, "d", "", out);
+#ifdef _WIN32
+    // "through the world-view seam" is the PORT's route.  On Windows the
+    // command bar is a CSendView reached from the document's view list, so a
+    // world view -- fake or real -- is not what this destination consults, and
+    // a host with no views has nowhere to put the text.  Assert that it goes
+    // nowhere rather than somewhere wrong, and that nothing reached the MUD
+    // either: eSendToCommand must never fall back to sending.
+    EXPECT_STREQ("", view.cmd.c_str());
+    EXPECT_TRUE(wire(doc).sent.empty());
+#else
     EXPECT_STREQ("go north", view.cmd.c_str());
     doc->SendTo(eSendToCommand, "go south", false, false, "d", "", out);
     EXPECT_STREQ("go north", view.cmd.c_str());   // bar not empty: unchanged
-    doc->m_pWorldView = nullptr;
+#endif
+    doc->m_pWorldView = savedView;
     delete doc;
 }
 
@@ -2194,6 +2301,20 @@ TEST(SmallArms, IncomingPacketDebugArm)
 TEST(SmallArms, SendWindowSizesEmitsNaws)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_nWrapColumn = 80;
     doc->m_gui_rows = 30;
@@ -2219,6 +2340,20 @@ TEST(SmallArms, SendWindowSizesEmitsNaws)
 TEST(SmallArms, NawsEscapesADimensionByteOfExactly255)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_gui_rows = 30;
 
@@ -2270,6 +2405,20 @@ TEST(SmallArms, NawsEscapesADimensionByteOfExactly255)
 TEST(SmallArms, TextRectangleRenegotiatesTheWindowSize)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_nWrapColumn = 80;
     doc->m_gui_rows = 30;
@@ -2352,6 +2501,20 @@ TEST(AutoWrap, ClampWrapColumnPassesLegalValuesThrough)
 TEST(AutoWrap, NawsReportsTheConfiguredColumnWhenAutoWrapIsOff)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_bAutoWrapWindowWidth = FALSE;
     doc->m_nWrapColumn = 100;
@@ -2370,6 +2533,20 @@ TEST(AutoWrap, NawsReportsTheConfiguredColumnWhenAutoWrapIsOff)
 TEST(AutoWrap, NawsReportsTheWidthItWasGivenNotTheStoredOne)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_nWrapColumn = 80;        // what the world is still configured for
     doc->m_gui_rows = 25;
@@ -2383,6 +2560,20 @@ TEST(AutoWrap, NawsReportsTheWidthItWasGivenNotTheStoredOne)
 TEST(AutoWrap, NawsSplitsWideDimensionsAcrossBothBytes)
 {
     CMUSHclientDoc* doc = make_doc();
+    if (kNawsNeedsAView) {
+        // Windows measures the rows from a CMUSHView and this host has none, so
+        // the honest assertion is that nothing is announced.  Everything ELSE
+        // SendWindowSizes gates on is satisfied first -- NAWS negotiated, a
+        // non-zero font height -- so the missing view is the only reason left.
+        // See kNawsNeedsAView at the top of this file.
+        doc->m_bNAWS_wanted = TRUE;
+        doc->m_FontHeight = 12;
+        wire(doc).sent.clear();
+        doc->SendWindowSizes(80);
+        EXPECT_TRUE(wire(doc).sent.empty());
+        delete doc;
+        return;
+    }
     doc->m_bNAWS_wanted = TRUE;
     doc->m_nWrapColumn = 80;                      // deliberately not the width
     doc->m_gui_rows = 300;                        // 0x012C
@@ -2706,6 +2897,7 @@ TEST(SendMsgR5, CommandAfterPartialMudLineStartsNewLine)
 
 // ── round 5: queued-command status display ────────────────────────────────
 
+#ifndef _WIN32   // g_wxhook_set_status is port-only -- Windows writes the status bar through the MFC message map, so there is no function pointer to observe
 TEST(QueueR5, ShowQueuedCommandsFormatsRepeatsAndOverflow)
 {
     // ShowQueuedCommands publishes the formatted queue via SetStatusMessageNow,
@@ -2744,6 +2936,7 @@ TEST(QueueR5, ShowQueuedCommandsFormatsRepeatsAndOverflow)
 
     g_wxhook_set_status = saved;
 }
+#endif  // !_WIN32
 
 // ── round 5: option-machinery guard arms (free helpers) ───────────────────
 
@@ -2788,30 +2981,30 @@ TEST(StyleRgbR5, AlternativeInverseRemainingArms)
     COLORREF fg = 0, bg = 0;
 
     // inverse, fg < 8, NOT hilited → normal palette for colour2
-    CStyle invPlain = make_style(COLOUR_ANSI | INVERSE, 1, 2);
+    CStyle invPlain; fill_style(invPlain, COLOUR_ANSI | INVERSE, 1, 2);
     doc->GetStyleRGB(&invPlain, fg, bg);
     EXPECT_EQ(RGB(0, 100, 0), fg);        // colour1 from background
     EXPECT_EQ(RGB(100, 0, 0), bg);        // colour2 from normal palette
 
     // not inverse, fg >= 8 → xterm palette
-    CStyle x = make_style(COLOUR_ANSI, 20, 2);
+    CStyle x; fill_style(x, COLOUR_ANSI, 20, 2);
     doc->GetStyleRGB(&x, fg, bg);
     EXPECT_EQ(RGB(0, 100, 0), bg);
 
     // not inverse, fg < 8, NOT hilited → normal palette both ways
-    CStyle plain = make_style(COLOUR_ANSI, 1, 2);
+    CStyle plain; fill_style(plain, COLOUR_ANSI, 1, 2);
     doc->GetStyleRGB(&plain, fg, bg);
     EXPECT_EQ(RGB(100, 0, 0), fg);
     EXPECT_EQ(RGB(0, 100, 0), bg);
 
     // inverse with bg >= 8 → xterm palette for colour1
-    CStyle invx = make_style(COLOUR_ANSI | INVERSE, 1, 20);
+    CStyle invx; fill_style(invx, COLOUR_ANSI | INVERSE, 1, 20);
     doc->GetStyleRGB(&invx, fg, bg);
 
     doc->m_bAlternativeInverse = FALSE;
 
     // classic mode: HILITE with fg >= 8 → xterm palette (not bold table)
-    CStyle boldx = make_style(COLOUR_ANSI | HILITE, 20, 2);
+    CStyle boldx; fill_style(boldx, COLOUR_ANSI | HILITE, 20, 2);
     doc->GetStyleRGB(&boldx, fg, bg);
     delete doc;
 }
@@ -2879,6 +3072,7 @@ TEST(SmallArmsR5, NewActivitySoundRequested)
 // the one being read — counted as unread, and nothing ever reset the counter.
 // Both frontends now drive the same predicate (IsWorldViewActive), which the
 // wx frame sets from its activate/deactivate handling.
+#ifndef _WIN32   // CMUSHclientDoc::SetWorldViewActive is port-only (doc.h, #ifndef _WIN32); on Windows activation is the framework raising the MDI child
 TEST(UnreadLines, CounterFollowsWorldWindowActivation)
 {
     CMUSHclientDoc* doc = make_doc();
@@ -2908,10 +3102,12 @@ TEST(UnreadLines, CounterFollowsWorldWindowActivation)
 
     delete doc;
 }
+#endif  // !_WIN32
 
 // GetInfo(113) is "is this world's window the active one?" (the same predicate),
 // and GetInfo(202) is the unread-line count.  113 used to answer "the world is
 // connected" on the port — a different question, and one 106/107 already answer.
+#ifndef _WIN32   // SetWorldViewActive, as above
 TEST(UnreadLines, GetInfoReportsActivationAndUnreadCount)
 {
     CMUSHclientDoc* doc = make_doc();
@@ -2929,6 +3125,7 @@ TEST(UnreadLines, GetInfoReportsActivationAndUnreadCount)
 
     delete doc;
 }
+#endif  // !_WIN32
 
 // ── ApplyTlsFallbackChoice — what a TLS failure prompt actually does ─────────
 // The two recoveries are not interchangeable: a certificate that cannot be

@@ -44,7 +44,15 @@ void CMUSHclientDoc::Serialize(CArchive& ar)
   CString strMsg;
   strMsg = TFormat ("Opening world \"%s\"", (LPCTSTR) ar.GetFile ()->GetFilePath ());
 
+#ifndef MUSHCLIENT_TESTS
+  // `Frame` is a MACRO -- *((CMainFrame*)App.m_pMainWnd) (stdafx.h) -- so with
+  // no main frame this is a null dereference rather than a call that does
+  // nothing, and the unit-test host has no main frame by design (giving it one
+  // was tried and measured worse -- docs/WINDOWS-VALIDATION.md 10v).  Skipping
+  // a status-bar update costs the tests nothing: strMsg is built either way,
+  // and nothing below reads it.
   Frame.SetStatusMessageNow (strMsg);
+#endif
 
   SetPathName((LPCTSTR) ar.GetFile ()->GetFilePath ());  // see: http://www.gammon.com.au/forum/?id=10596
 

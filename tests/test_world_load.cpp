@@ -16,12 +16,17 @@
 #include "doc.h"
 #include "scripting/errors.h"
 #include "platform/wx_mfc_hooks.h"
+// The notepad fixture is #ifndef _WIN32 (see its own header): a notepad on
+// Windows is a real CEditView from the MFC doc/view framework, with no
+// callback seam to substitute and no doc template in this host.  The few cases
+// below that use it are guarded individually so the rest of the file still
+// runs there.
 #include "notepad_fixture.h"   // NotepadCapture (XML-import notes seam)
 
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <unistd.h>   // getpid/unlink (temp world files)
+#include "posix_compat.h"
 #include <sys/stat.h> // mkdir (plugin state dir)
 
 #ifdef MUSHCLIENT_LUA_SCRIPTING
@@ -476,6 +481,125 @@ TEST(WorldLoad, UnlimitedScrollbackSentinelRoundTrips)
     remove(path);
 }
 
+
+
+// ── A preamble's trailing space is the whole point of a preamble ───────────
+//
+// `Get_XML_string` trims leading and trailing whitespace unless the option row
+// carries `OPT_KEEP_SPACES`, and `doc.cpp` concatenates a Send-to-world line
+// with no separator at all:
+//
+//     full_line  = dlg.m_strLinePreamble;
+//     full_line += str;
+//     full_line += dlg.m_strLinePostamble;
+//
+// so the space in `"say "` is the only thing between the verb and the text.
+// `send_to_world_line_preamble` and `…_postamble` were the only two
+// non-multiline `*amble`/prefix rows in the whole table without the flag —
+// the six log-line ones, both paste-line ones, the recall one, the chat prefix,
+// the speedwalk prefix and all three timestamps have it. An omission, not a
+// judgement. `docs/UPSTREAM-BUGS.md` 104.
+//
+// The paste twins are the control: they were always right, so a test that only
+// checked the send pair could pass on a build where the trim had been removed
+// wholesale.
+TEST(WorldLoad, ASendPreamblesTrailingSpaceSurvivesTheLoad)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000"
+       send_to_world_line_preamble="say "
+       send_to_world_line_postamble=" ."
+       paste_line_preamble="tell bob "
+       paste_line_postamble=" !">
+</world>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    EXPECT_STREQ("say ", (const char*)doc.m_line_preamble);
+    EXPECT_STREQ(" .",   (const char*)doc.m_line_postamble);
+
+    // the control pair, which never lost theirs
+    EXPECT_STREQ("tell bob ", (const char*)doc.m_pasteline_preamble);
+    EXPECT_STREQ(" !",        (const char*)doc.m_pasteline_postamble);
+}
+// ── A meaningful zero on an option whose DEFAULT is not zero ───────────────
+//
+// The sibling of the test above, and the case its own comment did not expect to
+// exist. `Save_XML_number` omits an attribute whose value is 0, and the loader
+// keeps the member as constructed — i.e. the table default — when an attribute
+// is absent. Those two rules only compose correctly when the default IS zero.
+//
+// `max_output_lines` was the one row anybody had noticed, and it was given
+// `OPT_ZERO_UNLIMITED` to force the write. But four more rows accept a
+// meaningful 0 against a non-zero default and had no such flag:
+//
+//     pixel_offset                  default 1      range 0-20
+//     fade_output_opacity_percent   default 20     range 0-100
+//     tool_tip_visible_time         default 5000   range 0-120000
+//     tool_tip_start_time           default 400    range 0-120000
+//
+// Set any of them to 0, save, reload, and the value is silently back to its
+// default. `docs/UPSTREAM-BUGS.md` 101.
+//
+// The saver now writes a 0 whenever the option's default is non-zero, which is
+// exactly the condition under which omitting it loses information. A row whose
+// default is 0 is written exactly as before.
+TEST(WorldLoad, AZeroSurvivesOnEveryOptionWhoseDefaultIsNotZero)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000">
+</world>
+</muclient>)";
+
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_zero_%d.mcl", (int)getpid());
+
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+
+        // The defaults, so a later 0 cannot be mistaken for "it was already 0".
+        ASSERT_EQ(1L,    (long)doc.m_iPixelOffset);
+        ASSERT_EQ(20L,   (long)doc.m_FadeOutputOpacityPercent);
+        ASSERT_EQ(5000L, (long)doc.m_iToolTipVisibleTime);
+        ASSERT_EQ(400L,  (long)doc.m_iToolTipStartTime);
+
+        EXPECT_EQ(eOK, doc.SetOption("pixel_offset", 0));
+        EXPECT_EQ(eOK, doc.SetOption("fade_output_opacity_percent", 0));
+        EXPECT_EQ(eOK, doc.SetOption("tool_tip_visible_time", 0));
+        EXPECT_EQ(eOK, doc.SetOption("tool_tip_start_time", 0));
+
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+
+    // The zeros must be ON DISK.  Checking only the reload would pass on a
+    // build where the loader happened to zero an absent attribute, which is the
+    // behaviour the boolean and alpha arms have and the numeric one does not.
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    std::string content; char buf[4096]; size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) content.append(buf, n);
+    fclose(f);
+    EXPECT_NE(content.find("pixel_offset=\"0\""),                std::string::npos);
+    EXPECT_NE(content.find("fade_output_opacity_percent=\"0\""), std::string::npos);
+    EXPECT_NE(content.find("tool_tip_visible_time=\"0\""),       std::string::npos);
+    EXPECT_NE(content.find("tool_tip_start_time=\"0\""),         std::string::npos);
+
+    CMUSHclientDoc reloaded;
+    ASSERT_TRUE(reloaded.LoadWorldFromFile(path));
+    EXPECT_EQ(0L, (long)reloaded.m_iPixelOffset);
+    EXPECT_EQ(0L, (long)reloaded.m_FadeOutputOpacityPercent);
+    EXPECT_EQ(0L, (long)reloaded.m_iToolTipVisibleTime);
+    EXPECT_EQ(0L, (long)reloaded.m_iToolTipStartTime);
+
+    remove(path);
+}
 TEST(WorldLoad, MaxOutputLinesRangeAcceptsZeroButNotOneToOneNinetyNine)
 {
     // The range is "200 lines at least, OR none at all", which a plain min/max
@@ -947,8 +1071,16 @@ TEST(PluginLoad, SourcePathRecorded)
     ASSERT_TRUE(TryLoadPlugin(doc, path.c_str()));
 
     CPlugin* p = doc.m_PluginList.front();
-    // m_strSource should equal the path we passed in
-    EXPECT_STREQ(path.c_str(), (const char*)p->m_strSource);
+    // m_strSource is the path the loader OPENED, not the string it was handed:
+    // it comes from CFile::GetFilePath, which fully qualifies.  On the port
+    // "/tmp/x.xml" already IS the full path so the two are equal; on Windows
+    // the same file is "C:\tmp\x.xml".  Assert what is true of both -- the
+    // file is named, and the recorded path is one that opens.
+    CString src = p->m_strSource;
+    EXPECT_TRUE(src.Find("srcpath.xml") != -1);
+    FILE* reopened = fopen((const char*)src, "rb");
+    EXPECT_TRUE(reopened != nullptr);
+    if (reopened) fclose(reopened);
 }
 
 TEST(PluginLoad, TriggersLandInPluginMap)
@@ -2797,8 +2929,24 @@ TEST(WorldLoadR5, WorldOnlyTagsRejectedInsidePlugin)
 }
 
 // Plugin header validation arms, one throw each.
+//
+// The two `language=` cases are platform-dependent and deliberately kept rather
+// than deleted.  stdafx.h defines USE_PYTHON / USE_TCL / USE_PHP / USE_RUBY
+// unconditionally inside its `#ifdef _WIN32` block, and the whitelist in
+// xml_load_world.cpp:2538 also lets perlscript and jscript through on `_WIN32`
+// alone -- so on Windows all of them are ACCEPTED, and the port accepts only
+// the engines it actually built.  Asserting the accept is worth as much as
+// asserting the refusal: it is the same fork read from the other side.
 TEST(WorldLoadR5, PluginHeaderValidationArms)
 {
+    // The languages Windows whitelists unconditionally and this port build does
+    // not: the expectation flips rather than the case disappearing.
+#ifdef _WIN32
+    const bool kExtraLanguagesLoad = true;
+#else
+    const bool kExtraLanguagesLoad = false;
+#endif
+
     struct { const char* name; const char* header; } cases[] = {
         { "p_req.xml",     "name=\"P\" id=\"0123456789abcdef012345dd\" requires=\"99.99\"" },
         { "p_badname.xml", "name=\"9bad\" id=\"0123456789abcdef012345dd\"" },
@@ -2810,9 +2958,6 @@ TEST(WorldLoadR5, PluginHeaderValidationArms)
           "name=\"P\" purpose=\"a123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789x\" id=\"0123456789abcdef012345dd\"" },
         { "p_shortid.xml", "name=\"P\" id=\"abc\"" },
         { "p_hexid.xml",   "name=\"P\" id=\"zzzzzzzzzzzzzzzzzzzzzzzz\"" },
-        { "p_lang.xml",    "name=\"P\" id=\"0123456789abcdef012345dd\" language=\"rubyscript\"" },
-        { "p_lang_perl.xml",
-          "name=\"P\" id=\"0123456789abcdef012345de\" language=\"perlscript\"" },
     };
 
     for (auto& c : cases) {
@@ -2820,7 +2965,30 @@ TEST(WorldLoadR5, PluginHeaderValidationArms)
             "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
             "<plugin " + std::string(c.header) + ">\n</plugin>\n</muclient>\n";
         CMUSHclientDoc doc;
-        EXPECT_FALSE(TryLoadPlugin(doc, write_temp_named(c.name, xml.c_str()).c_str()));
+        bool loaded = TryLoadPlugin(doc, write_temp_named(c.name, xml.c_str()).c_str());
+        // Name the case: they share one source line, so a bare EXPECT_FALSE
+        // says only that one of seven did the wrong thing.
+        if (loaded)
+            fprintf(stderr, "  header case %s LOADED and should not have\n", c.name);
+        EXPECT_FALSE(loaded);
+    }
+
+    struct { const char* name; const char* header; } languages[] = {
+        { "p_lang.xml",    "name=\"P\" id=\"0123456789abcdef012345dd\" language=\"rubyscript\"" },
+        { "p_lang_perl.xml",
+          "name=\"P\" id=\"0123456789abcdef012345de\" language=\"perlscript\"" },
+    };
+
+    for (auto& c : languages) {
+        std::string xml =
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+            "<plugin " + std::string(c.header) + ">\n</plugin>\n</muclient>\n";
+        CMUSHclientDoc doc;
+        bool loaded = TryLoadPlugin(doc, write_temp_named(c.name, xml.c_str()).c_str());
+        if (loaded != kExtraLanguagesLoad)
+            fprintf(stderr, "  language case %s %s and should not have\n",
+                    c.name, loaded ? "LOADED" : "was REFUSED");
+        EXPECT_EQ(kExtraLanguagesLoad, loaded);
     }
 }
 
@@ -2940,6 +3108,14 @@ TEST(WorldLoadR5, PluginStateFileArms)
 }
 
 // <comment> content lands on the "XML import notes" notepad.
+// Port-only observation seam.  The notepad fixture drives CTextDocument's
+// m_fn_* callbacks and hooks g_wxhook_create_text_window, and both are
+// #ifndef _WIN32: on Windows a notepad IS a real CEditView created through the
+// MFC doc/view framework, so there is no function pointer to substitute and no
+// window for this host to make.  Re-entering it means giving the test host a
+// document template and a frame -- the same thing test_accelerators.cpp needs
+// (docs/WINDOWS-VALIDATION.md 10k) -- not deleting the guard.
+#ifndef _WIN32
 TEST(WorldLoadR5, CommentsGoToTheNotepad)
 {
     const char* xml = R"(<?xml version="1.0"?>
@@ -2966,6 +3142,7 @@ TEST(WorldLoadR5, CommentsGoToTheNotepad)
               std::string((const char*) cap.pads[0]->doc->m_strTitle)
                   .find("XML import notes"));
 }
+#endif  // !_WIN32
 
 // An include file whose name is the reserved clipboard pseudo-name is refused
 // BEFORE it is recorded (the check at xml_load_world.cpp:836 throws before the

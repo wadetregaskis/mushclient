@@ -73,8 +73,8 @@ struct FakeWorldView : pal::IWorldView {
     // string, not a crash.
     void replaceCommandSelection(long start, long end, const char* text) override {
         long len = (long)cmd.size();
-        long s = std::max(0L, std::min(start, len));
-        long e = std::max(s,   std::min(end,   len));
+        long s = (std::max)(0L, (std::min)(start, len));
+        long e = (std::max)(s, (std::min)(end, len));
         std::string ins(text ? text : "");
         cmd = cmd.substr(0, (size_t)s) + ins + cmd.substr((size_t)e);
         cmdSel.start = cmdSel.end = (int)(s + (long)ins.size());
@@ -89,7 +89,7 @@ struct FakeWorldView : pal::IWorldView {
     std::vector<std::string> commandList(long count) const override {
         std::vector<std::string> out;
         long total = (long)history.size();
-        long n = (count <= 0) ? total : std::min(count, total);
+        long n = (count <= 0) ? total : (std::min)(count, total);
         for (long i = total - 1; i >= total - n; --i)
             out.push_back(history[(size_t)i]);
         return out;
@@ -173,6 +173,7 @@ struct FakeWorldView : pal::IWorldView {
     // returned by mainClientRect(); deliberately NOT a multiple of the
     // m_gui_* grid, so a test cannot pass on the headless fallback by accident
     pal::Rect mainClientR{ 0, 0, 793, 517 };
+    bool hasMainWin = true;               // answered by hasMainWindow()
 
     void setMainTitle(const char* t) override { mainTitle.assign(t); }
     void moveWorldWindow(long l, long t, long w, long h) override {
@@ -184,6 +185,10 @@ struct FakeWorldView : pal::IWorldView {
     bool saveWorld() override { ++saves; return true; }
     pal::Rect mainRect() const override { return mainR; }
     pal::Rect mainClientRect() const override { return mainClientR; }
+    // Separate from the rect on purpose: the seam has to be able to say "I have
+    // a window and it measures nothing", which is a minimised main frame, and
+    // a fake that derived this from the rect could not express it either.
+    bool hasMainWindow() const override { return hasMainWin; }
 
     // ── miniwindow mouse routing ────────────────────────────────────────────
     // WindowAddHotspot's create-under-the-cursor re-detect lands here.

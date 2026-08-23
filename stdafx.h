@@ -620,7 +620,8 @@ void Save_XML_colour  (CArchive& ar,
 void Save_XML_double    (CArchive& ar,
                        const char * sName,
                        const double & fNumber,
-                       const bool sameline = false);
+                       const bool sameline = false,
+                       const int iDecimals = 2);
 bool IsArchiveXML (CArchive& ar); // returns true if archive turns out to be XML
 bool IsClipboardXML (void); // returns true if clipboard turns out to be XML
 void SeeIfBase64 (CString & strText);

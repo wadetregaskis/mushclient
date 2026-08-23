@@ -30,7 +30,7 @@ extern "C" {
 #include <cstring>
 #include <cstdio>
 #include <string>
-#include <sys/resource.h>   // getrusage (RSS leak check)
+#include "posix_compat.h"
 
 lua_State* MakeLuaState();
 int RegisterLuaRoutines(lua_State*);
@@ -768,6 +768,14 @@ TEST(DatabaseTest, GetFieldBadSqlReturnsNilAndLeavesNoStatement)
 // Lua has its own column glue, so the COM-shaped methods (used by the
 // dispatch-based engines) are exercised directly here.  On the port a BSTR
 // is a char* copy and VARIANTs use the mfc_ui.h shim.
+//
+// Every BSTR below is compared through CString, never cast straight to
+// const char*.  On the port the cast is right and the CString is a no-op; on
+// Windows a BSTR is UTF-16, so "alpha" read as narrow bytes is "a" -- the
+// comparison then passes or fails on the first character alone, and these
+// seven tests failed exactly that way on the first Windows run.  CString is
+// the conversion on Windows and the identity on the port, which is why
+// variant_test_helpers.h vs() already spells it this way.
 
 TEST(DatabaseTest, CppColumnTextReturnsTextAndEmptyOutOfRange)
 {
@@ -776,10 +784,10 @@ TEST(DatabaseTest, CppColumnTextReturnsTextAndEmptyOutOfRange)
     f.doc.DatabasePrepare("db", "SELECT name FROM t ORDER BY id");
     f.doc.DatabaseStep("db");
     BSTR s = f.doc.DatabaseColumnText("db", 1);
-    EXPECT_STREQ("alpha", (const char*)s);
+    EXPECT_STREQ("alpha", (const char*)CString(s));
     SysFreeString(s);
     s = f.doc.DatabaseColumnText("db", 9);      // out of range → empty
-    EXPECT_STREQ("", (const char*)s);
+    EXPECT_STREQ("", (const char*)CString(s));
     SysFreeString(s);
 }
 
@@ -796,7 +804,7 @@ TEST(DatabaseTest, CppColumnValueVariantTypes)
 
     v = f.doc.DatabaseColumnValue("db", 2);           // TEXT → VT_BSTR
     EXPECT_EQ(VT_BSTR, (int)v.vt);
-    EXPECT_STREQ("alpha", (const char*)v.bstrVal);
+    EXPECT_STREQ("alpha", (const char*)CString(v.bstrVal));
     VariantClear(&v);
 
     v = f.doc.DatabaseColumnValue("db", 3);           // REAL → VT_R8
@@ -824,7 +832,7 @@ TEST(DatabaseTest, CppColumnValuesSafearrayTypes)
     EXPECT_EQ(VT_I4, (int)elems[0].vt);
     EXPECT_EQ(1L, (long)elems[0].lVal);
     EXPECT_EQ(VT_BSTR, (int)elems[1].vt);
-    EXPECT_STREQ("alpha", (const char*)elems[1].bstrVal);
+    EXPECT_STREQ("alpha", (const char*)CString(elems[1].bstrVal));
     EXPECT_EQ(VT_R8, (int)elems[2].vt);
     EXPECT_NEAR(1.5, elems[2].dblVal, 1e-9);
     // SQL NULL element: ChangeType(VT_NULL) stamps VT_NULL (Windows parity)
@@ -848,7 +856,7 @@ TEST(DatabaseTest, CppGetFieldReturnsFirstFieldVariant)
     ASSERT_NE(nullptr, f.L);
     VARIANT v = f.doc.DatabaseGetField("db", "SELECT name FROM t ORDER BY id DESC");
     EXPECT_EQ(VT_BSTR, (int)v.vt);
-    EXPECT_STREQ("beta", (const char*)v.bstrVal);
+    EXPECT_STREQ("beta", (const char*)CString(v.bstrVal));
     VariantClear(&v);
     // statement finalized: fresh prepare allowed
     EXPECT_EQ(0L, f.doc.DatabasePrepare("db", "SELECT 1"));
@@ -1099,7 +1107,7 @@ static void expect_variant_string(VARIANT& v, const char* expected)
 {
     EXPECT_EQ((int)VT_BSTR, (int)v.vt);
     if (v.vt == VT_BSTR)
-        EXPECT_STREQ(expected, (const char*)v.bstrVal);
+        EXPECT_STREQ(expected, (const char*)CString(v.bstrVal));
 }
 
 TEST(DatabaseTest, CppColumnValueBandsInt64)

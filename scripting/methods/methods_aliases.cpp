@@ -136,10 +136,20 @@ bool bReplace = false;
 
   // if it already exists, error
   if (GetAliasMap ().Lookup (strAliasName, alias_item))
+    {
     if (Flags & eReplace)
+      {
+      // Not while its own script is on the stack -- the eReplace arm below
+      // deletes this object and the caller writes bExecutingScript = false into
+      // it when the script returns.  DeleteAlias refuses it with eItemInUse
+      // (:96); the replace path never did.  docs/UPSTREAM-BUGS.md 102.
+      if (alias_item->bExecutingScript)
+        return eItemInUse;
       bReplace = true;
+      }
     else
       return eAliasAlreadyExists;
+    }
 
   // cannot have null match text
   if (strlen (MatchText) == 0)

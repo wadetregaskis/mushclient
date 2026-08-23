@@ -20,6 +20,9 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "mainfrm.h"   // ACCELERATOR_FIRST_COMMAND / ACCELERATOR_COUNT (the id pool)
+#ifdef _WIN32
+#include "MUSHview.h"  // the view AcceleratorTo walks for -- see AccelDoc below
+#endif
 #include "scripting/errors.h"
 #include "variant_test_helpers.h"
 
@@ -44,6 +47,52 @@ long command_for(CMUSHclientDoc& doc, BYTE fVirt, WORD key)
     return it == doc.m_AcceleratorToCommandMap.end() ? -1 : (long) it->second;
 }
 
+// ── the document these tests need ─────────────────────────────────────────
+//
+// A bare CMUSHclientDoc is enough on the port, where the HACCEL machinery does
+// not exist and the maps below are the whole mechanism.  On WINDOWS
+// AcceleratorTo opens by walking the document's view list for the MDI child
+// frame that owns the Win32 accelerator table, and refuses with eBadParameter
+// if it finds nothing -- so a document with no view cannot bind a single key
+// and eleven of these tests fail before they assert anything.
+//
+// So attach one.  Three facts make that possible without a GUI, all measured in
+// tests/win/test_gap_coverage.cpp's ClickColumnR6:
+//
+//   * CMUSHView's constructor is `protected: // create from serialization
+//     only`, like every MFC doc/view class, and
+//     RUNTIME_CLASS(..)->CreateObject() is the framework's own way past it.
+//   * CDocument::AddView tolerates a windowless view: its UpdateFrameCounts
+//     walk asks each view for its parent frame, and CWnd::GetParentFrame
+//     answers NULL for a null m_hWnd rather than asserting.
+//   * The DOCUMENT must be destroyed BEFORE the view.  ~CDocument runs
+//     DisconnectViews, which detaches without deleting; RemoveView is the
+//     tidy-looking call and the wrong one, because removing the last view runs
+//     OnCloseDocument -- `delete this` on an auto-delete document.
+//
+// What this does NOT give is a view with a window, so pView->GetParentFrame()
+// is NULL and the fallback chain in AcceleratorTo goes on to
+// App.m_pWorldDocTemplate->m_hAccelTable.  That is why the host now calls
+// CMultiDocTemplate::LoadTemplate (tests/mc_test.h): without it the table is
+// NULL, CopyAcceleratorTable answers 0, and the body indexes an empty vector.
+#ifdef _WIN32
+struct AccelDoc {
+    CMUSHView*      m_view;
+    CMUSHclientDoc* m_doc;
+    AccelDoc()
+      : m_view((CMUSHView*) RUNTIME_CLASS(CMUSHView)->CreateObject()),
+        m_doc(new CMUSHclientDoc)
+    { m_doc->AddView(m_view); }
+    ~AccelDoc() { delete m_doc; delete m_view; }   // document first — see above
+    CMUSHclientDoc& d() { return *m_doc; }
+};
+#else
+struct AccelDoc {
+    CMUSHclientDoc m_doc;
+    CMUSHclientDoc& d() { return m_doc; }
+};
+#endif
+
 }   // namespace
 
 // ── AcceleratorTo: the registration that used to be unreachable ────────────
@@ -52,7 +101,8 @@ long command_for(CMUSHclientDoc& doc, BYTE fVirt, WORD key)
 // three maps.  Before the fix this returned eBadParameter and touched nothing.
 TEST(Accelerators, AcceleratorToRegistersTheKeystroke)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     EXPECT_EQ((long) eOK, doc.AcceleratorTo("F5", "sing", eSendToWorld));
 
@@ -65,7 +115,8 @@ TEST(Accelerators, AcceleratorToRegistersTheKeystroke)
 // Modifiers have to survive the round trip, or Ctrl+F5 would collide with F5.
 TEST(Accelerators, ModifiersAreDistinctKeystrokes)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     EXPECT_EQ((long) eOK, doc.AcceleratorTo("F5", "plain", eSendToWorld));
     EXPECT_EQ((long) eOK, doc.AcceleratorTo("Ctrl+F5", "ctrl", eSendToWorld));
@@ -91,7 +142,8 @@ TEST(Accelerators, ModifiersAreDistinctKeystrokes)
 // leaking one out of the fixed ACCELERATOR_COUNT pool) and replaces the text.
 TEST(Accelerators, RebindingAKeyReusesTheCommandId)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     ASSERT_EQ((long) eOK, doc.AcceleratorTo("F5", "first", eSendToWorld));
     const long first = command_for(doc, FVIRTKEY, VK_F5);
@@ -110,7 +162,8 @@ TEST(Accelerators, RebindingAKeyReusesTheCommandId)
 // Windows the map IS the table, so the erase has to be explicit.
 TEST(Accelerators, EmptySendUnregistersTheKeystroke)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     ASSERT_EQ((long) eOK, doc.AcceleratorTo("F5", "sing", eSendToWorld));
     const long cmd = command_for(doc, FVIRTKEY, VK_F5);
@@ -143,7 +196,8 @@ TEST(Accelerators, EmptySendUnregistersTheKeystroke)
 // for free by never erasing, at the price of listing dead keys forever.
 TEST(Accelerators, UnbindingReleasesTheCommandIdForReuse)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     ASSERT_EQ((long) eOK, doc.AcceleratorTo("F5", "first", eSendToWorld));
     const long before = command_for(doc, FVIRTKEY, VK_F5);
@@ -168,7 +222,8 @@ TEST(Accelerators, UnbindingReleasesTheCommandIdForReuse)
 // "it worked twice" test would not notice, because the leak is one per cycle.
 TEST(Accelerators, ManyUnbindRebindCyclesDoNotExhaustThePool)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     // one cycle per id in the pool, plus a margin: without the free list this
     // starts returning eBadParameter partway through
@@ -184,7 +239,8 @@ TEST(Accelerators, ManyUnbindRebindCyclesDoNotExhaustThePool)
 
     // Distinct keys bound SIMULTANEOUSLY still each cost one, so the free list
     // has not turned the pool into an unbounded resource.
-    CMUSHclientDoc doc2;
+    AccelDoc fixture2;
+    CMUSHclientDoc& doc2 = fixture2.d();
     ASSERT_EQ((long) eOK, doc2.AcceleratorTo("F5", "a", eSendToWorld));
     ASSERT_EQ((long) eOK, doc2.AcceleratorTo("F6", "b", eSendToWorld));
     EXPECT_NE(command_for(doc2, FVIRTKEY, VK_F5),
@@ -194,7 +250,8 @@ TEST(Accelerators, ManyUnbindRebindCyclesDoNotExhaustThePool)
 // Deleting one keystroke must not disturb its neighbours.
 TEST(Accelerators, EmptySendLeavesOtherKeystrokesAlone)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     ASSERT_EQ((long) eOK, doc.AcceleratorTo("F5", "five", eSendToWorld));
     ASSERT_EQ((long) eOK, doc.AcceleratorTo("F6", "six",  eSendToWorld));
@@ -210,7 +267,8 @@ TEST(Accelerators, EmptySendLeavesOtherKeystrokesAlone)
 // Deleting a key that was never bound is a no-op, not an error or a crash.
 TEST(Accelerators, EmptySendOnAnUnboundKeyIsHarmless)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     EXPECT_EQ((long) eOK, doc.AcceleratorTo("F9", "", eSendToWorld));
     EXPECT_TRUE(doc.m_AcceleratorToCommandMap.empty());
@@ -220,7 +278,8 @@ TEST(Accelerators, EmptySendOnAnUnboundKeyIsHarmless)
 
 TEST(Accelerators, SendToOutOfRangeIsRejected)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     EXPECT_EQ((long) eOptionOutOfRange, doc.AcceleratorTo("F5", "sing", -1));
     EXPECT_EQ((long) eOptionOutOfRange, doc.AcceleratorTo("F5", "sing", eSendToLast));
@@ -231,7 +290,8 @@ TEST(Accelerators, SendToOutOfRangeIsRejected)
 // into eBadParameter rather than letting it escape into the script engine.
 TEST(Accelerators, UnknownKeyNameIsBadParameter)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     EXPECT_EQ((long) eBadParameter, doc.AcceleratorTo("Ctrl+Nonesuch", "sing", eSendToWorld));
     EXPECT_TRUE(doc.m_AcceleratorToCommandMap.empty());
@@ -243,7 +303,8 @@ TEST(Accelerators, UnknownKeyNameIsBadParameter)
 // which is also the destination AcceleratorList renders as blank.
 TEST(Accelerators, AcceleratorDefaultsToSendToExecute)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     EXPECT_EQ((long) eOK, doc.Accelerator("Ctrl+F8", "hello"));
 
@@ -258,7 +319,8 @@ TEST(Accelerators, AcceleratorDefaultsToSendToExecute)
 // MFC parity: a COleSafeArray that was never created detaches as VT_EMPTY.
 TEST(Accelerators, AcceleratorListIsEmptyWhenNothingIsBound)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     VARIANT v = doc.AcceleratorList();
     EXPECT_EQ((int) VT_EMPTY, (int) v.vt);
@@ -269,7 +331,8 @@ TEST(Accelerators, AcceleratorListIsEmptyWhenNothingIsBound)
 // compatibility with scripts written before AcceleratorTo existed.
 TEST(Accelerators, AcceleratorListRendersKeyTextAndDestination)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     ASSERT_EQ((long) eOK, doc.Accelerator("F5", "sing"));                  // eSendToExecute
     ASSERT_EQ((long) eOK, doc.AcceleratorTo("Ctrl+F6", "dance", eSendToWorld));
@@ -299,7 +362,8 @@ TEST(Accelerators, AcceleratorListRendersKeyTextAndDestination)
 // that the off-Windows delete arm really unhooks the entry.
 TEST(Accelerators, AcceleratorListDropsDeletedKeystrokes)
 {
-    CMUSHclientDoc doc;
+    AccelDoc fixture;
+    CMUSHclientDoc& doc = fixture.d();
 
     ASSERT_EQ((long) eOK, doc.Accelerator("F5", "sing"));
     ASSERT_EQ((long) eOK, doc.Accelerator("F6", "dance"));

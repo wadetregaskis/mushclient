@@ -1193,10 +1193,17 @@ bool bPaletteValid = false;
 
     // copy the wildcard contents to the clipboard, if required
 
-      if (trigger_item->iClipboardArg && 
-          trigger_item->iClipboardArg >= 0 &&
-          trigger_item->iClipboardArg < MAX_WILDCARDS)
-         putontoclipboard (trigger_item->wildcards [trigger_item->iClipboardArg].c_str (), m_bUTF_8);
+      // ClipboardWildcardIndex (OtherTypes.h) maps clipboard_arg onto the
+      // wildcards vector: 0 is "(none)", 1..9 are %1..%9, and 10 is the whole
+      // matching line at wildcards [0] -- the same convention the script array
+      // uses.  The old inline test was `arg && arg >= 0 && arg < MAX_WILDCARDS`,
+      // whose middle term was always true (arg is unsigned short) and whose
+      // upper bound excluded the 10 the Trigger dialog offers.
+      {
+      const int iWildcard = ClipboardWildcardIndex (trigger_item->iClipboardArg);
+      if (iWildcard >= 0)
+        putontoclipboard (trigger_item->wildcards [iWildcard].c_str (), m_bUTF_8);
+      }
 
       if (trigger_item->strLabel.IsEmpty ())
         Trace ("Matched trigger \"%s\"", (LPCTSTR) trigger_item->trigger);

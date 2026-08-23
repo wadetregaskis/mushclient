@@ -1016,22 +1016,31 @@ int ID = 0;
 // get a pathname and extract the directory from it
 CString ExtractDirectory (CString str)
   {
-#ifdef _WIN32
-  int iSlash = str.ReverseFind ('\\');
-  if (iSlash == -1)
-     str = ".\\";
-  else
-    str = str.Left (iSlash + 1);
-#else
-  // On POSIX paths use '/' but also accept '\' in case of cross-platform world files.
+  // Accept BOTH separators, on both platforms, and let the later one win.
+  //
+  // The POSIX arm always did, "in case of cross-platform world files".  The
+  // Windows arm looked only for a backslash, and that is an upstream defect
+  // rather than a platform difference -- its own caller proves it.
+  // xml_load_world.cpp decides whether a plugin filename is relative by asking
+  // whether it contains a backslash OR a forward slash, so a plugin path with
+  // forward slashes is a shape the loader expressly expects; six lines later it
+  // hands that same string to this function.  With a backslash-only search the
+  // answer was ".\", so the plugin's m_strDirectory -- and with it every
+  // $PLUGINDIR the plugin uses -- resolved to the current directory instead of
+  // the plugin's own.  Win32 has taken '/' as a path separator since NT, so
+  // widening the search cannot mis-split a path a backslash-only search got
+  // right: every such path has no '/' in it at all.  docs/UPSTREAM-BUGS.md 89.
   int iSlashF = str.ReverseFind ('/');
   int iSlashB = str.ReverseFind ('\\');
   int iSlash  = (iSlashF > iSlashB) ? iSlashF : iSlashB;
   if (iSlash == -1)
+#ifdef _WIN32
+     str = ".\\";    // the no-separator fallback still names the platform's own
+#else
      str = "./";
+#endif
   else
     str = str.Left (iSlash + 1);
-#endif
   return str;
   } // end of ExtractDirectory
 

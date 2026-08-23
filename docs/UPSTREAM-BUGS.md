@@ -102,6 +102,7 @@ patches upstream, not as a claim that this tree fixed it.
 | 85 | `MXP_StartTag` records a built-in tag as open — an active-list entry plus a `START_TAG` marker style — before `MXP_OpenAtomicTag` asks the veto, and nothing unwinds it, so a vetoed tag stays on the active list: a spurious `StartNewLine` from its close, a swallowed outstanding-tag warning, a close-tag callback for an open that was suppressed, and a vetoed `<send>` rewriting the enclosing anchor's action | `3095c2a` | mxpStart.cpp `CMUSHclientDoc::MXP_StartTag`; mxpOpenAtomic.cpp `CMUSHclientDoc::MXP_OpenAtomicTag` |
 | 86 | `calculate_line_and_column`'s two UTF-8 fix-ups disagree about direction — the first walks **forward** to the next character's lead byte (`col++`) where the half-way arm below walks **backward** (`col--`) — so the two arms can resolve the same click to different characters, and a click just left of a multi-byte character selects one too far right | not fixed (needs a Windows run) | mushview.cpp `CMUSHView::calculate_line_and_column` |
 | 87 | lsqlite3 decides whether a column value survives as a Lua number with `n == i64`, where the usual arithmetic conversions widen the int64 operand to double — so the test reads `(double) i64 == (double) i64`, is vacuously true, and the exact-decimal-string branch beside it is unreachable at all three sites; any value a double cannot hold is pushed to Lua silently **rounded** (a column holding `9007199254740993` reads back as `9007199254740992`) | `fbb6695` | lsqlite3.c `vm_push_column`, `db_last_insert_rowid`, `db_push_value` — vendored third-party code, so upstream lsqlite3 carries it too |
+| 88 | `Get_XML_date` builds its `CTime` with `nDST = 0` — "this wall-clock time is standard time" — so a date recorded during daylight saving is handed to `mktime` as if it were not, and reading the hour back through `localtime` returns it **one hour later**.  Measured on Windows: `"2020-05-06 07:08:09"` parses back as hour 8.  Invisible to the port, whose `CTime` shim ignores the argument and always passes `-1` | this commit | xmlparse.cpp `Get_XML_date` — the third bug in this function, after 5 and 6 |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1987,11 +1988,12 @@ had a Lua fixture whose `OnOpen` already returned `name == 'suppressme'`, but no
 ever sent `<suppressme>`, so the atomic-veto branch had **zero** coverage at HEAD. See
 `docs/WINDOWS-VALIDATION.md` §4c-duodequadragies.
 
-## 86 — The two UTF-8 click fix-ups walk in opposite directions (not fixed; needs a Windows run)
-**Bug:** `CMUSHView::calculate_line_and_column` corrects a click that lands mid-character
-twice, and the two corrections disagree. The first, right after `col--` makes the column
-zero-relative (`mushview.cpp:1927-1932`), walks **forward** to the next character's lead
-byte:
+## 86 — REFUTED: the two UTF-8 click fix-ups compose, they do not disagree (this commit)
+
+**The claim was:** `CMUSHView::calculate_line_and_column` corrects a click that lands
+mid-character twice, and the two corrections walk in opposite directions. The first,
+right after `col--` makes the column zero-relative (`mushview.cpp:1927-1932`), walks
+**forward** to the next character's lead byte:
 
 ```cpp
   if (pDoc->m_bUTF_8)
@@ -1999,23 +2001,59 @@ byte:
       col++;
 ```
 
-The half-way arm below it (`:1943-1947`), reached when the click is past the midpoint of
-the character and `bHalfWay` is set, walks **backward** with `col--`. So on Windows the
-same click can resolve to different characters depending on which arm runs, and a click
-just left of a multi-byte character selects one too far right.
+while the half-way arm below it (`:1943-1947`) walks **backward** with `col--`. So — the
+reasoning went — the same click resolves to different characters depending on which arm
+runs, and a click just left of a multi-byte character selects one too far right. The
+entry proposed a one-token fix (`col++` → `col--`), and recorded that it needed a Windows
+run before anyone made it, because `CMUSHView` is never constructed on the port.
 
-**Not fixed, on either platform.** `CMUSHView` is never constructed on the port, so the
-change is unverifiable from this side — nothing here can observe the defect or a fix for
-it. Correcting it is a single token (`col++` -> `col--`) in canonical `mushview.cpp`, but
-editing sacred upstream code on evidence this platform cannot produce is exactly the kind
-of change the project has learned not to make from reading alone. It needs a Windows run
-to confirm the misresolution, and then a call.
+**The run has now happened, and the answer is that there is no defect.** The two walks
+**compose**; each normalises the byte the step before it produced, in the direction that
+step went.
 
-**What a Windows run has to show:** in a UTF-8 world, click just to the left of a
-multi-byte character (an accented letter or a box-drawing glyph) and start a drag
-selection. The selection should begin at that character, not one to its right. Compare
-against a click past the character's midpoint, which takes the backward arm and is
-believed correct. Recorded as `docs/DECISION-QUEUE-2026-08.md` D-26.
+The loop measures the boundary **at** `col` and then advances `col` past the character
+there, so on exit `col` is the boundary *after* the character the click landed in, and
+`col--` is "that boundary, minus one **byte**". For a single-byte character that is
+already the next character's lead byte; for a multi-byte one it is a continuation byte,
+and the forward walk is exactly what normalises it to the same thing. The half-way arm
+then steps back from "the next character" to "this character", and its backward walk
+normalises *that*.
+
+**Measured** on Windows with `"Aé"` + `"B"` — bytes `A`=0, lead=1, continuation=2,
+`B`=3 — against the single-byte controls either side:
+
+| arm | click in `A` | click in `é` | click in `B` |
+|---|---|---|---|
+| `bHalfWay = false` | 1 | **3** | 4 |
+| `bHalfWay = true`, left half | 0 | **1** | — |
+| `bHalfWay = true`, right half | 1 | **3** | — |
+
+Every row is the **same rule** for one-byte and two-byte characters, which is the only
+thing the asymmetry could have broken. The half-way row is also exactly what a drag
+selection wants: anchor before the character when the click is in its left half, after it
+when the click is in its right.
+
+**The proposed fix was tried and measured too, and it is a regression.** Changing the
+forward walk to `col--` moves the left-half answer from 1 to 0, so a selection started in
+the left half of an accented character would begin one character too far left — the very
+defect the entry was trying to remove, introduced in its place.
+
+**How it was tested without a GUI**, since "needs a Windows run" turned out to mean "needs
+five lines nobody had written": `calculate_line_and_column` is public, its inputs are the
+document's line list and font metrics, and the only Windows object it insists on is a
+`CClientDC` — which, given a **NULL** `CWnd*`, is the screen DC and needs no window.
+`CMUSHView`'s constructor is protected (`// create from serialization only`) but
+`RUNTIME_CLASS(CMUSHView)->CreateObject()` is the framework's own way past that, and
+`CDocument::AddView` attaches the result safely because `CWnd::GetParentFrame` answers
+NULL for a windowless view rather than asserting. The document must be destroyed **before**
+the view (`~CDocument` runs `DisconnectViews`, which detaches without deleting);
+`RemoveView` is the tidy-looking call and the wrong one, because removing the last view
+runs `OnCloseDocument` — `delete this` on an auto-delete document.
+
+`tests/win/test_gap_coverage.cpp`'s `ClickColumnR6` pins both arms, controls included, so
+the refutation stays refuted.
+
+**Recorded as `docs/DECISION-QUEUE-2026-08.md` D-26; that row can be closed.**
 
 ## 87 — lsqlite3's int64 round-trip test is vacuously true, so the module rounds silently (`fbb6695`)
 **Bug:** the bundled Lua `sqlite3` module decides whether an INTEGER column survives
@@ -2072,3 +2110,1224 @@ range guard exists for. Mutation-checked: restoring the vacuous test fails it.
 **Vendored code.** `lsqlite/lsqlite3.c` is third-party and is in `MUSHclient.vcxproj`,
 so the defect ships to Windows too and the fix is a local patch that upstream
 lsqlite3 does not carry. See `docs/WINDOWS-VALIDATION.md` §4c-sexquadragies.
+
+## 88 — `Get_XML_date` tells `mktime` that summer is standard time, so every parsed hour is an hour late (this commit)
+
+**Bug:** the function's last line builds the result as
+
+```cpp
+tValue = CTime (iYear, iMonth, iDay, iHour, iMinute, iSecond, 0);
+```
+
+The trailing `0` is MFC's `nDST`, which `CTime` passes straight through as
+`tm_isdst` to `mktime`. `0` does not mean "no opinion" — it is a positive claim
+that the wall-clock time being converted is **standard** time. For any date
+inside a daylight-saving period the CRT therefore converts it as standard time,
+producing a `time_t` an hour earlier than intended; reading a component back
+through `localtime` — which is what `CTime::GetHour()` does — returns the hour
+one **later** than the string said.
+
+Measured rather than inferred, on Windows on 2026-08-21 with
+`tests/test_xmlparse.cpp`'s `XmlAttrR5.DateParseArms`:
+
+| attribute | parsed back as |
+|---|---|
+| `2020-05-06 07:08:09` | hour 8 |
+| `2020-05-06` (no time) | hour 1, not 0 |
+| `2020-05-06 01` | hour 2 |
+
+Every hour in the fixture is off by exactly one, and the shift is the local
+zone's DST offset — so the size of the error depends on the reader's timezone
+and the time of year, and it is zero for half the year, which is a good part of
+why it has survived.
+
+**Fix:** pass `-1` ("work it out"), which is `CTime`'s own default and what the
+three other `CTime` component constructors in this tree already get by not
+naming the parameter. `xmlparse.cpp:1592` is the only site in the tree that
+passes an explicit `nDST`.
+
+**Where it shows:** `Get_XML_date` has one caller that reaches user data —
+`xml_load_world.cpp:2472`, a plugin's `date_written`, which the Plugins dialog
+displays. Cosmetic in effect, but it is a value read straight back out of a file
+the client itself wrote, so a plugin's date drifts by an hour every time it is
+loaded during summer time.
+
+**Why the port never saw it:** `platform/mfc_time.h`'s `CTime` names the
+parameter `int /*dst*/` and always sets `tm_isdst = -1`. The port has therefore
+been giving the correct answer all along, and this is one of the cases where
+Windows and the port genuinely differed and the *port* was right. It took the
+Windows unit-test target (`docs/WINDOWS-VALIDATION.md` §10j, §10k) to see it: the
+test that caught it is not new and had been green on macOS for months.
+
+
+## 89 — `ExtractDirectory` looks only for a backslash on Windows, so a plugin path with forward slashes resolves `$PLUGINDIR` to the current directory (this commit)
+
+`utilities_shared.cpp`'s `ExtractDirectory` had two arms. The POSIX one searched
+for **both** separators and took the later, with the comment "also accept `'\'`
+in case of cross-platform world files". The Windows one searched for a backslash
+only:
+
+```cpp
+int iSlash = str.ReverseFind ('\\');
+if (iSlash == -1)
+   str = ".\\";
+else
+  str = str.Left (iSlash + 1);
+```
+
+So `ExtractDirectory("plugins/images/x.png")` answered `".\"` on Windows and
+`"plugins/images/"` on the port.
+
+**Why it is a defect rather than a platform difference: the function's own
+caller already expects forward slashes.** `xml/xml_load_world.cpp` decides
+whether a plugin filename is relative by asking whether it contains **either**
+separator:
+
+```cpp
+if (strFileName.Find ("\\") == -1 &&
+    strFileName.Find ("/") == -1)
+  strFileName = CString (Make_Absolute_Path (App.m_strPluginsDirectory)) + strFileName;
+```
+
+Six lines later it hands that same string to `ExtractDirectory` to set
+`m_CurrentPlugin->m_strDirectory`. A path with forward slashes is therefore a
+shape the loader **expressly** anticipates, and the very next thing it does with
+it mis-parses it.
+
+**Where it shows:** `m_strDirectory` is what `$PLUGINDIR` expands to
+(`xml_load_world.cpp`, the `::Replace` block), so a plugin loaded from a path
+written with forward slashes had every `$PLUGINDIR` resolve to the *current
+directory* instead of its own. Files the plugin ships beside itself (sounds,
+images, `require`d Lua) are then looked for in the wrong place. Forward slashes
+get into world files the ordinary way: a world file authored or edited on macOS
+or Linux, one hand-written, or one produced by a script.
+
+**Fix:** use the POSIX arm's search on both platforms, looking for both
+separators and taking the later. The only thing left under `#ifdef` is the
+no-separator fallback, which still names the platform's own separator (`".\"`
+against `"./"`).
+
+The widening cannot break a path the old code got right: for any string with no
+`'/'` in it the two searches return the same index, and a string that *does*
+contain `'/'` is exactly the case that was wrong. Win32 has accepted `'/'` as a
+path separator since NT, so the answer is usable as a path either way.
+
+**Why the port never saw it:** the port only ever compiled the other arm. The
+divergence came from widening the POSIX side without carrying the reasoning back
+across the `#ifdef`, so the comment explaining *why* both separators matter
+ended up inside the one arm that no longer needed explaining.
+
+**Test:** `tests/test_utilities.cpp`'s
+`Utilities.ExtractDirectoryAcceptsBackslashSeparators`. It needed no new case to
+catch this; two of its four assertions failed the moment the suite was enabled
+on Windows. It now asserts **both** mixed orders instead of one. Only
+`a\b/c.png` distinguishes the arms: a backslash-only search answers `a/b\c.png`
+correctly by accident, because there the backslash *is* the later separator. The
+pair pins the rule rather than one example of it. The fourth assertion, the
+no-separator fallback, is the one genuinely platform-specific line and is the
+only part still under an `#ifdef`.
+
+
+## 90 — A Lua MXP handler that returns nothing suppresses every tag, and every error (this commit)
+
+`ExecuteLua` hands the handler's answer back through a `bool *`, and writes a
+default first:
+
+```cpp
+if (result)
+  {
+  *result = true;                  // <-- the default
+  if (lua_gettop (L) > 0)          //     only overwritten when the handler
+    ...                            //     actually returned something
+  }
+```
+
+That default is correct, and deliberate: the parameter answers **"keep
+processing?"**, and "a handler that returns nothing keeps processing" is a
+reference contract all six languages conform to, asserted for each of them in
+`platform/engines_selftest.cpp`.
+
+The defect is that **two call sites read that same value as a different
+question**:
+
+| call site | what it reads `true` as | COM arm, handler returned nothing | Lua arm |
+|---|---|---|---|
+| `mxpStart.cpp` `MXP_StartTagScript` | **veto the tag** | `VT_EMPTY` → `return false`, proceed | **veto** |
+| `mxpError.cpp` `MXP_error` | **suppress the error** | `VT_EMPTY` → carry on | **suppress** |
+
+Both COM arms can tell "said nothing" from "said true", because a handler that
+returns nothing leaves the `COleVariant` as `VT_EMPTY`; the comment at the first
+of them is explicit about the intent — "if the function returns a non-zero
+result, don't go ahead". The Lua arm has no such signal, so it acts on a default
+that was written to answer a different question.
+
+**Why it stayed hidden.** Every existing test of these callbacks returns an
+explicit boolean. The case that fails is the one a real script is most likely to
+contain — the one-armed veto:
+
+```lua
+function OnMXPopenTag (name, args)
+  if name == 'u' then return true end
+end
+```
+
+That is the natural way to write "suppress `<u>`", and for every *other* tag it
+falls off the end of the function. The result was that a world with such a
+handler suppressed **all** MXP markup, while the identical handler written in
+VBScript suppressed only `<u>`. At the other site a handler that merely logs —
+no `return` anywhere, which is what a logging handler looks like — silenced the
+`ON_PLUGIN_MXP_ERROR` broadcast to every loaded plugin as well as the
+debug-window display.
+
+**A second defect at the same two lines.** Both sites declared their flag as a
+bare `bool result;`. `ExecuteLua` has four early returns that never reach the
+assignment — no Lua state, unknown dispid, the handler's name not found, and a
+run-time error in the handler — so a handler that *threw* left the caller
+reading uninitialised stack. At `MXP_StartTagScript` that means a broken handler
+vetoed tags at random.
+
+**The fix is additive, and that is deliberate.** `*result` must not be changed
+to default false: that would break the six-language keep-processing contract
+above. What the two MXP sites actually lack is the ability to tell "said
+nothing" from "said true". So `ExecuteLua` gained an optional
+`bool * pbReturnedAValue`, set from `lua_gettop (L) > 0` in Lua's own body, and
+the two sites honour `result` only when it says the handler really answered —
+which is exactly what `VT_EMPTY` gives their COM arms.
+
+Nothing else moves: the six plugin call sites do not pass the new parameter, the
+keep-processing contract is untouched, and the five embedded engines return
+before Lua's body and never set it, so with the flag seeded `true` at the call
+sites their behaviour is bit-for-bit what it was. Both sites also seed `result`
+itself, which removes the uninitialised read.
+
+**Tests:** `MxpVetoR5.OpenTagHandlerThatReturnsNothingDoesNotVetoTheTag`
+(`tests/test_mxp.cpp`) uses the one-armed handler above and asserts both halves
+in one test — `<b>` opens, `<u>` does not — so neither can pass with a handler
+that is never consulted.
+`PluginCallback.WorldErrorHandlerThatReturnsNothingStillTellsThePlugins`
+(`tests/test_plugins.cpp`) checks that the world's own error handler running does
+not stop the plugins hearing about the error, and asserts the world handler ran
+so the plugin's silence cannot be blamed on there having been no error. Both
+were confirmed to fail before the fix.
+
+**Still open: the five embedded engines on the port.** They are unchanged by
+this commit and still wrong in the same way — a Python `OnMXP_OpenTag` returning
+`None` still vetoes every tag. Each writes its own default rather than reporting
+whether the handler answered: `py_engine.cpp:552,555` (`*result = true`, then
+`Py_None` → `true` under the comment "no explicit return → keep going"),
+`perl_engine.cpp:411`, `js_engine.cpp:579`, `tcl_engine.cpp:365` (the non-`TCL_OK`
+arm) and `ruby_engine.cpp:512` (`Qnil` → `true`). Each needs one line: set
+`pbReturnedAValue` from whatever it already uses to spot the no-return case.
+Verification is `--engines-selftest`, which needs a macOS GUI build, so it is not
+part of this commit. Windows is unaffected either way — all five are
+`#ifndef _WIN32`.
+
+## 91 — `world.Save (name, true)` on a never-saved world throws instead of saving (this commit)
+
+`L_Save` (`scripting/lua_methods.cpp`) implements the Save-**As** flag by
+remembering the document's path name, saving under the new one, and putting the
+old one back:
+
+```cpp
+CString strOldName = pDoc->GetPathName ();
+...
+lua_pushboolean (L, pDoc->Save (my_checkstring (L, 1)));
+if (bSaveAs)
+  pDoc->SetPathName (strOldName, FALSE);
+```
+
+For a world that has never been saved, `GetPathName ()` is `""` — and
+`CDocument::SetPathName ("")` is not a quiet no-op. MFC fully qualifies the name
+before storing it, `AfxFullPath` fails on an empty string, and the failure
+branch is:
+
+```cpp
+if (AfxFullPath (szFullPath, lpszPathName) == FALSE)
+  {
+  ASSERT(FALSE);
+  AfxThrowFileException (CFileException::badPath, -1, lpszPathName);
+  }
+```
+
+(`doccore.cpp:291-297` in MFC 14.44.) So the restore raises
+`CFileException::badPath` **out of a Lua C function**, past `lua_pcall`'s C
+frames. The file on disk is written correctly first — the throw is in the
+book-keeping after it — which is what makes this look like an intermittent
+"scripting error" rather than a save failure.
+
+Reachable in the product: File ▸ New World, then any plugin or script line that
+calls `world.Save (filename, true)`. A world opened from a file has a path name
+and is unaffected, which is why it has survived.
+
+**Fix:** only restore a name there is one to restore.
+
+```cpp
+if (bSaveAs && !strOldName.IsEmpty ())
+  pDoc->SetPathName (strOldName, FALSE);
+```
+
+With nothing to go back to the document keeps the name just written, which is
+what File ▸ Save As does for an untitled document.
+
+**Found by** the Windows unit-test target: `LuaMarshal.SaveWritesWorldFile` and
+`SweepR4.WorldSaveRoundTripWithEverything` both call `world.Save (path, true)`
+on a fresh `CMUSHclientDoc`. The port never saw it because its `CDocument` shim
+accepts an empty path name. The frame came from the assertion-stack hook
+described in `docs/WINDOWS-VALIDATION.md` §10z; before that the run reported
+only `doccore.cpp(293) : Assertion failed!`, which names a line in MFC and
+nothing about the caller.
+
+## 92 — The "bytes sent" statistic is counted twice
+
+**Where:** `doc_shared.cpp`'s `CMUSHclientDoc::SendPacket` and
+`worldsock.cpp`'s `CWorldSocket::OnSend`, both as of `249534f^`.
+
+`m_nBytesOut` is incremented in **two** places on the same data:
+
+```cpp
+// SendPacket, once per call, for the whole buffer
+m_pSocket->m_outstanding_data.append (lpBuf, nBufLen);
+m_pSocket->OnSend (0);   // in case FD_WRITE message got lost, try to send again
+m_nBytesOut += nBufLen;
+
+// CWorldSocket::OnSend, again, for every chunk that drains
+count = Send (m_outstanding_data.data (), m_outstanding_data.length ());
+if (count != SOCKET_ERROR)
+  pDoc->m_nBytesOut += count; // count bytes out
+```
+
+`SendPacket` calls `OnSend (0)` itself, so both run on every send. Once the
+buffer has fully drained the two contributions are equal, and the figure is
+exactly **double** the bytes that went out. (It is not a fixed factor while data
+is still queued, which is why it never looks like an obvious 2×.)
+
+Everything that reports the number is affected: the world-properties Info page's
+`Sent: %I64d bytes` (`dialogs/world_prefs/configuration.cpp:552`), `world.GetInfo
+(217)` and its Lua twin (`scripting/methods/methods_info.cpp:633`,
+`scripting/lua_methods.cpp:3737`), and `world.Debug`'s `Sent:` line
+(`world_debug.cpp:1397`). **Bytes RECEIVED is counted once and is right**, so a
+world's own statistics page shows a plausible-looking 2:1 out:in ratio for a
+session that was actually about 1:1 — which is exactly why nobody notices.
+
+`chatsock.cpp:501` counts the chat socket's bytes once and is unaffected.
+
+**Fix:** count where the engine hands the data over, not again as it drains.
+This is what the transport relocation did (`doc_shared.cpp:1785` carries the
+note), so this build now reports the true figure on both platforms — a
+behavioural difference from stock 5.06, registered as
+`docs/UPSTREAM-DIVERGENCES.md` § 20.
+
+**Found by** reading `CWorldSocket::OnSend` out of git history while writing
+`tests/win/test_win_transport.cpp`, to check whether the adapter had reproduced
+its one-`Send`-per-`FD_WRITE` structure faithfully. It had. The byte counter
+beside it had not, deliberately, and nothing recorded that.
+`WinTransport.BytesSentAreCountedOncePerSendPacket` pins the fixed behaviour.
+
+## 93 — "Save notes to file" is an OPEN dialog, so it truncates without asking
+
+**Where:** `dialogs/world_prefs/prefspropertypages.cpp`, `CPrefsP11::OnSaveNotes`
+(the world-properties Notes page, the **Save…** button).
+
+```cpp
+CFileDialog filedlg (TRUE,   // loading the file
+                     "txt",
+                     "",
+                     OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+                     ...
+filedlg.m_ofn.lpstrTitle = "File to save notes into";
+...
+f = new CFile (filedlg.GetPathName (), CFile::modeWrite | CFile::modeCreate);
+```
+
+`CFileDialog`'s first parameter is `bOpenFileDialog`, and it is `TRUE`. So the
+panel is an **Open** dialog wearing a save dialog's title, and
+`OFN_OVERWRITEPROMPT` — which the author asked for explicitly — is inert,
+because an open panel has no overwrite confirmation to give. `CFile::modeCreate`
+then truncates. **Choosing an existing file destroys it with no warning.**
+
+It is a copy-paste: `CPrefsP11::OnLoadNotes` sits directly above with the same
+four arguments and the same `// loading the file` comment, which came along with
+them.
+
+This is the only site in the tree shaped this way. Every other
+`OFN_OVERWRITEPROMPT` passes `FALSE` (`chatsock.cpp:1082`, `doc.cpp:740`,
+`evaluate.cpp:850`, `mushview.cpp:3997`, `plugins.cpp:1051`,
+`prefspropertypages.cpp:1156` and `:8019`) or derives it from a `bLoad`
+parameter that is `FALSE` on the save arm (`prefspropertypages.cpp:7238`,
+`scripting/lua_utils.cpp:750`).
+
+**Measured on the running client**, not inferred: driving Game ▸ Configure ▸
+Notes ▸ Save… and reading the resulting panel's controls gave
+
+```
+FILE PANEL title: 'File to save notes into'
+   button id=1      '&Open'          <- before
+   button id=1      '&Save'          <- after
+```
+
+**Fix:** `FALSE`. The overwrite prompt then works because it is finally attached
+to a dialog that implements one.
+
+**Note for the port.** The macOS symptom was *different and more visible* — an
+`NSOpenPanel` will not return a name that does not exist, so the button could
+never create a new file — and `platform/mfc_ui.h` compensated for it in the shim
+with an `openOrCreate` heuristic ("an open-style dialog whose flags say the file
+need not exist and that it should warn before overwriting"). That heuristic was
+the *blocker stated at the wrong layer*: it patched the shim for a typo one
+level up, and it could not have fixed Windows, where the open panel happily
+returns new names and only the warning is lost. With the call site corrected the
+heuristic is unreachable; it is left in place with a comment saying so.
+
+## 94 — MXP `</p>` uses the line a gagging trigger just freed
+
+**Where:** `mxp/mxpClose.cpp`, `CMUSHclientDoc::MXP_CloseTag`.
+
+`MXP_CloseTag` opens by scanning backwards through `m_LineList` for the matching
+start tag, and caches four things about where it found it:
+
+```cpp
+CLine  * pLine;    POSITION oldlinepos;
+CStyle * pStyle;   POSITION oldstylepos;
+```
+
+It then dispatches the tag through `MXP_CloseAtomicTag`, and afterwards uses all
+four again without re-checking any of them:
+
+```cpp
+pLine->styleList.RemoveAt (oldstylepos);
+...
+m_pCurrentLine->styleList.AddTail (pStyle);
+pStyle->iFlags &= ~START_TAG;
+```
+
+For `</p>` the dispatch is (`mxp/mxpCloseAtomic.cpp`)
+
+```cpp
+case MXP_ACTION_P:
+   m_bInParagraph = false;
+   StartNewLine (true, 0);
+```
+
+`StartNewLine` with a hard break runs `ProcessPreviousLine`, and a trigger with
+**omit from output** does this (`ProcessPreviousLine.cpp`):
+
+```cpp
+delete pLine;                // delete contents of tail iten
+m_LineList.RemoveTail ();    // get rid of the line
+```
+
+The line `MXP_CloseTag` is holding is the **tail** — that is where its backwards
+scan began — so it is the first one gagged away, taking its `styleList` and
+therefore `pStyle` with it (`~CLine` deletes every style it owns). Everything
+after the dispatch then reads and writes freed memory.
+
+**Reachable from the MUD**: any server sending `<p>…</p>` in secure mode to a
+world with a gagging trigger. `p` is secure-only (`mxp/mxpinit.cpp` gives it no
+`TAG_OPEN`), so a plain-mode world is safe; a Discworld-style MXP world is not.
+
+**Measured**, with a Debug CRT that fills freed memory with `0xDD`:
+
+```
+*** ACCESS VIOLATION (0xC0000005) -- writing 0xDDDDDDDD
+   0  CPtrList::RemoveAt
+   1  CMUSHclientDoc::MXP_CloseTag   mxp/mxpClose.cpp:337
+   2  CMUSHclientDoc::MXP_EndTag     mxp/mxpEnd.cpp:111
+   3  CMUSHclientDoc::MXP_collected_element
+   4  CMUSHclientDoc::Phase_MXP_ELEMENT
+   5  CMUSHclientDoc::DisplayMsg
+```
+
+**Fix:** re-find the line before touching it, and return if it has gone — the
+same liveness check `aca2478` gave the Plugins dialog for a stale `CPlugin*`.
+The re-scan is bounded by how far back the opening tag was, which the forward
+scan already measured, so it costs no more than the search that produced the
+pointer.
+
+Nothing leaks on the bail-out path: `~CLine` released the styles and their
+actions when it went.
+
+**Shared code — the same defect ships on macOS**, where a sanitizer would call
+it a heap-use-after-free rather than an access violation.
+`MXPCloseR6.ParagraphCloseSurvivesAGaggingTrigger` in `tests/test_mxp.cpp` runs
+on both.
+
+## 95 — "Cancel" on world properties is not a cancel
+
+**Where:** `dialogs/world_prefs/configuration.cpp`,
+`CMUSHclientDoc::LoadPrefsP23` (the Chat page's load half).
+
+```cpp
+  // take reasonable defaults
+
+  if (m_strOurChatName.IsEmpty ())
+    m_strOurChatName = m_name;      // try login character name
+
+  if (m_strOurChatName.IsEmpty ())
+    m_strOurChatName = DEFAULT_CHAT_NAME;  // still nothing? blech!
+
+  if (m_IncomingChatPort == 0)
+    m_IncomingChatPort = DEFAULT_CHAT_PORT;  // won't use port 0
+
+  if (m_cChatForegroundColour == m_cChatBackgroundColour)
+    {
+    m_cChatForegroundColour = RGB (255, 0, 0);
+    m_cChatBackgroundColour = RGB (0, 0, 0);
+    }
+
+  // show whether we really are accepting calls
+  m_bAcceptIncomingChatConnections = m_pChatListenSocket != NULL;
+```
+
+Every one of those writes **the document**, not the page — and `LoadPrefsP23`
+runs when the property sheet is *built*, alongside the other twenty-two, so it
+happens whichever page the user asked for and before anything is shown. By the
+time there is a button to press, the document has already changed, and **Cancel
+cannot undo it**: the change did not happen at OK.
+
+`SetModifiedFlag` is not called either, so the world is not marked dirty and
+nothing prompts. The new values simply sit in the document until the next save
+— autosave, File ▸ Save World Details, quitting a world with
+`save_world_automatically` — and are written then.
+
+**Measured on the running client.** A world file with no `chat_name`, opened,
+Game ▸ Configure ▸ *MUD name/IP address* (not even the Chat page), **Cancel**,
+File ▸ Save World Details, diff:
+
+```
+CANCEL : WORLD FILE CHANGED
+   =>    chat_name="Name-not-set"
+```
+
+**Fix:** default into locals and put them on the *page*. Nothing is lost:
+`SavePrefsP23` copies all of these back on OK, unconditionally
+(`configuration.cpp`'s save block is a straight-line list, not gated on
+`ChangedPrefs*`), so the OK path lands on exactly the values it always did. It
+also now *says* so — `ChangedPrefsP23` can finally see the difference, so a
+sheet that fills in defaults marks the world modified, which it should always
+have done.
+
+Verified both ways on the running client after the change:
+
+```
+Chat page, OK      -> WORLD FILE CHANGED:  chat_name="Name-not-set"
+Chat page, CANCEL  -> world file unchanged
+```
+
+**Scope.** Only `LoadPrefsP23` does this; the other twenty-two `LoadPrefsP*`
+functions assign to `pageNN.*` and nothing else, checked by walking each body
+for a bare `m_… =`. So this is one page's slip, not a pattern — but it is the
+page every sheet loads.
+
+## 96 — A short chat file block writes heap memory into the user's file
+
+**Where:** `chatsock.cpp`, `CChatSocket::Process_File_block`.
+
+```cpp
+UINT expected = m_iFileBlockSize;
+if (m_iBlocksTransferred == m_iFileBlocks)
+  expected = m_iFileSize % m_iFileBlockSize;   // smaller final block
+if (expected == 0)
+  expected = m_iFileBlockSize;
+
+CString strBuffer = strMessage;
+char * pBuff = strBuffer.GetBuffer (strMessage.GetLength ());
+...
+m_pFile->Write (pBuff, expected);
+...
+shsUpdate (&m_shsInfo, (unsigned char *) pBuff, expected);
+```
+
+`expected` is what the **peer promised**: `m_iFileBlockSize` comes from the
+handshake (`request.fileBlockSize`, 1024 for zChat) and `m_iFileSize` from its
+file-start message (`m_iFileSize = atol (strSize)`). `pBuff` is a buffer of
+`strMessage.GetLength ()` bytes — what actually arrived. **Nothing compares the
+two.**
+
+The two transports differ, and only one is safe:
+
+| transport | how the block is sliced |
+|---|---|
+| MudMaster | `if (iLength < (m_iFileBlockSize + 2)) return;` then `Mid (1, m_iFileBlockSize)` — waits for a full block, so the slice is always exactly the block size |
+| **zChat** | length taken from two bytes of the peer's own message header, `Mid (4, iLength)` — **whatever the peer said, 0 to 65535, never compared to the block size** |
+
+So a peer sending a one-byte `CHAT_FILE_BLOCK` over zChat makes the receiver
+`Write (pBuff, 1024)` out of a one-byte allocation: **1023 bytes past the end of
+a heap block, written into the file the user is receiving**, and fed to the SHA
+sumcheck alongside. The guard the zChat arm needs is the one the MudMaster arm
+already has.
+
+**Reachable:** the chat file-transfer flow — a peer this client is chatting with
+offers a file and the user accepts it, or `m_bAutoAllowFiles` ("accept files
+automatically") is on and no acceptance is needed. Both ends of a chat session
+are ordinary MUSHclient users; this needs a modified or malfunctioning one at
+the other end, not a compromised MUD.
+
+**Fix:** refuse a block shorter than promised, rather than clamping. A short
+block means the transfer is already wrong, and silently writing a short one
+produces a corrupt file whose only symptom is the sumcheck failing at the end.
+The abort path already exists and already deletes the half-received file.
+
+**Shared code — the same defect ships on macOS**, where a sanitizer would call
+it a heap-buffer-overflow read. `ChatFileBlockR6.AShortBlockIsRefusedRatherThan
+PaddedFromTheHeap` in `tests/win/test_gap_coverage.cpp` drives
+`Process_File_block` directly (the socket-level suite is excluded on Windows for
+using `socketpair`) and was verified non-vacuous: with the guard replaced by
+`if (false)`, all three of its assertions fail.
+
+## 97 — A script routine name is used as a printf format (Windows COM engines)
+
+**Where:** `scripting/scriptengine.cpp`, `CScriptEngine::ExecuteScript`, inside
+the file's own `#ifdef _WIN32`.
+
+```cpp
+m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
+```
+
+`CMUSHclientDoc::Trace` is **printf-style** — `doc.h` declares it
+`void Trace (LPCTSTR lpszFormat, ...) MC_PRINTF_FORMAT(2, 3)` and its body does
+`strMsg.FormatV (lpszFormat, argList)`. The line above hands it the
+*already-composed* string as the format, with no varargs behind it. A `%` in
+`szProcedure` is therefore a conversion specifier read against an empty
+argument list.
+
+`szProcedure` is a script routine name: it comes from a world file's
+`script="…"` attribute on a trigger, alias or timer, or from
+`world.AddTrigger (…, "name")`. A routine called `100%s` is enough.
+
+**This was already found and fixed — three times — in the Lua twin**, which
+carries the reasoning verbatim at each site:
+
+```cpp
+// Trace takes a FORMAT; szProcedure is a plugin-supplied callback name, so
+// handing the composed string straight in would let a '%' in it read a
+// vararg that does not exist.
+m_pDoc->Trace ("%s",
+  (LPCTSTR) TFormat ("Executing %s script \"%s\"", szType, szProcedure));
+```
+
+(`scripting/lua_scripting.cpp`, three occurrences.) `exceptions.cpp` carries a
+comment about the same hazard. The COM path is `#ifdef _WIN32`, so the port
+never compiled it and the sweep that fixed the others never reached it.
+
+**Fix:** the same one line the Lua path uses. A tree-wide grep for a
+`MC_PRINTF_FORMAT`-annotated function called with a computed first argument now
+returns nothing but the two legitimate `va_list` forwarders in `exceptions.cpp`.
+
+**Narrow but real:** it needs a `%` conversion in a routine name, tracing on
+(Game ▸ Trace), and a COM scripting language — VBScript, JScript, PerlScript or
+PythonScript, i.e. not Lua. That is a Windows-only combination, which is exactly
+why it survived.
+
+## 98 — A second chat file offer corrupts, or frees, the transfer in progress
+
+**Where:** `chatsock.cpp`, `CChatSocket::Process_File_start`.
+
+The function had **no in-progress guard**. Its only gates were
+`m_bCanSendFiles`, the `"filename,filesize"` argument count, the slash check,
+and whether the user wanted the file. A second `CHAT_FILE_START` arriving
+mid-transfer therefore ran straight through to
+
+```cpp
+m_pFile = new CFile (m_strOurFileName, CFile::modeCreate | CFile::modeReadWrite);
+```
+
+**leaking the open `CFile`** and orphaning the half-received file it was
+writing. And the failure arm of that same `new` did
+
+```cpp
+delete m_pFile;    // in case it was set up
+```
+
+**without nulling it.** On its own that is harmless — `m_bDoingFileTransfer` is
+false, so `Process_File_block` and `StopFileTransfer` both return early — but
+together with the missing guard it is a **write through freed memory**: a
+transfer is running (so the flag is true), a second offer's open fails, and the
+next `CHAT_FILE_BLOCK` writes to the deleted `CFile`.
+
+**It bites even when the user says no.** `m_iFileSize = atol (strSize)` runs
+*before* the accept prompt, so a second offer that is refused still overwrites
+the running transfer's size — and that feeds `m_iFileBlocks` and the
+final-block arithmetic, so the file being received is truncated or padded.
+Measured: with the guard removed, `m_iFileSize` reads 2048 where the running
+transfer had 4096.
+
+**Fix:** refuse a second `CHAT_FILE_START` while one is running, with a
+`CHAT_FILE_DENY` in the same style as the existing refusals; and null `m_pFile`
+after deleting it, as every other site that deletes it already does.
+
+`ChatFileBlockR6.ASecondFileStartIsRefusedWhileATransferIsRunning` pins it, and
+was verified non-vacuous.
+
+**Shared code — the same defect ships on macOS.** Same family as 96, found in
+the same function's neighbourhood by the same sweep.
+
+## 99 — `CTimer`'s constructor leaves `bEnabled` uninitialised
+
+**Where:** `OtherTypes.h`, `CTimer::CTimer`.
+
+The constructor assigns twenty-one members and not `bEnabled`. Its two
+siblings — `CAlias` and `CTrigger` — both do `bEnabled = TRUE;`.
+
+That is not cosmetic, because `Get_XML_boolean` leaves its output **untouched**
+when the attribute is absent and defaults are wanted:
+
+```cpp
+if (!Get_XML_string (node, sName, strValue, bUseDefault))
+  if (bUseDefault)
+    return false;          // bValue never assigned
+```
+
+and the timer loader reads it through that path
+(`GET_BOOL_BOOL ("enabled", t->bEnabled)`, with `bUseDefault` coming either
+from the element's own `defaults="y"` or from the enclosing `<include>`). So a
+`<timer defaults="y">` with no `enabled=` attribute — ordinary hand-written
+plugin XML — took whatever was on the heap. Under a Debug CRT that is `0xCD`
+fill, i.e. reliably true; under a Release allocator it is whatever the previous
+occupant left.
+
+**Fix:** `bEnabled = TRUE;`, matching the siblings. Pinned by
+`ConstructorDefaultsR6.ATimerIsEnabledOnConstructionJustLikeAnAliasAndATrigger`,
+which asserts all three together — a timer that loaded *disabled* where an
+identically-written alias loaded enabled would be a subtler bug than the
+uninitialised read.
+
+## 100 — `world.SetOption ("wrap_column", n)` under-allocates the line buffer and then lies about it
+
+**Where:** `scriptingoptions.cpp`, the `OPT_FIX_WRAP_COLUMN` arm of
+`SetOptionItem`.
+
+```cpp
+delete [] m_pCurrentLine->text;
+m_pCurrentLine->text = new char [MAX (m_pCurrentLine->len, Value)];
+```
+
+Two things wrong, and the second is what makes the first dangerous.
+
+**The size is in the wrong unit.** `CLine`'s own constructor sizes the buffer in
+BYTES from a wrap column counted in CHARACTERS, and a UTF-8 world needs four
+bytes each:
+
+```cpp
+if (bUnicode) iMemoryAllocated = nWrapColumn * 4;
+else          iMemoryAllocated = nWrapColumn;
+```
+
+This site used the raw column count, so on a UTF-8 world the re-allocated buffer
+is **a quarter** of what the wrap logic is entitled to fill.
+
+**And `iMemoryAllocated` was never updated.** `DisplayMsg`'s emergency bail-out
+is
+
+```cpp
+// in the Unicode case we are allocating 4 bytes per character so we shouldn't
+// overshoot the allocated memory, but just in case, we test that we don't
+if (((iLineLength >= m_nWrapColumn) && bNewCharacter) ||
+    (m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated))
+```
+
+— the single guard against overrunning this buffer, and it was answering for the
+allocation the line used to have. The other site that re-allocates the same
+buffer (`doc_shared.cpp`, the end-of-line shrink) updates `iMemoryAllocated`
+first and allocates from it; only this one did not.
+
+**Measured**, with the update removed: a UTF-8 line built at wrap 80 has
+`iMemoryAllocated == 320`; after `SetOption ("wrap_column", 200)` the buffer is
+**200 bytes** and the record still reads **320**. The guard therefore permits
+120 bytes of writing that the allocation cannot take, and MUD output is what
+does the writing.
+
+**Reachable from a script**: `world.SetOption ("wrap_column", n)` is a
+documented API, and the world-properties Output page changes the same option.
+Shrinking is the dangerous direction and is the ordinary one — 80 columns from a
+wider default.
+
+**Fix:** compute the size once, into `iMemoryAllocated`, with the constructor's
+own arithmetic, and allocate from it. Pinned by
+`WrapColumnResizeR6.TheLineBufferAndItsRecordedSizeStayInStep`, verified
+non-vacuous.
+
+**Shared code — the same defect ships on macOS**, where a UTF-8 world is the
+common case rather than the unusual one.
+
+## 101 — Four world options silently revert to their defaults when set to zero
+
+**Where:** `xml/xml_save_world.cpp`, the numeric arm of the option loop.
+
+Two rules that only compose when the default is zero:
+
+- `Save_XML_number` omits an attribute whose value is 0, unless the caller asks
+  for it (`bWriteZero`).
+- The loader keeps the member **as constructed** when a numeric attribute is
+  absent — `Get_XML_number` with `bUseDefault` leaves its output untouched, and
+  the constructor value is the table default.
+
+So an option whose default is non-zero loses a deliberate 0 on every save.
+
+`max_output_lines` is the one row anybody had noticed; it was given
+`OPT_ZERO_UNLIMITED` to force the write, and both `docs/AUDIT-2026-08.md` and
+`docs/WINDOWS-VALIDATION.md` close that story with *"Any **future** option where
+0 is a real setting rather than 'unset' has the same trap"*. **Four existing
+rows already had it:**
+
+| option | default | range |
+|---|---|---|
+| `pixel_offset` | 1 | 0–20 |
+| `fade_output_opacity_percent` | 20 | 0–100 |
+| `tool_tip_visible_time` | 5000 | 0–120000 |
+| `tool_tip_start_time` | 400 | 0–120000 |
+
+Every one of them accepts 0 from `world.SetOption` and from its prefs page, and
+0 means something in each: no offset, fade to transparent, show immediately.
+
+**Measured**, with the fix reverted: set all four to 0, save, and none of the
+four attributes is in the file; reload and they read 1, 20, 5000 and 400.
+
+**Fix:** write a zero whenever the option's default is non-zero, which is
+exactly the condition under which omitting it loses information. A row whose
+default is 0 is written exactly as before, and a non-zero value always was —
+so no existing world file changes except by gaining the four attributes it
+should always have carried.
+
+`WorldLoad.AZeroSurvivesOnEveryOptionWhoseDefaultIsNotZero` pins all four,
+checking both the bytes on disk and the reload. The two checks are not
+redundant: the boolean and alpha arms of the loader *do* zero an absent
+attribute, so a reload-only test could pass on a build where the numeric arm
+started doing the same.
+
+## 102 — Replacing a trigger, alias or timer whose own script is running frees it
+
+**Where:** `scripting/methods/methods_triggers.cpp` (`AddTriggerEx`),
+`methods_aliases.cpp` (`AddAlias`), `methods_timers.cpp` (`AddTimer`) — the
+`eReplace` arm of each.
+
+`ProcessPreviousLine` brackets a trigger's script like this:
+
+```cpp
+trigger_item->bExecutingScript = true;     // cannot be deleted now
+SendTo (...);                              // the script runs here
+trigger_item->bExecutingScript = false;    // can be deleted now
+```
+
+`DeleteTrigger` honours that comment:
+
+```cpp
+// can't if executing a script
+if (trigger_item->bExecutingScript)
+  return eItemInUse;
+```
+
+The `eReplace` arm of `AddTriggerEx` did not — it went straight to
+`delete trigger_item`. So a script that replaces the very trigger that invoked
+it frees the object, and the `= false` on the line after `SendTo` writes into
+freed memory. `DeleteAlias` and `DeleteTimer` have the same guard and
+`AddAlias`/`AddTimer` had the same hole.
+
+**Reachable, and not exotic:** `world.AddTrigger (name, …, eReplace)` from
+inside that trigger's own script. Re-registering yourself — to change the match
+text, the sequence, or the response — is an ordinary thing for a plugin to do,
+and `eReplace` exists precisely so that it can be done without a separate
+delete.
+
+**Measured**, with the three guards removed: all three calls return `eOK`
+instead of `eItemInUse`, and the map's pointer changes underneath the caller —
+`0A7A5F58` → `0A7A6500` for the trigger, and likewise for the alias and the
+timer. The old address is the one the caller is about to write `false` into.
+
+**Fix:** the same guard the matching `Delete*` has, at the point where
+`bReplace` is decided, returning `eItemInUse`. Pinned by
+`ReplaceWhileRunningR6.AllThreeRefuseToReplaceAnItemWhoseScriptIsOnTheStack`,
+which also asserts the refusal is about the *script* and not about replace being
+broken: with the flag cleared, the same three calls succeed.
+
+**Shared code — the same defect ships on macOS.**
+
+## 103 — Three archive writes report success before the bytes are written
+
+**Where:** `plugins.cpp` (`CPlugin::SaveState`),
+`dialogs/world_prefs/prefspropertypages.cpp` (export variables) and
+`evaluate.cpp` (`Save_Set` — export triggers/aliases/colours/macros/timers).
+
+All three have the same shape:
+
+```cpp
+try {
+  f  = new CFile (name, CFile::modeCreate | CFile::modeReadWrite);
+  ar = new CArchive (f, CArchive::store);
+  Save_World_XML (*ar, …);
+  bError = false;              // success declared HERE
+}
+catch (CFileException *)   { … }
+catch (CMemoryException *) { … }
+catch (CArchiveException *){ … }
+
+delete ar;                     // ...and the bytes are written HERE
+delete f;
+```
+
+`Save_World_XML` only fills the archive's buffer. The write happens when the
+`CArchive` is destroyed — **after every catch arm** — so:
+
+- **A failed write is reported as success.** `CPlugin::SaveState` returns its
+  `bError` to `world.SaveState ()`, so a script is told the state was saved when
+  it was not. `CFile::modeCreate` truncated the old state file first, so what
+  the user actually has is nothing.
+- **And the failure throws out of a destructor.** MFC's `~CArchive` is
+
+  ```cpp
+  CArchive::~CArchive()
+  {
+      if (m_pFile != NULL && !(m_nMode & bNoFlushOnDelete))
+          Close();      // -> Flush(), which can throw
+      Abort();
+  }
+  ```
+
+  with no guard of its own. Under C++11 a destructor is implicitly `noexcept`,
+  so a `CFileException` from that `Flush` terminates the process.
+
+**Fix:** `ar->Close ()` inside the `try`, before success is declared. The
+subsequent `delete ar` then finds `m_pFile == NULL` and does nothing.
+
+**No new test.** The success path is already pinned by
+`PluginState.SaveStateWritesVariablesToStateFile`, which reads the file's
+contents back and is green with the change; the failure path needs a write that
+fails, which this suite has no way to arrange. That is an honest gap rather than
+a covered one.
+
+**Shared code — all three sites ship on both platforms.**
+
+## 104 — The Send-to-world line preamble loses its trailing space on every load
+
+**Where:** `scriptingoptions_alpha.inc`, the `send_to_world_line_preamble` and
+`send_to_world_line_postamble` rows.
+
+`Get_XML_string` trims leading and trailing whitespace unless the row carries
+`OPT_KEEP_SPACES` (`xml_load_world.cpp` passes
+`!(iFlags & OPT_KEEP_SPACES)` as its trim flag). The saver preserves the space —
+`Save_XML_string` only collapses newlines and escapes markup — so the bytes on
+disk are right and the loader is what changes them.
+
+And `doc.cpp` concatenates with **no separator**:
+
+```cpp
+full_line  = dlg.m_strLinePreamble;
+full_line += str;
+full_line += dlg.m_strLinePostamble;
+```
+
+so the space in `"say "` is the only thing between the verb and the text. Set
+one, save, reload, and every line is sent as `sayhello`.
+
+**These two were the only non-multiline `*amble`/prefix rows in the table
+without the flag.** The six `log_line_*amble_*`, both `paste_line_*amble`,
+`recall_line_preamble`, `chat_message_prefix`, `speed_walk_prefix` and all three
+`timestamp_*` rows have it. That is twelve to two — an omission, not a
+judgement.
+
+**Measured**, with the flag removed again: `"say "` loads as `"say"` and `" ."`
+as `"."`, while the paste twins keep theirs.
+
+**Fix:** `OPT_KEEP_SPACES` on both rows.
+`WorldLoad.ASendPreamblesTrailingSpaceSurvivesTheLoad` pins it, with the paste
+pair as the control — a test that checked only the send pair would pass on a
+build where the trim had been removed wholesale.
+
+## 105 — `world.SetTimerOption` can give an "every" timer a zero interval, and it then fires on every poll
+
+`scripting/methods/methods_timers.cpp`, `SetTimerOption`.
+
+An interval timer whose hour, minute and second are all zero fires on **every**
+poll of `CheckTimers`, indefinitely. `AddTimer` refuses that combination
+outright:
+
+```cpp
+// can't have a zero time for "every" timers
+if (((Hour == 0) && (Minute == 0) && (Second == 0.0)) && !(Flags & eAtTime))
+  return eTimeInvalid;
+```
+
+and so does the Timers dialog, in `CTimerDlg::DoDataExchange`:
+
+```cpp
+if (ts1 <= CmcDateTimeSpan (0, 0, 0, 0))
+    {
+    ::TMessageBox("The timer interval must be greater than zero.");
+```
+
+`SetTimerOption` sets `hour`, `minute` and `second` one at a time and checked
+neither the component it was writing nor the combination it was producing, so
+zeroing whichever component was last still non-zero arrived at exactly the state
+the other two entry points exist to prevent — returning `eOK`.
+
+Negative values were never a route: the `TimerOptionsTable` rows carry a minimum
+of 0, so `SetBaseOptionItem` answers `eOptionOutOfRange` for those. Zero was the
+only hole.
+
+**Why it runs away.** `CheckTimers` fires anything whose `tFireTime` is not in
+the future, then advances it:
+
+```cpp
+timer_item->tFireTime += CmcDateTimeSpan (0, timer_item->iEveryHour,
+                                          timer_item->iEveryMinute,
+                                          timer_item->fEverySecond);
+
+// in case clock changes or some such thing, make sure timer will be due to
+// fire in the future, not the past, or it might go mad and keep firing
+
+if (timer_item->tFireTime <= tNow)
+  ResetOneTimer (timer_item);
+```
+
+Adding a zero span leaves `tFireTime` where it was — in the past — so the guard
+fires, and `ResetOneTimer` sets `tFireTime = tNow + interval`, which for a zero
+interval is `tNow` again. **The comment names the symptom exactly** ("it might
+go mad and keep firing") and the guard it introduces cannot reach this case,
+because the case is the one where adding the interval is a no-op.
+
+**Measured**, not argued. `TimerIntervalR6.ZeroIntervalTimerFiresOnEveryPoll`
+calls `CheckTimers` three times back to back with no time allowed to pass: the
+zero-interval timer matches 3 times, a legitimate five-second one at most once.
+
+**Fix:** the same combined check `AddTimer` already makes, applied in
+`SetTimerOption` **before** `SetBaseOptionItem` so that a refusal leaves nothing
+half-written. Pinned by
+`TimerIntervalR6.SetTimerOptionRefusesToZeroTheLastComponentOfAnEveryTimer`,
+which also asserts that zeroing a component while another stays non-zero is
+still allowed, that `iEveryMinute` is unchanged after the refusal, and — as
+controls — that `AddTimer` gives the same `eTimeInvalid` and that an *at*-time
+timer may still be set to midnight.
+
+**Not fixed, and deliberately:** the XML world loader makes no such check
+either, so a hand-edited world file can still contain a zero-interval timer.
+Rejecting one at load time would fail to open a file that opens today, which is
+a different risk from refusing a script call, and belongs in its own change.
+
+## 106 — The world saver rounds a timer's interval to a value its own loader refuses
+
+`xml/xml_save_world.cpp`, `Save_XML_double`.
+
+A timer's seconds are declared to **four** decimals everywhere the app reads or
+validates them:
+
+```cpp
+GET_DOUBLE ("second", t->fEverySecond, 0, 59.9999);     // xml_load_world.cpp
+DDV_MinMaxDouble (pDX, m_fEverySecond, 0., 59.9999);    // TimerDlg.cpp
+```
+
+and to **two** where it writes them:
+
+```cpp
+CString strNumber = CFormat ("%.2f", fNumber);
+```
+
+`AddTimer` accepts any interval but exactly zero, and the dialog refuses only
+`<= 0`, so `world.AddTimer ("blip", 0, 0, 0.001, ...)` — or typing `0.001` into
+the Timers dialog — is legal on both routes. Saving the world writes it as
+`second="0.00"`, and the loader then **refuses the app's own output**:
+
+```cpp
+if (!(t->iEveryHour || t->iEveryMinute || t->fEverySecond > 0.0))
+  ThrowErrorException ("Timer for 'every' time cannot have zero interval");
+```
+
+**Measured**, before the fix, with three timers in the file:
+
+- the file contained `second="0.00"` for the sub-0.005 s one;
+- the reload dropped exactly that timer and kept the other two — the per-item
+  `HandleLoadException` means the blast radius is one timer, not the section;
+- `LoadWorldFromFile` still returned TRUE, so the world opens normally with the
+  timer simply gone;
+- the user gets `[WARNING] <world file>` and `Timer for 'every' time cannot
+  have zero interval` in the output window — naming a file the app itself had
+  just written.
+
+This is the same end state as `UPSTREAM-BUGS` 105 approached from the other
+side. There, `SetTimerOption` let a script *create* the zero interval that
+`AddTimer` and the dialog both refuse; here the saver *manufactures* it out of
+a legal value. Four places had an opinion about a zero interval and three of
+them agreed.
+
+**Fix:** `Save_XML_double` takes a precision, defaulting to 2 so the only other
+caller (`plugins.cpp`'s `"requires"` version number, which wants exactly two)
+is untouched, and the two timer-second sites pass 4 — the precision the loader
+and the dialog already declare. Trailing zeros are trimmed back to two decimals
+so that widening the format does **not** rewrite every existing world file:
+`5.0` still writes `"5.00"`, and only `0.001` spends the extra digits.
+
+**Residual, and deliberate:** an interval below 0.00005 s still rounds to zero.
+That is now *below the declared precision of the field* rather than inside it,
+so it is a stated limit instead of a silent disagreement. Note also that
+`CheckTimers` is driven by a 100 ms poll at best, so nothing below that is
+distinguishable at runtime anyway.
+
+Pinned by `TimerSaveR6.SubCentisecondIntervalSurvivesASaveAndReload`, which
+checks the written text, the round trip, and — as the control for the trim —
+that a whole-second timer still writes `"5.00"`. There is deliberately **no**
+textual negative assertion for `second="0.00"`: `offset_second="0.00"` is a
+legal superstring of it, and the first draft of the test failed on exactly that.
+
+## 107 — A SOCKS 5 proxy that answers with a non-IPv4 bind address puts binary garbage on the first line
+
+`doc_shared.cpp`, `ProcessProxyResponse3`.
+
+RFC 1928 §6 gives the CONNECT reply as
+
+```
++----+-----+-------+------+----------+----------+
+|VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+| 1  |  1  |   1   |  1   | Variable |    2     |
++----+-----+-------+------+----------+----------+
+```
+
+where BND.ADDR is **4** bytes for ATYP 1 (IPv4), **16** for ATYP 4 (IPv6) and
+**1 + N** for ATYP 3 (a domain name). Only the IPv4 case is ten bytes, and the
+code said
+
+```cpp
+iBytesToMove = 10;
+```
+
+unconditionally. The caller then does
+
+```cpp
+memmove (buff, &buff [iBytesToMove], count - iBytesToMove);
+count -= iBytesToMove;
+```
+
+so with an IPv6 bind address the remaining **12** bytes of the proxy's reply
+are moved to the front of the receive buffer and handed to `DisplayMsg` — the
+session opens with a line of binary. A domain-name reply does the same with
+however many bytes the name ran to.
+
+This is not a memory-safety bug: the caller guards with
+`if (count <= iBytesToMove) return;`, so a *short* reply is dropped rather than
+over-read.
+
+**Fix:** derive the length from ATYP. An ATYP the RFC does not define keeps the
+old ten-byte assumption — there is nothing better to guess from — and the test
+pins that as a choice rather than leaving it undefined.
+
+**Not fixed, and it needs more than a length calculation: a reply split across
+TCP segments.** There is no accumulation buffer for the proxy phase; each
+`ProcessProxyResponse*` sees one packet and must answer from it. A short read
+still reports success off `buff [1]`, and the rest of the reply arrives in the
+next packet, by which time the phase is `eConnectConnectedToMud` and it is
+displayed. Closing that means giving the proxy phase a persistent buffer and a
+"need more data" return value — a change to the phase machinery, not to this
+arm, and worth its own decision. A ≤22-byte reply written immediately after
+connect rarely splits, which is why this has not been noticed; it is a real
+hole all the same.
+
+Pinned by `Socks5R6.ConnectReplyLengthFollowsTheAddressType`, which asserts the
+returned byte count — the value the caller consumes — for all three address
+types, for an undefined one, and for a refusal.
+
+## 108 — Opening World Properties and clicking OK rewrites "accept incoming calls" to match runtime state
+
+`dialogs/world_prefs/configuration.cpp`, `LoadPrefsP23`.
+
+The Chat page's "&Accept incoming calls on port:" tick was filled from the
+**socket**, not the preference:
+
+```cpp
+// show whether we really are accepting calls
+page23.m_bAcceptIncomingChatConnections = m_pChatListenSocket != NULL;
+```
+
+while `SavePrefsP23` copies that same tick straight back into the persisted
+`m_bAcceptIncomingChatConnections`. So OK on a dialog nobody touched
+overwrites the saved preference with runtime state, and it goes wrong in
+**both** directions:
+
+- the listen socket **failed to bind** — the port is already in use, which is
+  easy to arrange with two worlds on the default 4050 — so the tick shows
+  clear, and OK turns the saved preference **off**. The next launch does not
+  even try, and nothing told the user their setting had changed.
+- a script called **`world.ChatAcceptCalls`**, so the tick shows set, and OK
+  turns the preference **on** in a world that never asked for it.
+
+The socket normally does come up at world open (`SetUpOutputWindow`
+→ `ChatAcceptCalls (0)` when the flag is set), which is why the first case
+needs a bind failure to appear and why this has gone unnoticed. The second
+needs only a plugin.
+
+**Fix:** show the preference. Nothing is lost: a bind failure is already
+reported when it happens, by `ChatNote` inside `ChatAcceptCalls` — and OK on a
+world whose bind failed now **retries** it, because `SavePrefsP23`'s "start
+accepting if required" arm runs on a flag that is still true, instead of
+falling into the `else` that stops.
+
+Pinned by `PrefsChange.ChatAcceptTickShowsThePreferenceNotTheSocket`. With the
+fix reverted it fails on three assertions, the last of which is the data loss
+itself: `m_bAcceptIncomingChatConnections` is FALSE after `SavePrefsP23` on an
+untouched page.
+
+**A note on the test, because it caught a wrong assumption of mine.** The first
+draft asserted `ChangedPrefsP23` was false on a fresh document and failed —
+not because of this bug, but because `UPSTREAM-BUGS` 95 deliberately made
+`LoadPrefsP23` put *defaults* for the chat name, port and two colours on the
+page while leaving the document alone, so the page legitimately differs from
+the document until OK. 95's own comment says exactly that. The test now seeds
+those four fields so the comparison isolates the tick. **A page-wide "did
+anything change" check is not a test of one field**, and reading it as one
+turns a documented behaviour into a phantom regression.
+
+## 109 — The trigger clipboard dropdown offers a wildcard the clipboard code cannot copy
+
+`ProcessPreviousLine.cpp`, and the mapping now lives in `OtherTypes.h`.
+
+The Trigger dialog's clipboard dropdown (`IDC_WILDCARD_CLIPBOARD`) is populated
+from `DLGINIT` with **eleven** entries — `(none)`, then `1` … `10` — so the
+selected index is the wildcard number. The code that acts on it was
+
+```cpp
+if (trigger_item->iClipboardArg &&
+    trigger_item->iClipboardArg >= 0 &&
+    trigger_item->iClipboardArg < MAX_WILDCARDS)
+   putontoclipboard (trigger_item->wildcards [trigger_item->iClipboardArg]...);
+```
+
+with `MAX_WILDCARDS == 10`, so the usable range was **1 … 9** and the last
+entry the dropdown offers stored 10, failed the bound, and silently copied
+nothing.
+
+**Wildcard 10 is not a nonexistent wildcard.** The array handed to scripts is
+built 1-relative with `MAX_WILDCARDS` elements, and its final element is
+deliberately not a capture group:
+
+```cpp
+// i should be MAX_WILDCARDS (10) now ;)
+COleVariant v (trigger_item->wildcards [0].c_str ()); // the whole matching line
+```
+
+(`doc_shared.cpp:4500`, and the same again in `evaluate.cpp:1195` for aliases.)
+So a script's `wildcards[10]` is the whole matching line — which is the natural
+reading of what the dropdown's `10` offers, and the clipboard code could reach
+it by neither index: 10 failed the upper bound, and 0, where the whole line
+actually lives in `trigger_item->wildcards`, fails the truthiness guard that
+means "(none)".
+
+The `iClipboardArg >= 0` term beside it was dead: the member is
+`unsigned short`.
+
+**Fix:** `ClipboardWildcardIndex` (`OtherTypes.h`) maps `clipboard_arg` onto the
+vector — 0 is "copy nothing", 1…9 are `%1`…`%9`, and 10 is `wildcards [0]`, the
+whole matching line. It **remaps** rather than widening the bound, because
+widening it would index a 10-element vector at 10; that is what the old bound
+was there for, and the fix keeps that protection while making the dropdown's
+last entry mean what scripts already mean by it.
+
+Two tests, at two levels, because neither alone is enough:
+
+- `ClipboardWildcardR6.TenNamesTheWholeLineAndZeroNamesNothing` asserts the
+  mapping, including the property that matters — **no value the option table
+  and the loader accept (0…10) can index past the end of the vector**. It
+  deliberately does not drive the call site: that would put text on the
+  machine's real clipboard and clobber whatever the user had copied.
+- `tests/win/app_probes/clipboard.lua` drives the real call site inside the
+  running app, through an actual trigger match, and can afford to because
+  `world.GetClipboard`/`SetClipboard` let it save and restore. It seeds
+  `SENTINEL` before each match so "copied nothing" is visible, and checks
+  `clipboard_arg` 1, 3, 10 and 0 — the last as the control. Against the app
+  built before the fix it failed on exactly the `10` assertion and passed the
+  other three, which is the end-to-end proof the unit test cannot give.

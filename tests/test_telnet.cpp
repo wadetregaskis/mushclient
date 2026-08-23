@@ -493,6 +493,66 @@ TEST(TelnetTest, Phase_SUBNEG_IAC_EscapedIACsAreAlsoCapped)
     EXPECT_LE(doc.m_IAC_subnegotiation_data.size(), kSubnegCap);
 }
 
+// The abort must be ONE-SHOT, and the two tests above cannot see whether it is:
+// each breaks out of its loop the moment the disconnect appears, so neither
+// ever asks what the NEXT byte does.  That is the general shape worth
+// remembering -- a test that stops at the first sign of the behaviour it is
+// checking cannot tell whether that behaviour repeats.
+//
+// It did repeat.  The guard used to return without touching m_phase or the
+// collected data, and DisplayMsg's byte loop calls these helpers as
+// `Phase_SUBNEGOTIATION (c); continue;`, so every remaining byte of the packet
+// re-entered the guard: another OnConnectionDisconnect, another modal message
+// box.  Measured on Windows 2026-08-20 against a server that sent the cap plus
+// sixteen bytes: eight modal dialogs, where one is correct.  See
+// docs/WINDOWS-VALIDATION.md §10e.
+TEST(TelnetTest, Phase_SUBNEG_CapAbortsOnceNotOncePerByte)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.Phase_SB(TELOPT_TERMINAL_TYPE);
+    ASSERT_EQ(HAVE_SUBNEGOTIATION, doc.m_phase);
+
+    for (size_t i = 0; i < kSubnegCap + 64; i++) {
+        doc.Phase_SUBNEGOTIATION('X');
+        if (doc.m_iConnectPhase == eConnectNotConnected) break;
+    }
+    ASSERT_EQ(eConnectNotConnected, doc.m_iConnectPhase);
+
+    // Abandoning the subnegotiation is what makes it one-shot: the phase is no
+    // longer HAVE_SUBNEGOTIATION and the collector is empty, so neither the
+    // caller's dispatch nor the guard's own test can be reached again.
+    EXPECT_NE(HAVE_SUBNEGOTIATION, doc.m_phase);
+    EXPECT_TRUE(doc.m_IAC_subnegotiation_data.empty());
+
+    // Feed the rest of the packet.  Re-arm the connect phase first so that a
+    // SECOND abort is detectable, then check that none happens.
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_phase = HAVE_SUBNEGOTIATION;   // as the loop would have left it
+    for (size_t j = 0; j < 4096; j++)
+        doc.Phase_SUBNEGOTIATION('X');
+    // Still connected: the cap did not fire again.  If this fails, one hostile
+    // stream closes the world once per byte and puts up a modal box each time.
+    EXPECT_EQ(eConnectConnectedToMud, doc.m_iConnectPhase);
+}
+
+// The escaped-IAC vector aborts once too, on the same helper.
+TEST(TelnetTest, Phase_SUBNEG_IAC_CapAbortsOnceNotOncePerByte)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.Phase_SB(TELOPT_TERMINAL_TYPE);
+
+    for (size_t i = 0; i < kSubnegCap + 64; i++) {
+        doc.Phase_SUBNEGOTIATION(IAC);
+        doc.Phase_SUBNEGOTIATION_IAC(IAC);
+        if (doc.m_iConnectPhase == eConnectNotConnected) break;
+    }
+    ASSERT_EQ(eConnectNotConnected, doc.m_iConnectPhase);
+    EXPECT_NE(HAVE_SUBNEGOTIATION, doc.m_phase);
+    EXPECT_TRUE(doc.m_IAC_subnegotiation_data.empty());
+}
+
 // ── Phase_SUBNEGOTIATION_IAC ──────────────────────────────────────────────
 
 TEST(TelnetTest, Phase_SUBNEG_IAC_IACIACStoresOneIAC)
@@ -1167,13 +1227,20 @@ TEST(TelnetR4, TeloptNameTableAndDebugTracing)
     EXPECT_STREQ("ZMP",            telopt_name(93));
     EXPECT_STREQ("GMCP",           telopt_name(201));
 
-    // with g_debug on, the negotiation dbg() lines print (stderr)
+#ifndef _WIN32
+    // with g_debug on, the negotiation dbg() lines print (stderr).
+    //
+    // Windows has nothing to exercise here: telnet_phases.cpp defines dbg() as
+    // ((void)0) and g_debug as a file-local `static const bool false` for the
+    // full build (:8-15), so the tracing is compiled out and g_debug is not a
+    // variable anything can set.  doc.h declares g_debug only off Windows.
     bool saved = g_debug;
     g_debug = true;
     CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(TELOPT_MXP);
     doc.Phase_DO(1 /* echo */);
     g_debug = saved;
+#endif
 }
 
 // ── round 5: RFC 854 resend suppression, unnegotiated MCCP, UTF-8 errors ──

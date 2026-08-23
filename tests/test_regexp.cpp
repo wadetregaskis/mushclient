@@ -2,8 +2,6 @@
 // Unit tests for the PCRE regex wrapper (regexp.h / regexp.cpp).
 
 #include "mc_test.h"
-#include "platform/compat.h"
-#include "regexp.h"
 
 // Real doc.h layout (matches mushcore / mushcore_testsupport -- see the
 // WIN32/_NOSOUND/MUSHCLIENT_FULL_BUILD comment in tests/CMakeLists.txt) is
@@ -11,8 +9,9 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "regexp.h"   // after the MFC headers: it uses CString and ASSERT
 
-#include <sys/resource.h>   // getrusage (RSS leak check)
+#include "posix_compat.h"
 
 // RAII compile+free wrapper (audit §4): compile in the ctor, delete in the dtor,
 // so the repeated `t_regexp* r = regcomp(...); ...; delete r;` boilerplate collapses
@@ -29,6 +28,32 @@ struct Regexp {
     t_regexp* operator->() const { return r; }
 };
 } // namespace
+
+// regexec, with the ONE platform difference in its error arm normalised.
+//
+// A PCRE *runtime* error -- catastrophic backtracking hitting the match limit,
+// as opposed to a plain no-match -- frees and NULLs the compiled program on
+// both platforms, and then regexp.cpp:109 THROWS on Windows where :119 returns
+// false off it.  That divergence is deliberate and commented at the site: on
+// Windows ThrowErrorException is how the client reports it, and the portable
+// arm's "an errored attempt is a NON-match" exists so control cannot fall
+// through to `return true` and fire a trigger on a line that never matched.
+//
+// Both mean the same thing to the tests below, which are about what happens
+// AFTER the error -- the program is null, the error code is recorded, a second
+// exec early-outs, the wildcard list degrades to one empty entry -- and all of
+// that is identical on the two platforms.  So normalise the report and let the
+// assertions stay shared.  A spurious MATCH still fails: it is returned, not
+// thrown, and the callers assert 0.
+static int regexec_erroring(t_regexp* re, const char* s)
+{
+#ifdef _WIN32
+    try { return regexec(re, s); }
+    catch (CException* e) { e->Delete(); return 0; }
+#else
+    return regexec(re, s);
+#endif
+}
 
 // ── Compilation ───────────────────────────────────────────────────────────
 
@@ -143,7 +168,7 @@ TEST(RegexpTest, RuntimeErrorIsNotReportedAsMatch) {
     ASSERT_NE(nullptr, r.get());
     std::string s(50, 'a');
     s += '!';                       // guarantees the overall match must fail
-    int result = regexec(r.get(), s.c_str());
+    int result = regexec_erroring(r.get(), s.c_str());
     EXPECT_EQ(0, result);           // errored → NON-match, not a spurious match
     EXPECT_LT(r->m_iExecutionError, 0);  // a real runtime error code was recorded
 }
@@ -222,7 +247,7 @@ TEST(RegexpTest, ExecOnErroredProgramEarlyOutsFalse) {
 
     // First exec: catastrophic backtracking -> a PCRE runtime error, which frees
     // and NULLs m_program (regexp.cpp:104-105) and records the error code.
-    EXPECT_EQ(0, regexec(r.get(), s.c_str()));
+    EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
     ASSERT_TRUE(r->m_program == nullptr);        // program was nulled on the error
     EXPECT_LT(r->m_iExecutionError, 0);
     const long attemptsAfterError = r->m_iMatchAttempts;
@@ -231,7 +256,7 @@ TEST(RegexpTest, ExecOnErroredProgramEarlyOutsFalse) {
     // false BEFORE the m_iMatchAttempts++ at regexp.cpp:96. Drop the guard and the
     // return value is still 0 (pcre_exec(NULL) -> PCRE_ERROR_NULL, no crash), but the
     // attempt counter advances -- so the counter, not the return value, catches it.
-    EXPECT_EQ(0, regexec(r.get(), "anything"));
+    EXPECT_EQ(0, regexec_erroring(r.get(), "anything"));
     EXPECT_EQ(attemptsAfterError, r->m_iMatchAttempts);
 }
 
@@ -345,7 +370,7 @@ TEST(RegexpWildcardsTest, ErroredProgramDegradesToASingleEmptyEntry) {
     ASSERT_NE(nullptr, r.get());
     std::string s(50, 'a');
     s += '!';
-    EXPECT_EQ(0, regexec(r.get(), s.c_str()));
+    EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
     ASSERT_TRUE(r->m_program == nullptr);
 
     std::vector<std::string> wc;

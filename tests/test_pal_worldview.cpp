@@ -482,10 +482,20 @@ TEST(PalWorldView, WindowFamilyDrivesTheView)
 
     // A view with no window to measure reports false and leaves the outputs
     // alone, so the caller can keep its own approximation.
+    view.hasMainWin  = false;
     view.mainClientR = pal::Rect{ 0, 0, 0, 0 };
     cx = cy = cw = ch = 7;
     EXPECT_TRUE(!doc.GetMainClientRect(cx, cy, cw, ch));
     EXPECT_TRUE(cx == 7 && cy == 7 && cw == 7 && ch == 7);
+
+    // A view that HAS a window measuring 0 x 0 — a minimised main frame — is a
+    // different answer: true, with zeroes.  The accessor used to gate on the
+    // empty rect and so could not tell these two apart, which is what made
+    // GetInfo(249)/(250) fabricate a size for a minimised client.
+    view.hasMainWin = true;
+    cx = cy = cw = ch = 7;
+    EXPECT_TRUE(doc.GetMainClientRect(cx, cy, cw, ch));
+    EXPECT_TRUE(cx == 0 && cy == 0 && cw == 0 && ch == 0);
 }
 
 // world.SetCommandWindowHeight.  The canonical body drove the world window's

@@ -17,9 +17,11 @@
 #include <cstring>
 #include <cstdio>
 #include <string>
-#include <unistd.h>
+#include "posix_compat.h"
+#ifndef _WIN32
 #include <sys/socket.h>   // socketpair (chat snoop test)
 #include <fcntl.h>
+#endif
 
 #include "flags.h"   // eEnabled / eOmitFromOutput / ... (AddTriggerEx flags)
 #include "pal/itransport.h"
@@ -858,6 +860,15 @@ TEST(NotingTest, NoteColourNameSetsRgbFromNamesAndHex)
 TEST(NotingTest, ColourTellStampsRequestedColoursAndRestores)
 {
     CMUSHclientDoc doc; make_doc(doc);
+    // Say which note-colour mode this is, rather than inheriting one.  Whether
+    // ColourTell restores anything is CONDITIONAL on the mode (methods_noting
+    // .cpp: it puts the colours back only when the doc was already in RGB, and
+    // otherwise just clears the flag), and the two platforms construct a doc
+    // with different modes on purpose -- the port defaults m_bNotesInRGB true
+    // because headless has no palette to resolve an index against, and the
+    // Windows ctor leaves it false (doc_construct.cpp).  A test that does not
+    // set it is testing whichever branch the platform happened to pick.
+    doc.NoteColourRGB(0xFFFFFF, 0x000000);
     COLORREF old_fore = doc.m_iNoteColourFore, old_back = doc.m_iNoteColourBack;
     doc.ColourTell("red", "blue", "hi");
     CStyle* s = style_at(doc.m_pCurrentLine, 0);
@@ -992,7 +1003,31 @@ static std::string slurp(const std::string& path)
     size_t n;
     while ((n = fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
     fclose(f);
+#ifdef _WIN32
+    // The log is opened in TEXT mode (doc_shared.cpp fopens it "w" or "a+"), so
+    // the CRT turns every LF the writer emits into CRLF on the way to disk.
+    // Read back in binary that is a real difference between the platforms, and
+    // a deliberate one: WriteToLog is a plain fwrite, so logs are LF on the
+    // port and CRLF here -- a cosmetic parity gap left alone on purpose and
+    // recorded in CLAUDE.md.
+    //
+    // Collapsing the pair back to a single LF keeps every assertion below about
+    // the CONTENT rather than the encoding, and gives up nothing: the
+    // substitution is one-for-one, so "how many line breaks are there" survives
+    // it -- which is exactly what
+    // WriteLogDoesNotDoubleAnExistingTrailingNewline asks.
+    std::string t;
+    t.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i)
+    {
+        if (s[i] == 0x0D && i + 1 < s.size() && s[i + 1] == 0x0A)
+            continue;
+        t += s[i];
+    }
+    return t;
+#else
     return s;
+#endif
 }
 
 static bool log_contains(const std::string& hay, const char* needle)
@@ -1121,6 +1156,7 @@ TEST(AnsiNoteTest, PlainTextBecomesCommentLine)
 TEST(AnsiNoteTest, ForegroundCodeColoursFollowingTextOnly)
 {
     CMUSHclientDoc doc; make_doc(doc);
+    doc.NoteColourRGB(0xFFFFFF, 0x000000);       // RGB notes; see NotingTest above
     doc.m_normalcolour[1] = 0x0000CC;            // ANSI red slot
     COLORREF plain_fore = doc.m_iNoteColourFore;
     doc.AnsiNote("pre\x1b[31mred");
@@ -1239,6 +1275,7 @@ TEST(AnsiNoteTest, ResetRestoresNormalWhiteOnBlack)
 TEST(AnsiNoteTest, StateAndColoursRestoredAfterCall)
 {
     CMUSHclientDoc doc; make_doc(doc);
+    doc.NoteColourRGB(0xFFFFFF, 0x000000);       // RGB notes; see NotingTest above
     doc.NoteStyle(UNDERLINE);
     COLORREF old_fore = doc.m_iNoteColourFore, old_back = doc.m_iNoteColourBack;
     doc.AnsiNote("\x1b[1;31;42mX");
@@ -2075,6 +2112,7 @@ TEST(PrevLineArms, MappingFailureRegexpVariant)
 // SendChatMessage was an empty stub in platform/windows_stubs.cpp.  chatsock.cpp
 // is in mushcore now, SendData -> OnSend -> CAsyncSocket::Send reaches ::send
 // for real, and the bytes ARE readable off the other end of a socketpair.
+#ifndef _WIN32   // socketpair(AF_UNIX) has no Windows equivalent; a loopback pair would need a listener, an accept and a port, which is a different fixture rather than a guard
 TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -2127,6 +2165,7 @@ TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
     ::close(fds[0]);
     ::close(fds[1]);
 }
+#endif  // !_WIN32
 
 // LogLineInHTMLcolour called DIRECTLY on an explicit head POSITION (the public
 // entry point). Trimmed (audit §3): the full <font>/<span>/<u> golden now lives in

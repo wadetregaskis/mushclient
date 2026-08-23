@@ -55,7 +55,14 @@ static const int kNeedsWorld [] = {
   ID_GAME_COMMANDHISTORY,         // 32152
   ID_EDIT_GOTOMATCHINGBRACE,      // 32946
   ID_EDIT_SELECTTOMATCHINGBRACE,  // 32947
-  ID_GAME_FUNCTIONSLIST,          // 33046
+  // ID_GAME_FUNCTIONSLIST (33046) is deliberately NOT here.  It looks like a
+  // CSendView command and it is one -- but sendvw.cpp is not its only handler.
+  // CTextView has one (notepad context) and so does CMainFrame
+  // (scripting/functionlist.cpp:602), and the frame's takes no context at all:
+  // ShowFunctionslist ("", 0, 0, true).  So Windows leaves the item live with
+  // nothing open, and greying it here was a real divergence, found by
+  // tests/win/test_menu_rules_win.cpp asking MFC the same question this table
+  // answers.  The no-world arm is in wx_mfc_impl.cpp's dispatch.
   // CMUSHclientDoc (doc.cpp)
   ID_EDIT_FLIPTONOTEPAD,          // 32953
   ID_FILE_PLUGINS,                // 32983

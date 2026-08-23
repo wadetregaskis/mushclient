@@ -1164,6 +1164,17 @@ TEST(FixSendTextArms, NamedWildcardExpansion)
 
 // ═══ Trigger regexp-compile failure arms in EvaluateTrigger ════════════════
 
+// Port-only: the setup below hands EvaluateTrigger three triggers with
+// regexp == nullptr, which is a state only the port can be in.  Windows
+// compiles a trigger's regexp when it is added, and the recompile arm this
+// test is aiming at sits INSIDE `if (trigger_item->regexp)` (evaluate.cpp);
+// what makes a null-regexp trigger reach it at all is the lazy-compile block
+// a few lines above, which is itself #ifndef _WIN32.  So on Windows all three
+// take the no-regexp skip and "goodv" is never set -- the test's premise, not
+// the product, is what does not hold there.  Nothing to fix on either side:
+// a trigger with a null regexp does not occur on Windows.
+#ifndef _WIN32
+
 // Variable-expanding triggers recompile their regexp on every evaluation:
 // an invalid recompiled pattern takes the report-and-skip catch arm, while a
 // valid one matches; a trigger with NO regexp at all is skipped outright.
@@ -1226,6 +1237,7 @@ TEST(EvaluateArms, VariableExpandingTriggerRecompileArms)
     // the bad trigger still has no compiled regexp
     EXPECT_TRUE(bad->regexp == nullptr);
 }
+#endif  // !_WIN32
 
 // ── round 5 ───────────────────────────────────────────────────────────────
 

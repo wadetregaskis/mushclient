@@ -6308,15 +6308,28 @@ and worth knowing before the technique is applied to a bigger suite.
 
 ### 10af. What round two owes macOS, file by file
 
-Everything from §10z onwards was written and measured on Windows, and nothing in
-it has been compiled by clang. This is the list the macOS `ctest` run has to
-clear before any of it merges, sorted by how much attention each needs.
+The whole of round two — `ab34492~1..HEAD`, 84 commits — was written and
+measured on Windows, and nothing in it has been compiled by clang. This is the
+list the macOS `ctest` run has to clear before any of it merges, sorted by how
+much attention each needs.
 
-**This section is the handoff.** It was written when the round reached §10ae and
-has been extended twice since; the sub-heading below still says "since §10af was
-written" for that reason. If you are picking this up on macOS, read this section
-and `docs/UPSTREAM-BUGS.md` 88-109, in that order — §10af says what to check,
-and the bug entries say why each change is what it is.
+**This section is the handoff.** It was written when the round reached §10ae
+and has been extended three times since, which is why the sub-headings below
+read as a chronology rather than a taxonomy. If you are picking this up on
+macOS, read this section and `docs/UPSTREAM-BUGS.md` 88-109, in that order —
+§10af says what to check, the bug entries say why each change is what it is.
+
+**The shipping-code lists are derived; the test list is not.** Every shared
+hunk in the tables below was found by computing the preprocessor nesting at each
+changed line of `git diff ab34492~1..HEAD` **and reading the guard text at each
+depth** — not by reading back through §10, which twice had silently stopped
+tracking files that reach macOS. Re-derive it the same way after further work.
+
+The depth number alone is not the answer, and assuming it was is a mistake worth
+not repeating: it cannot tell an `#ifdef _WIN32` from an include guard or an
+`#if ALIASES_USE_UTF8`, so it scores a Windows-only hunk and a shared one inside
+any conditional identically. Read what is open at that depth. On the test files
+it is not worth doing at all — see below for why.
 
 #### One behavioural change to shared engine code
 
@@ -6339,14 +6352,29 @@ Verified by reading each hunk's guard rather than by assuming:
 | `evaluate.cpp` | `Load_Set` is inside `#ifdef _WIN32` (`:599`); the `MUSHCLIENT_TESTS` arm nests inside it |
 | `pal/win_worldview.cpp` | the whole file is `#ifdef _WIN32` |
 | `platform/wx_mfc_hooks.h` | the addition sits inside the existing `#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)` block |
-| `tests/mc_test.h` | every hunk is inside the file's `#ifdef _WIN32` block |
-| `tests/win/*` | Windows-only files, not in the CMake build |
+| `tests/win/*`, `MUSHclient_tests.vcxproj` | Windows-only files. CMake never sees them — `tests/CMakeLists.txt` names each executable explicitly and globs nothing. The vcxproj is kept honest by the `lint_win_test_sources` ctest entry, which DOES run on macOS: if it goes red, the generator and the project have drifted, not the port. |
 
 #### Shared test files: what changed for BOTH platforms
 
-Most of the test edits are `#ifdef`-guarded and leave the macOS arm verbatim.
-These do not, and are the ones to look at if `ctest` goes red:
+**26 shared test files changed in this round, and `ctest` is itself the check** —
+unlike shipping code, where a mis-guarded hunk changes behaviour silently, a
+test either compiles and passes there or it does not. So this list is a
+head start on a red run, not a proof of anything: it names the edits known to
+carry a macOS-visible semantic change. It was written by hand, and an attempt to
+verify it mechanically failed — counting preprocessor depth cannot tell an
+`#ifdef _WIN32` from an include guard or an `#if ALIASES_USE_UTF8`, so it reports
+a fully-guarded file and a fully-shared one identically. Trust the run:
 
+- **`mc_test.h` — the framework itself, and this row used to say the opposite.**
+  It was listed as "every hunk is inside the file's `#ifdef _WIN32` block". Eight
+  of its fifteen are not, and one of those changes what a macOS run DOES: `run_all`
+  now wraps `tc.fn ()` in a `try`, so an exception escaping a test is a **failed
+  test** rather than a dead process with no summary line. Also new and shared:
+  `ScopedWorldView` (restores the doc's OWN view, never NULL — on Windows the doc
+  constructs and deletes its own adapter, so the old `= nullptr` idiom leaked it),
+  `list_suites ()`, a `run_all (const char * only)` filter, and an
+  `#include <exception>`. None of it is conditional. If `ctest` fails to build,
+  start here — it is included by every test file.
 - **`test_lua_surface.cpp`, `MiniWindowFontIsWindowsSized`** — the pin is now
   `tmHeight - tmInternalLeading` rather than `tmHeight`. Equivalent on
   `pal::CpuRaster` *because it leaves `internalLeading` at its zero default*
@@ -6452,6 +6480,22 @@ neither headless suite can — real GDI, real font metrics, the real command bar
 which on macOS is exactly what `--pal-surface-selftest` and its siblings cover.
 Do **not** port the runner; if a probe assertion turns out to be worth having on
 both sides, its home there is a selftest harness.
+
+#### Shared code changed BEFORE §10z, which this section used to exclude
+
+The scope line above said "§10z onwards" for most of the round, so the shared
+hunks from the round's *first* half — §10j to §10y, `UPSTREAM-BUGS` 88, 89 and
+90 — were never listed here at all. Found by computing the preprocessor nesting
+at every changed line in `ab34492~1..HEAD` rather than by re-reading the
+narrative, which is the only way that finds a file nobody thought to mention.
+
+| file | change | what to check on macOS |
+|---|---|---|
+| `xml/xmlparse.cpp` | `Get_XML_date` passes `nDST = -1` ("work it out") instead of 0 ("standard time") (`UPSTREAM-BUGS` 88) | **provably a no-op there** — `platform/mfc_time.h:83` and `:97` hardcode `tm.tm_isdst = -1` and ignore the `nDST` argument entirely, which is *why* the port had been getting this right for months. Compile it; nothing else. |
+| `utilities_shared.cpp` | `ExtractDirectory` accepts both separators on both platforms, later one wins (`UPSTREAM-BUGS` 89) | behaviour-identical there **by construction**: the POSIX arm's own both-separator logic is what became the shared body, and the only line still `#ifdef`-split is the no-separator fallback, which still answers `"./"`. This fix moves Windows to what macOS always did. |
+| `mxp/mxpStart.cpp`, `mxp/mxpError.cpp`, `scripting/scripting.h` | `ExecuteLua` gained `pbReturnedAValue`, so the two MXP sites can tell "said nothing" from "said true"; `result` is seeded as well (`UPSTREAM-BUGS` 90) | **the one hunk of this block that changes live macOS behaviour, and it changes it for the engine macOS uses most.** A Lua `OnMXPopenTag` that falls off the end no longer vetoes the tag, and a Lua `OnMXP_Error` that merely logs no longer suppresses the `ON_PLUGIN_MXP_ERROR` broadcast to every other plugin. Seeding `result` also stops a handler that *throws* leaving an uninitialised read — `ExecuteLua` has four early returns that never reach the assignment. Check with the MXP suite and `--engines-selftest`. |
+| `serialize.cpp` | `Frame.SetStatusMessageNow` is skipped under `MUSHCLIENT_TESTS`, because `Frame` is a macro that dereferences a null `m_pMainWnd` in the Windows test host | **inert there** — `MUSHCLIENT_TESTS` is never defined by the CMake build (it occurs in `tests/CMakeLists.txt` only inside a comment), so the `#ifndef` body always compiles and the call runs exactly as before. |
+| `MUSHclient.cpp`, `MUSHclient.h`, `Utilities.cpp`, `doc_construct.cpp` | Windows test-host plumbing | every hunk is inside `#if defined(_WIN32) && defined(MUSHCLIENT_TESTS)`, measured; cannot reach macOS. |
 
 Two findings from the same round are **macOS-only and deliberately not fixed
 here** — `platform/mfc_collections.h`'s leaked walk cursor and `timers.cpp`'s

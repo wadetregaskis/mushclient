@@ -521,7 +521,8 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
                                list<double> & nparams, list<string> & sparams,
                                long & nInvocationCount, const t_regexp * regexp,
                                map<string, string> * table, CPaneLine * paneline,
-                               bool * result, const bool bLowercaseWildcards)
+                               bool * result, const bool bLowercaseWildcards,
+                               bool * pbReturnedAValue)
   {
   if (!m_jsEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
@@ -580,6 +581,11 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
     if (ret && !JSValueIsUndefined (ctx, ret) && !JSValueIsNull (ctx, ret))
       *result = JSValueToBoolean (ctx, ret);
     }
+  // Whether the handler answered at all -- `undefined` is what a function with
+  // no explicit return yields, and `result` cannot express the difference from
+  // an explicit `return true`.  docs/UPSTREAM-BUGS.md 90.
+  if (pbReturnedAValue)
+    *pbReturnedAValue = ret && !JSValueIsUndefined (ctx, ret) && !JSValueIsNull (ctx, ret);
   return false;
   }
 

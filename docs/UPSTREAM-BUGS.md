@@ -2310,17 +2310,32 @@ not stop the plugins hearing about the error, and asserts the world handler ran
 so the plugin's silence cannot be blamed on there having been no error. Both
 were confirmed to fail before the fix.
 
-**Still open: the five embedded engines on the port.** They are unchanged by
-this commit and still wrong in the same way — a Python `OnMXP_OpenTag` returning
-`None` still vetoes every tag. Each writes its own default rather than reporting
-whether the handler answered: `py_engine.cpp:552,555` (`*result = true`, then
-`Py_None` → `true` under the comment "no explicit return → keep going"),
-`perl_engine.cpp:411`, `js_engine.cpp:579`, `tcl_engine.cpp:365` (the non-`TCL_OK`
-arm) and `ruby_engine.cpp:512` (`Qnil` → `true`). Each needs one line: set
-`pbReturnedAValue` from whatever it already uses to spot the no-return case.
-Verification is `--engines-selftest`, which needs a macOS GUI build, so it is not
-part of this commit. Windows is unaffected either way — all five are
-`#ifndef _WIN32`.
+**Now closed: the five embedded engines on the port.** Each reports the flag from
+whatever it already used to spot a no-return handler — `res != Py_None`
+(`py_engine.cpp`), a *defined* scalar off the `G_SCALAR` stack
+(`perl_engine.cpp`), a value that is neither `undefined` nor `null`
+(`js_engine.cpp`), a result that converts as a boolean (`tcl_engine.cpp`), and
+`r != Qnil` (`ruby_engine.cpp`). `ExecuteLua` passes `pbReturnedAValue` down
+through `DispatchEmbedded`, so all six languages now answer the same question.
+Windows is unaffected: those five bodies, the declaration macro they share and
+the dispatch that reaches them are all inside `#ifndef _WIN32`.
+
+**Tcl needed a wider condition than the "non-`TCL_OK` arm" this entry first
+named.** A proc that falls off the end returns the empty string with
+`rc == TCL_OK`, and `Tcl_GetBooleanFromObj` then fails and leaves `b` at its
+seeded 1 — so the one-armed veto reached "keep processing" through the *success*
+path, not the error one, and fixing only the error arm would have left Tcl
+broken while looking fixed. The flag is set from whether the boolean conversion
+succeeded, which covers both; `result` itself is computed exactly as before.
+
+**Tests:** `battery_returned_a_value` (`platform/engines_selftest.cpp`), run for
+all six languages by `--engines-selftest`. Lua is a real control rather than a
+nominal one: it alone can tell an empty result stack from a nil on it, so its
+`rnil()` must answer where the other five must not. Measured against three
+mutations of the Python body — the pre-fix state (flag never set), the flag
+hard-wired `false`, and hard-wired `true` — which fail 2, 3 and 2 checks
+respectively. The harness seeds the flag `true` exactly as the two MXP call sites
+do, which is what makes "never set it" a failure rather than a silent pass.
 
 ## 91 — `world.Save (name, true)` on a never-saved world throws instead of saving (this commit)
 

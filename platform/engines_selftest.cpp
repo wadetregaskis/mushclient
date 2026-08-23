@@ -114,17 +114,32 @@ struct Engine {
                   std::map<std::string, std::string>* table = nullptr,
                   unsigned short reason = eDontChangeAction,
                   const t_regexp* regexp = nullptr,
-                  bool lowercaseWildcards = false)
+                  bool lowercaseWildcards = false,
+                  bool* saidOut = nullptr)
     {
         DISPID d = id(proc);
         long   count = 0;
         bool   keep  = false;
+        // Seeded TRUE, exactly as the two MXP call sites seed it, so an engine
+        // that never sets it leaves the seed -- and the "returned nothing"
+        // assertions below FAIL rather than pass by accident.
+        bool   said  = true;
         const bool err = eng->ExecuteLua(d, proc, reason, "selftest", "selftest",
                                          nparams, sparams, count,
                                          regexp, table, nullptr, &keep,
-                                         lowercaseWildcards);
+                                         lowercaseWildcards, &said);
         if (errOut) *errOut = err;
+        if (saidOut) *saidOut = said;
         return keep;
+    }
+
+    // Did the handler answer AT ALL?  docs/UPSTREAM-BUGS.md 90.
+    bool answered(const char* proc)
+    {
+        bool said = true;
+        callRich(proc, nullptr, {}, {}, nullptr, eDontChangeAction, nullptr,
+                 false, &said);
+        return said;
     }
 
     // Put a known sentinel in a variable, so a handler that silently does
@@ -969,6 +984,41 @@ void battery_keepgoing(Engine& e, const Dialect& d)
              "indistinguishable here from a handler with no return statement");
 }
 
+// 2b. Did the handler answer at all?  `result` cannot express it: a handler that
+// falls off the end and one that says `return true` both hand back true, because
+// the parameter's question is "keep processing?" and "nothing" means "keep
+// going".  The two MXP call sites read the same value as "veto this tag", so the
+// one-armed veto a real script is most likely to contain --
+//
+//     function OnMXPopenTag (name, args)
+//       if name == 'u' then return true end
+//     end
+//
+// -- suppressed EVERY tag in the five embedded engines, where the identical
+// handler in VBScript suppressed only <u>.  docs/UPSTREAM-BUGS.md 90.
+//
+// Lua is the control, and it is a real one: Lua alone can tell an empty result
+// stack from a nil on it, so its rnil() must answer differently from the other
+// five.  A blanket `*pbReturnedAValue = false` passes the first check and fails
+// here; leaving the flag unset fails the first check, because callRich seeds it
+// true the way the MXP sites do.
+void battery_returned_a_value(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    check(e.answered("rnothing") == false, L,
+          "a handler that returns nothing did not answer");
+    check(e.answered("rtrue")    == true,  L, "an explicit true is an answer");
+    check(e.answered("rfalse")   == true,  L, "an explicit false is an answer");
+    check(e.answered("rzero")    == true,  L, "an explicit 0 is an answer");
+
+    // nilStops is the same property from the other side: an engine that can tell
+    // an explicit nil from no return at all is one whose rnil() DID answer.
+    check(e.answered("rnil") == d.nilStops, L,
+          d.nilStops ? "an explicit nil is an answer here"
+                     : "an explicit nil cannot be told from no answer here");
+}
+
 // 3. Parameters: the shape triggers, aliases and timers all use.
 void battery_parameters(Engine& e, const Dialect& d)
 {
@@ -1648,6 +1698,7 @@ bool run_language(const Dialect& d)
 
     battery_simple    (e, d);
     battery_keepgoing (e, d);
+    battery_returned_a_value(e, d);
     battery_parameters(e, d);
     battery_wildcards (e, d);
     battery_call_surroundings(e, d);

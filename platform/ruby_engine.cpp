@@ -450,7 +450,8 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
                                  list<double> & nparams, list<string> & sparams,
                                  long & nInvocationCount, const t_regexp * regexp,
                                  map<string, string> * table, CPaneLine * /*paneline*/,
-                                 bool * result, const bool bLowercaseWildcards)
+                                 bool * result, const bool bLowercaseWildcards,
+                                 bool * pbReturnedAValue)
   {
   if (!m_rubyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
@@ -515,6 +516,11 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
     else if (RB_TYPE_P (r, T_FLOAT))*result = (rb_num2dbl (r) != 0.0);
     else                            *result = RTEST (r);
     }
+  // Whether the handler answered at all: nil is what a Ruby method with no
+  // meaningful return yields, and `result` cannot tell it from `return true`.
+  // docs/UPSTREAM-BUGS.md 90.
+  if (pbReturnedAValue)
+    *pbReturnedAValue = r != Qnil;
   return false;
   }
 

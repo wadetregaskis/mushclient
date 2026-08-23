@@ -569,15 +569,15 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   if (DispatchEmbedded (&embErr, [&] () -> bool
         {
         if      (m_pyEngine)   return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
-                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
+                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards, pbReturnedAValue);
         else if (m_perlEngine) return ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
-                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
+                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards, pbReturnedAValue);
         else if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
-                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
+                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards, pbReturnedAValue);
         else if (m_tclEngine)  return ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
-                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
+                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards, pbReturnedAValue);
         else                   return ExecuteRuby   (dispid, szProcedure, iReason, szType, szReason,
-                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
+                                                nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards, pbReturnedAValue);
         }))
     return embErr;
 #endif
@@ -788,9 +788,10 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   // difference, because they read the value as "veto" rather than as "keep
   // processing".  docs/UPSTREAM-BUGS.md 90.
   //
-  // Set only here, in Lua's own body -- the five embedded engines return
-  // above, so a caller's `true` seed survives for them and their behaviour
-  // is untouched.
+  // Lua's own body sets it here; the five embedded engines return above and
+  // each sets it from their own no-return idiom (None / undef / undefined /
+  // a non-boolean Tcl result / nil), so all six languages answer the same
+  // question.
   if (pbReturnedAValue)
     *pbReturnedAValue = lua_gettop (L) > 0;
 

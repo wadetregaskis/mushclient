@@ -212,7 +212,8 @@ class CScriptEngine : public CObject
                list<double> & nparams, list<string> & sparams,                     \
                long & nInvocationCount, const t_regexp * regexp = NULL,             \
                map<string, string> * table = NULL, CPaneLine * paneline = NULL,     \
-               bool * result = NULL, const bool bLowercaseWildcards = false);       \
+               bool * result = NULL, const bool bLowercaseWildcards = false,        \
+               bool * pbReturnedAValue = NULL);                                     \
     bool Name (DISPID & dispid, LPCTSTR szProcedure, const unsigned short iReason,  \
                LPCTSTR szType, LPCTSTR szReason, CString strParam,                  \
                long & nInvocationCount, CString & result);

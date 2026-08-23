@@ -474,7 +474,8 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
                                    list<double> & nparams, list<string> & sparams,
                                    long & nInvocationCount, const t_regexp * regexp,
                                    map<string, string> * table, CPaneLine * paneline,
-                                   bool * result, const bool bLowercaseWildcards)
+                                   bool * result, const bool bLowercaseWildcards,
+                                   bool * pbReturnedAValue)
   {
   if (!m_pyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
@@ -555,6 +556,14 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
     else if (res == Py_None)     *result = true;   // no explicit return → keep going
     else                         *result = PyObject_IsTrue (res) ? true : false;
     }
+
+  // Whether the handler answered at all, which `result` cannot express -- its
+  // default for a no-return handler is true, and so is an explicit `return True`.
+  // The two MXP call sites read the value as a veto and need the difference.
+  // docs/UPSTREAM-BUGS.md 90.  None is what a Python handler that falls off the
+  // end returns.
+  if (pbReturnedAValue)
+    *pbReturnedAValue = res != Py_None;
 
   Py_DECREF (res);
   return false;

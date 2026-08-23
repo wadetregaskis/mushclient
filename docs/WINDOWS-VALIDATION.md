@@ -6503,15 +6503,21 @@ dropped status-line refresh. Both are described with proposed fixes in §10ap;
 neither can be compiled on this machine, and the first is the container shim the
 whole port stands on.
 
-#### And the one thing Windows found that only macOS can fix
+#### And the one thing Windows found that only macOS can fix — DONE
 
-The five embedded engines still carry `docs/UPSTREAM-BUGS.md` 90: a Python
-`OnMXP_OpenTag` that returns `None` still vetoes every tag, because
-`ExecuteLua`'s new `pbReturnedAValue` is set only in Lua's own body and the
-other five return before it. One line each — `py_engine.cpp:552,555`,
-`perl_engine.cpp:411`, `js_engine.cpp:579`, `tcl_engine.cpp:365`,
-`ruby_engine.cpp:512` — and `--engines-selftest` is the only place they can be
-proved.
+`docs/UPSTREAM-BUGS.md` 90's remaining half is closed. `ExecuteLua` now passes
+`pbReturnedAValue` down through `DispatchEmbedded` and all five embedded engines
+set it from the idiom each already used to spot a no-return handler, so a Python
+`OnMXP_OpenTag` returning `None` no longer vetoes every tag. Proved by a new
+`battery_returned_a_value` in `--engines-selftest`, green in all six languages
+and measured against three mutations of the Python body.
+
+**One thing this section had wrong, and it mattered:** the Tcl pointer said "the
+non-`TCL_OK` arm". That is not where Tcl's no-return case lands. A proc that
+falls off the end returns the empty string with `rc == TCL_OK`; the boolean
+conversion then fails and leaves the seeded 1, so the one-armed veto arrived at
+"keep processing" through the *success* path. Fixing only the arm named here
+would have left Tcl broken while every other language looked fixed.
 
 ### 10ag. `aca2478`, the last §10h row with no test anywhere
 

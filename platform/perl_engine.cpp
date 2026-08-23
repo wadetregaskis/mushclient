@@ -348,7 +348,8 @@ bool CScriptEngine::ExecutePerl (DISPID & dispid, LPCTSTR szProcedure,
                                  list<double> & nparams, list<string> & sparams,
                                  long & nInvocationCount, const t_regexp * regexp,
                                  map<string, string> * table, CPaneLine * paneline,
-                                 bool * result, const bool bLowercaseWildcards)
+                                 bool * result, const bool bLowercaseWildcards,
+                                 bool * pbReturnedAValue)
   {
   if (!m_perlEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
@@ -402,13 +403,17 @@ bool CScriptEngine::ExecutePerl (DISPID & dispid, LPCTSTR szProcedure,
   // A handler with no explicit return yields undef under G_SCALAR; treat that as
   // "keep going" (truthy stays true), matching Lua/Python. Only a *defined* value
   // overrides it — a defined 0 is false, as on the Windows COM path.
-  if (n > 0) { SV* r = POPs; if (!err && SvOK (r)) truthy = SvTRUE (r); }
+  bool bSaid = false;   // did the handler answer at all?  docs/UPSTREAM-BUGS.md 90
+  if (n > 0) { SV* r = POPs; if (!err && SvOK (r)) { truthy = SvTRUE (r); bSaid = true; } }
   PUTBACK;
   FREETMPS; LEAVE;
 
   if (err) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, szType, szProcedure); return true; }
   nInvocationCount++;
   if (result) *result = truthy;
+  // An undef scalar is what a Perl handler with no explicit return yields, so
+  // it is "said nothing" -- the two MXP call sites read `result` as a veto.
+  if (pbReturnedAValue) *pbReturnedAValue = bSaid;
   return false;
   }
 

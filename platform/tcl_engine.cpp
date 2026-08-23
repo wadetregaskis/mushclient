@@ -308,7 +308,8 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
                                 list<double> & nparams, list<string> & sparams,
                                 long & nInvocationCount, const t_regexp * regexp,
                                 map<string, string> * table, CPaneLine * /*paneline*/,
-                                bool * result, const bool bLowercaseWildcards)
+                                bool * result, const bool bLowercaseWildcards,
+                                bool * pbReturnedAValue)
   {
   if (!m_tclEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
@@ -358,12 +359,17 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
   int rc = Tcl_EvalObjv (interp, (int) av.size (), av.data (), 0);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
 
+  // A proc that falls off the end yields the empty string, which is not a
+  // boolean -- so the conversion FAILING is Tcl's "said nothing", not just the
+  // error arm.  `b` keeps its 1 in that case, exactly as before, so `result` is
+  // computed identically; only the new flag is new.  docs/UPSTREAM-BUGS.md 90.
+  int b = 1;
+  const bool bSaid = rc == TCL_OK &&
+        Tcl_GetBooleanFromObj (nullptr, Tcl_GetObjResult (interp), &b) == TCL_OK;
   if (result)                                   // truthy result keeps processing (Lua parity)
-    {
-    int b = 1;
-    if (rc == TCL_OK) Tcl_GetBooleanFromObj (nullptr, Tcl_GetObjResult (interp), &b);
     *result = (rc == TCL_OK) ? (b != 0) : true;
-    }
+  if (pbReturnedAValue)
+    *pbReturnedAValue = bSaid;
   for (Tcl_Obj* o : av) Tcl_DecrRefCount (o);
 
   if (rc != TCL_OK) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, interp, szType, szProcedure); return true; }

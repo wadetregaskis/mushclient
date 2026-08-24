@@ -22,6 +22,7 @@
 #include "doc.h"
 #include "scripting/scripting.h"
 #include "platform/mc_dispatch.h"
+#include "platform/mc_variant_args.h"
 
 #include <string>
 #include <vector>
@@ -170,7 +171,7 @@ XS(mc_perl_invoke)
   char errmsg[320] = "";
   int count = 0;
   {
-    std::vector<VARIANT> vargs((size_t) nargs);
+    MCVariantArgs vargs((size_t) nargs);
     for (int i = 0; i < nargs; i++)
       sv_to_variant(ST(2 + i), vargs[(size_t) i]);
 

@@ -27,6 +27,7 @@
 #include "doc.h"
 #include "scripting/scripting.h"
 #include "platform/mc_dispatch.h"
+#include "platform/mc_variant_args.h"
 
 // MUSHclient defines WIN32 (no underscore) for source compatibility; tcl.h would
 // then treat this as a Windows build (dllimport storage classes, Win types).  The
@@ -130,7 +131,7 @@ int World_cmd (ClientData cd, Tcl_Interp* interp, int objc, Tcl_Obj* const objv[
 
   if (MC_DispatchHas (name.c_str ()))           // a method
     {
-    std::vector<VARIANT> vargs (nextra);
+    MCVariantArgs vargs ((size_t) nextra);
     for (int i = 0; i < nextra; i++) tcl_to_variant (objv[2 + i], vargs[i]);
 
     VARIANT result; VariantInit (&result);

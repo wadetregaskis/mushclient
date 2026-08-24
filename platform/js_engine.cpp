@@ -21,6 +21,7 @@
 #include "doc.h"
 #include "scripting/scripting.h"
 #include "platform/mc_dispatch.h"
+#include "platform/mc_variant_args.h"
 
 // MUSHclient defines WIN32 (no underscore) for source compatibility, which makes
 // JavaScriptCore's JS_EXPORT expand to dllimport __declspec.  The MFC headers
@@ -284,7 +285,7 @@ JSValueRef Method_call(JSContextRef ctx, JSObjectRef function, JSObjectRef /*thi
     }
 
 
-  std::vector<VARIANT> vargs(argc);
+  MCVariantArgs vargs(argc);
   for (size_t i = 0; i < argc; i++) js_to_variant(ctx, argv[i], vargs[i]);
 
   VARIANT result; VariantInit(&result);

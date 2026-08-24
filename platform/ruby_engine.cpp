@@ -28,6 +28,7 @@
 #include "doc.h"
 #include "scripting/scripting.h"
 #include "platform/mc_dispatch.h"
+#include "platform/mc_variant_args.h"
 
 #include <string>
 #include <vector>
@@ -210,7 +211,7 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       }
     else if (MC_DispatchHas (name.c_str ()))      // a method
       {
-      std::vector<VARIANT> vargs (nargs);
+      MCVariantArgs vargs ((size_t) nargs);
       for (int i = 0; i < nargs; i++) ruby_to_variant (a[i], vargs[i]);
       VARIANT result; VariantInit (&result);
       std::vector<VARIANT> outargs;

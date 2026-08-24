@@ -24,6 +24,7 @@
 #include "doc.h"
 #include "scripting/scripting.h"
 #include "platform/mc_dispatch.h"
+#include "platform/mc_variant_args.h"
 
 #include <string>
 #include <vector>
@@ -178,7 +179,7 @@ PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
 
   Py_ssize_t n = PyTuple_GET_SIZE(args);
 
-  std::vector<VARIANT> vargs((size_t) n);
+  MCVariantArgs vargs((size_t) n);
   for (Py_ssize_t i = 0; i < n; i++)
     py_to_variant(PyTuple_GET_ITEM(args, i), vargs[(size_t) i]);
 

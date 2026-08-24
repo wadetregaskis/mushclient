@@ -95,6 +95,15 @@ static wxStatusBar* s_statusBar = nullptr;
 // the MDI child hierarchy (which is platform-dependent and unreliable).
 static std::unordered_map<CMUSHclientDoc*, CWorldChildFrame*> s_docFrameMap;
 
+// True only while hook_query_quit_save is walking the worlds.  Its save/close
+// prompts run nested event loops that keep the socket poll timer firing, so a
+// MUD trigger running world.DoCommand("Close") -- or a queued ID_FILE_CLOSE --
+// would reach the wxID_CLOSE arm and `delete doc` a world the quit walk still
+// holds a raw pointer to (a use-after-free across every later phase).  While
+// this is set the wxID_CLOSE arm no-ops: every world is being closed by the
+// quit anyway, so ignoring an interleaved close is correct.
+static bool s_inQuitSave = false;
+
 // Forward declaration — defined in the World-list persistence section below.
 
 // ── Recent Worlds list ────────────────────────────────────────────────────────
@@ -652,6 +661,13 @@ static int hook_post_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
                 const bool agreed =
                     wxMessageBox(prompt, wxT("TLS Certificate Not Verified"),
                                  wxYES_NO | wxICON_EXCLAMATION, parent) == wxYES;
+                // The modal above ran a nested event loop, which keeps the socket
+                // poll timer firing and dispatches queued commands: another
+                // world's trigger could have closed THIS world (delete doc) while
+                // the prompt was up.  Re-check before touching doc -- the gate at
+                // the top only covered the PostMessage->CallAfter window.
+                if (s_docFrameMap.find(doc) == s_docFrameMap.end())
+                    return;
                 if (doc->ApplyTlsFallbackChoice(/*bCertFailure=*/true, agreed))
                     doc->ConnectSocket();
             } else {
@@ -663,6 +679,11 @@ static int hook_post_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
                 const bool agreed =
                     wxMessageBox(prompt, wxT("TLS Connection Failed"),
                                  wxYES_NO | wxICON_QUESTION, parent) == wxYES;
+                // As above: the world may have been closed during the modal, and
+                // this arm additionally flips m_bUseSSL off (a plaintext
+                // reconnect), so a UAF here would corrupt an encryption decision.
+                if (s_docFrameMap.find(doc) == s_docFrameMap.end())
+                    return;
                 if (doc->ApplyTlsFallbackChoice(/*bCertFailure=*/false, agreed))
                     doc->ConnectSocket();
             }
@@ -2227,9 +2248,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (dlg.ShowModal() == wxID_OK)
                 hook_open_world_file(dlg.GetPath().ToUTF8().data());
         } else if (id == wxID_CLOSE) {
-            // Close the currently active MDI child (world window).
+            // Close the currently active MDI child (world window) -- unless the
+            // quit walk is in progress, in which case deleting a doc now would
+            // dangle the pointer it still holds (s_inQuitSave).
             if (wxMDIChildFrame* active = frame->GetActiveChild())
-                active->Close();
+                if (!s_inQuitSave)
+                    active->Close();
         } else if (id == wxID_SAVE || id == 0xE103 /*ID_FILE_SAVE*/) {
             hook_save_active_world(frame, /*saveAs=*/false);
         } else if (id == wxID_SAVEAS || id == 0xE104 /*ID_FILE_SAVE_AS*/) {
@@ -3419,6 +3443,15 @@ static int hook_query_quit_save()
     // Guard the whole flow: a save raising (e.g. a write error, an MFC
     // CException) must not propagate through applicationShouldTerminate: — that
     // is an Objective-C++ boundary and a C++ exception crossing it crashes.
+    //
+    // Also block interleaved world-closes for the duration of the walk (see
+    // s_inQuitSave): the prompts below pump events, and a mid-quit close would
+    // free a doc still in `worlds`.  RAII, so every return path clears it.
+    struct QuitSaveGuard {
+        QuitSaveGuard()  { s_inQuitSave = true;  }
+        ~QuitSaveGuard() { s_inQuitSave = false; }
+    } quitSaveGuard;
+
     try
     {
         // Phase 0 — the notepads.  SaveModified() is virtual and is exactly what
@@ -4036,13 +4069,25 @@ static void hook_progress_set_range(void* handle, int maximum)
     // wxProgressDialog has no SetRange, so re-make it at the right size.  The
     // callers all do Create() then SetRange() before any real work, so this
     // happens once, before anything is on screen worth preserving.
+    //
+    // Delete the old dialog SYNCHRONOUSLY, not via Destroy().  wxPD_APP_MODAL
+    // gives each dialog a wxWindowDisabler that disables the parent frame; a
+    // wxWindowDisabler only re-enables what IT disabled.  With a deferred
+    // Destroy() the new dialog's disabler is built while the OLD one still holds
+    // the parent disabled, so it records nothing -- and when the deferred delete
+    // later re-enables the parent, the "app-modal" replacement never re-disables
+    // it and the re-entrancy protection (a second send re-entering the engine)
+    // is silently lost for the rest of the operation.  A synchronous delete runs
+    // the old disabler's destructor here, re-enabling the parent, so the new
+    // disabler then disables it for real.  Safe because SetRange is called from
+    // the caller's setup, never from inside the dialog's own event handler.
     const wxString title = p->dlg->GetTitle();
-    const wxWindow* parent = p->dlg->GetParent();
-    p->dlg->Destroy();
+    wxWindow* parent = const_cast<wxWindow*>(p->dlg->GetParent());
+    delete p->dlg;
+    p->dlg = nullptr;
     p->max = maximum;
     p->dlg = new wxProgressDialog(
-        title, wxString(), maximum,
-        const_cast<wxWindow*>(parent),
+        title, wxString(), maximum, parent,
         wxPD_APP_MODAL | wxPD_CAN_ABORT | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
 }
 

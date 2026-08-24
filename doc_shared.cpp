@@ -3073,7 +3073,8 @@ CString strLine (lpszText, size);
     m_iCurrentActionSource = eInputFromServer;
 
     // let plugin change the input packet unless we have faked an input line from MXP processing or similar
-    if (!fake)
+    // (skip the whole-plugin walk when no plugin implements OnPluginPacketReceived)
+    if (!fake && m_bPluginProcessesPacket)
       SendToAllPluginCallbacksRtn (ON_PLUGIN_PACKET_RECEIVED, strLine);
 
     m_iCurrentActionSource = eUnknownActionSource;
@@ -4429,6 +4430,11 @@ long CMUSHclientDoc::CountLinesBeforeLastUserInput (void) const
 
 void CMUSHclientDoc::SendLineToPlugin (void)
   {
+  // No plugin implements OnPluginPartialLine -> skip the per-line CString copy
+  // and the whole-plugin walk entirely (m_bPluginProcessesPartialLine is set at
+  // load, sticky-true like the MXP flags, so this never wrongly skips).
+  if (!m_bPluginProcessesPartialLine)
+    return;
 
   CString strPartialLine = CString (m_pCurrentLine->text, m_pCurrentLine->len);
   SendToAllPluginCallbacks (ON_PLUGIN_PARTIAL_LINE, strPartialLine);

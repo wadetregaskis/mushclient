@@ -1467,6 +1467,13 @@ public:
   bool    m_bPluginProcessesSetVariable; // does any plugin handle set variable?
   bool    m_bPluginProcessesSetEntity;   // does any plugin handle set entity?
   bool    m_bPluginProcessesError;       // does any plugin handle the error?
+  // Monotonic per-line-callback flags (same sticky-true shape as the MXP ones
+  // above): set at plugin load if ANY plugin implements the callback, so the
+  // per-line dispatch can skip both the CString copy and the whole-plugin walk
+  // for the common case where none does.
+  bool    m_bPluginProcessesLine;        // any plugin handles OnPluginLineReceived?
+  bool    m_bPluginProcessesPartialLine; // ...OnPluginPartialLine?
+  bool    m_bPluginProcessesPacket;      // ...OnPluginPacketReceived?
 
   // listening for UDP packets
 

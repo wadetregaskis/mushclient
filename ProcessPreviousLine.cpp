@@ -472,7 +472,8 @@ assemble the full text of the original line.
 
   m_iCurrentActionSource = eInputFromServer;
 
-  if (!SendToAllPluginCallbacks (ON_PLUGIN_LINE_RECEIVED, strCurrentLine))
+  if (m_bPluginProcessesLine &&
+      !SendToAllPluginCallbacks (ON_PLUGIN_LINE_RECEIVED, strCurrentLine))
     m_bLineOmittedFromOutput = true;
 
   m_iCurrentActionSource = eUnknownActionSource;

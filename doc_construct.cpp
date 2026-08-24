@@ -454,6 +454,9 @@ int i;
   m_bPluginProcessesSetVariable = false;
   m_bPluginProcessesSetEntity = false;
   m_bPluginProcessesError = false;      
+  m_bPluginProcessesLine        = false;
+  m_bPluginProcessesPartialLine = false;
+  m_bPluginProcessesPacket      = false;
 
   ZeroMemory (&m_bClient_sent_IAC_DO,   sizeof m_bClient_sent_IAC_DO);
   ZeroMemory (&m_bClient_sent_IAC_DONT, sizeof m_bClient_sent_IAC_DONT);

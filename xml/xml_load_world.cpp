@@ -551,6 +551,15 @@ LONGLONG iCounterFrequency = large_int_frequency.QuadPart;
         if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_ERROR].isvalid ())
           m_bPluginProcessesError  = true;
 
+        if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_LINE_RECEIVED].isvalid ())
+          m_bPluginProcessesLine = true;
+
+        if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_PARTIAL_LINE].isvalid ())
+          m_bPluginProcessesPartialLine = true;
+
+        if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_PACKET_RECEIVED].isvalid ())
+          m_bPluginProcessesPacket = true;
+
 
         }  // end of having a script
 

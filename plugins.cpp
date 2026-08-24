@@ -411,7 +411,10 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
     // this crazy code is to get 0x00 bytes into telnet subnegotiations ;)
 
     VARIANT v;
-    VariantClear (&v);
+    VariantInit (&v);       // NOT VariantClear: v is uninitialised here, so
+                            // VariantClear would read a garbage vt and, if it
+                            // happened to carry VT_ARRAY, SafeArrayDestroy a wild
+                            // pointer.  VariantInit is what this wanted.
     v.vt = VT_BSTR;
     CString str (sText.c_str (), sText.size ());
     v.bstrVal = str.AllocSysString (); 

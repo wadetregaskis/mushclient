@@ -57,8 +57,11 @@ int i;
   pcb.lines_per_page   = lines_per_page;
   pcb.point_size       = point_size; 
   pcb.printer_spacing  = printer_spacing;
-  strcpy (pcb.printer_font, printer_font);
-  
+  // Bounded copy: App.m_strPrinterFont is a persisted, user/migration-settable
+  // string of unbounded length, and pcb.printer_font is a fixed char[256].
+  strncpy (pcb.printer_font, printer_font, sizeof (pcb.printer_font) - 1);
+  pcb.printer_font [sizeof (pcb.printer_font) - 1] = '\0';
+
   //
   // Initialize a PRINTDLG struct and call PrintDlg to allow user to
   //   specify various printing options...
@@ -191,7 +194,10 @@ LOGFONT lf;
   lf.lfClipPrecision  =  CLIP_DEFAULT_PRECIS;	// clipping precision    
   lf.lfQuality        =  DEFAULT_QUALITY;	// output quality            
   lf.lfPitchAndFamily =  MUSHCLIENT_FONT_FAMILY;	// pitch and family              
-  strcpy (lf.lfFaceName, pcb.printer_font); 	// address of typeface name string       
+  // Bounded copy into the fixed LOGFONT::lfFaceName[32], the last member of the
+  // stack local `lf`: a face name past 31 chars would otherwise run off the end.
+  strncpy (lf.lfFaceName, pcb.printer_font, sizeof (lf.lfFaceName) - 1);
+  lf.lfFaceName [sizeof (lf.lfFaceName) - 1] = '\0';	// typeface name string
 
 
 // create 8 fonts (all possible combinations of bold, italic and underline)

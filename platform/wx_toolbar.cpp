@@ -609,15 +609,43 @@ void CWorldToolBars::ReadPlacements (Placement out[eBarCount]) const
             std::swap(pos[b], pos[b-1]);
         }
 
-    // Canonicalise: rows compacted to 0..k-1 and order restarted within each.
-    // The stored form HAS to be canonical — dock_pos is a pixel offset, so two
-    // windows of different widths would otherwise publish different numbers for
-    // the same picture and push them at each other without ever settling.
+    // Canonicalise the VISIBLE bars: rows compacted to 0..k-1 and order
+    // restarted within each.  The stored form HAS to be canonical — dock_pos is
+    // a pixel offset, so two windows of different widths would otherwise publish
+    // different numbers for the same picture and push them at each other without
+    // ever settling.
+    bool placed[eBarCount] = { false };
     int outRow = -1, outOrder = 0, prevRow = INT_MIN;
     for (int k = 0; k < n; ++k) {
         if (row[k] != prevRow) { prevRow = row[k]; ++outRow; outOrder = 0; }
         out[idx[k]].row   = outRow;
         out[idx[k]].order = outOrder++;
+        placed[idx[k]]    = true;
+    }
+
+    // A bar NOT in the visible set (hidden, or not built in this window) kept the
+    // absolute row it had in s_place above — which now COLLIDES with a renumbered
+    // visible bar: hide Standard (row 0) and World renumbers from 1 to 0, so both
+    // read (row 0, order 0), and re-showing Standard docks it on top of World.
+    // Give each such bar its own fresh row ABOVE the visible ones instead, in
+    // stored-placement order, so a re-show can never land on an occupied slot.
+    int hid[eBarCount], hn = 0;
+    for (int i = 0; i < eBarCount; ++i)
+        if (!placed[i]) hid[hn++] = i;
+    for (int a = 1; a < hn; ++a)
+        for (int b = a; b > 0; --b) {
+            const Placement& x = s_place[hid[b]];
+            const Placement& y = s_place[hid[b-1]];
+            const bool before = x.row < y.row ||
+                (x.row == y.row && (x.order < y.order ||
+                 (x.order == y.order && hid[b] < hid[b-1])));
+            if (!before) break;
+            std::swap(hid[b], hid[b-1]);
+        }
+    int nextRow = outRow + 1;
+    for (int k = 0; k < hn; ++k) {
+        out[hid[k]].row   = nextRow++;
+        out[hid[k]].order = 0;
     }
 }
 

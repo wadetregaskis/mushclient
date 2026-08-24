@@ -1652,6 +1652,24 @@ int RunMenuBarSelfTest()
         check(bars->StripHeight() == threeRows,
               "...and showing it again takes the row back");
 
+        // Regression: hiding a bar that is NOT last renumbers the visible bars
+        // into lower rows, and the hidden bar used to keep its old ABSOLUTE row
+        // -- so Standard (row 0) and World (renumbered 1 -> 0) both read
+        // (row 0, order 0), and re-showing Standard docked it on top of World.
+        // Every bar must have a DISTINCT (row, order) even while one is hidden.
+        bars->SetBarVisible(kStd, false);
+        {
+            const Place a = bars->GetPlacement(kStd);
+            const Place b = bars->GetPlacement(kWld);
+            const Place c = bars->GetPlacement(kAct);
+            auto same = [](const Place& x, const Place& y) {
+                return x.row == y.row && x.order == y.order;
+            };
+            check(!same(a, b) && !same(a, c) && !same(b, c),
+                  "a hidden bar does not collide with a renumbered visible bar");
+        }
+        bars->SetBarVisible(kStd, true);   // restore before teardown
+
         delete bars2;             // both before their hosts: see the block above
         delete bars;
         tbHost2->Destroy();

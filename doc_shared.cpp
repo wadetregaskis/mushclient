@@ -38,6 +38,7 @@
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
+
 #undef THIS_FILE
 static char BASED_CODE THIS_FILE[] = __FILE__;
 #endif
@@ -3314,10 +3315,36 @@ CString strLine (lpszText, size);
           }   // end of HAVE_SUBNEGOTIATION_IAC
 
         // MXP phases             
-        case HAVE_MXP_ELEMENT:     Phase_MXP_ELEMENT (c); continue;
-        case HAVE_MXP_COMMENT:     Phase_MXP_COMMENT (c); continue;
-        case HAVE_MXP_QUOTE:       Phase_MXP_QUOTE (c); continue;
-        case HAVE_MXP_ENTITY:      Phase_MXP_ENTITY (c); continue;
+        case HAVE_MXP_ELEMENT:
+        case HAVE_MXP_COMMENT:
+        case HAVE_MXP_QUOTE:
+        case HAVE_MXP_ENTITY:
+          // Cap the collection.  A hostile MXP server can send '<' or '&'
+          // followed by megabytes with NONE of the terminators (\n \r ESC IAC)
+          // that would end collection, so each of the four Phase_MXP_* handlers
+          // appends to m_strMXPstring without bound until the client OOMs or
+          // thrashes -- a remote denial of service.  The telnet subnegotiation
+          // buffer is capped for exactly this reason (71c6afd,
+          // MAX_SUBNEGOTIATION_LENGTH); a legitimate tag/comment/entity/quote is
+          // orders of magnitude shorter than this bound.  Deliberate divergence
+          // from upstream, which has no such limit (docs/UPSTREAM-DIVERGENCES.md).
+          // 256 KB mirrors the telnet subnegotiation cap; no legitimate MXP
+          // construct approaches it.
+          if (m_strMXPstring.GetLength () >= 256 * 1024)
+            {
+            MXP_unterminated_element ("too long");
+            m_strMXPstring.Empty ();
+            m_phase = NONE;
+            continue;
+            }
+          switch (m_phase)
+            {
+            case HAVE_MXP_ELEMENT: Phase_MXP_ELEMENT (c); break;
+            case HAVE_MXP_COMMENT: Phase_MXP_COMMENT (c); break;
+            case HAVE_MXP_QUOTE:   Phase_MXP_QUOTE (c);   break;
+            case HAVE_MXP_ENTITY:  Phase_MXP_ENTITY (c);  break;
+            }
+          continue;
 
         case HAVE_MXP_ROOM_NAME:
         case HAVE_MXP_ROOM_DESCRIPTION:

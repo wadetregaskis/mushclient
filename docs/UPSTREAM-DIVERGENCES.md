@@ -864,3 +864,34 @@ received", so it is written down.
 **Verification:** `WinTransport.BytesSentAreCountedOncePerSendPacket` sends 5
 then 6 bytes through a real `pal::WinTransport` over loopback, asserts the
 counter reads 5 then 11, and then asserts the drain does not add any more.
+
+## 21 — MXP element/entity collection is capped, where upstream is unbounded
+
+**Where:** `doc_shared.cpp`, `CMUSHclientDoc::DisplayMsg` (the MXP-phase dispatch).
+
+**Was:** while collecting an MXP element (`<…`), comment, quote or entity
+(`&…`), each received byte was appended to `m_strMXPstring` with no length
+limit. Collection ends only on a terminator — `>`/`;`, or one of newline, CR,
+ESC, IAC (which abandon it as unterminated). So a hostile MXP-enabled server
+could send `<` (or `&`) followed by megabytes containing none of those bytes and
+grow `m_strMXPstring` without bound — a remote memory-exhaustion denial of
+service. The analogous telnet-subnegotiation buffer was already capped for
+exactly this reason (`MAX_SUBNEGOTIATION_LENGTH`, `71c6afd`); the MXP collection
+phases were not.
+
+**Now:** the four collection phases are capped at 256 KB. On reaching it the
+element is abandoned (`MXP_unterminated_element`, the buffer cleared and the
+phase reset to `NONE`, so the overflow bytes become ordinary text) exactly as
+the newline/ESC/IAC terminators already do. No legitimate MXP construct
+approaches 256 KB — real tags, entities and `<!ELEMENT>`/`<!ENTITY>` definitions
+are at most a few KB — so nothing well-formed is affected.
+
+**Why it is here rather than only in UPSTREAM-BUGS:** it is shared code compiled
+on Windows too, and it changes behaviour against a (pathological) server —
+upstream would keep collecting until it ran out of memory; this build stops at
+256 KB and logs an unterminated-element error. A server that legitimately needed
+a larger MXP payload (none is known to exist) would see it truncated here.
+
+**Verification:** `MXPFlood.UnterminatedElementCollectionIsBounded` feeds a
+600 KB unterminated element and asserts `m_strMXPstring` stays under 300 KB;
+without the cap it reaches the full flood size.

@@ -2660,4 +2660,23 @@ TEST(MXPCloseR6, ParagraphCloseCleansUpWithoutAGag)
     EXPECT_EQ(0, startTags);
 }
 
+// A hostile MXP server can open an element ('<') or entity ('&') and never send
+// a terminator, so the Phase_MXP_* collectors would grow m_strMXPstring without
+// bound -- a remote memory-exhaustion DoS.  The collection is now capped at
+// 256 KB (like the telnet subnegotiation buffer); an over-long element is
+// abandoned rather than accumulated.  The flood here (600 KB) is deliberately
+// bigger than the assertion threshold, so the test fails if the cap is absent.
+TEST(MXPFlood, UnterminatedElementCollectionIsBounded)
+{
+    CMUSHclientDoc doc;
+    make_doc_e2e(doc);
+    doc.m_iMXP_mode = eMXP_secure;
+
+    std::string flood = "<";                 // opens an element
+    flood.append(600 * 1024, 'A');           // none of > < ' " CR LF ESC IAC
+    feed(doc, flood.c_str());
+
+    EXPECT_LT(doc.m_strMXPstring.GetLength(), 300 * 1024);
+}
+
 MC_TEST_MAIN()

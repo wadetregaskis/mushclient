@@ -400,6 +400,20 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
                 wxPath.ToUTF8().data()));
             m_pDoc->SetModifiedFlag(FALSE);
             SetTitle(wxFileName(wxPath).GetFullName());
+        } else {
+            // The write FAILED (a full disk, a read-only path, a yanked volume).
+            // This is past the dialog-cancel early return above, so it is a real
+            // failure, not a cancel -- and it was silent: OnMenuSave ignores
+            // DoSave's BOOL, so the user was left believing the file was saved
+            // while the document stayed dirty.  Windows' CDocument::DoSave shows
+            // an error box here; match it.
+            wxMessageBox(
+                wxString::Format(
+                    wxT("Could not save the notepad to \"%s\".\n\n"
+                        "The file could not be written -- check that the disk is "
+                        "not full and the location is writable."),
+                    wxPath),
+                wxT("Save Failed"), wxOK | wxICON_EXCLAMATION, this);
         }
         return ok;
     };

@@ -298,6 +298,32 @@ TEST(WrapTest, Utf8TabStopCountsCharactersNotBytes)
     EXPECT_EQ(8, utf8_column_of(multibyte, '|'));
 }
 
+// A 4-byte UTF-8 character (an emoji, U+1F600) counts as ONE wrap column here:
+// wchar_t is 32-bit on this port, so LineLengthInChars / MultiByteToWideChar
+// returns code points, and a 4-byte character is one of them.  (On a 16-bit
+// wchar_t Windows build it is a UTF-16 surrogate pair, so it would count as two
+// there -- a divergence worth being explicit about; this pins the port side.)
+TEST(WrapTest, Utf8FourByteCharCountsAsOneColumn)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8 = TRUE;
+    doc.m_nWrapColumn = 5;
+
+    std::string s;
+    for (int i = 0; i < 7; i++) s += "\xF0\x9F\x98\x80";   // 7 x U+1F600 (4 bytes each)
+    s += "\n";
+    doc.DisplayMsg(s.c_str(), (int)s.size(), 0);
+
+    CLine* l0 = nth_line(doc, 0);
+    CLine* l1 = nth_line(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    EXPECT_EQ(20, l0->len);   // 5 emoji (each counted as ONE column) = 20 bytes
+    EXPECT_EQ(8,  l1->len);   // remaining 2 emoji
+    EXPECT_FALSE(l0->hard_return);
+    EXPECT_TRUE(l1->hard_return);
+}
+
 // doc_shared.cpp AddToLine: "any character starting 10xxxxxx will *not* be
 // the start of a character ... we do *not* want to split it by putting it
 // onto a new line" — a multi-byte character reaching the wrap column moves

@@ -9,6 +9,7 @@
 #if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)
 
 #include <unordered_map>
+#include <unordered_set>
 #include <set>
 #include <functional>
 #include <string>
@@ -388,6 +389,13 @@ void build_table()
 // the Which parameter at all (they hand 1 to the X variant themselves), so the
 // window rows name MoveWorldWindowX / GetWorldWindowPositionX, which do.
 struct ArgDefault { const char* method; int slot; long value; };
+
+// The set of method names that appear in kArgDefaults, built once.  Only these
+// can need argument padding, so a caller can skip the 34-entry string-compare
+// scan below entirely for every OTHER method -- which is the hot path: a plugin
+// calls world.Note / world.GetVariable / world.Send thousands of times a second
+// and none of them has a default.
+static const std::unordered_set<std::string>& methods_with_defaults ();
 static const ArgDefault kArgDefaults[] = {
   { "addtriggerex",          9, DEFAULT_TRIGGER_SEQUENCE },
   { "blendpixel",            3, 1 },                    // Opacity
@@ -422,6 +430,16 @@ static const ArgDefault kArgDefaults[] = {
   { "windowmergeimagealpha", 8, 1 },
   { "windowshow",            1, 1 },
 };
+
+static const std::unordered_set<std::string>& methods_with_defaults ()
+  {
+  static const std::unordered_set<std::string>* s = []{
+    auto* m = new std::unordered_set<std::string>;
+    for (const ArgDefault& d : kArgDefaults) m->insert (d.method);
+    return m;
+  }();
+  return *s;
+  }
 
 // Does kArgDefaults supply slot `slot` of method `key` (already lower-cased)?
 static bool slot_has_default (const std::string& key, const int slot)
@@ -494,6 +512,11 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
 
   std::vector<VARIANT> padded;
   const int nSupplied = nargs;      // before the padding below rewrites it
+
+  // Skip the 34-entry kArgDefaults scan for every method that has no defaults
+  // (the common case) with one O(1) membership test.
+  if (methods_with_defaults ().count (key))
+    {
   int  maxSlot = -1;                // highest defaulted slot still to fill
   bool anyToFill = false;
   for (const ArgDefault& d : kArgDefaults)
@@ -525,6 +548,7 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
     args  = padded.data();
     nargs = total;
     }
+    }   // end methods_with_defaults guard
 
   // ── Strict argument checking (world option "script_strict_arguments") ────
   // Deliberately HERE, after the kArgDefaults padding above: a slot the table

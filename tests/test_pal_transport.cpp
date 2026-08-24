@@ -957,6 +957,54 @@ TEST(PalTransport, RefusedConnectReportsAnErrorAndNoPhantomClose)
     delete t;
 }
 
+// ── a send during the DNS lookup must be QUEUED, not dropped ───────────────
+//
+// CMUSHclientDoc::CreateTransport builds the adapter at the START of a connect;
+// connect() creates the socket only after the async DNS lookup resolves, so for
+// the whole eConnectMudNameLookup window the transport exists (ConnectionOpen()
+// == m_pTransport != NULL is true) while m_sock.m_hSocket == INVALID_SOCKET.  A
+// timer with "Active when world is closed" firing to the world -- or any other
+// SendTo/SendMsg path -- reaches flushSend() there.  Without eed6351's POSIX
+// twin (the INVALID_SOCKET guard) the plaintext arm ::send(-1, ...)s, EBADF is
+// not EWOULDBLOCK, the error branch runs and m_outgoing.clear() DROPS the bytes:
+// the command is echoed, logged and counted as sent, yet never reaches the MUD.
+// Modelled by sending BEFORE connect() and proving the bytes still arrive.
+TEST(PalTransport, SendBeforeConnectIsQueuedNotDropped)
+{
+    sockaddr_in sa;
+    int srv = make_loopback_listener(sa);
+    ASSERT_TRUE(srv >= 0);
+
+    ConnectRecorder ev;
+    pal::ITransport* t = pal::CreatePosixTransport(ev);
+
+    // The socket does not exist yet: this is the invalid-handle window.
+    t->send("EARLY\r\n", 7);
+
+    // Now connect; the queued bytes must drain on the first writable event.
+    t->connect(htonl(INADDR_LOOPBACK), ntohs(sa.sin_port),
+               pal::TransportOptions{ false });
+    ASSERT_TRUE(pump_until([&]{ return ev.connects > 0; }));
+    EXPECT_EQ(0, ev.firstConnectErr);        // connect succeeded
+
+    int client = ::accept(srv, nullptr, nullptr);
+    ASSERT_TRUE(client >= 0);
+
+    char buf[16] = {};
+    long got = 0;
+    EXPECT_TRUE(pump_until([&]{
+        long n = ::recv(client, buf + got, sizeof buf - 1 - got, MSG_DONTWAIT);
+        if (n > 0) got += n;
+        return got >= 7;
+    }));
+    EXPECT_EQ(0, memcmp(buf, "EARLY\r\n", 7));   // the pre-connect send arrived
+    EXPECT_EQ(0, ev.closes);                      // and no spurious teardown
+
+    ::close(client);
+    ::close(srv);
+    delete t;
+}
+
 
 MC_TEST_MAIN()
 

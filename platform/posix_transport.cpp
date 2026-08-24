@@ -405,6 +405,22 @@ private:
     void flushSend()
     {
         if (m_outgoing.empty()) return;
+        // A send() can land while the transport exists but its socket does not:
+        // CMUSHclientDoc::CreateTransport builds this adapter at the START of a
+        // connect, and connect() creates the socket only after the async DNS
+        // lookup resolves.  For that whole eConnectMudNameLookup window
+        // m_sock.m_hSocket == INVALID_SOCKET while ConnectionOpen()
+        // (m_pTransport != NULL) is already true, so a timer with "Active when
+        // world is closed" firing to the world -- or any other SendTo/SendMsg
+        // path -- reaches here.  Without this guard the plaintext branch calls
+        // ::send(-1, ...) -> EBADF (not EWOULDBLOCK), takes the error branch and
+        // m_outgoing.clear() DROPS the queued bytes: the command is echoed,
+        // logged and counted as sent, yet never reaches the MUD.  Leaving it
+        // queued is the right answer -- it drains on the first FD_WRITE once
+        // connected.  pal/win_transport.cpp:481 got exactly this guard in
+        // eed6351; this is its missing POSIX twin.
+        if (m_sock.m_hSocket == INVALID_SOCKET)
+            return;
 #ifdef OPENSSL_FOUND
         if (m_tlsUp && m_ssl) {
             int count = SSL_write(m_ssl, m_outgoing.data(),

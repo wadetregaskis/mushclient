@@ -3491,6 +3491,12 @@ void CWorldChildFrame::OnActivate(wxActivateEvent& evt)
 {
     if (evt.GetActive()) {
         UpdateStatusBar();
+        // Refresh the toolbar bars now that this window is the visible one --
+        // OnWorldTimer updates the bars only for the active world, so without
+        // this a just-activated window would show up-to-100 ms-stale button and
+        // activity state until its next tick.
+        if (m_toolbars)
+            m_toolbars->UpdateState(m_doc);
         if (m_doc) {
             // The engine's "is this world's window the active one?" state, and
             // with it the unread-line counter the activity toolbar and the
@@ -5358,7 +5364,13 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // Windows drives these from MFC's idle-time ON_UPDATE_COMMAND_UI pump plus
     // the frame's ACTIVITY_TIMER; the port has neither, so ride the world timer
     // (UpdateState only touches wx state that actually changed).
-    if (m_toolbars)
+    //
+    // Only the ACTIVE world window is on screen (the MDI parent shows one child
+    // at a time), and its activity bar already reflects EVERY world's state, so
+    // updating a hidden child's bars 10x/second is pure waste -- with N worlds
+    // open it was N updates per tick where one suffices.  OnActivate refreshes
+    // the bars the instant a window becomes active, so nothing looks stale.
+    if (m_toolbars && IsActiveWorld())
         m_toolbars->UpdateState(m_doc);
 
     // Keep the connected-time pane moving.  Nothing did: UpdateStatusBar()'s

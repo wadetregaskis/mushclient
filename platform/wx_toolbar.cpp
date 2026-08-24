@@ -827,11 +827,28 @@ void CWorldToolBars::UpdateState (CMUSHclientDoc* activeDoc)
         cachedStyle = style;
     }
 
+    // Build the slot->world map in ONE walk.  UpdateWorldCounts() above already
+    // numbered every world 1..N in m_view_number, so calling wx_world_in_slot
+    // (which restarts the whole doc-list walk) ten times did 10 O(N) traversals
+    // per tick on top of that one -- 11 total, every 100 ms, per open world.
+    // (wx_world_in_slot's lazy number-assign branch is never reached from here,
+    // since UpdateWorldCounts just assigned them all.)
+    CMUSHclientDoc* slotWorld[11] = {};   // indices 1..10
+    if (App.m_pWorldDocTemplate) {
+        for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos; ) {
+            CMUSHclientDoc* pDoc =
+                (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
+            const int n = pDoc->m_view_number;
+            if (n >= 1 && n <= 10)
+                slotWorld[n] = pDoc;
+        }
+    }
+
     for (int slot = 1; slot <= 10; ++slot) {
         const int btnIndex = slot - 1;
         const int id       = kActivity[btnIndex].id;
 
-        CMUSHclientDoc* found = wx_world_in_slot(slot);
+        CMUSHclientDoc* found = slotWorld[slot];
         if (!found) {
             act->EnableTool(id, false);
             act->ToggleTool(id, false);

@@ -28,6 +28,11 @@
 #define VT_DISPATCH 9              // an IDispatch* (another world object)
 #endif
 
+// Forward declaration (defined after the kArgDefaults table further down, at file
+// scope): build_table below, inside the anonymous namespace, stamps each Entry's
+// hasDefaults flag from this so the hot path avoids a second hash of the key.
+static const std::unordered_set<std::string>& methods_with_defaults ();
+
 namespace {
 
 // Automation names are case-insensitive on Windows (IDispatch::GetIDsOfNames),
@@ -265,12 +270,13 @@ template<>       constexpr bool is_out_param<VARIANT*> = true;
 
 using Thunk = std::function<bool(CMUSHclientDoc*, const VARIANT*, int,
                                  VARIANT&, std::vector<VARIANT>*)>;
-struct Entry { Thunk fn; int inArity; };
+struct Entry { Thunk fn; int inArity; bool hasDefaults = false; };
 std::unordered_map<std::string, Entry>& table()
   {
   static std::unordered_map<std::string, Entry> t;
   return t;
   }
+
 
 template<class Ret, class... Args>
 void register_disp(const char* name, Ret (CMUSHclientDoc::*pmf)(Args...))
@@ -363,6 +369,11 @@ void build_table()
                 static_cast<void (CMUSHclientDoc::*)(LPCTSTR)>(&CMUSHclientDoc::Note));
   register_disp("ColourNote",
                 static_cast<void (CMUSHclientDoc::*)(LPCTSTR, LPCTSTR, LPCTSTR)>(&CMUSHclientDoc::ColourNote));
+
+  // Stamp the argument-default flag once, so MC_DispatchInvoke reads it from the
+  // Entry it already looked up instead of hashing the key a second time.
+  for (auto & kv : table ())
+    kv.second.hasDefaults = methods_with_defaults ().count (kv.first) != 0;
   }
 
 } // anonymous namespace
@@ -389,13 +400,6 @@ void build_table()
 // the Which parameter at all (they hand 1 to the X variant themselves), so the
 // window rows name MoveWorldWindowX / GetWorldWindowPositionX, which do.
 struct ArgDefault { const char* method; int slot; long value; };
-
-// The set of method names that appear in kArgDefaults, built once.  Only these
-// can need argument padding, so a caller can skip the 34-entry string-compare
-// scan below entirely for every OTHER method -- which is the hot path: a plugin
-// calls world.Note / world.GetVariable / world.Send thousands of times a second
-// and none of them has a default.
-static const std::unordered_set<std::string>& methods_with_defaults ();
 static const ArgDefault kArgDefaults[] = {
   { "addtriggerex",          9, DEFAULT_TRIGGER_SEQUENCE },
   { "blendpixel",            3, 1 },                    // Opacity
@@ -515,7 +519,7 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
 
   // Skip the 34-entry kArgDefaults scan for every method that has no defaults
   // (the common case) with one O(1) membership test.
-  if (methods_with_defaults ().count (key))
+  if (it->second.hasDefaults)
     {
   int  maxSlot = -1;                // highest defaulted slot still to fill
   bool anyToFill = false;

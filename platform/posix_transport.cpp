@@ -230,6 +230,18 @@ public:
             return;
         }
         SSL_set_fd(m_ssl, m_sock.m_hSocket);
+        // send() appends to m_outgoing (a std::string that reallocates) and
+        // flushSend() re-issues SSL_write(m_outgoing.data(), ...) on every call.
+        // When the OS send buffer is momentarily full SSL_write returns
+        // WANT_WRITE with the bytes still queued; the next send() appends more,
+        // the string can realloc, and the retry passes a MOVED, longer buffer.
+        // OpenSSL's default retry contract forbids that (SSL_R_BAD_WRITE_RETRY ->
+        // SSL_ERROR_SSL), which flushSend treats as a hard error and tears the
+        // whole world connection down mid-command.  This mode is exactly the
+        // sanctioned relaxation: the retry buffer may move as long as the bytes
+        // being retried are unchanged, which append-only growth guarantees.
+        // (No Windows twin: stock MUSHclient has no TLS transport.)
+        SSL_set_mode(m_ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
         if (!m_tlsParams.serverName.empty()) {
             SSL_set_tlsext_host_name(m_ssl, m_tlsParams.serverName.c_str());
             // CN/SAN pinning — without it any valid chain for ANY host passes.

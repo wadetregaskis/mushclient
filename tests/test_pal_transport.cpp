@@ -485,6 +485,7 @@ TEST(PalTransport, PosixAdapterConformanceSelftest)
 #include <openssl/x509.h>
 #include <openssl/evp.h>
 #include <thread>
+#include <atomic>
 
 namespace {
 
@@ -827,6 +828,81 @@ TEST(PalTransport, TlsEncryptedSendConsumesTheBufferExactlyOnce)
     // empty transcript would mean the bytes went out in the CLEAR (the record
     // layer would have rejected them), so this pins encryption too.
     EXPECT_STREQ("PINGTLS\nBYE\n", transcript.c_str());
+}
+
+// TLS server that handshakes, greets, then NEVER reads: the client's socket send
+// buffer fills, so its SSL_write returns WANT_WRITE.  Lingers until told to stop.
+static unsigned short start_tls_nonreading_server(std::thread& out,
+                                                  std::atomic<bool>* go)
+{
+    sockaddr_in sa;
+    int srv = make_loopback_listener(sa);
+    out = std::thread([srv, go]() {
+        EVP_PKEY* pkey = nullptr; X509* x = nullptr;
+        SSL_CTX* ctx = make_tls_server_ctx(pkey, x);
+        int c = ::accept(srv, nullptr, nullptr);
+        if (c >= 0) {
+            SSL* ssl = SSL_new(ctx);
+            SSL_set_fd(ssl, c);
+            if (SSL_accept(ssl) == 1) {
+                SSL_write(ssl, "TLSHELLO", 8);
+                while (go->load()) ::usleep(5000);   // hold open, never SSL_read
+            }
+            SSL_free(ssl);
+            ::close(c);
+        }
+        SSL_CTX_free(ctx); X509_free(x); EVP_PKEY_free(pkey);
+        ::close(srv);
+    });
+    return ntohs(sa.sin_port);
+}
+
+// A burst of sends while the peer never reads fills the socket buffer, so
+// SSL_write returns WANT_WRITE with the bytes still queued in m_outgoing; the
+// next send() appends more and the std::string reallocates, so flushSend re-
+// issues SSL_write with a MOVED, longer buffer.  Without
+// SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER that is SSL_R_BAD_WRITE_RETRY ->
+// SSL_ERROR_SSL, which flushSend's hard-error arm turns into ShutDown + FD_CLOSE
+// -> the whole session is torn down mid-command.  With the mode the retry is
+// legal and the session survives; the queued bytes drain once the peer reads.
+TEST(PalTransport, TlsBackpressureBurstDoesNotTearDownTheSession)
+{
+    std::atomic<bool> go{true};
+    std::thread server;
+    unsigned short port = start_tls_nonreading_server(server, &go);
+
+    TlsRecorder ev;
+    pal::ITransport* t = pal::CreatePosixTransport(ev);
+    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
+
+    pal::TlsParams params;
+    params.serverName = "localhost";
+    params.allowInvalidCert = true;
+    t->startTls(params);
+    EXPECT_TRUE(pump_until([&]{ return ev.tlsEstablished || ev.tlsFailed; }));
+    EXPECT_TRUE(ev.tlsEstablished);         // EXPECT, not ASSERT: a joinable
+
+    // thread must be joined before any return.  If the handshake somehow failed
+    // the burst below is harmless (send just queues) and the asserts still run.
+    std::string chunk(16 * 1024, 'Z');
+    for (int i = 0; i < 256 && ev.closes == 0 && !ev.tlsFailed; ++i) {
+        t->send(chunk.data(), chunk.size());
+        CAsyncSocket::Poll(2);
+        pal::PumpTransportCompletions();
+    }
+    // Let any teardown from a bad retry surface before we judge.
+    for (int i = 0; i < 40; ++i) {
+        CAsyncSocket::Poll(2);
+        pal::PumpTransportCompletions();
+    }
+
+    EXPECT_EQ(0, ev.closes);                // the moving-buffer retry did NOT kill it
+    EXPECT_FALSE(ev.tlsFailed);
+
+    go = false;
+    delete t;                               // stops the client half
+    server.join();
 }
 
 #endif // OPENSSL_VERSION_TEXT

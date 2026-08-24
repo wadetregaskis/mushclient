@@ -5263,6 +5263,13 @@ CString str;
 		pEdit->GetWindowText(str);
 
     f->Write (str, str.GetLength ());
+
+    // Flush + close inside the try so a failed write reaches the error box
+    // below.  Off Windows CFile is buffered stdio, so a notes file small enough
+    // to fit in one buffer would otherwise be lost in ~CFile's unchecked fclose
+    // while the user was shown nothing.  (No-op on Windows -- unbuffered CFile
+    // already threw at the Write.)
+    f->Close ();
     } // end of try block
 
   catch (CFileException * e)

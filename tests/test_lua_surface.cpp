@@ -32,6 +32,9 @@ extern "C" {
 #include <vector>
 #include "posix_compat.h"
 #include <png.h>       // the image-family tests emit a real RGBA PNG
+#include <sys/resource.h>  // RLIMIT_FSIZE — WindowWrite full-disk test
+#include <csignal>         // SIGXFSZ
+#include <unistd.h>        // getpid
 
 // make_lua()/run()/run_ret()/LuaDoc/EXPECT_LUA_OK are shared with
 // test_lua_scripting.cpp (audit §2/§4).
@@ -693,6 +696,42 @@ TEST(LuaSurface, BmpImagesDecodeAndDraw)
         EXPECT_TRUE(run(f.L, script.c_str()));
         remove(bmp.c_str());
     }
+}
+
+// world.WindowWrite of a small miniwindow to a .bmp is the sub-buffer CFile
+// shape: the whole file (an 8x8 window is ~310 bytes) fits in one stdio buffer,
+// so without the explicit Close() inside CMiniWindow::Write the bytes reach disk
+// only in ~CFile's unchecked fclose -- and a full disk was reported to the
+// script as eOK for a 0-byte file.  RLIMIT_FSIZE=0 is the kernel's own "disk
+// full"; SIGXFSZ must be ignored or the process is killed instead of the write
+// failing.  (.bmp, not .png: the fix and the buffered-write shape are on the BMP
+// path; WritePng is a separate fopen.)
+TEST(LuaSurface, WindowWriteReportsAWriteFailureNotFalseSuccess)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_ww_%d.bmp", (int) getpid());
+
+    ASSERT_TRUE(run(f.L,
+        "assert(world.WindowCreate('w', 0, 0, 8, 8, 0, 0, 0x000000) == 0)\n"));
+
+    struct rlimit old_rl;
+    ASSERT_EQ(0, getrlimit(RLIMIT_FSIZE, &old_rl));
+    void (*old_sig)(int) = signal(SIGXFSZ, SIG_IGN);
+    struct rlimit rl = old_rl;
+    rl.rlim_cur = 0;
+    ASSERT_EQ(0, setrlimit(RLIMIT_FSIZE, &rl));
+
+    const std::string script =
+        std::string("assert(world.WindowWrite('w', '") + path +
+        "') == error_code.eLogFileBadWrite)\n";
+    const bool reported = run(f.L, script.c_str());
+
+    setrlimit(RLIMIT_FSIZE, &old_rl);
+    signal(SIGXFSZ, old_sig);
+    remove(path);
+
+    EXPECT_TRUE(reported);   // the failed write was reported, not swallowed as eOK
 }
 
 // The refusals, which matter as much: a caller must be able to tell "no such

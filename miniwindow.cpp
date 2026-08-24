@@ -1275,6 +1275,14 @@ long CMiniWindow::Write (LPCTSTR FileName)
 
       // Write the bits
       file.Write( pA,  bmi.bmiHeader.biSizeImage);
+
+      // Flush + close inside the try so a failed write is reported, not
+      // swallowed: off Windows CFile is a buffered stdio FILE*, so a small BMP
+      // that fits in one buffer would otherwise reach disk only in ~CFile's
+      // unchecked fclose -- world.WindowWrite would return eOK for a 0-byte file
+      // on a full disk.  (Windows' CFile is unbuffered; the error already
+      // surfaced at the first Write, so this is a no-op there.)
+      file.Close();
       }
     catch (CFileException * e)
       {

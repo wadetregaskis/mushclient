@@ -1369,6 +1369,28 @@ void CChatSocket::Process_File_block			    (const CString strMessage)
 
   if (m_iBlocksTransferred >= m_iFileBlocks)
     {
+    // Flush + close with error checking BEFORE declaring the transfer complete.
+    // StopFileTransfer's `delete m_pFile` swallows the fclose error, and off
+    // Windows CFile is buffered stdio, so a final block that fit in one buffer
+    // could be lost on a full disk while the receiver printed "complete" with a
+    // matching checksum (the sum is over the bytes handed to Write, not the
+    // file).  On a failed flush, treat it as an abort so the truncated file is
+    // deleted rather than left behind as a "complete, checksum-verified" lie.
+    try
+      {
+      m_pFile->Close ();
+      }
+    catch (CFileException * e)
+      {
+      e->Delete ();
+      SendChatMessage (CHAT_MESSAGE,
+                       "File transfer aborted due to write error by receiver.");
+      m_pDoc->ChatNote (eChatFile,
+              TFormat ("Receive of file \"%s\" aborted due to write error.",
+                       (LPCTSTR) m_strOurFileName ));
+      StopFileTransfer (true);    // deletes the truncated file
+      return;
+      }
     m_pDoc->ChatNote (eChatFile,TFormat ("Receive of file \"%s\" complete.",
                     (LPCTSTR) m_strOurFileName ));
     shsFinal  (&m_shsInfo);

@@ -2826,14 +2826,23 @@ void CMUSHclientDoc::StartNewLine_KeepPreviousStyle (const int flags)
   }  // end of CMUSHclientDoc::StartNewLine_KeepPreviousStyle
 
 
-// the width of the current line, as the wrap column counts it: for Unicode
-// that is characters, not stored bytes
-static int LineLengthInChars (const CLine * pLine, const bool bUTF_8)
+// The wrap-column width of a line's stored bytes, computed from scratch.  Used
+// to (re)seed CLine::m_iCharCount when len is set directly; the per-character
+// AddToLine path maintains that cache incrementally instead of calling this.
+static int RawLineLengthInChars (const CLine * pLine, const bool bUTF_8)
   {
   if (!bUTF_8)
     return pLine->len;
 
   return MultiByteToWideChar (CP_UTF8, 0, pLine->text, pLine->len, NULL, 0);
+  }
+
+// the width of the current line, as the wrap column counts it: for Unicode
+// that is characters, not stored bytes.  O(1) -- reads the maintained cache
+// rather than rescanning the whole line on every character (the O(len^2) trap).
+static int LineLengthInChars (const CLine * pLine, const bool bUTF_8)
+  {
+  return bUTF_8 ? pLine->m_iCharCount : pLine->len;
   }   // end of LineLengthInChars
 
 // called from DisplayMsg to actually add to the current line
@@ -2943,6 +2952,8 @@ Unicode range              UTF-8 bytes
           saved_count--;    // one less to copy
           last_space++;  // one more on this line (the space)
           m_pCurrentLine->len = last_space; // this line is longer
+          m_pCurrentLine->m_iCharCount =
+            RawLineLengthInChars (m_pCurrentLine, m_bUTF_8);
           }   // end of indenting not wanted
         // A DBCS split point needs no adjustment: it is already ON a character
         // boundary, so the continuation line starts on a lead byte either way.
@@ -2956,6 +2967,8 @@ Unicode range              UTF-8 bytes
           CString strText = CString (&m_pCurrentLine->text [last_space],
                                      saved_count); 
           m_pCurrentLine->len = last_space;
+          m_pCurrentLine->m_iCharCount =
+            RawLineLengthInChars (m_pCurrentLine, m_bUTF_8);
 
           CLine * pPreviousLine = m_pCurrentLine; // remember this line
 
@@ -2970,6 +2983,8 @@ Unicode range              UTF-8 bytes
         
           memcpy (m_pCurrentLine->text, (LPCTSTR) strText, saved_count);
           m_pCurrentLine->len = saved_count;
+          m_pCurrentLine->m_iCharCount =
+            RawLineLengthInChars (m_pCurrentLine, m_bUTF_8);
 
           // now move the styles over to the new line
 
@@ -3028,6 +3043,12 @@ Unicode range              UTF-8 bytes
     // add character to line
     m_pCurrentLine->text [m_pCurrentLine->len] = c;
     m_pCurrentLine->len++;    // line has one more character
+    if (bNewCharacter)        // keep the width cache in step with len
+      {
+      m_pCurrentLine->m_iCharCount++;
+      if (sizeof (wchar_t) == 2 && m_bUTF_8 && (c & 0xF8) == 0xF0)
+        m_pCurrentLine->m_iCharCount++;   // 4-byte UTF-8 = a UTF-16 surrogate pair
+      }
 //BUG    m_pCurrentLine->flags = flags;  // ensure we retain existing flags
 
     // style spans one more character now
@@ -3517,6 +3538,7 @@ CString strLine (lpszText, size);
 
               m_pCurrentLine->hard_return = false;
               m_pCurrentLine->len = 0;
+              m_pCurrentLine->m_iCharCount = 0;
 
               }   // end of letting a \r delete line contents
 

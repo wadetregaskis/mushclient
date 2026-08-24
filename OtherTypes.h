@@ -341,6 +341,12 @@ class CLine : public CObject
   bool hard_return;
   unsigned char flags;
   int len;
+  // Cached wrap-column WIDTH of the bytes in `text` (what MultiByteToWideChar
+  // (CP_UTF8) returns: code points, or UTF-16 units on a 16-bit-wchar_t build).
+  // Maintained at every write to `len` so LineLengthInChars is O(1) instead of a
+  // per-character full UTF-8 rescan (which made AddToLine O(len^2) per line).
+  // For a single-byte line it equals len; only consulted for UTF-8.
+  int m_iCharCount;
   char * text;          // allocated as necessary and then resized
   CStyleList styleList; // list of styles applying to text, see above
   CTime m_theTime;      // time this line arrived

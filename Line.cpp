@@ -33,6 +33,7 @@ CLine::CLine (const long nLineNumber,
   {
   hard_return = false;
   len = 0;
+  m_iCharCount = 0;   // stays in step with len (see CLine::m_iCharCount)
   m_iPreambleOffset = 0;
   m_theTime = CTime::GetCurrentTime();
   QueryPerformanceCounter (&m_lineHighPerformanceTime);

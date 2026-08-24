@@ -2874,11 +2874,19 @@ void CWorldChildFrame::ShowFunctionsList()
 {
     wxTextCtrl* inp = ActiveInput();
     if (!inp || !m_doc) return;
-    CString text((const char*) inp->GetValue().utf8_str());
+    const wxString value = inp->GetValue();
+    CString text((const char*) value.utf8_str());
     long from = 0, to = 0;
     inp->GetSelection(&from, &to);
+    // GetSelection returns CHARACTER offsets, but ShowFunctionslist indexes the
+    // UTF-8 BYTE string (functionlist.cpp's GetSelectedFunction slices with byte
+    // offsets), so any non-ASCII text earlier in the bar shifted the pre-filter
+    // onto the wrong word.  Convert characters -> bytes, the same way
+    // GotoMatchingBrace above does.
+    const int fromByte = (int) value.Mid(0, from).utf8_str().length();
+    const int toByte   = (int) value.Mid(0, to).utf8_str().length();
     bool bLua = m_doc->GetScriptEngine() && m_doc->GetScriptEngine()->L;
-    ::ShowFunctionslist(text, (int) from, (int) to, bLua);
+    ::ShowFunctionslist(text, fromByte, toByte, bLua);
 }
 
 // Display ▸ Text Attributes — show the style (colour/flags) of the first
@@ -5923,10 +5931,19 @@ std::string CWorldChildFrame::currentCommand() const
 // world.GetSelection* / SetSelection speak on Windows (CMUSHView's
 // calculate_line_and_column advances m_selstart_col by whole UTF-8 sequences)
 // — is BYTES.  These convert a 0-based column between the two spaces over one
-// doc line; in a non-UTF-8 world every character is one byte, so the value
-// passes through (clamped, as Windows' MIN(col, pLine->len) clamps).  The
-// command bar made the same conversion first (commandSelection above); the
-// output selection was the one unconverted seam.
+// doc line.  For a UTF-8 world the conversion is exact; for a single-byte-charset
+// world every character IS one byte and the clamp (Windows' MIN(col, len)) is
+// right.
+//
+// KNOWN GAP: a non-UTF-8 world whose output_font_charset is one of the four DBCS
+// charsets (Shift-JIS/GB2312/Big5/Hangul) has multi-byte characters, and the
+// pane's columns are DECODED-character positions (RunCharLen -> DbcsRunCharLen),
+// so this pass-through reports byte==char and lands selection columns
+// mid-character for scripts (world.GetSelection*/SetSelection) and the four GUI
+// commands.  A correct fix needs a charset-aware char<->byte walk; deferred as
+// niche and DBCS-correctness-sensitive -- see docs/AUDIT-2026-08.md.  The command
+// bar made the same conversion first (commandSelection above); the output
+// selection was the one unconverted seam.
 static CLine* DocLineAt(CMUSHclientDoc* doc, long line0)
 {
     if (!doc || line0 < 0) return NULL;

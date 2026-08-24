@@ -6,6 +6,7 @@
 // headers.  Same ordering as wx_activity.cpp / wx_world_child.cpp.
 #include <wx/wx.h>
 #include <wx/toolbar.h>
+#include <wx/aui/framemanager.h>
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
 #include <wx/config.h>
@@ -16,6 +17,8 @@
 #include "resource.h"
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
 #include "platform/menu_ui_rules.h" // kPortMenuIdDisconnect -- one owner of the id
+#include <algorithm>
+#include <climits>
 #include <memory>
 #include "platform/wx_toolbar.h"
 
@@ -236,10 +239,71 @@ wxBitmap TileBitmap (const wxImage& strip, int index)
 }
 
 // Windows persists toolbar state in the registry via CFrameWnd::SaveBarState;
-// there is no equivalent here, so keep it simple: one flag per bar.
-wxString VisKey (int which)
+// there is no equivalent here, so keep it simple: one flag per bar, and one
+// row/order pair per bar (see wx_toolbar.h for why not a perspective string).
+wxString VisKey   (int which) { return wxString::Format(wxT("/toolbars/visible%d"), which); }
+wxString RowKey   (int which) { return wxString::Format(wxT("/toolbars/row%d"),     which); }
+wxString OrderKey (int which) { return wxString::Format(wxT("/toolbars/order%d"),   which); }
+
+// wxAuiManager matches panes by name when it restores them, so these are part
+// of the persisted contract even though the perspective string is not used.
+const char* const kPaneName [CWorldToolBars::eBarCount] =
+    { "standard", "world", "activity" };
+
+// The bar's own name, shown in the drag hint while a bar is in flight.  Windows
+// takes these from the control bars' window text (mainfrm.cpp:320-350).
+const char* const kBarLabel [CWorldToolBars::eBarCount] =
+    { "Standard", "World", "Activity" };
+
+// ── The shared arrangement ────────────────────────────────────────────────
+// One record for the whole app, not one per world window: see wx_toolbar.h.
+// A world opened later starts where the ones already open are.
+CWorldToolBars::Placement s_place [CWorldToolBars::eBarCount];
+bool s_placeLoaded = false;
+// True while one strip is pushing its arrangement to the others, so their own
+// change detection does not turn round and push it back.
+bool s_publishing  = false;
+
+// Function-local so there is no static-initialisation order to get wrong: a
+// CWorldToolBars can be constructed from a selftest before main() would have
+// run a namespace-scope constructor here.
+std::set<CWorldToolBars*>& Instances ()
 {
-    return wxString::Format(wxT("/toolbars/visible%d"), which);
+    static std::set<CWorldToolBars*> s;
+    return s;
+}
+
+void LoadPlacements ()
+{
+    if (s_placeLoaded) return;
+    s_placeLoaded = true;
+
+    const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
+    for (int i = 0; i < CWorldToolBars::eBarCount; ++i) {
+        // The canonical arrangement is one bar per row, in declaration order —
+        // which is also what Windows' OnViewResetToolbars produces.
+        cfg.Read(RowKey(i),   &s_place[i].row,   i);
+        cfg.Read(OrderKey(i), &s_place[i].order, 0);
+        // A config file can be hand-edited or written by a future version with
+        // more bars; a row number outside the strip would put a bar somewhere
+        // no drag could reach it from.
+        if (s_place[i].row   < 0 || s_place[i].row   >= CWorldToolBars::eBarCount)
+            s_place[i].row = i;
+        if (s_place[i].order < 0 || s_place[i].order >= CWorldToolBars::eBarCount)
+            s_place[i].order = 0;
+    }
+}
+
+void SavePlacements ()
+{
+    const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
+    for (int i = 0; i < CWorldToolBars::eBarCount; ++i) {
+        cfg.Write(RowKey(i),   s_place[i].row);
+        cfg.Write(OrderKey(i), s_place[i].order);
+    }
+    cfg.Flush();
 }
 
 } // namespace
@@ -263,18 +327,46 @@ CWorldToolBars::CWorldToolBars (wxFrame* frame, wxBoxSizer* sizer)
             cfg.Read(VisKey(i), &m_visible[i], true);
     }
 
-    // Insert in canonical order at the very top of the frame's vertical sizer,
-    // above the output pane.  `slot` counts only the bars that were actually
-    // built: if one has no art, the next must still land directly beneath its
-    // predecessor rather than below the output pane.
-    int slot = 0;
+    LoadPlacements();
+
+    // The strip, at the very top of the frame's vertical sizer and above the
+    // output pane.  It is added with proportion 0 and NO min size of its own:
+    // wxAuiManager gives the window it manages a real wxSizer and calls
+    // SetSizer on every Update, which invalidates the best-size cache, so the
+    // strip's GetBestSize() IS the current AUI layout's height and the frame's
+    // sizer picks it up for free.  Measured on this wx (3.3.2): 82 px with the
+    // three bars on separate rows, 55 px with two of them sharing one.
+    m_host = new wxPanel(m_frame, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                         wxBORDER_NONE);
+    m_sizer->Insert(0, m_host, 0, wxEXPAND);
+
+    // No wxAUI_MGR_ALLOW_FLOATING — floating is out, and leaving the flag on
+    // would let a drag that misses every dock tear a bar off into a window of
+    // its own.  Floatable(false) on each pane says the same thing; both, so
+    // that neither one alone is load-bearing.
+    m_mgr = new wxAuiManager(m_host,
+                             wxAUI_MGR_TRANSPARENT_HINT | wxAUI_MGR_HINT_FADE);
+
     for (int i = 0; i < eBarCount; ++i) {
         m_bars[i] = Build(static_cast<Which>(i));
-        if (!m_bars[i]) continue;
-        m_sizer->Insert(slot++, m_bars[i], 0, wxEXPAND);
-        if (!m_visible[i])
-            m_bars[i]->Hide();
+        if (!m_bars[i]) continue;          // no art -> no bar, as before
+        m_mgr->AddPane(m_bars[i],
+            wxAuiPaneInfo()
+                .Name    (wxString::FromUTF8(kPaneName[i]))
+                .Caption (wxString::FromUTF8(kBarLabel[i]))
+                .ToolbarPane().Top()
+                .Row(s_place[i].row).Position(s_place[i].order)
+                .LeftDockable(false).RightDockable(false).BottomDockable(false)
+                .Floatable(false)
+                .Show(m_visible[i]));
     }
+    m_mgr->Update();
+    // The frame has no sizer yet when a world window builds its bars (it calls
+    // SetSizer after us), so this Layout is a no-op there and the frame's own
+    // first layout does the job.  In a selftest, where the sizer is already
+    // attached, it is what gives the strip its height before anything is asked
+    // about it.
+    SyncStripHeight();
 
     for (int i = 0; i < eBarCount; ++i) {
         const BarSpec& spec = Spec(i);
@@ -283,19 +375,65 @@ CWorldToolBars::CWorldToolBars (wxFrame* frame, wxBoxSizer* sizer)
                 m_ourIds.insert(spec.buttons[b].id);
     }
 
-    m_frame->Bind(wxEVT_TOOL, [this](wxCommandEvent& evt) {
-        if (m_ourIds.find(evt.GetId()) == m_ourIds.end()) { evt.Skip(); return; }
-
-        // Re-entrancy guard.  wxMDIParentFrameBase::TryBefore offers the parent
-        // frame's events to the ACTIVE CHILD first — which is this frame — so an
-        // event handed upwards comes straight back here and, without this flag,
-        // recurses until the stack dies.  On the second pass, skip: the event
-        // then carries on to the parent's own handler, where the canonical
-        // command dispatch lives.
-        if (m_forwarding) { evt.Skip(); return; }
-
-        DispatchId(evt.GetId());
+    // wxAuiManager fires this from its own paint, so it is the first moment
+    // after a drop at which the new arrangement is readable.  The work is
+    // DEFERRED because re-laying the frame out from inside a paint would
+    // re-enter it, and a deferred call needs the alive token: nothing here can
+    // promise this object outlives a call already sitting in the queue.
+    m_alive = std::make_shared<bool>(true);
+    m_host->Bind(wxEVT_AUI_RENDER, [this](wxAuiManagerEvent& evt) {
+        evt.Skip();
+        if (m_pollPending) return;
+        m_pollPending = true;
+        std::shared_ptr<bool> alive = m_alive;
+        m_host->CallAfter([this, alive] {
+            if (!*alive) return;
+            m_pollPending = false;
+            PollLayout();
+        });
     });
+
+    // The alive token again, for a different reason: this handler is bound on
+    // the FRAME, which outlives this object, and ~CWorldToolBars cannot unbind a
+    // lambda it kept no handle to.  Without the guard the only safe thing to do
+    // with a CWorldToolBars was to leak it — and it can no longer be leaked,
+    // because its wxAuiManager has to be UnInit'd before the strip it manages is
+    // destroyed.
+    {
+        std::shared_ptr<bool> alive = m_alive;
+        m_frame->Bind(wxEVT_TOOL, [this, alive](wxCommandEvent& evt) {
+            if (!*alive) { evt.Skip(); return; }
+            if (m_ourIds.find(evt.GetId()) == m_ourIds.end()) { evt.Skip(); return; }
+
+            // Re-entrancy guard.  wxMDIParentFrameBase::TryBefore offers the
+            // parent frame's events to the ACTIVE CHILD first — which is this
+            // frame — so an event handed upwards comes straight back here and,
+            // without this flag, recurses until the stack dies.  On the second
+            // pass, skip: the event then carries on to the parent's own
+            // handler, where the canonical command dispatch lives.
+            if (m_forwarding) { evt.Skip(); return; }
+
+            DispatchId(evt.GetId());
+        });
+    }
+
+    // Last, once everything above is in place: another strip may publish an
+    // arrangement to this one the moment it is on the list.
+    Instances().insert(this);
+}
+
+CWorldToolBars::~CWorldToolBars ()
+{
+    if (m_alive) *m_alive = false;
+    Instances().erase(this);
+    if (m_mgr) {
+        // Before the host goes: UnInit pops the manager off the host's event
+        // handler chain, and the host is destroyed by the frame afterwards
+        // (members die before the wxWindow base destroys its children).
+        m_mgr->UnInit();
+        delete m_mgr;
+        m_mgr = nullptr;
+    }
 }
 
 void CWorldToolBars::DispatchId (int id)
@@ -373,7 +511,9 @@ wxToolBar* CWorldToolBars::Build (Which which)
     if (!strip.IsOk())
         return nullptr;                    // no art → no bar, rather than blanks
 
-    wxToolBar* bar = new wxToolBar(m_frame, wxID_ANY,
+    // Parented to the strip, not the frame: wxAuiManager positions the panes
+    // it manages inside the window it manages.
+    wxToolBar* bar = new wxToolBar(m_host, wxID_ANY,
                                    wxDefaultPosition, wxDefaultSize,
                                    wxTB_HORIZONTAL | wxTB_FLAT | wxTB_NODIVIDER);
     bar->SetToolBitmapSize(wxSize(kTileW, kTileH));
@@ -402,9 +542,13 @@ bool CWorldToolBars::IsBarVisible (Which which) const
 void CWorldToolBars::SetBarVisible (Which which, bool show)
 {
     m_visible[which] = show;
-    if (m_bars[which]) {
-        m_bars[which]->Show(show);
-        m_frame->Layout();
+    if (m_bars[which] && m_mgr) {
+        wxAuiPaneInfo& pane = m_mgr->GetPane(m_bars[which]);
+        if (pane.IsOk()) {
+            pane.Show(show);
+            m_mgr->Update();      // drops the now-empty row, or puts it back
+        }
+        SyncStripHeight();
     }
     const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
     wxConfigBase& cfg = *cfgOwner;
@@ -414,8 +558,156 @@ void CWorldToolBars::SetBarVisible (Which which, bool show)
 
 void CWorldToolBars::ResetLocations ()
 {
+    // Windows' CMainFrame::OnViewResetToolbars (mainfrm.cpp:1336) re-docks all
+    // three at the top and does NOT touch visibility.  This item has always
+    // also shown all three here — while there was nothing to rearrange, that
+    // was the whole of what "reset" could mean — and that half is kept: taking
+    // it away would leave someone who had hidden every bar with no single item
+    // that brings them back, which is not a change this has any reason to make.
     for (int i = 0; i < eBarCount; ++i)
         SetBarVisible(static_cast<Which>(i), true);
+
+    Placement canonical[eBarCount];
+    for (int i = 0; i < eBarCount; ++i) {
+        canonical[i].row   = i;
+        canonical[i].order = 0;
+    }
+    SetArrangement(canonical);
+}
+
+// ── Arrangement ───────────────────────────────────────────────────────────
+
+void CWorldToolBars::ReadPlacements (Placement out[eBarCount]) const
+{
+    // Seed from the shared record so a bar this window could not build, or one
+    // that is hidden and therefore not in any dock, keeps the placement the
+    // other windows know about instead of being renumbered out of existence.
+    for (int i = 0; i < eBarCount; ++i)
+        out[i] = s_place[i];
+    if (!m_mgr) return;
+
+    int idx[eBarCount], row[eBarCount], pos[eBarCount], n = 0;
+    for (int i = 0; i < eBarCount; ++i) {
+        if (!m_bars[i]) continue;
+        const wxAuiPaneInfo& p = m_mgr->GetPane(m_bars[i]);
+        if (!p.IsOk() || !p.IsShown()) continue;
+        idx[n] = i; row[n] = p.dock_row; pos[n] = p.dock_pos; ++n;
+    }
+
+    // Sort by (row, pos), ties broken by bar index so the answer never depends
+    // on the order wxAuiManager happens to be holding its panes in.
+    for (int a = 1; a < n; ++a)
+        for (int b = a; b > 0; --b) {
+            const bool before =
+                row[b] < row[b-1] ||
+                (row[b] == row[b-1] &&
+                 (pos[b] < pos[b-1] ||
+                  (pos[b] == pos[b-1] && idx[b] < idx[b-1])));
+            if (!before) break;
+            std::swap(idx[b], idx[b-1]);
+            std::swap(row[b], row[b-1]);
+            std::swap(pos[b], pos[b-1]);
+        }
+
+    // Canonicalise: rows compacted to 0..k-1 and order restarted within each.
+    // The stored form HAS to be canonical — dock_pos is a pixel offset, so two
+    // windows of different widths would otherwise publish different numbers for
+    // the same picture and push them at each other without ever settling.
+    int outRow = -1, outOrder = 0, prevRow = INT_MIN;
+    for (int k = 0; k < n; ++k) {
+        if (row[k] != prevRow) { prevRow = row[k]; ++outRow; outOrder = 0; }
+        out[idx[k]].row   = outRow;
+        out[idx[k]].order = outOrder++;
+    }
+}
+
+void CWorldToolBars::ApplyPlacements (const Placement place[eBarCount])
+{
+    if (!m_mgr) return;
+    for (int i = 0; i < eBarCount; ++i) {
+        if (!m_bars[i]) continue;
+        wxAuiPaneInfo& p = m_mgr->GetPane(m_bars[i]);
+        if (!p.IsOk()) continue;
+        p.Row(place[i].row).Position(place[i].order);
+    }
+    m_mgr->Update();
+    SyncStripHeight();
+}
+
+void CWorldToolBars::PublishPlacements ()
+{
+    if (s_publishing) return;
+
+    Placement now[eBarCount];
+    ReadPlacements(now);
+
+    bool changed = false;
+    for (int i = 0; i < eBarCount; ++i)
+        if (now[i].row != s_place[i].row || now[i].order != s_place[i].order)
+            changed = true;
+    if (!changed) return;
+
+    for (int i = 0; i < eBarCount; ++i)
+        s_place[i] = now[i];
+    SavePlacements();
+
+    // Windows has one set of bars on one main frame, so rearranging them is
+    // global.  Push it to the other world windows, exactly as the View ▸
+    // Toolbars handler pushes a visibility toggle (wx_mfc_impl.cpp:1832).
+    s_publishing = true;
+    for (CWorldToolBars* other : Instances())
+        if (other != this)
+            other->ApplyPlacements(s_place);
+    s_publishing = false;
+}
+
+void CWorldToolBars::SyncStripHeight ()
+{
+    if (!m_host) return;
+    // What the AUI layout now needs.  Keyed on a CHANGE in that, not on
+    // "wanted != actual": PollLayout runs from a paint, so a height the frame's
+    // sizer cannot grant -- a window shorter than its own contents -- would
+    // otherwise relayout, repaint and ask again forever.
+    const int want = m_host->GetBestSize().y;
+    if (want == m_stripHeight) return;
+    m_stripHeight = want;
+    m_frame->Layout();                   // the strip is a row of the frame's sizer
+}
+
+int CWorldToolBars::StripHeight () const
+{
+    // The height the strip ACTUALLY has, not the height it wants.  The two only
+    // agree once the frame has been laid out, which is the point: the wanted
+    // height changes as soon as wxAuiManager re-docks a pane, so asserting on
+    // it would pass even if nothing ever told the frame about it.
+    return m_host ? m_host->GetSize().y : 0;
+}
+
+CWorldToolBars::Placement CWorldToolBars::GetPlacement (Which which) const
+{
+    Placement all[eBarCount];
+    ReadPlacements(all);
+    return all[which];
+}
+
+void CWorldToolBars::SetArrangement (const Placement place[eBarCount])
+{
+    Placement want[eBarCount];
+    for (int i = 0; i < eBarCount; ++i) {
+        // Clamp rather than reject: the caller is describing a picture, and a
+        // row outside the strip would put a bar where no drag could reach it.
+        want[i].row   = std::max(0, std::min(place[i].row,   eBarCount - 1));
+        want[i].order = std::max(0, std::min(place[i].order, eBarCount - 1));
+    }
+    ApplyPlacements(want);
+    PublishPlacements();
+}
+
+void CWorldToolBars::PollLayout ()
+{
+    if (s_publishing) return;
+    SyncStripHeight();
+    PublishPlacements();
 }
 
 void CWorldToolBars::ReloadActivityStyle ()
@@ -443,6 +735,11 @@ void CWorldToolBars::ReloadActivityStyle ()
 void CWorldToolBars::UpdateState (CMUSHclientDoc* activeDoc)
 {
     m_doc = activeDoc;   // Dispatch() needs it; clicks arrive between ticks
+
+    // Pick up a drag the render hook missed.  That hook rides wxAuiManager's
+    // paint, so it is prompt but not guaranteed; this tick is guaranteed but
+    // 100 ms late.  Both are change-detected, so running both is free.
+    PollLayout();
 
     // Keep slot numbers DENSE (2026-08-12).  Windows renumbers on every idle
     // tick (CMUSHclientApp::UpdateWorldCounts from OnIdle) and on activity

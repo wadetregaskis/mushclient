@@ -28,6 +28,9 @@
 #include <wx/menu.h>
 #include <wx/accel.h>
 #include <wx/filename.h>   // wxFileName — the Open Recent labels are basenames
+// Before stdafx.h, like every other wx header here: compat.h defines Windows
+// macros that otherwise clobber wx's own.  app_config.h below needs it.
+#include <wx/config.h>
 
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -43,6 +46,7 @@
 #include "platform/wx_mfc_hooks.h"
 #include "platform/wx_mfc_logic.h"   // RecentWorlds* — the MRU behind File ▸ Open Recent
 #include "platform/wx_toolbar.h"     // CWorldToolBars — the Connect/Disconnect toggle
+#include "platform/app_config.h"     // OpenAppConfig — redirected around the toolbar blocks
 #include "platform/menu_ui_rules.h"  // kPortMenuIdDisconnect — the id both must agree on
 #include "dialogs/world_prefs/TreePropertySheet.h"   // m_iWantedPage — which page a Configure command asked for
 
@@ -203,6 +207,45 @@ int RunMenuBarSelfTest()
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("MENUBAR-SELFTEST: building the real MUSHclient menu bar\n");
+
+    // ── preferences are REDIRECTED for the whole harness ────────────────────
+    // This harness exits from wxApp::OnInit, so OpenAppConfig is still pointing
+    // at ~/Library/Preferences/mushclient Preferences -- the real file belonging
+    // to the copy of MUSHclient the person is actually using.  It builds real
+    // CWorldChildFrames, and every one of those builds the three toolbars,
+    // which READ the saved arrangement on construction and WRITE it back
+    // whenever it changes.  Rearranging someone's toolbars from a test run is
+    // exactly the accident platform/app_config.h exists to prevent.
+    //
+    // It has to be here rather than around the toolbar blocks below: the first
+    // world frame is built hundreds of lines earlier, so a redirect down there
+    // would be too late to stop the read AND would make the toolbar assertions
+    // depend on whatever arrangement the user happens to have saved.  (Found
+    // exactly that way -- the block passed until a real drag was saved.)
+    //
+    // Asserted rather than assumed, because nothing downstream would notice if
+    // it had silently failed.
+    const wxString savedCfgPath = AppConfigPathForTesting();
+    SetAppConfigPathForTesting(
+        wxString::Format(wxT("/tmp/mc_selftest_menubar_%d.cfg"), (int) getpid()));
+    check(!AppConfigPathForTesting().empty(),
+          "the harness is not writing the user's real preferences");
+
+    // Seed a recent-worlds list into the scratch config, before anything reads
+    // it: the MRU is loaded during the frame build below, and File > Open
+    // Recent is checked against whatever that produced.  Those checks used to
+    // run against the tester's own config -- which the block's own comment
+    // calls out as a hazard, since a machine with no recent worlds takes the
+    // empty-MRU branch and the populated one is never exercised.  Redirecting
+    // the config made every machine that machine, so seed it instead and the
+    // populated branch runs everywhere, the same way, every time.
+    {
+        const std::unique_ptr<wxConfigBase> cfg = OpenAppConfig();
+        cfg->Write(wxT("/recent/0"), wxT("/tmp/mc_selftest_recent_one.mcl"));
+        cfg->Write(wxT("/recent/1"), wxT("/tmp/mc_selftest_recent_two.mcl"));
+        cfg->Write(wxT("/recent/2"), wxT("/tmp/mc_selftest_recent_three.mcl"));
+        cfg->Flush();
+    }
 
     // The bridge walks the world registry while building window furniture.
     if (App.m_pWorldDocTemplate == NULL)
@@ -1438,8 +1481,11 @@ int RunMenuBarSelfTest()
         wxFrame*     tbHost  = new wxFrame(frame, wxID_ANY, wxT("toolbar-host"));
         wxBoxSizer*  tbSizer = new wxBoxSizer(wxVERTICAL);
         tbHost->SetSizer(tbSizer);
-        // Deliberately leaked: its click lambda captures this object, and the
-        // frame outlives a stack instance by the length of one Destroy().
+        // Heap, and deleted below rather than leaked: a live CWorldToolBars
+        // stays on the list every other strip pushes a rearrangement to, so one
+        // left behind with a destroyed host is a crash waiting for the next
+        // drag.  Deleting it is safe now that the click lambda bound on the
+        // frame carries an alive token (wx_toolbar.cpp).
         CWorldToolBars* bars = new CWorldToolBars(tbHost, tbSizer);
 
         check(wxTheApp->GetTopWindow() != tbHost,
@@ -1462,8 +1508,163 @@ int RunMenuBarSelfTest()
               "...and a disconnected one forwards Connect (the other branch)");
 
         frame->Unbind(wxEVT_MENU, &recordForwardedCmd);
+        delete bars;              // UnInits its wxAuiManager -- before the host goes
         tbHost->Destroy();
         wxYield();
+    }
+
+    // ── the three toolbars can be REARRANGED, and the strip follows (2026-08-23) ──
+    // Windows creates all three CBRS_GRIPPER and gives them
+    // EnableDocking (CBRS_ALIGN_ANY) (mainfrm.cpp:318-409), and tips.txt opens
+    // with "You can drag the "game" toolbar alongside the "file" toolbar, to
+    // save room at the top of the screen".  The port had them nailed to one
+    // sizer row each.  They are now wxAuiManager panes in a strip.
+    //
+    // The drag GESTURE is wxAuiManager's and there is no way to inject the
+    // mouse events it reads, so it is not what is pinned here.  Everything the
+    // gesture ENDS in is this port's code and is: the relayout, the strip's
+    // height, the save, and the push to the other world windows.
+    {
+        typedef CWorldToolBars::Placement Place;
+        const CWorldToolBars::Which kStd = CWorldToolBars::eStandard;
+        const CWorldToolBars::Which kWld = CWorldToolBars::eWorld;
+        const CWorldToolBars::Which kAct = CWorldToolBars::eActivity;
+
+        wxFrame*    tbHost  = new wxFrame(frame, wxID_ANY, wxT("toolbar-arrange"));
+        wxBoxSizer* tbSizer = new wxBoxSizer(wxVERTICAL);
+        tbHost->SetSizer(tbSizer);
+        CWorldToolBars* bars = new CWorldToolBars(tbHost, tbSizer);
+
+        check(bars->GetPlacement(kStd).row == 0 &&
+              bars->GetPlacement(kWld).row == 1 &&
+              bars->GetPlacement(kAct).row == 2,
+              "the three toolbars start one per row, in canonical order");
+
+        const int threeRows = bars->StripHeight();
+        // Tall enough for three rows of the 16x15 toolbar art.  "> 0" would
+        // have been satisfied by the strip's default 20 px -- i.e. by a frame
+        // that was never laid out at all, which is one of the ways this can
+        // break.
+        checkf(threeRows >= 3 * 15,
+               std::string("the toolbar strip is three rows tall (")
+                   + std::to_string(threeRows) + " px)");
+
+        // A pure REORDER: still one bar per row, different order.  The height
+        // must NOT move.  This is the pair that tells a reorder from a merge --
+        // an implementation that quietly ignored row numbers would satisfy the
+        // height half and fail the placement half, and one that rebuilt the
+        // strip from scratch every time would do the reverse.
+        {
+            Place p[CWorldToolBars::eBarCount];
+            p[kStd] = { 1, 0 };
+            p[kWld] = { 2, 0 };
+            p[kAct] = { 0, 0 };
+            bars->SetArrangement(p);
+        }
+        check(bars->GetPlacement(kAct).row == 0 &&
+              bars->GetPlacement(kStd).row == 1 &&
+              bars->GetPlacement(kWld).row == 2,
+              "the rows can be reordered");
+        check(bars->StripHeight() == threeRows,
+              "...and reordering three rows leaves the strip the same height");
+
+        // The tip's own case: the World bar dragged up alongside the Standard
+        // one.  Two rows need less height than three, so if the strip did not
+        // really re-lay out, this is the assertion that fails.
+        {
+            Place p[CWorldToolBars::eBarCount];
+            p[kStd] = { 0, 0 };
+            p[kWld] = { 0, 1 };
+            p[kAct] = { 1, 0 };
+            bars->SetArrangement(p);
+        }
+        check(bars->GetPlacement(kStd).row   == 0 &&
+              bars->GetPlacement(kWld).row   == 0 &&
+              bars->GetPlacement(kStd).order == 0 &&
+              bars->GetPlacement(kWld).order == 1,
+              "two bars can share one row, in a known left-to-right order");
+        const int twoRows = bars->StripHeight();
+        checkf(twoRows < threeRows,
+               std::string("...and the strip gives back the row they saved (")
+                   + std::to_string(threeRows) + " -> " + std::to_string(twoRows) + ")");
+
+        // It has to reach the preferences FILE, not just the record in memory --
+        // the arrangement is meant to survive a restart.  The key names are
+        // written out here on purpose: renaming one would silently discard
+        // everybody's saved arrangement, and nothing else would notice.
+        {
+            const std::unique_ptr<wxConfigBase> cfg = OpenAppConfig();
+            int row = -1, order = -1;
+            cfg->Read(wxT("/toolbars/row1"),   &row,   -1);
+            cfg->Read(wxT("/toolbars/order1"), &order, -1);
+            checkf(row == 0 && order == 1,
+                   std::string("the arrangement is saved to preferences (row=")
+                       + std::to_string(row) + " order=" + std::to_string(order) + ")");
+        }
+
+        // A second strip, standing in for a second world window.  Windows has
+        // ONE set of bars on its single main frame, so rearranging them is
+        // global; here every world window owns a set and the change has to be
+        // pushed -- the same rule wx_mfc_impl.cpp follows for a visibility
+        // toggle.  First half: a window opened LATER adopts the arrangement.
+        wxFrame*    tbHost2  = new wxFrame(frame, wxID_ANY, wxT("toolbar-arrange-2"));
+        wxBoxSizer* tbSizer2 = new wxBoxSizer(wxVERTICAL);
+        tbHost2->SetSizer(tbSizer2);
+        CWorldToolBars* bars2 = new CWorldToolBars(tbHost2, tbSizer2);
+
+        check(bars2->GetPlacement(kWld).row   == 0 &&
+              bars2->GetPlacement(kWld).order == 1,
+              "a world window opened later starts with the arrangement in use");
+
+        // Second half, and the one that fails if nothing is pushed: rearrange
+        // in the SECOND window and watch the FIRST follow.
+        {
+            Place p[CWorldToolBars::eBarCount];
+            p[kStd] = { 0, 0 };
+            p[kWld] = { 1, 0 };
+            p[kAct] = { 1, 1 };
+            bars2->SetArrangement(p);
+        }
+        check(bars->GetPlacement(kAct).row   == 1 &&
+              bars->GetPlacement(kAct).order == 1 &&
+              bars->GetPlacement(kWld).row   == 1,
+              "rearranging one world window rearranges the others too");
+
+        // View ▸ Reset Toolbar Locations, in every window at once.
+        bars->ResetLocations();
+        check(bars->GetPlacement(kStd).row == 0 &&
+              bars->GetPlacement(kWld).row == 1 &&
+              bars->GetPlacement(kAct).row == 2 &&
+              bars->StripHeight() == threeRows,
+              "Reset Toolbar Locations puts them back one per row");
+        check(bars2->GetPlacement(kWld).row == 1 &&
+              bars2->GetPlacement(kAct).row == 2,
+              "...and that reaches the other world windows as well");
+
+        // Hiding a bar takes its row with it -- View > Toolbars and the drag
+        // arrangement share one strip, and this is where they could disagree.
+        bars->SetBarVisible(kAct, false);
+        checkf(bars->StripHeight() < threeRows,
+               std::string("hiding a bar gives up its row (")
+                   + std::to_string(threeRows) + " -> "
+                   + std::to_string(bars->StripHeight()) + ")");
+        bars->SetBarVisible(kAct, true);
+        check(bars->StripHeight() == threeRows,
+              "...and showing it again takes the row back");
+
+        delete bars2;             // both before their hosts: see the block above
+        delete bars;
+        tbHost2->Destroy();
+        tbHost->Destroy();
+    }
+
+    // The user's real preferences again.
+    SetAppConfigPathForTesting(savedCfgPath);
+    {
+        char scratch[256];
+        snprintf(scratch, sizeof scratch, "/tmp/mc_selftest_menubar_%d.cfg",
+                 (int) getpid());
+        remove(scratch);
     }
 
     // ── app activation reaches CMainFrame::m_bActive (2026-08-18) ───────────

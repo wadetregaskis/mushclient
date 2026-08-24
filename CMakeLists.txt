@@ -936,7 +936,7 @@ if(NOT WIN32)
     # Requires wxWidgets 3.x AND Lua 5.1 (mushcore + mushgui_adapters need both).
     # On macOS: brew install wxwidgets lua@5.1
     # On Linux: apt install libwxgtk3.0-gtk3-dev liblua5.1-dev
-    find_package(wxWidgets QUIET COMPONENTS core base html adv)
+    find_package(wxWidgets QUIET COMPONENTS aui core base html adv)
 
     # Fallback: if find_package didn't find wx but a wx-config binary is known,
     # query it directly.  This handles the case where wx was built from source
@@ -946,7 +946,7 @@ if(NOT WIN32)
             COMMAND "${wxWidgets_CONFIG_EXECUTABLE}" --cxxflags
             OUTPUT_VARIABLE _wx_cxx OUTPUT_STRIP_TRAILING_WHITESPACE)
         execute_process(
-            COMMAND "${wxWidgets_CONFIG_EXECUTABLE}" --libs core,base,html,adv
+            COMMAND "${wxWidgets_CONFIG_EXECUTABLE}" --libs aui,core,base,html,adv
             OUTPUT_VARIABLE _wx_libs OUTPUT_STRIP_TRAILING_WHITESPACE)
         execute_process(
             COMMAND "${wxWidgets_CONFIG_EXECUTABLE}" --version

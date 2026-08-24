@@ -332,6 +332,12 @@ BOOL CMUSHclientDoc::Save_Set(const int set_type,
         case MACRO:   Save_World_XML(*ar, XML_MACROS);   break;
         case TIMER:   Save_World_XML(*ar, XML_TIMERS);   break;
         }
+        // Flush before declaring success, matching evaluate.cpp's Windows twin
+        // (evaluate.cpp:906).  Save_World_XML only queued the bytes; ar->Close()
+        // pushes them to the file and throws on a failed write, so a full-disk
+        // Export Triggers/Aliases/Timers/Macros/Colours is reported as the error
+        // it is rather than as a success over an already-truncated file.
+        ar->Close();
         error = FALSE;
     }
     catch (CFileException* e)    { ::TMessageBox("Unable to create the requested file", MB_ICONEXCLAMATION); e->Delete(); }

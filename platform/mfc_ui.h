@@ -2982,8 +2982,20 @@ public:
     ~CArchive() {}
     bool IsLoading() const { return m_mode == load; }
     bool IsStoring() const { return m_mode == store; }
-    void Close() {}
-    void Flush() {}
+    // MFC-faithful: Close() -> Flush() pushes the buffered bytes to the file and
+    // THROWS a CFileException on an I/O failure.  Real MFC's CArchive is buffered
+    // and CFile is unbuffered, so the write reaches the OS inside Flush(); the
+    // three export paths (CPlugin::SaveState, the prefs variable export, and
+    // Save_Set) all call ar->Close() inside their try precisely so a failing
+    // write is caught before success is declared (47ce9a9 / UPSTREAM-BUGS 103).
+    // This shim has no archive buffer -- WriteString/Write go straight to the
+    // CFile -- but the CFile is a buffered stdio FILE*, so without forwarding the
+    // flush here those writes sat in the stdio buffer, Close() did nothing, and
+    // the only flush was ~CFile's unchecked fclose: a small export to a full disk
+    // reported success over an already-truncated file.  Store archives only: a
+    // load archive has nothing to flush, and fflush() on a read stream is UB.
+    void Close() { Flush(); }
+    void Flush() { if (m_pFile && m_mode == store) m_pFile->Flush(); }
     CFile* GetFile() const { return m_pFile; }
     CString m_strFileName;
 

@@ -979,6 +979,46 @@ TEST(Files, OnSaveDocumentReportsWriteFailure) {
     CFile::Remove(path.c_str());
 }
 
+TEST(Files, CArchiveCloseFlushesAndReportsWriteFailure) {
+    // The CPlugin::SaveState / variable-export / Save_Set shape: a SMALL store
+    // archive whose writes all fit in one stdio buffer, so the only place a
+    // full-disk failure can be caught is ar.Close()'s flush.  Before the shim
+    // forwarded that flush, CArchive::Close() was a no-op: the bytes sat in the
+    // buffer, the export declared success, and the only (unchecked) flush was
+    // ~CFile's fclose -- a truncated file reported as a good save.  Contrast the
+    // test above, whose 256 KB overflows the buffer and so fails at an
+    // intermediate CFile::Write even with a no-op Close().
+    std::string path = temp_path("archivewritefail.txt");
+
+    struct rlimit old_rl;
+    ASSERT_EQ(0, getrlimit(RLIMIT_FSIZE, &old_rl));
+    void (*old_sig)(int) = signal(SIGXFSZ, SIG_IGN);
+    struct rlimit rl = old_rl;
+    rl.rlim_cur = 0;                       // the kernel's own "disk full"
+    ASSERT_EQ(0, setrlimit(RLIMIT_FSIZE, &rl));
+
+    bool threw = false;
+    {
+        CFile f;
+        // modeCreate truncates to 0 (allowed at rlim 0); the write is what fails.
+        ASSERT_TRUE(f.Open(path.c_str(),
+                           CFile::modeCreate | CFile::modeReadWrite));
+        CArchive ar(&f, CArchive::store);
+        ar.WriteString("a few hundred bytes of variable state\r\n");  // < 1 buffer
+        try {
+            ar.Close();                   // must FLUSH -> throw on the full disk
+        }
+        catch (CFileException* e) { threw = true; e->Delete(); }
+    }
+
+    setrlimit(RLIMIT_FSIZE, &old_rl);
+    signal(SIGXFSZ, old_sig);
+
+    EXPECT_TRUE(threw);                    // reported, not swallowed
+
+    CFile::Remove(path.c_str());
+}
+
 TEST(Files, CFileBackslashPathsAreNormalized) {
     // MUSHclient embeds Windows separators; the shim maps '\' -> '/'.
     std::string dir = temp_path("bsdir");

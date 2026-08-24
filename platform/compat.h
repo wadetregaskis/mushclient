@@ -290,9 +290,20 @@ public:
     void GetClientRect(RECT* r) const {
         if (g_wxhook_get_client_rect) g_wxhook_get_client_rect(m_hWnd, r);
     }
-    void GetClientRect(CRect*) const {}
-    void GetWindowRect(RECT*) const {}
-    void GetWindowRect(CRect*) const {}
+    // CRect derives from RECT, and the standard MFC idiom passes a CRect -- which
+    // used to bind to a no-op overload here and read back garbage, while a RECT
+    // caller got real data (the D-31 shape: overloads in a set disagreeing on
+    // their contract).  GetWindowRect answered nothing at all, though its hook
+    // already exists and CView's own overrides use it.  Mirror CView: the CRect
+    // forms delegate to the RECT forms, and GetWindowRect actually calls its hook.
+    // CRect is only forward-declared here (defined in mfc_ui.h), so a
+    // static_cast cannot see the inheritance; the C-style cast is what CView's
+    // own overrides use and is exact because RECT is CRect's sole, first base.
+    void GetClientRect(CRect* r) const { GetClientRect((RECT*) r); }
+    void GetWindowRect(RECT* r) const {
+        if (g_wxhook_get_window_rect) g_wxhook_get_window_rect(m_hWnd, r);
+    }
+    void GetWindowRect(CRect* r) const { GetWindowRect((RECT*) r); }
     void MoveWindow(int x, int y, int w, int h, BOOL repaint = TRUE) {
         if (g_wxhook_move_window)
             g_wxhook_move_window(m_hWnd, x, y, w, h, repaint != FALSE);

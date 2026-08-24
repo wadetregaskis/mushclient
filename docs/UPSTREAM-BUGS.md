@@ -2587,6 +2587,45 @@ it a heap-use-after-free rather than an access violation.
 `MXPCloseR6.ParagraphCloseSurvivesAGaggingTrigger` in `tests/test_mxp.cpp` runs
 on both.
 
+### Follow-up (2026-08-24 bug hunt): the guard is over-broad, and it masks a second, deeper defect
+
+Two problems, both confirmed by measurement, both still open at HEAD.
+
+**1. The liveness bound is one short for the ordinary (non-gagging) case.** The
+re-scan is bounded by `iLinesBack`, measured *before* the dispatch. But the
+dispatch for `</p>`/`</ul>`/`</ol>` is `MXP_CloseAtomicTag`'s
+`StartNewLine (true, 0)`, and in the common case (no gagging trigger) that
+**appends** a new tail line — so `pLine` is now `iLinesBack + 1` back from the
+tail and the `for (i = 0; i < iLinesBack …)` loop can never reach it.
+`bLineStillThere` stays false and `MXP_CloseTag` returns early, skipping the
+*entire* cleanup: the `<p>`'s START_TAG style is left on its line with a live
+`pAction` (leaked once per `</p>`), and the remembered style is never restored.
+Measured: `<p>hello</p>world` leaves exactly **one orphaned START_TAG style**
+(should be zero). Nothing in the suite caught it — the two non-gag `<p>…</p>`
+tests assert only line count/text (which the append still produces), and
+`CloseTagRestoresStyleAtOpenPoint` uses `<b>`, whose close does not append.
+
+**2. Re-enabling the cleanup is NOT a safe fix — the cleanup itself
+double-frees.** Widening the bound to `iLinesBack + linesAdded` makes the
+non-gag cleanup run again, and it then corrupts the heap: Guard Malloc reports
+`attempted free of pointer … not claimed by any zone`, deterministically (6/6
+plain, masked under ASan). A diagnostic at the cleanup shows that in the non-gag
+`</p>` case `pStyle->pAction` is **already NULL** and `pStyle` is **already
+absent from `pLine`'s styleList** before `RemoveAt (oldstylepos)` runs — i.e.
+`oldstylepos` is stale, so `RemoveAt` unlinks garbage. The `<p>` START_TAG style
+has evidently already been closed/cleaned once (a double-close), and the guard's
+accidental skipping is what currently keeps it from being cleaned twice. The
+pre-`ab4bea7` guardless cleanup crashes the same way (3/3), so this is a
+**pre-existing latent double-free that `ab4bea7`'s over-broad guard masks**.
+
+**Net:** HEAD is safe-but-lossy (leftover zero-length style + a small per-`</p>`
+`CAction` leak, no crash). A correct fix has to untangle the double-close of the
+`<p>` START_TAG style — why `pStyle` is cleaned and unlinked before
+`MXP_CloseTag` reaches its own cleanup — before either the bound or the cleanup
+can be touched. That needs its own focused session; a naive bound-widen trades a
+cosmetic leak for a crash. (Investigated in the 2026-08-24 bug hunt; test and
+fix drafted and reverted.)
+
 ## 95 — "Cancel" on world properties is not a cancel
 
 **Where:** `dialogs/world_prefs/configuration.cpp`,

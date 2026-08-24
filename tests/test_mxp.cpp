@@ -2630,4 +2630,34 @@ TEST(MXPCloseR6, ParagraphCloseSurvivesAGaggingTrigger)
     }
 }
 
+// Regression for the ab4bea7 liveness guard.  For </p> (and </ul>, </ol>)
+// WITHOUT a gagging trigger the close's StartNewLine APPENDS a line, so the
+// guard's iLinesBack bound -- measured before the dispatch -- was one short and
+// wrongly concluded the line had been gagged out from under it.  It then
+// returned early and skipped the ENTIRE style cleanup: the <p>'s START_TAG
+// style was left on its line with a live CAction (leaked once per </p>), and
+// the remembered style was never restored past the tag.  The R6 gag test above
+// cannot see this: its StartNewLine SHRINKS the list, so the same bound holds.
+TEST(MXPCloseR6, ParagraphCloseCleansUpWithoutAGag)
+{
+    CMUSHclientDoc doc;
+    make_doc_e2e(doc);
+    doc.m_iMXP_mode = eMXP_secure;          // <p> is a secure-only tag
+
+    feed(doc, "<p>hello</p>world");
+
+    // Every START_TAG style belongs to a still-open tag; </p> closed the only
+    // one, so a leftover START_TAG anywhere in the buffer is the skipped-cleanup
+    // signature -- mxpClose.cpp clears START_TAG on the style it restores.
+    int startTags = 0;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        for (POSITION sp = l->styleList.GetHeadPosition(); sp; ) {
+            CStyle* s = l->styleList.GetNext(sp);
+            if (s->iFlags & START_TAG) startTags++;
+        }
+    }
+    EXPECT_EQ(0, startTags);
+}
+
 MC_TEST_MAIN()

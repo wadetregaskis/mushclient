@@ -2618,13 +2618,26 @@ accidental skipping is what currently keeps it from being cleaned twice. The
 pre-`ab4bea7` guardless cleanup crashes the same way (3/3), so this is a
 **pre-existing latent double-free that `ab4bea7`'s over-broad guard masks**.
 
-**Net:** HEAD is safe-but-lossy (leftover zero-length style + a small per-`</p>`
-`CAction` leak, no crash). A correct fix has to untangle the double-close of the
-`<p>` START_TAG style — why `pStyle` is cleaned and unlinked before
-`MXP_CloseTag` reaches its own cleanup — before either the bound or the cleanup
-can be touched. That needs its own focused session; a naive bound-widen trades a
-cosmetic leak for a crash. (Investigated in the 2026-08-24 bug hunt; test and
-fix drafted and reverted.)
+**Fixed (2026-08-24).** The guard now re-establishes BOTH facts from the live
+list instead of trusting the cached pointers:
+
+- The pLine-liveness bound is widened by however many lines the dispatch
+  appended (`iLinesBack + (GetCount() - countBeforeDispatch)`), so the non-gag
+  `</p>` — whose `StartNewLine` adds a tail line — is no longer wrongly judged
+  gagged. A gag shrinks the list, so the added term is ≤ 0 there and the
+  original bound (which correctly fails to find the freed line) is preserved.
+- pStyle's position is then **re-derived from its identity** on pLine, and the
+  cleanup runs only if it is still a live start tag (`freshpos != NULL &&
+  (iFlags & START_TAG) && pAction != NULL`). The cached `oldstylepos` was the
+  stale node the widened-only version double-freed on; re-finding it also means
+  a style some other path already closed is skipped rather than closed twice.
+
+So the leak is now collected (measured: `<p>hello</p>world` leaves **zero**
+orphaned START_TAG styles), the gag UAF stays fixed, and there is no double-free
+(clean under Guard Malloc and ASan). `MXPCloseR6.ParagraphCloseCleansUpWithoutAGag`
+pins the leak — red on the old skipping guard, and the whole suite crashed under
+the widened-bound-only draft, which is what proves the re-derivation is
+load-bearing.
 
 ## 95 — "Cancel" on world properties is not a cancel
 

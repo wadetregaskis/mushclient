@@ -302,6 +302,11 @@ bool bHaveVariable = false;
 
 // see if we know of this element
 
+  // The dispatch below can GROW the line list (StartNewLine for </p>/</ul>/</ol>
+  // appends a tail line) as well as shrink it (a gagging trigger frees the tail),
+  // so record the count to bound the liveness re-scan correctly either way.
+  const int iLinesBeforeDispatch = m_LineList.GetCount ();
+
 CAtomicElement * pAtomicElement;
   
   // atomic element?
@@ -354,7 +359,10 @@ CAtomicElement * pAtomicElement;
   {
   bool bLineStillThere = false;
   POSITION checkpos = m_LineList.GetTailPosition ();
-  for (int i = 0; i < iLinesBack && checkpos; i++)
+  int iLinesAdded = m_LineList.GetCount () - iLinesBeforeDispatch;
+  if (iLinesAdded < 0)
+    iLinesAdded = 0;
+  for (int i = 0; i < iLinesBack + iLinesAdded && checkpos; i++)
     if (m_LineList.GetPrev (checkpos) == pLine)
       {
       bLineStillThere = true;
@@ -369,6 +377,29 @@ CAtomicElement * pAtomicElement;
   // I don't need the opening style tag any more, and as it remembers the style at
   // the moment it was made it will make a good way of restoring existing styles
   // eg. underline off
+
+  // The pLine check above only proves the LINE survived.  The style itself may
+  // already have been closed under us -- then the cached oldstylepos names a
+  // stale node and pStyle->pAction a released one, and RemoveAt + Release below
+  // double-frees (Guard Malloc: "free of a pointer not claimed by any zone").
+  // Re-find pStyle by identity and act only if it is still a LIVE start tag.
+  {
+  POSITION freshpos = NULL;
+  for (POSITION sp = pLine->styleList.GetHeadPosition (); sp; )
+    {
+    POSITION here = sp;
+    if (pLine->styleList.GetNext (sp) == pStyle)
+      {
+      freshpos = here;
+      break;
+      }
+    }
+  if (freshpos == NULL ||
+      (pStyle->iFlags & START_TAG) == 0 ||
+      pStyle->pAction == NULL)
+    return;                 // already closed under us -- do not close it twice
+  oldstylepos = freshpos;   // the live position, not the stale cached one
+  }
 
   pLine->styleList.RemoveAt (oldstylepos);
 

@@ -258,6 +258,7 @@ const Dialect kDialects[] = {
   "function wrap(s) return '<' .. s .. '>' end\n"
   "function size(s) return tostring(#s) end\n"
   "function boom(s) error('deliberate') end\n"
+  "function boomnul(s) error('nul\\0here') end\n"
   "function rnothing() end\n"
   "function rtrue() return true end\n"
   "function rfalse() return false end\n"
@@ -351,6 +352,7 @@ const Dialect kDialects[] = {
   "def wrap(s):\n    return '<' + s + '>'\n"
   "def size(s):\n    return str(len(s.encode('utf-8', 'surrogateescape')))\n"
   "def boom(s):\n    raise RuntimeError('deliberate')\n"
+  "def boomnul(s):\n    raise RuntimeError('nul\\0here')\n"
   // *a: called via both the rich overload (zero args) and the simple one
   // (one string arg, R2-07-F6's DispatchEmbedded coverage) -- unlike Lua,
   // Python raises on an unexpected positional argument.
@@ -446,6 +448,7 @@ const Dialect kDialects[] = {
   "sub wrap { return '<' . $_[0] . '>'; }\n"
   "sub size { return length($_[0]); }\n"
   "sub boom { die 'deliberate'; }\n"
+  "sub boomnul { die \"nul\\0here\"; }\n"
   "sub rnothing { return; }\n"
   "sub rtrue { return 1; }\n"
   "sub rfalse { return 0; }\n"
@@ -521,6 +524,7 @@ const Dialect kDialects[] = {
   "function wrap(s) { return '<' + s + '>'; }\n"
   "function size(s) { return String(s.length); }\n"
   "function boom(s) { throw new Error('deliberate'); }\n"
+  "function boomnul(s) { throw new Error('nul\\0here'); }\n"
   "function rnothing() { }\n"
   "function rtrue() { return true; }\n"
   "function rfalse() { return false; }\n"
@@ -611,6 +615,7 @@ const Dialect kDialects[] = {
   "proc wrap {s} { return \"<$s>\" }\n"
   "proc size {s} { return [string length $s] }\n"
   "proc boom {s} { error deliberate }\n"
+  "proc boomnul {s} { error nul\\0here }\n"
   // args: called via both overloads (see the Python rnothing comment above);
   // Tcl also errors on an unexpected positional argument.
   "proc rnothing {args} { }\n"
@@ -688,6 +693,7 @@ const Dialect kDialects[] = {
   "def wrap(s); '<' + s + '>'; end\n"
   "def size(s); s.bytesize.to_s; end\n"
   "def boom(s); raise 'deliberate'; end\n"
+  "def boomnul(s); raise \"nul\\0here\"; end\n"
   // (*a): called via both overloads (see the Python rnothing comment above);
   // Ruby also errors on an unexpected positional argument.
   "def rnothing(*a); nil; end\n"
@@ -1272,6 +1278,15 @@ void battery_errors(Engine& e, const Dialect& d)
                       io, count, io);
     check(d2 == DISPID_UNKNOWN, L, "a failed handler is disabled, not retried");
     check(count == 0, L, "a failed call is not counted as an invocation");
+
+    // A raise whose MESSAGE contains an embedded NUL must be REPORTED, not crash
+    // the client.  Ruby's report_error fed the message to StringValueCStr, which
+    // raises ArgumentError on a NUL where no Ruby tag is live -> rb_bug/abort;
+    // the other engines truncate.  If boomnul aborts the process this whole
+    // selftest dies, so reaching the assertion below at all is the guard.
+    bool errnul = false;
+    e.callRtn("boomnul", "untouched", &errnul);
+    check(errnul, L, "a raise with a NUL in its message is reported, not a crash");
 }
 
 // 5. State: globals persist between calls, and engines do not see each other's.

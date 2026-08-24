@@ -145,7 +145,14 @@ void ruby_to_variant (VALUE r, VARIANT& out)
   // strings and everything else -> string (the dispatch coerces as needed)
   VALUE s = rb_obj_as_string (r);
   out.vt = VT_BSTR;
-  out.bstrVal = SysAllocString (StringValueCStr (s));
+  // RSTRING_PTR, not StringValueCStr: the latter RAISES ArgumentError on a
+  // String holding an embedded NUL, and this runs inside world_method_missing
+  // with a live std::vector<VARIANT> and std::string on the stack -- the longjmp
+  // to ExecuteRuby's rb_protect would skip their destructors (a leak per call).
+  // RSTRING_PTR is always NUL-terminated by MRI, and SysAllocString truncates at
+  // the first NUL, so this matches the other four engines (perl/js/tcl/py all
+  // feed a raw char* straight through) and the non-NUL case is unchanged.
+  out.bstrVal = SysAllocString (RSTRING_PTR (s));
   }
 
 // ── world.<Method|Property>[=] — World#method_missing ────────────────────────
@@ -334,7 +341,12 @@ void report_error (CMUSHclientDoc* doc, const char* what, const char* proc)
     if (state)
       rb_set_errinfo (Qnil);             // #message itself raised — discard it
     else if (TYPE (s) == T_STRING)
-      msg = StringValueCStr (s);
+      // Length-explicit, like the ruby_to_s path below: StringValueCStr RAISES
+      // on an embedded NUL, and here there is NO enclosing Ruby tag (rb_protect
+      // already returned), so that raise hits rb_bug -> abort, crashing the whole
+      // client on any `raise "...\0..."` from a Ruby script.  A message with a
+      // NUL truncates like everything else instead of taking the process down.
+      msg.assign (RSTRING_PTR (s), RSTRING_LEN (s));
     }
   rb_set_errinfo (Qnil);
   // Route through the shared policy (scripting/lua_scripting.cpp), so this

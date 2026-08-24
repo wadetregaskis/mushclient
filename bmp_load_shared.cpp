@@ -62,7 +62,17 @@ long LoadBmp (LPCTSTR FileName, HBITMAP & hbmp)
 {
     hbmp = NULL;
 
+#ifdef _WIN32
     FILE* fp = fopen (FileName, "rb");
+#else
+    // Plugins (e.g. Quow's Cow Bar map tiles) reference images by Windows-style
+    // backslash paths; POSIX needs '/'.  The exact translation LoadPng already
+    // does (png_load_shared.cpp) -- .bmp shipped after .png and never got it, so
+    // world.WindowLoadImage("shots\\x.bmp") loaded as .png yet failed as .bmp
+    // with a fabricated eFileNotFound, even though world.WindowWrite had created
+    // the file through CFile::Open's own '\\'->'/' translation.
+    FILE* fp = fopen (PortableFilePath (FileName).c_str (), "rb");
+#endif
     if (fp == NULL)
         return eFileNotFound;
 

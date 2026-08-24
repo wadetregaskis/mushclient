@@ -33,6 +33,10 @@ size_t         HeadlessLiveDibCountForTesting();
 
 #include <cstring>
 #include <vector>
+#include <cstdio>            // LoadBmp backslash-path test: fopen/fwrite
+#include <unistd.h>          // unlink
+#include <sys/stat.h>        // mkdir
+#include "scripting/errors.h"  // eFileNotFound / eUnableToLoadImage
 
 // ── 1. Font-metric path (ChangeFont / ChangeInputFont shape) ────────────────
 // Mirrors doc.cpp:1140-1192 / 1229-1258 exactly, then asserts the metric that
@@ -503,6 +507,36 @@ TEST(GdiHeadless, AStaleDcCannotPaintIntoAReusedSurface)
            reused == freed ? "RECYCLED: the cleanup is now load-bearing"
                            : "not recycled: the cleanup stays defensive");
     EXPECT_TRUE(victim.DeleteObject());
+}
+
+TEST(GdiHeadless, LoadBmpTranslatesBackslashPaths)
+{
+    // world.WindowWrite creates files through CFile::Open's '\\'->'/' mapping,
+    // so a plugin that writes "shots\\x.bmp" gets shots/x.bmp on disk -- but
+    // LoadBmp used a raw fopen, so loading the same backslash path returned a
+    // fabricated eFileNotFound for a file that was right there (its sibling
+    // LoadPng already translated).  Garbage content is enough to pin it: any
+    // return OTHER than eFileNotFound means fopen FOUND the file via the
+    // translated path, where before it could not.
+    char dirtmpl[] = "/tmp/mc_bmp_bs_XXXXXX";
+    ASSERT_TRUE(mkdtemp(dirtmpl) != NULL);
+    std::string dir = dirtmpl;
+    std::string posixPath = dir + "/x.bmp";
+    {
+        FILE* f = fopen(posixPath.c_str(), "wb");
+        ASSERT_TRUE(f != NULL);
+        fwrite("not-a-real-bmp", 1, 14, f);
+        fclose(f);
+    }
+
+    std::string winPath = dir + "\\x.bmp";
+    HBITMAP hbmp = (HBITMAP) 0;
+    long rc = LoadBmp(winPath.c_str(), hbmp);
+    EXPECT_NE(eFileNotFound, rc);        // FOUND via the translated separator
+    EXPECT_EQ(eUnableToLoadImage, rc);   // opened, then refused as not a real BMP
+
+    unlink(posixPath.c_str());
+    rmdir(dir.c_str());
 }
 
 MC_TEST_MAIN()

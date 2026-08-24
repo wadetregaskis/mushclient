@@ -71,11 +71,16 @@ int count;
     return false;
 
   // inspired by a suggestion by Twisol (to remove a hard-coded limit on the number of wildcards)
-  int capturecount = 0;
-  // how many captures did we get?
-  pcre_fullinfo(prog->m_program, NULL, PCRE_INFO_CAPTURECOUNT, &capturecount);
-  // allocate enough memory
-  vector<int> offsets ((capturecount + 1) * 3);  // we always get offset 0 - the whole match
+  // capturecount is IMMUTABLE for a compiled program, so fetch it once and cache
+  // it; a per-call pcre_fullinfo + heap ovector was pure overhead on the ~99.8%
+  // NOMATCH calls (once per enabled trigger per line).
+  if (prog->m_iCaptureCount < 0)
+    pcre_fullinfo(prog->m_program, NULL, PCRE_INFO_CAPTURECOUNT,
+                  &prog->m_iCaptureCount);
+  const size_t needOffsets = (size_t) (prog->m_iCaptureCount + 1) * 3;  // +1: whole match
+  if (prog->m_vScratch.size () < needOffsets)
+    prog->m_vScratch.resize (needOffsets);
+  vector<int> & offsets = prog->m_vScratch;   // reused across calls, never freed
 
   LARGE_INTEGER start, finish;
   if (App.m_iCounterFrequency)

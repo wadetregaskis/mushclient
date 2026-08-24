@@ -40,6 +40,7 @@ class t_regexp
       m_program = NULL; 
       m_extra = NULL;
       iTimeTaken = 0;
+      m_iCaptureCount = -1;
       m_iCount = 0;
       m_iMatchAttempts = 0;
       m_iExecutionError = 0;
@@ -53,6 +54,13 @@ class t_regexp
 
   // pairs of offsets from match
   vector<int> m_vOffsets;
+  // Reusable pcre_exec output buffer + cached capture count, so regexec does not
+  // heap-allocate an ovector and re-query PCRE_INFO_CAPTURECOUNT on every call --
+  // both are per-compiled-program invariants, and regexec runs once per enabled
+  // trigger per line.  Copied into m_vOffsets only on a successful match, so the
+  // NOMATCH path still leaves m_vOffsets untouched.
+  vector<int> m_vScratch;
+  int m_iCaptureCount;   // -1 until first computed from the compiled program
   // count of matching wildcards
   int m_iCount;
   long m_iMatchAttempts;

@@ -388,6 +388,20 @@ if(TARGET mushgui)
                              RUN_SERIAL TRUE
                              TIMEOUT 120)
 
+        # Edit > Cut/Paste/Undo used to recurse until the stack died: the
+        # frame's dispatcher re-dispatched a wxCommandEvent to the focused
+        # window, and an unhandled command event propagates straight back up to
+        # the frame.  Nothing in wx binds those three ids, so "unhandled" was
+        # the only case -- Edit > Undo with no world open killed the app.  This
+        # mode, because the arm branches on wxWindow::FindFocus() and a
+        # loop-free harness cannot place focus at all.
+        add_test(NAME extended_edit_commands
+                 COMMAND $<TARGET_FILE:mushgui> --extended-selftest=edit-commands ${_selftest_args})
+        set_tests_properties(extended_edit_commands PROPERTIES
+                             LABELS "extended"
+                             RUN_SERIAL TRUE
+                             TIMEOUT 120)
+
         # The watchdog is the safety net the whole mode rests on, so it is
         # itself a test: a harness that deliberately never finishes must be
         # killed by it, not by ctest.  WILL_FAIL inverts the verdict -- the

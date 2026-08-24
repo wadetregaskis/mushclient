@@ -1962,15 +1962,39 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // wxID_UNDO at the top of this handler).
         if (id == wxID_CUT || id == wxID_PASTE || id == wxID_UNDO)
         {
-            wxWindow* focused = wxWindow::FindFocus();
-            if (focused) {
-                // Cut, Paste and Undo are no-ops on a read-only output pane;
-                // otherwise forward to focused window (wxTextCtrl, etc.) via
-                // its own event handler so the built-in editing works.
-                if (!dynamic_cast<COutputPane*>(focused)) {
-                    wxCommandEvent fwd(wxEVT_MENU, id);
-                    fwd.SetEventObject(focused);
-                    focused->GetEventHandler()->ProcessEvent(fwd);
+            // Act on the focused text field DIRECTLY, exactly as the Copy and
+            // Select All handlers on wxTheApp above do.  Cut, Paste and Undo
+            // stay no-ops on the read-only output pane, which falls out of the
+            // cast: COutputPane is a wxScrolledWindow, not a wxTextCtrl.
+            //
+            // This used to re-dispatch a wxCommandEvent to the focused window
+            // instead, and that CRASHED THE APP (2026-08-23).  A wxCommandEvent
+            // PROPAGATES: when nothing handles it, wxWindowBase::TryAfter walks
+            // it up the parent chain looking for a taker — which reaches this
+            // frame, whose dispatcher is this arm, which sent it straight back
+            // down to the same window.  For ever.  Measured: 511 frames, SIGSEGV
+            // on the guard page, and Edit ▸ Undo with no world open was enough.
+            //
+            // The forward DID work when a text field had focus: wxTextCtrl binds
+            // these three ids (wxTextCtrl::OnCut/OnPaste/OnUndo — in a private
+            // header, so they are invisible to a grep of wx/textctrl.h) and each
+            // one just calls the matching method.  What it could not survive was
+            // focus on anything else, because nothing else in wxWidgets handles
+            // them at all: on this platform they are AppKit's native
+            // cut:/paste:/undo: actions, which is the very reason these menu
+            // items keep their standard ids (see the Edit menu above).
+            //
+            // So the cast below is not a narrowing.  wxTextCtrl is exactly the
+            // set that used to do any work — verified against the shipped
+            // library: it is the only class in it that binds these ids — and
+            // calling the method is what its handler did anyway.  Everything
+            // else goes from "recurse until the stack dies" to "do nothing",
+            // which is the right answer for Undo with nothing focused to undo.
+            if (auto* te = dynamic_cast<wxTextCtrl*>(wxWindow::FindFocus())) {
+                switch (id) {
+                case wxID_CUT:   te->Cut();   break;
+                case wxID_PASTE: te->Paste(); break;
+                case wxID_UNDO:  te->Undo();  break;
                 }
             }
             return;   // consumed — do not call evt.Skip()

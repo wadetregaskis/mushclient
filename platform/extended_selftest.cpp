@@ -25,6 +25,13 @@ int RunDialogBridgeSelfTest();
 
 int RunNotepadSelfTest();   // platform/notepad_selftest.cpp
 
+// Defined in platform/edit_command_selftest.cpp: Edit > Cut/Paste/Undo must not
+// recurse.  Its own TU for the same reason the dialog bridge has one -- it
+// needs the canonical MFC headers to build the real MDI frame.  It needs THIS
+// mode because the arm it covers branches on wxWindow::FindFocus(), and a
+// loop-free harness cannot place focus at all.
+int RunEditCommandSelfTest();
+
 // Defined in wx_mfc_impl.cpp: the geometry writer the quit hook and the MDI
 // parent's close handler share, and the full-screen toggle that stashes (or
 // discards) a window's pre-full-screen rect for it -- see R2-12-F5 in
@@ -392,6 +399,7 @@ const Harness kHarnesses[] = {
     { wxT("clear-semantics"), &RunClearSemanticsSelfTest },
     { wxT("paint-cost"),    &RunPaintCostSelfTest },
     { wxT("notepad"),       &RunNotepadSelfTest },
+    { wxT("edit-commands"), &RunEditCommandSelfTest },
     { wxT("hang"),          &RunWatchdogProbe },
 };
 

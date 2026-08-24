@@ -1017,6 +1017,11 @@ if(NOT WIN32)
             # ShowModal).  Always compiled -- the harness costs nothing until
             # --extended-selftest=dialog-bridge names it.
             platform/dialog_bridge_selftest.cpp
+            # Edit > Cut/Paste/Undo must not recurse: the arm branches on
+            # wxWindow::FindFocus(), which a loop-free harness cannot place, so
+            # this one needs the loop-running mode too.  Own TU for the same
+            # reason as the dialog bridge -- it builds the real MDI frame.
+            platform/edit_command_selftest.cpp
             # The three canonical toolbars (Standard/World/Activity) over
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.

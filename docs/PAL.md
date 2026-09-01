@@ -454,7 +454,13 @@ ConnectionEstablished/ReceiveMsg/SendPacket/StartSSLHandshake/
 ContinueSSLHandshake/LookupHostName/OnConnectionDisconnect), their hand-written
 doc_portable.cpp twins, the POSIX `CAsyncSocket` shim (platform/posix_socket.h —
 a select(2) pump driven by a 20 ms wx timer; generation-tagged registry against
-callback self-deletion), and the OpenSSL usage.
+callback self-deletion), and the OpenSSL usage.  (The pump now drains a
+socket's whole backlog within one pass, re-arming on "the callback consumed
+something" the way Winsock's edge-triggered `FD_READ` does; before that, one
+`OnReceive` per 20 ms tick was a throughput ceiling Windows does not have.  The
+tick *period* is still the port's own, so a strictly lockstep exchange — the
+MudMaster chat file transfer, one block per round trip — still costs a tick per
+round trip.)
 
 ### What the survey established
 

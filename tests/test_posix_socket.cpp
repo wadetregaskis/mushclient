@@ -11,6 +11,7 @@
 #include "platform/posix_socket.h"
 
 #include <string>
+#include <sys/ioctl.h>     // FIONREAD (the backlog-drain fixture)
 #include <sys/resource.h>
 
 // ── helpers ───────────────────────────────────────────────────────────────
@@ -422,6 +423,137 @@ TEST(PosixSocket, UrgentDataGoesToOnOutOfBandDataNotOnReceive)
     EXPECT_EQ(0, server.closes);
 
     client.Close();
+    lis.Close();
+}
+
+// ── the per-pass backlog drain ────────────────────────────────────────────
+//
+// posix_socket.h Poll: Winsock re-records FD_READ whenever recv() is called and
+// data still remains, so a Windows message loop consumes a burst within one
+// turn.  The port's only pump is a 20 ms wxTimer, so one OnReceive per pass put
+// a throughput ceiling on the port that Windows does not have -- 9999 bytes a
+// tick on the world socket, 999 on a chat socket.
+namespace {
+struct DrainRecorder : CAsyncSocket {
+    int         receives = 0;
+    int         bufSize  = 64;    // deliberately smaller than the payload
+    bool        consume  = true;
+    std::string got;
+    void OnReceive(int) override
+    {
+        ++receives;
+        if (!consume) return;
+        char buf[256];
+        const int n = Receive(buf, bufSize);
+        if (n > 0) got.append(buf, (size_t) n);
+    }
+};
+
+// Wait until at least `want` bytes are queued on fd WITHOUT running the shim's
+// pump, so the whole backlog is present before the first Poll().  That is what
+// makes "one pass delivered all of it" an exact statement rather than a lucky
+// one -- the oracle below counts delivered callbacks, never elapsed time.
+static bool wait_for_queued(int fd, int want)
+{
+    for (int i = 0; i < 3000; ++i) {
+        int pending = -1;
+        if (::ioctl(fd, FIONREAD, &pending) == 0 && pending >= want) return true;
+        ::usleep(1000);
+    }
+    return false;
+}
+
+// A raw remote end: not a CAsyncSocket, so nothing the shim polls owns it and
+// the payload sits in the kernel until the test says otherwise.
+static int raw_connect(UINT port)
+{
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    SOCKADDR_IN a{};
+    a.sin_family      = AF_INET;
+    a.sin_port        = htons((uint16_t) port);
+    a.sin_addr.s_addr = inet_addr("127.0.0.1");
+    if (::connect(fd, (SOCKADDR*) &a, sizeof a) != 0) { ::close(fd); return -1; }
+    return fd;
+}
+} // namespace
+
+TEST(PosixSocket, OnePollPassDrainsABacklogBiggerThanTheCallbacksBuffer)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+    const int client = raw_connect(lis.port_);
+    ASSERT_TRUE(client >= 0);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+
+    DrainRecorder server;
+    ASSERT_TRUE(lis.Accept(server));
+
+    std::string payload;
+    for (int i = 0; i < 512; ++i) payload += (char) ('a' + (i % 26));
+    ASSERT_EQ((ssize_t) payload.size(),
+              ::write(client, payload.data(), payload.size()));
+    ASSERT_TRUE(wait_for_queued(server.m_hSocket, (int) payload.size()));
+    ASSERT_EQ(0, server.receives);          // nothing delivered before the pump runs
+
+    // Count PASSES THAT DELIVERED something, not polls: a pass that fires no
+    // callback at all must not count against the oracle.
+    int passesWithData = 0, polls = 0;
+    while (server.got.size() < payload.size() && polls < 200) {
+        const int before = server.receives;
+        CAsyncSocket::Poll(10);
+        ++polls;
+        if (server.receives > before) ++passesWithData;
+    }
+
+    EXPECT_EQ(payload, server.got);         // every byte arrived, in order
+    // 512 bytes through a 64-byte read cannot be one callback, so this proves
+    // the loop actually ran rather than the buffer quietly being big enough.
+    EXPECT_GE(server.receives, 8);
+    // ...and all of them inside ONE pass.  Before the drain loop this was 8.
+    EXPECT_EQ(1, passesWithData);
+
+    server.Close();
+    ::close(client);
+    lis.Close();
+}
+
+// The control, and the reason the loop asks FIONREAD rather than MSG_PEEK.
+// Winsock's FD_READ is edge-triggered on recv(), so a callback that is notified
+// and reads nothing gets no re-post there either.  A drain loop keyed on "there
+// is still data" would instead call such a callback its whole budget's worth on
+// every single pass -- and every Recorder in this file is exactly that shape.
+TEST(PosixSocket, ACallbackThatConsumesNothingIsNotCalledAgainInThePass)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+    const int client = raw_connect(lis.port_);
+    ASSERT_TRUE(client >= 0);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+
+    DrainRecorder server;
+    server.consume = false;                 // notified, but never recv()s
+    ASSERT_TRUE(lis.Accept(server));
+
+    const std::string payload(512, 'z');
+    ASSERT_EQ((ssize_t) payload.size(),
+              ::write(client, payload.data(), payload.size()));
+    ASSERT_TRUE(wait_for_queued(server.m_hSocket, (int) payload.size()));
+
+    // poll_until stops on the pass that first delivers, so this is "exactly one
+    // callback in the pass that saw 512 queued bytes".
+    ASSERT_TRUE(poll_until([&] { return server.receives > 0; }));
+    EXPECT_EQ(1, server.receives);
+
+    // and the data is still there, untouched -- the callback really did decline
+    // it, so the count above is about the re-arm rule and not about an empty
+    // socket.
+    int pending = -1;
+    EXPECT_EQ(0, ::ioctl(server.m_hSocket, FIONREAD, &pending));
+    EXPECT_EQ((int) payload.size(), pending);
+
+    server.Close();
+    ::close(client);
     lis.Close();
 }
 

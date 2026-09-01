@@ -172,6 +172,14 @@ const char* const CWorldChildFrame::kAccelClearToStart    = "Ctrl+K";
 const char* const CWorldChildFrame::kAccelClearToMark     = "Ctrl+L";
 const char* const CWorldChildFrame::kAccelClearScrollback = "Alt+Ctrl+K";
 const char* const CWorldChildFrame::kAccelClearScreen     = "RawCtrl+Ctrl+L";
+// The Display menu's scroll commands.  "RawCtrl" is the physical Control key,
+// which is what Windows means by Ctrl here and what the command bar's own
+// handlers already test with RawControlDown(); "Ctrl" would be Command and
+// would take Cmd+Up / Cmd+Down away from the command bar's caret movement.
+const char* const CWorldChildFrame::kAccelScrollStart     = "RawCtrl+Home";
+const char* const CWorldChildFrame::kAccelScrollEnd       = "RawCtrl+End";
+const char* const CWorldChildFrame::kAccelScrollLineUp    = "RawCtrl+Up";
+const char* const CWorldChildFrame::kAccelScrollLineDown  = "RawCtrl+Down";
 // Canonical command ids, not private wxIDs: world.DoCommand("FullScreenMode")
 // and world.DoCommand("ViewStatusbar") post these through
 // Frame.PostMessage -> hook_post_message -> wxEVT_MENU, and accelerators.cpp
@@ -1334,6 +1342,31 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // ── Display menu (output-pane view commands) ──────────────────────────
     // No Ctrl+F accelerator here — the inline find bar already binds it.
     wxMenu* displayMenu = new wxMenu();
+    // The six scroll commands Windows' Display menu opens with
+    // (mushclient_dialogs.rc:3013-3018), in the same order.  They scroll the
+    // output without taking the caret out of the command bar, which is why
+    // CSendView owns them upstream (sendvw.cpp:53-58 -> CMUSHView::OnTest*).
+    // The port had none of them: four were reachable only as hard-coded keys
+    // in CWorldChildFrame::OnInputKeyDown, and Line Up / Line Down existed
+    // nowhere at all -- Ctrl+Up in the command bar fell through to the
+    // ordinary history walk, so it silently did the same thing as plain Up.
+    // See the accelerator note on CWorldChildFrame for why Page Up / Page
+    // Down get no key equivalent here.
+    displayMenu->Append(32114 /*ID_TEST_START*/,
+                        wxString(wxT("&Start\t")) +
+                        wxString::FromUTF8(CWorldChildFrame::kAccelScrollStart));
+    displayMenu->Append(32111 /*ID_TEST_PAGEUP*/,   wxT("Page &Up"));
+    displayMenu->Append(32112 /*ID_TEST_PAGEDOWN*/, wxT("Page &Down"));
+    displayMenu->Append(32107 /*ID_TEST_END*/,
+                        wxString(wxT("&End\t")) +
+                        wxString::FromUTF8(CWorldChildFrame::kAccelScrollEnd));
+    displayMenu->Append(32115 /*ID_TEST_LINEUP*/,
+                        wxString(wxT("Line Up\t")) +
+                        wxString::FromUTF8(CWorldChildFrame::kAccelScrollLineUp));
+    displayMenu->Append(32116 /*ID_TEST_LINEDOWN*/,
+                        wxString(wxT("Line Down\t")) +
+                        wxString::FromUTF8(CWorldChildFrame::kAccelScrollLineDown));
+    displayMenu->AppendSeparator();
     displayMenu->Append(32248 /*ID_DISPLAY_FIND*/,         wxT("&Find…"));
     displayMenu->Append(32249 /*ID_DISPLAY_FINDAGAIN*/,    wxT("Find &Again"));
     displayMenu->AppendSeparator();
@@ -2130,6 +2163,30 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (!child->SaveSelectionToFile(dlg.GetPath()))
                 wxMessageBox(wxT("Failed to write the selection."),
                              wxT("Save Selection"), wxICON_ERROR | wxOK, child);
+            return;
+        }
+
+        // ── Display menu: the six scroll commands (ID_TEST_*) ──────────────
+        // One switch, mapping the canonical ids onto the frame's single
+        // implementation, which the command bar's key handling also calls --
+        // so a menu click and its shortcut cannot end up doing different
+        // things.  Upstream: CSendView::OnTest* -> CMUSHView::OnTest*.
+        if (id == 32114 /*ID_TEST_START*/    || id == 32111 /*ID_TEST_PAGEUP*/ ||
+            id == 32112 /*ID_TEST_PAGEDOWN*/ || id == 32107 /*ID_TEST_END*/    ||
+            id == 32115 /*ID_TEST_LINEUP*/   || id == 32116 /*ID_TEST_LINEDOWN*/) {
+            if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
+                CWorldChildFrame::EScrollCommand which =
+                    CWorldChildFrame::eScrollStart;
+                switch (id) {
+                case 32111: which = CWorldChildFrame::eScrollPageUp;   break;
+                case 32112: which = CWorldChildFrame::eScrollPageDown; break;
+                case 32107: which = CWorldChildFrame::eScrollEnd;      break;
+                case 32115: which = CWorldChildFrame::eScrollLineUp;   break;
+                case 32116: which = CWorldChildFrame::eScrollLineDown; break;
+                default:    which = CWorldChildFrame::eScrollStart;    break;
+                }
+                c->FireScrollCommand(which);
+            }
             return;
         }
 

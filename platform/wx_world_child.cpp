@@ -1383,6 +1383,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                   SRunEncoding{ m_doc->m_bUTF_8 != 0,
                                                 (int) m_doc->m_font_charset });
 
+        // 1a. Is the cursor on a line at all?  Windows decides this ONCE, past
+        // the miniwindow arm and before either the hint or the line
+        // information: calculate_line_and_column hands back bOutside
+        // (mushview.cpp:1896-1904) and OnToolTipNeedText answers an empty tip
+        // (`pTTT->szText [0] = 0`, :4255-4256).  PointToChar CLAMPS instead --
+        // rightly, since every other Windows caller discards bOutside and wants
+        // the last line -- so the guard further down (pt.line >= GetCount())
+        // could never fire, and the last line's information, or even its MXP
+        // hint when x happened to fall over a link's columns, followed the
+        // cursor all the way down the empty area below the text.
+        if (m_output->YIsOutsideLines(y))
+            return {};
+
         // 2. Check MXP hint text on the output line under the cursor.
         // Use PointToChar for wrap-aware hit-testing: it returns the absolute
         // character column within the logical line, which we then walk to find
@@ -1396,6 +1409,25 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // every run after the first non-ASCII one, so the hint returned was the
         // wrong run's (or none).  The hyperlink walk in wx_outputpane.cpp
         // already measures with RunCharLen; this was the odd one out.
+        // The first NON-EMPTY pipe-delimited field -- the same rule the
+        // link-click handler uses to pick the default action, so the flyover
+        // names exactly what a click would send.  Windows takes the literal
+        // head (StringToList + GetHead, mxp/mxputils.cpp:358-384), which is the
+        // same string for every input but a degenerate leading '|'; there the
+        // click and the flyover agreeing matters more than matching a case
+        // upstream answers with an empty command.
+        auto firstField = [](const std::string& s) -> std::string {
+            size_t start = 0;
+            for (;;) {
+                size_t sep = s.find('|', start);
+                std::string part = s.substr(start,
+                    (sep == std::string::npos) ? std::string::npos : sep - start);
+                if (!part.empty()) return part;
+                if (sep == std::string::npos) return std::string();
+                start = sep + 1;
+            }
+        };
+
         int c = 0;
         for (const auto& run : *line) {
             int runLen = RunCharLen(run);
@@ -1411,10 +1443,36 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 if (action.empty() ||
                     action.find("&text;") != std::string::npos)
                     break;  // not an actionable link: line information instead
+
+                // What upstream actually puts in the flyover
+                // (CMUSHView::OnToolTipNeedText, mushview.cpp:4283-4322):
+                //   ACTION_SEND / ACTION_PROMPT -- the head of the HINT list if
+                //     there are any hints, else the head of the ACTION list.
+                //     Its own comment is "hint defaults to the default action":
+                //     with no hint attribute the flyover names the command the
+                //     click will send.
+                //   ACTION_HYPERLINK -- the hint if there is one, else the raw
+                //     action (the URL).  No pipe splitting on this arm.
+                //   anything else -- nothing, so the line information shows.
+                // This returned run.hint() verbatim, pipes and all, and fell
+                // straight through to the line information whenever the hint
+                // was absent.  The comment here claimed that matched upstream's
+                // `if (strText.IsEmpty ())`, but it does not: strText was
+                // already seeded with the default action by then, so it was NOT
+                // empty and the line info never showed.  A plain
+                // <send>look</send> therefore read "Line 1234, Sunday, ..."
+                // here and "look" on Windows, and a multi-hint link showed the
+                // whole raw "Pick an exit|Go north|Go south".
                 const std::string hint = run.hint();
-                if (!hint.empty())
-                    return DecodeRunBytes(hint, run.encoding());
-                break;      // empty hint: fall through to the line information,
+                const int type = run.action_type();
+                std::string tip;
+                if (type == ACTION_HYPERLINK)
+                    tip = hint.empty() ? action : hint;
+                else if (type == ACTION_SEND || type == ACTION_PROMPT)
+                    tip = firstField(hint.empty() ? action : hint);
+                if (!tip.empty())
+                    return DecodeRunBytes(tip, run.encoding());
+                break;      // nothing to say: the line information instead,
             }               // exactly as `if (strText.IsEmpty ())` does upstream
             c += runLen;
         }
@@ -1499,6 +1557,20 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // and then does the parts that are this frontend's own business —
         // exactly what mushview.cpp does with the same return value.
         auto fire = [this, actionType, bCommentLine, enc](const std::string& cmd) {
+            // "unpause the output window if wanted" — CMUSHView::OnLButtonDown
+            // (mushview.cpp:2176-2181) runs this BEFORE HyperlinkClicked, so it
+            // fires even on the not-connected arm, and OnMXPMenu repeats it at
+            // its tail (mushview.cpp:5550-5555) for the right-click route.
+            // Windows does not undo it afterwards: the link arm returns before
+            // SetCapture, so OnLButtonUp's auto-freeze never runs for a click
+            // that fired a link.  Only the typed-command path
+            // (CWorldChildFrame::sendCommand, and CSendView::SendCommand
+            // upstream) read this option here before; a click on a send-link in
+            // frozen scrollback sent the command and then left the reply
+            // off-screen.
+            if (m_doc->m_bUnpauseOnSend && m_output && m_output->IsPaused())
+                m_output->SetPaused(false);
+
             switch (m_doc->HyperlinkClicked(CString(cmd.c_str()),
                                             actionType, bCommentLine))
             {
@@ -1533,30 +1605,29 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_doc->UpdateAllViews(nullptr);
         };
 
-        // Single action: run it immediately without a menu.
-        if (choices.size() == 1) {
-            fire(choices[0]);
-            return;
-        }
-
-        // Multiple alternatives — present a popup menu so the user can choose.
-        // We bind the handlers directly on the wxMenu object (wxMenu extends
-        // wxEvtHandler); when the menu goes out of scope the bindings are freed.
-        // Menu events are dispatched to the menu's own handler chain first, so
-        // the Bind() calls below will be reached before the window's handlers.
-        wxMenu linkMenu;
-        for (const std::string& ch : choices) {
-            wxMenuItem* item = linkMenu.Append(
-                wxID_ANY, DecodeRunBytes(ch, enc));
-            linkMenu.Bind(wxEVT_MENU, [fire, cmd = ch](wxCommandEvent&) {
-                fire(cmd);
-            }, item->GetId());
-        }
-        // PopupMenu() runs its own event loop and returns after the user
-        // picks an item or dismisses the menu.  The selected item's handler
-        // fires synchronously inside PopupMenu() before it returns.
-        m_output->PopupMenu(&linkMenu);
-        // linkMenu destructs here, automatically cleaning up all Bind() handlers.
+        // A click sends the FIRST alternative — the MXP default action — and
+        // never asks.  Windows:
+        //     StringToList (strActions, POPUP_DELIMITER, actionsList);
+        //     CString strAction = actionsList.GetHead ();
+        //         // just send first action (default action)
+        // (CMUSHView::OnLButtonDown, mushview.cpp:2166-2176).  The chooser is
+        // the RIGHT-click path there (IDR_MXP_MENU, mushview.cpp:3540-3607,
+        // which marks alternative 0 as the default item), and it is the
+        // right-click path here too — COutputPane::BuildContextMenu lists one
+        // "send this" item per alternative, labelled with the MUD's hints.
+        //
+        // This used to pop that chooser up on a plain LEFT click, so a
+        // <send "north|south">exit</send> sent nothing at all until a second
+        // click, and dismissing the menu sent nothing whatsoever.  Every
+        // MUD/plugin that relies on the default-action convention behaved
+        // differently here.
+        //
+        // The split above skips EMPTY segments, where Windows' StringToList
+        // (mxp/mxputils.cpp:358-384) keeps them — so for a degenerate
+        // "|north" Windows sends an empty line and this sends "north".  Kept
+        // deliberately: the divergence is one degenerate input wide and
+        // strictly the better answer of the two.
+        fire(choices[0]);
     };
 
     // The command bar is MULTI-LINE, matching Windows: CSendView::PreCreateWindow
@@ -3997,6 +4068,35 @@ bool CWorldChildFrame::FireNamedMacroCommand(int id)
     return false;
 }
 
+// ── FireScrollCommand ──────────────────────────────────────────────────────
+// The six Display-menu scroll commands, in one place: the menu items
+// (wx_mfc_impl.cpp) and the command bar's own keys both call this, so they
+// cannot drift apart the way they would with two copies.
+//
+// Every one of them CANCELS the output-buffer fade first.  That is the whole
+// point of the cancel -- you scrolled back to read something, so it returns to
+// full intensity for one fade's worth of time -- and Windows does it in the
+// same commands (CSendView::OnTestPageup / OnTestPagedown / OnTestEnd,
+// sendvw.cpp:564-580).
+//
+// Note which pane call each one makes.  Start / Page Up / Page Down / Line Up
+// / Line Down / End all reach CMUSHView::ScrollToPosition upstream, so each
+// ends in RefreshAutoScrollFromPosition (inside the pane method) rather than
+// forcing the freeze either way -- see COutputPane::ScrollToBufferEnd.
+void CWorldChildFrame::FireScrollCommand(EScrollCommand which)
+{
+    CancelOutputFade();
+    if (!m_output) return;
+    switch (which) {
+    case eScrollStart:    m_output->ScrollToTop();      break;
+    case eScrollPageUp:   m_output->ScrollPage(-1);     break;
+    case eScrollPageDown: m_output->ScrollPage(+1);     break;
+    case eScrollEnd:      m_output->ScrollToBufferEnd();break;
+    case eScrollLineUp:   m_output->ScrollLine(-1);     break;
+    case eScrollLineDown: m_output->ScrollLine(+1);     break;
+    }
+}
+
 // ── OnInputKeyDown ─────────────────────────────────────────────────────────
 // Up/Down arrows navigate command history; all other keys pass through normally.
 void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
@@ -4045,37 +4145,24 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;   // consume — don't close dialogs or deselect in the input bar
     }
 
-    // Page Up / Page Down: scroll the output pane one page without leaving the
-    // input bar.  This lets the user page through output while still typing.
+    // The six Display-menu scroll commands, from the command bar, which is
+    // where Windows puts them too: CSendView owns the ON_COMMAND entries
+    // (sendvw.cpp:53-58) precisely so the caret never has to leave the input
+    // box.  They all go through FireScrollCommand, the same body the menu
+    // items reach, so a key and its menu item cannot drift apart.
     //
-    // Scrolling also CANCELS the output-buffer fade, which is the whole point
-    // of the cancel: you scrolled back to read something, so it comes back to
-    // full intensity for one fade's worth of time.  Windows does this in the
-    // same three commands (CSendView::OnTestPageup / OnTestPagedown /
-    // OnTestEnd, sendvw.cpp:564-580).
-    if (code == WXK_PAGEUP) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollPage(-1);
-        return;
-    }
-    if (code == WXK_PAGEDOWN) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollPage(+1);
-        return;
-    }
-
-    // Ctrl+Home / Ctrl+End: jump to the very top or bottom of the output buffer
-    // without leaving the input bar.  Mirrors the Ctrl+Home/End shortcuts that
-    // work when the output pane itself has focus (COutputPane::OnKeyDown).
-    if (code == WXK_HOME && evt.RawControlDown()) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollToTop();
-        return;
-    }
-    if (code == WXK_END && evt.RawControlDown()) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollToBottom();
-        return;
+    // Ctrl+Up / Ctrl+Down had no arm at all, and the fall-through was not
+    // harmless: neither the m_bArrowsChangeHistory skip nor the caret-at-edge
+    // skip excludes RawControlDown, so control reached the ordinary
+    // history-walk block below and Ctrl+Up quietly did exactly what plain Up
+    // does.  This arm has to sit ahead of that block, which is why it is here.
+    if (code == WXK_PAGEUP)   { FireScrollCommand(eScrollPageUp);   return; }
+    if (code == WXK_PAGEDOWN) { FireScrollCommand(eScrollPageDown); return; }
+    if (evt.RawControlDown()) {
+        if (code == WXK_HOME) { FireScrollCommand(eScrollStart);    return; }
+        if (code == WXK_END)  { FireScrollCommand(eScrollEnd);      return; }
+        if (code == WXK_UP)   { FireScrollCommand(eScrollLineUp);   return; }
+        if (code == WXK_DOWN) { FireScrollCommand(eScrollLineDown); return; }
     }
 
     wxTextCtrl* inp = ActiveInput();
@@ -4260,7 +4347,9 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Without this it fell through to the text control's native undo.
     if (evt.RawControlDown() && code == 'Z' &&
         m_doc && m_doc->m_bCtrlZGoesToEndOfBuffer && m_output) {
-        m_output->ScrollToBottom();
+        // CSendView::OnEditCtrlZ calls OnTestEnd (sendvw.cpp:2217-2225), so
+        // this is the same jump Ctrl+End makes and obeys the same latch.
+        m_output->ScrollToBufferEnd();
         return;
     }
 
@@ -6275,7 +6364,10 @@ void CWorldChildFrame::setScroll(long pos)
 {
     if (!m_output) return;
     if (pos == -1) {
-        m_output->ScrollToBottom();
+        // Windows reaches the end through ScrollToPosition here too
+        // (methods_output.cpp:620-635), so -1 is a jump, not an unfreeze: with
+        // keep_pause_at_bottom set it leaves a frozen pane frozen.
+        m_output->ScrollToBufferEnd();
     } else if (pos <= 0) {
         m_output->ScrollToTop();
     } else {

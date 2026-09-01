@@ -333,9 +333,30 @@ public:
     bool WantsSelectAll() const { return m_wantsSelectAll; }
     void ClearSelectAllClaim() { m_wantsSelectAll = false; }
 
-    // Scroll to the very bottom of the buffer and re-engage auto-scroll.
-    // Safe to call at any time; no-op if already at the bottom.
+    // Scroll to the very bottom of the buffer and re-engage auto-scroll
+    // UNCONDITIONALLY.  This is the EXPLICIT unfreeze: the Pause command, the
+    // hint bar, Escape, world.Pause(false).  Windows spells those `m_freeze =
+    // false` directly rather than going through ScrollToPosition, which is why
+    // they ignore keep_pause_at_bottom -- see ScrollToBufferEnd for the other
+    // kind of jump to the end.
     void ScrollToBottom();
+
+    // Jump to the end of the buffer and then let the world's options decide
+    // whether output resumes -- CMUSHView::OnTestEnd (mushview.cpp:1619-1653)
+    // and world.SetScroll(-1) (methods_output.cpp:620-635) both reach the end
+    // through ScrollToPosition, whose tail is
+    //
+    //     if (m_bAutoFreeze) {
+    //       if (m_bKeepFreezeAtBottom) m_freeze = m_freeze || (pt.y < bottom);
+    //       else                       m_freeze = pt.y < bottom;
+    //     }
+    //
+    // (mushview.cpp:4598-4604).  Arriving AT the bottom makes `pt.y < bottom`
+    // false, so with keep_pause_at_bottom on a frozen view stays frozen -- the
+    // latch is that option's entire purpose -- and with auto_pause off nothing
+    // touches the freeze at all.  RefreshAutoScrollFromPosition is that tail;
+    // ScrollToTop() already ends in it, and these callers now do too.
+    void ScrollToBufferEnd();
 
     // Programmatically pause (disengage auto-scroll) or unpause (re-engage).
     // Mirrors world.Pause() scripting API.  When pausing, the scroll position
@@ -519,6 +540,14 @@ public:
     // Updates the auto-scroll state accordingly.
     void ScrollPage(int direction);
 
+    // Scroll one LINE up (-1) or down (+1) — ID_TEST_LINEUP / ID_TEST_LINEDOWN,
+    // i.e. CMUSHView::OnTestLineup / OnTestLinedown (mushview.cpp:2963-2999),
+    // which move the scroll position by exactly one m_FontHeight and then hand
+    // it to ScrollToPosition.  So, like ScrollPage and ScrollToBufferEnd, it
+    // ends in RefreshAutoScrollFromPosition rather than deciding the freeze
+    // itself.
+    void ScrollLine(int direction);
+
     // Line height / char width in pixels (updated on font change).
     int LineHeight() const { return m_lineH; }
     int CharWidth()  const { return m_charW; }
@@ -529,6 +558,16 @@ public:
     // is empty.  Exposed for callers (e.g. CWorldChildFrame tooltip handler)
     // that need to map pixel coordinates to text without owning a wxMouseEvent.
     SelPoint PointToChar(int clientX, int clientY, bool halfway = true) const;
+
+    // "Is this y even on a line?" — CMUSHView::calculate_line_and_column's
+    // bOutside (mushview.cpp:1896-1904), which is TRUE above the first line
+    // and below the last, and for an empty buffer.  PointToChar deliberately
+    // does not answer it: every Windows caller of calculate_line_and_column
+    // discards bOutside and takes the clamped line EXCEPT the tooltip, which
+    // answers with an empty tip instead (mushview.cpp:4255-4256).  Exposed so
+    // the frame's tooltip callback can ask the same question without
+    // re-deriving the pane's pixel arithmetic.
+    bool YIsOutsideLines(int clientY) const;
 
     // Number of lines currently in the buffer.
     int LineCount() const { return LineCountI(); }
@@ -1027,8 +1066,13 @@ private:
 
     // ── Selection helpers ────────────────────────────────────────────────────
 
-    // Convert client-coordinates y to a line index.
-    int YToLine(int clientY) const;
+    // Convert client-coordinates y to a line index.  The result is always
+    // CLAMPED into the buffer, which is what every Windows caller of
+    // calculate_line_and_column but one wants (a click below the text selects
+    // the last line).  `outside`, when supplied, is that function's bOutside:
+    // true when the pixel named a row outside the buffer and the clamp above
+    // therefore moved it.  See YIsOutsideLines.
+    int YToLine(int clientY, bool* outside = nullptr) const;
     // The y below which a drag counts as "past the bottom edge".  One
     // expression, because OnMotion and AutoScrollTick must not disagree about
     // where the edge is -- the hint bar moves it when the view is frozen.

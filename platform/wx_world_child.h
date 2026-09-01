@@ -259,6 +259,33 @@ public:
     static const char* const kAccelClearToMark;       // Cmd-L
     static const char* const kAccelClearScrollback;   // Alt-Cmd-K
     static const char* const kAccelClearScreen;       // Ctrl-Cmd-L
+
+    // ── the Display menu's six scroll commands ──────────────────────────────
+    // Windows' Display menu opens with them (mushclient_dialogs.rc:3013-3018):
+    // Start / Page Up / Page Down / End / Line Up / Line Down, all handled by
+    // CSendView (sendvw.cpp:53-58) so they work while the caret stays in the
+    // command bar.  ONE definition, shared by the menu items and by the
+    // command bar's own key handling, so the two cannot drift apart.
+    enum EScrollCommand {
+        eScrollStart, eScrollPageUp, eScrollPageDown,
+        eScrollEnd,   eScrollLineUp, eScrollLineDown
+    };
+    void        FireScrollCommand(EScrollCommand which);
+
+    // Their menu accelerators, same notation and same reason as the clears
+    // above.  Windows spells all four with its Control key, which is
+    // "RawCtrl" here -- NOT "Ctrl", which is Command on macOS and would take
+    // Cmd+Up/Cmd+Down away from the multi-line command bar's caret movement.
+    // Page Up / Page Down deliberately have NO accelerator: theirs carry no
+    // modifier on Windows, and an unmodified menu key equivalent on macOS is
+    // claimed app-wide -- it would scroll the world's output when the user
+    // pressed Page Up in a notepad or a dialog.  The bare keys still work
+    // where Windows has them, in the command bar and the output pane.
+    static const char* const kAccelScrollStart;       // Ctrl-Home
+    static const char* const kAccelScrollEnd;         // Ctrl-End
+    static const char* const kAccelScrollLineUp;      // Ctrl-Up
+    static const char* const kAccelScrollLineDown;    // Ctrl-Down
+
     void        setPaused(bool paused) override;
     bool        isPaused() const override;
     void        flash() override;

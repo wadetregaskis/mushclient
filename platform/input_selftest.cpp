@@ -366,6 +366,78 @@ int RunInputSelfTest()
     chkStr(inp->GetValue(), "hist_c",
            "...but typing a character does cancel it, back to the newest");
 
+    // ── Ctrl+Up / Ctrl+Down nudge the OUTPUT, and leave the history alone ──
+    // Windows' Display ▸ Line Up / Line Down (ID_TEST_LINEUP / ID_TEST_LINEDOWN
+    // -> CSendView -> CMUSHView::OnTestLineup / OnTestLinedown) scroll the
+    // output by exactly one line without the caret leaving the command bar.
+    // The port had no arm for them, and the fall-through was NOT inert: neither
+    // the arrows_change_history skip nor the caret-at-edge skip excludes
+    // RawControlDown, so control reached the ordinary history walk and Ctrl+Up
+    // silently did what plain Up does.  The second assertion in each pair is
+    // what would have caught that -- a scroll test alone would not.
+    {
+        COutputPane* pane = child->OutputPane();
+        chk(pane != NULL, "line scroll: the world window has an output pane");
+
+        // DisplayMsg (and so Note) is a no-op until m_LinePositions is
+        // allocated, which normally happens at world load; this doc never went
+        // through that, so without this the pane stays empty and every
+        // assertion below passes vacuously.
+        doc->SetUpOutputWindow();
+        for (int i = 0; i < 300; ++i)
+            doc->Note(("line scroll fixture " + std::to_string(i + 1)).c_str());
+        doc->UpdateAllViews(NULL);
+
+        const int lh = pane ? pane->LineHeight() : 0;
+        chk(pane && pane->LineCount() > 100 && lh > 0,
+            "line scroll (fixture): the pane really holds a scrollable buffer");
+
+        if (pane && lh > 0) {
+            // Somewhere in the middle, so a nudge in either direction has room.
+            pane->ScrollToLine(150);
+            const long start = pane->GetScrollPositionY();
+
+            restartBrowse();                      // browse cursor at the newest
+            inp->SetValue(wxT("half-typed"));
+
+            sendKey(inp, WXK_UP, /*ctrl*/ true);
+            const long afterUp = pane->GetScrollPositionY();
+            chk(afterUp == start - lh,
+                "line scroll: Ctrl+Up moves the view up by exactly one line");
+            chkStr(inp->GetValue(), "half-typed",
+                   "line scroll: ...and does NOT replace what is typed (was: "
+                   "it walked the command history like a plain Up)");
+
+            sendKey(inp, WXK_DOWN, /*ctrl*/ true);
+            chk(pane->GetScrollPositionY() == start,
+                "line scroll: Ctrl+Down brings it back down one line");
+            chkStr(inp->GetValue(), "half-typed",
+                   "line scroll: ...and leaves the typing alone too");
+
+            // The browse cursor must be untouched as well as the text: a
+            // handler that restored the text but had already moved the index
+            // would send the next plain Up to the wrong entry.
+            inp->Clear();
+            sendKey(inp, WXK_UP);
+            chkStr(inp->GetValue(), "hist_c",
+                   "line scroll: the history browse is still at the newest "
+                   "entry, so Ctrl+Up never moved it");
+
+            // The control: a PLAIN Up in the same state does walk the history
+            // and does not scroll, so the assertions above discriminate on the
+            // modifier rather than on the arrow keys having gone inert.
+            const long before = pane->GetScrollPositionY();
+            sendKey(inp, WXK_UP);
+            chkStr(inp->GetValue(), "hist_b",
+                   "line scroll (control): a plain Up still walks the history");
+            chk(pane->GetScrollPositionY() == before,
+                "line scroll (control): ...and does not scroll the output");
+
+            pane->ScrollToBottom();
+        }
+        restartBrowse();
+    }
+
     // ── Escape's history push must not leave the browse cursor off by one ──
     // With escape_deletes_input and save_deleted_command both on, Escape pushes
     // the discarded text into the history; AT THE LIMIT that costs an

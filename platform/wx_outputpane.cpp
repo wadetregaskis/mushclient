@@ -919,6 +919,17 @@ void COutputPane::ScrollToBottom()
         m_fn_autoscroll_changed(true);
 }
 
+// See the header.  UpdateScrollbars(true) moves the viewport to the very end
+// without touching m_autoScroll, and RefreshAutoScrollFromPosition is the
+// ScrollToPosition tail -- the auto_pause gate and the keep_pause_at_bottom
+// latch -- so the two together ARE OnTestEnd.  Same shape as ScrollToTop().
+void COutputPane::ScrollToBufferEnd()
+{
+    UpdateScrollbars(true);
+    RefreshAutoScrollFromPosition();
+    Refresh(false);
+}
+
 void COutputPane::SetPaused(bool paused)
 {
     if (paused) {
@@ -1382,6 +1393,16 @@ void COutputPane::ScrollPage(int direction)
     Scroll(scrollX, newY);
 
     // Re-evaluate whether we're now at the bottom.
+    RefreshAutoScrollFromPosition();
+}
+
+// See the header.  ScrollByRows deliberately leaves the freeze alone (a drag
+// scroll is not a user scroll), so the ScrollToPosition tail is added here --
+// the same pairing ScrollPage above uses.
+void COutputPane::ScrollLine(int direction)
+{
+    if (direction == 0) return;
+    ScrollByRows(direction < 0 ? -1 : +1);
     RefreshAutoScrollFromPosition();
 }
 
@@ -2760,8 +2781,12 @@ void COutputPane::OnSize(wxSizeEvent& evt)
 
 // ── Selection helpers ─────────────────────────────────────────────────────────
 
-int COutputPane::YToLine(int clientY) const
+int COutputPane::YToLine(int clientY, bool* outside) const
 {
+    // Windows' bOutside starts TRUE and is cleared only when the raw row lands
+    // inside the buffer (CMUSHView::calculate_line_and_column,
+    // mushview.cpp:1896-1904), so an empty pane counts as outside.
+    if (outside) *outside = true;
     if (LineCountI() == 0) return 0;
 
     // Honor the text rectangle's vertical offset (text starts at its top).
@@ -2771,12 +2796,30 @@ int COutputPane::YToLine(int clientY) const
     const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
     int unitH;
     const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
-    const long long yPix = (long long) scrollY * unitH + clientY;
-    const int visRow = pal::clampToDeviceExtent(
-                           (m_lineH > 0) ? yPix / m_lineH : 0);
+    const long long yPix   = (long long) scrollY * unitH + clientY;
+    const long long rawRow = (m_lineH > 0) ? (yPix / m_lineH) : 0;
+    const int visRow = pal::clampToDeviceExtent(rawRow);
+    // The row the pixel really named, BEFORE the clamp above -- Windows keeps
+    // the same two facts apart: it clamps `line` and still reports that the
+    // clamp happened.  Every caller but the tooltip discards the flag, which
+    // is parity: a click below the buffer selects the last line there too.
+    // Asked of yPix rather than of rawRow or visRow, because C++ truncates
+    // toward zero (so -5/15 is 0, not -1) and clampToDeviceExtent floors at 0
+    // -- both would swallow "above the first line" entirely.
+    if (outside)
+        *outside = (yPix < 0) || (rawRow >= m_totalVisualRows);
     // Map visual row → logical line via the wrap cache.
     return std::max(0, std::min(LineCountI() - 1,
                                 const_cast<COutputPane*>(this)->VisualRowToLogical(visRow)));
+}
+
+// See the header.  Y only, exactly like Windows' bOutside: the column is
+// clamped on both platforms and never decides whether a point is on a line.
+bool COutputPane::YIsOutsideLines(int clientY) const
+{
+    bool outside = true;
+    YToLine(clientY, &outside);
+    return outside;
 }
 
 // The preamble's width in character cells for a line — 0 when the option is
@@ -3791,10 +3834,11 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
                     }, item->GetId());
             }
             // No "Send All (in order)" item.  It handed the WHOLE pipe-
-            // delimited string to m_fn_link_clicked, whose multi-alternative
-            // arm answers by popping up the same chooser again
-            // (wx_world_child.cpp:1526-1547), so it could never send anything,
-            // let alone all of them in order.  Windows offers no such thing
+            // delimited string to m_fn_link_clicked, which sends the FIRST
+            // alternative and only that (the MXP default action —
+            // wx_world_child.cpp's link handler, after mushview.cpp:2166-2176),
+            // so it never sent all of them in order and, before that handler
+            // was fixed, sent nothing at all.  Windows offers no such thing
             // either: IDR_MXP_MENU is exactly one item per alternative
             // (mushview.cpp:3565-3595), and the items above are that.
             wxMenuItem* itemCopy = menu.Append(wxID_ANY, "Copy Action");
@@ -4068,8 +4112,22 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         return;
     }
     if (evt.RawControlDown() && code == WXK_END) {
-        // Ctrl+End: scroll to the bottom and re-engage auto-scroll.
-        ScrollToBottom();
+        // Ctrl+End: jump to the end of the buffer -- ID_TEST_END, i.e.
+        // CMUSHView::OnTestEnd, which reaches it through ScrollToPosition and
+        // so does NOT unfreeze a view whose world says keep_pause_at_bottom.
+        // This called ScrollToBottom, the explicit-unfreeze API, so Ctrl+End
+        // always resumed output and the next burst scrolled the text away.
+        ScrollToBufferEnd();
+        return;
+    }
+    if (evt.RawControlDown() &&
+        (code == WXK_UP || code == WXK_DOWN)) {
+        // Ctrl+Up / Ctrl+Down: nudge the view one line, the Display menu's
+        // Line Up / Line Down (ID_TEST_LINEUP / ID_TEST_LINEDOWN).  Here as
+        // well as on the command bar for the same reason Ctrl+Home and
+        // Ctrl+End are: the key should mean the same thing whichever half of
+        // the window has the focus.
+        ScrollLine(code == WXK_UP ? -1 : +1);
         return;
     }
 

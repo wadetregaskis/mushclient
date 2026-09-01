@@ -669,6 +669,81 @@ void TestKeepPauseAtBottom()
         opCheck(!h.pane->IsPaused(),
                 "the latch does not re-freeze a pane that is already running");
     }
+
+    // ── ScrollToBufferEnd is a JUMP, not an unfreeze ───────────────────────
+    // ID_TEST_END (CMUSHView::OnTestEnd), Ctrl+Z's ctrl_z_goes_to_end_of_buffer
+    // and world.SetScroll(-1) all reach the end through ScrollToPosition, whose
+    // tail (mushview.cpp:4598-4604) leaves a frozen view frozen when
+    // keep_pause_at_bottom is set.  All three called ScrollToBottom here, which
+    // sets m_autoScroll unconditionally, so on the port they always resumed
+    // output -- the exact thing the option exists to prevent.
+    {
+        Harness h;
+        h.Feed(400);
+        h.pane->SetKeepPauseAtBottom(true);
+        h.pane->ScrollPage(-1);
+        opCheck(h.pane->IsPaused(), "jump-to-end (fixture): scrolled up, frozen");
+        h.pane->ScrollToBufferEnd();
+        opCheck(h.pane->IsAtBufferEnd(),
+                "jump-to-end: it really did land at the end (else the freeze "
+                "assertion below would pass for the wrong reason)");
+        opCheck(h.pane->IsPaused(),
+                "jump-to-end: with keep_pause_at_bottom ON the pane STAYS "
+                "frozen (was: Ctrl+End always resumed output)");
+    }
+    {
+        // The control, and the option's default: with it OFF, arriving at the
+        // end resumes -- so the assertion above is about the option and not
+        // about ScrollToBufferEnd having simply stopped working.
+        Harness h;
+        h.Feed(400);
+        h.pane->SetKeepPauseAtBottom(false);
+        h.pane->ScrollPage(-1);
+        opCheck(h.pane->IsPaused(), "jump-to-end (fixture): scrolled up, frozen");
+        h.pane->ScrollToBufferEnd();
+        opCheck(!h.pane->IsPaused(),
+                "jump-to-end (control): with the option OFF it resumes");
+    }
+    {
+        // auto_pause off is Windows' outer `if (pDoc->m_bAutoFreeze)`: a scroll
+        // decides nothing about the freeze at all, so an explicitly frozen pane
+        // is still frozen after the jump.
+        Harness h;
+        h.Feed(400);
+        h.pane->SetAllowAutoFreeze(false);
+        h.pane->SetPaused(true);
+        opCheck(h.pane->IsPaused(), "jump-to-end (fixture): explicitly frozen");
+        h.pane->ScrollToBufferEnd();
+        opCheck(h.pane->IsPaused(),
+                "jump-to-end: with auto_pause OFF the jump does not thaw "
+                "either (mushview.cpp:4598's outer gate)");
+    }
+    {
+        // Wiring, not just the new method: the pane's OWN Ctrl+End arm must be
+        // the one that changed.  A method-level test alone would pass on a
+        // build that forgot the call site.
+        Harness h;
+        h.Feed(400);
+        h.pane->SetKeepPauseAtBottom(true);
+        h.pane->ScrollPage(-1);
+        opCheck(h.pane->IsPaused(), "Ctrl+End (fixture): scrolled up, frozen");
+
+        wxKeyEvent e(wxEVT_KEY_DOWN);
+        e.m_keyCode     = WXK_END;
+        e.m_controlDown = true;
+#if defined(__WXOSX__) || defined(__WXMAC__)
+        // RawControlDown() reads this member on macOS, m_controlDown elsewhere.
+        e.m_rawControlDown = true;
+#endif
+        e.SetEventObject(h.pane);
+        h.pane->ProcessWindowEvent(e);
+
+        opCheck(h.pane->IsAtBufferEnd(),
+                "Ctrl+End: the key really did jump to the end");
+        opCheck(h.pane->IsPaused(),
+                "Ctrl+End: ...and left the pane frozen, because the world set "
+                "keep_pause_at_bottom");
+    }
 }
 
 // ── 4b. "frozen" and "at the buffer end" are two different questions ───────

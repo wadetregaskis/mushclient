@@ -2624,6 +2624,35 @@ int RunWorldFrameSelfTest()
         check(!input.empty(), "line info: a typed line is marked (input)");
         check(note != input,  "line info: ...and the two are not the same string");
 
+        // ── and NOT below the last line ──────────────────────────────────
+        // Windows works out whether the cursor is on a line at all before it
+        // composes anything: calculate_line_and_column hands back bOutside
+        // (mushview.cpp:1896-1904) and OnToolTipNeedText answers an empty
+        // string (:4255-4256).  COutputPane::PointToChar CLAMPS instead --
+        // which is right for every other caller, since a click below the text
+        // selects the last line on both platforms -- so the last line's
+        // information used to follow the cursor down the whole empty area
+        // under the text, and the lambda's own `pt.line >= GetCount()` guard
+        // could never fire because pt.line had already been clamped.
+        const long long rows = pane->TotalVisualRows();
+        check(rows > 0,
+              "line info (fixture): the buffer occupies some visual rows, so "
+              "\"one row past the end\" is a real place");
+        check(!tipForRow((int) rows - 1).empty(),
+              "line info (fixture): the LAST occupied row still answers, so "
+              "the assertion below is about being past the end and not about "
+              "the callback having gone silent");
+        check(tipForRow((int) rows).empty(),
+              "line info: the first row PAST the last line has no tooltip "
+              "(was: the last line's information, anywhere in the dead space)");
+        check(tipForRow((int) rows + 20).empty(),
+              "line info: ...and neither does one far below it");
+        check(pane->m_fn_get_tooltip
+                  ? pane->m_fn_get_tooltip(4, -pane->LineHeight() * 2).empty()
+                  : false,
+              "line info: nor does a y ABOVE the first line -- bOutside is "
+              "true at both ends");
+
         // The control: the option gates it.  Without this, a callback that
         // ignored m_bLineInformation would pass everything above.
         doc->m_bLineInformation = 0;
@@ -2633,6 +2662,127 @@ int RunWorldFrameSelfTest()
         check(!anyTip, "line info: turning the option off silences it");
         doc->m_bLineInformation = 1;
 
+        doc->ClearOutput();
+    }
+
+    // ── the flyover for a link says what the click will do ──────────────────
+    // CMUSHView::OnToolTipNeedText (mushview.cpp:4283-4322) seeds strText with
+    // the HEAD of the pipe-delimited ACTION list -- "hint defaults to the
+    // default action" -- and only then overrides it with the head of the HINT
+    // list, and the line information shows only if BOTH left it empty.  The
+    // port returned the hint verbatim (pipes and all) and dropped straight to
+    // the line information when there was no hint attribute, which upstream
+    // never does for an actionable link.
+    {
+        const unsigned short savedMxp     = doc->m_bMXP;
+        const int            savedUseMxp  = doc->m_iUseMXP;
+        const int            savedMxpMode = doc->m_iMXP_mode;
+        // The atomic-element table lives on the App and is normally built by
+        // InitInstance, which a selftest exits before ever reaching -- without
+        // it every tag is an "Unknown MXP element" and the styles carry no
+        // action at all (which is exactly how this block first read).
+        App.MXP_LoadElements();
+        doc->m_bMXP      = true;
+        doc->m_iUseMXP   = eUseMXP;
+        doc->m_iMXP_mode = eMXP_secure;    // persistent secure: all tags allowed
+
+        // Feed one MXP line and read the flyover over its first character.
+        // Every row is probed and the first non-empty answer taken, because
+        // ClearOutput re-seeds a line of its own and the link is not always
+        // row 0.
+        auto tipForMxp = [&](const char* mxp) -> std::string {
+            doc->ClearOutput();
+            doc->m_iMXP_defaultMode = eMXP_secure;
+            doc->m_iMXP_mode        = eMXP_secure;
+            doc->DisplayMsg(mxp, (int) strlen(mxp), 0);
+            doc->UpdateAllViews(NULL);
+            const int lh3 = pane->LineHeight();
+            for (int row = 0; row < pane->LineCount(); ++row) {
+                const wxString t = pane->m_fn_get_tooltip
+                    ? pane->m_fn_get_tooltip(4, row * lh3 + lh3 / 2) : wxString();
+                const std::string s(t.utf8_str());
+                if (!s.empty() && s.compare(0, 5, "Line ") != 0)
+                    return s;
+            }
+            return std::string();
+        };
+
+        check(tipForMxp("<SEND href='look'>here</SEND>\n") == "look",
+              "link flyover: a hint-less send-link shows the command the click "
+              "will send (was: the \"Line N, <date>\" line information)");
+
+        check(tipForMxp("<SEND href='n|s' hint='Pick an exit|Go north|Go south'>"
+                        "exit</SEND>\n") == "Pick an exit",
+              "link flyover: a multi-hint link shows only the HEAD of the hint "
+              "list (was: the raw pipe-delimited string)");
+
+        check(tipForMxp("<SEND href='north|south'>exit</SEND>\n") == "north",
+              "link flyover: a hint-less multi-action link shows the DEFAULT "
+              "action, the one a click sends");
+
+        // ACTION_HYPERLINK takes the raw action, unsplit -- upstream pipe-
+        // splits only the SEND/PROMPT arm.  The pipe in the URL is what makes
+        // this discriminating: a shared splitter would answer "http://a".
+        check(tipForMxp("<A href='http://a|b'>link</A>\n") == "http://a|b",
+              "link flyover: a hyperlink shows its whole URL -- the hyperlink "
+              "arm does NOT pipe-split");
+
+        // The control that keeps the assertions above from passing on a
+        // callback that simply echoes something: an ordinary line still gets
+        // the line information, and a hinted send-link still prefers its hint.
+        check(tipForMxp("<SEND href='look' hint='peek'>here</SEND>\n") == "peek",
+              "link flyover (control): a hint still wins over the action");
+
+        {
+            doc->ClearOutput();
+            doc->DisplayMsg("an ordinary line\n", 17, 0);
+            doc->UpdateAllViews(NULL);
+            const int lh3 = pane->LineHeight();
+            bool sawLineInfo = false;
+            for (int row = 0; row < pane->LineCount(); ++row) {
+                const wxString t = pane->m_fn_get_tooltip
+                    ? pane->m_fn_get_tooltip(4, row * lh3 + lh3 / 2) : wxString();
+                const std::string s(t.utf8_str());
+                if (s.compare(0, 5, "Line ") == 0) sawLineInfo = true;
+            }
+            check(sawLineInfo,
+                  "link flyover (control): a line with no link still answers "
+                  "with the line information");
+        }
+
+        // The "is the cursor on a line at all?" test gates the HINT branch as
+        // well as the line information -- Windows runs
+        // calculate_line_and_column once, before either.  With x over the
+        // link's own columns, hovering the dead space below the buffer used to
+        // answer with the LAST line's hint.
+        {
+            doc->ClearOutput();
+            doc->m_iMXP_defaultMode = eMXP_secure;
+            doc->m_iMXP_mode        = eMXP_secure;
+            const char* kLink = "<SEND href='look'>here</SEND>\n";
+            doc->DisplayMsg(kLink, (int) strlen(kLink), 0);
+            doc->UpdateAllViews(NULL);
+            const int       lh4   = pane->LineHeight();
+            const long long rows4 = pane->TotalVisualRows();
+            check(rows4 > 0 && pane->m_fn_get_tooltip != nullptr,
+                  "link flyover (fixture): the link line occupies a row and "
+                  "the callback is wired");
+            if (pane->m_fn_get_tooltip && rows4 > 0) {
+                check(pane->m_fn_get_tooltip(
+                          4, (int) ((rows4 - 1) * lh4) + lh4 / 2) == "look",
+                      "link flyover (fixture): the link's own row answers with "
+                      "its action, so the assertion below is about being past "
+                      "the end");
+                check(pane->m_fn_get_tooltip(
+                          4, (int) (rows4 * lh4) + lh4 / 2).empty(),
+                      "link flyover: the dead space below the buffer shows no "
+                      "hint either (was: the last line's, clamped onto it)");
+            }
+        }
+
+        doc->m_iMXP_mode = savedMxpMode;
+        doc->m_iUseMXP   = savedUseMxp;
+        doc->m_bMXP      = savedMxp;
         doc->ClearOutput();
     }
 
@@ -2761,6 +2911,155 @@ int RunWorldFrameSelfTest()
             doc->m_font_charset = (BYTE) savedCharset;
             doc->ClearOutput();
         }
+    }
+
+    // ── a click on a multi-alternative link sends the DEFAULT action ────────
+    // Windows takes the head of the pipe-delimited list and sends it, with no
+    // menu whatsoever: "just send first action (default action)"
+    // (CMUSHView::OnLButtonDown, mushview.cpp:2166-2176).  The port popped up
+    // a chooser instead, so <send "north|south"> sent NOTHING until a second
+    // click -- and nothing at all if the menu was dismissed.
+    //
+    // These assertions could not exist before the fix: the old branch called
+    // PopupMenu, which spins its own event loop with nobody to dismiss it, so
+    // it would have wedged the harness rather than failed.  Hence the fix and
+    // the test land together.
+    {
+        pal::ITransport* savedWire  = doc->m_pTransport;
+        const int        savedPhase = doc->m_iConnectPhase;
+        RecordingTransport* wire = new RecordingTransport();
+        doc->m_pTransport    = wire;
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+
+        static int s_defaultActionModals = 0;
+        s_defaultActionModals = 0;
+        int (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
+        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+            ++s_defaultActionModals;
+            return IDNO;
+        };
+
+        check(pane->m_fn_link_clicked != nullptr,
+              "link default action: the pane's link handler is wired");
+
+        if (pane->m_fn_link_clicked) {
+            wire->sent.clear();
+            pane->m_fn_link_clicked("north|south", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+            check(wire->sent.find("north") != std::string::npos,
+                  "link default action: a pipe-delimited link sends its FIRST "
+                  "alternative (was: a popup chooser, and nothing sent)");
+            check(wire->sent.find("south") == std::string::npos,
+                  "link default action: ...and ONLY that one -- the rest are "
+                  "the right-click menu's business, as IDR_MXP_MENU is on "
+                  "Windows");
+
+            // Control: the single-alternative path still fires, so the check
+            // above is discriminating on WHICH alternative was chosen rather
+            // than on whether anything was sent at all.
+            wire->sent.clear();
+            pane->m_fn_link_clicked("south", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+            check(wire->sent.find("south") != std::string::npos,
+                  "link default action (control): a single-action link still "
+                  "sends that action");
+
+            // The splitter skips empty segments, so a degenerate leading pipe
+            // takes the first NON-empty alternative rather than sending a bare
+            // line.  Pinned because it is a deliberate (one input wide)
+            // departure from Windows' StringToList.
+            wire->sent.clear();
+            pane->m_fn_link_clicked("|north", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+            check(wire->sent.find("north") != std::string::npos,
+                  "link default action: a leading empty segment is skipped, "
+                  "not sent as a blank line");
+        }
+
+        check(s_defaultActionModals == 0,
+              "link default action: no modal was raised (if this fails the "
+              "checks above tested nothing)");
+        g_wxhook_message_box = savedMB;
+
+        doc->m_iConnectPhase = savedPhase;
+        doc->m_pTransport    = savedWire;   // the doc did not own this one
+        delete wire;
+    }
+
+    // ── unpause_on_send reaches the link-click path ─────────────────────────
+    // Windows unfreezes the output window before dispatching a send/prompt
+    // link, gated on the world's unpause_on_send (default ON):
+    // CMUSHView::OnLButtonDown, mushview.cpp:2176-2181, repeated at the tail
+    // of OnMXPMenu (:5550-5555) for the right-click route.  The port read the
+    // option only on the typed-command path, so a click on a send-link in
+    // frozen scrollback sent the command and left the reply off-screen.
+    {
+        pal::ITransport* savedWire  = doc->m_pTransport;
+        const int        savedPhase = doc->m_iConnectPhase;
+        const unsigned short savedUnpause = doc->m_bUnpauseOnSend;
+        RecordingTransport* wire = new RecordingTransport();
+        doc->m_pTransport    = wire;
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+
+        static int s_unpauseModals = 0;
+        s_unpauseModals = 0;
+        int (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
+        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+            ++s_unpauseModals;
+            return IDNO;
+        };
+
+        doc->ClearOutput();
+        doc->DisplayMsg("a line to hover over\n", 15, 0);
+        doc->UpdateAllViews(NULL);
+
+        check(pane->m_fn_link_clicked != nullptr,
+              "unpause on link: the pane's link handler is wired");
+
+        // ON: the click both sends AND thaws.
+        doc->m_bUnpauseOnSend = 1;
+        pane->SetPaused(true);
+        check(pane->IsPaused(),
+              "unpause on link (fixture): the pane really is frozen first, so "
+              "the assertion below is not vacuous");
+        wire->sent.clear();
+        if (pane->m_fn_link_clicked)
+            pane->m_fn_link_clicked("look", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+        check(wire->sent.find("look") != std::string::npos,
+              "unpause on link: the click still SENDS the action (if this "
+              "fails the thaw assertion below proves nothing)");
+        check(!pane->IsPaused(),
+              "unpause on link: with unpause_on_send ON a send-link click "
+              "thaws the output window (was: frozen, reply invisible)");
+
+        // OFF: the control.  Without it an unconditional thaw would pass.
+        doc->m_bUnpauseOnSend = 0;
+        pane->SetPaused(true);
+        check(pane->IsPaused(),
+              "unpause on link (fixture): frozen again for the control");
+        wire->sent.clear();
+        if (pane->m_fn_link_clicked)
+            pane->m_fn_link_clicked("look", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+        check(wire->sent.find("look") != std::string::npos,
+              "unpause on link (control): the click sends with the option off "
+              "too");
+        check(pane->IsPaused(),
+              "unpause on link (control): ...and leaves the pane frozen, so "
+              "the option really is what decides");
+
+        check(s_unpauseModals == 0,
+              "unpause on link: no modal was raised (if this fails the checks "
+              "above tested nothing)");
+        g_wxhook_message_box = savedMB;
+
+        doc->m_bUnpauseOnSend = savedUnpause;
+        pane->SetPaused(false);
+        doc->m_iConnectPhase = savedPhase;
+        doc->m_pTransport    = savedWire;   // the doc did not own this one
+        delete wire;
+        doc->ClearOutput();
     }
 
     // ── the output-buffer fade ──────────────────────────────────────────────
@@ -3395,6 +3694,108 @@ int RunWorldFrameSelfTest()
 
         doc->m_bAutoFreeze = 1;
         pane->SetAllowAutoFreeze(true);
+        pane->ScrollToBottom();
+        doc->ClearOutput();
+    }
+
+    // ── the three "jump to the end" routes obey keep_pause_at_bottom ────────
+    // Ctrl+End from the command bar (ID_TEST_END -> CMUSHView::OnTestEnd),
+    // Ctrl+Z with ctrl_z_goes_to_end_of_buffer (CSendView::OnEditCtrlZ ->
+    // OnTestEnd, sendvw.cpp:2217-2225) and world.SetScroll(-1)
+    // (methods_output.cpp:620-635) all reach the end through ScrollToPosition,
+    // whose tail is `m_freeze = m_freeze || (pt.y < bottom)` when the world
+    // sets keep_pause_at_bottom -- and pt.y IS bottom for all three, so a
+    // frozen view stays frozen.  All three called the pane's explicit-unfreeze
+    // API here, so on the port they always resumed output; the option's whole
+    // purpose is that only an explicit unfreeze does that.
+    {
+        doc->ClearOutput();
+        for (int i = 0; i < 300; ++i)
+            doc->Note(("latch fixture line " + std::to_string(i + 1)).c_str());
+        doc->UpdateAllViews(NULL);
+
+        wxTextCtrl* bar = child->ActiveInputPublic();
+        check(bar != NULL, "jump latch: the world window has a command bar");
+
+        const unsigned short savedCtrlZ = doc->m_bCtrlZGoesToEndOfBuffer;
+        doc->m_bAutoFreeze = 1;
+        pane->SetAllowAutoFreeze(true);
+        pane->SetKeepPauseAtBottom(true);
+
+        auto sendToBar = [&](int code) {
+            wxKeyEvent e(wxEVT_KEY_DOWN);
+            e.m_keyCode     = code;
+            e.m_controlDown = true;
+#if defined(__WXOSX__) || defined(__WXMAC__)
+            // RawControlDown(), which every arm of OnInputKeyDown tests, reads
+            // this member on macOS and m_controlDown everywhere else.
+            e.m_rawControlDown = true;
+#endif
+            e.SetEventObject(bar);
+            if (bar) bar->GetEventHandler()->ProcessEvent(e);
+        };
+
+        // (a) Ctrl+End in the command bar.
+        pane->ScrollPage(-1);
+        check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        sendToBar(WXK_END);
+        check(pane->IsAtBufferEnd(),
+              "jump latch: Ctrl+End moved the view to the end");
+        check(pane->IsPaused(),
+              "jump latch: ...and left it frozen (was: Ctrl+End always "
+              "resumed, so the next burst scrolled the text away)");
+
+        // (b) Ctrl+Z, opt-in via ctrl_z_goes_to_end_of_buffer.
+        doc->m_bCtrlZGoesToEndOfBuffer = 1;
+        pane->ScrollPage(-1);
+        check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        sendToBar('Z');
+        check(pane->IsAtBufferEnd(),
+              "jump latch: Ctrl+Z moved the view to the end");
+        check(pane->IsPaused(), "jump latch: ...and left it frozen");
+
+        // (c) world.SetScroll(-1).
+        pane->ScrollPage(-1);
+        check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        child->setScroll(-1);
+        check(pane->IsAtBufferEnd(),
+              "jump latch: SetScroll(-1) moved the view to the end");
+        check(pane->IsPaused(), "jump latch: ...and left it frozen");
+
+        // The control: with the option OFF -- its default -- all three resume,
+        // so the assertions above are about the latch and not about the three
+        // routes having stopped working.
+        pane->SetKeepPauseAtBottom(false);
+        pane->ScrollPage(-1);
+        sendToBar(WXK_END);
+        check(!pane->IsPaused(),
+              "jump latch (control): with the option OFF Ctrl+End resumes");
+        pane->ScrollPage(-1);
+        sendToBar('Z');
+        check(!pane->IsPaused(),
+              "jump latch (control): ...and so does Ctrl+Z");
+        pane->ScrollPage(-1);
+        child->setScroll(-1);
+        check(!pane->IsPaused(),
+              "jump latch (control): ...and so does SetScroll(-1)");
+
+        // Escape is the OTHER kind: an explicit unfreeze, which must still
+        // work with the latch on or the pane could never be resumed by hand.
+        pane->SetKeepPauseAtBottom(true);
+        pane->ScrollPage(-1);
+        check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        {
+            wxKeyEvent e(wxEVT_KEY_DOWN);
+            e.m_keyCode = WXK_ESCAPE;
+            e.SetEventObject(bar);
+            if (bar) bar->GetEventHandler()->ProcessEvent(e);
+        }
+        check(!pane->IsPaused(),
+              "jump latch: Escape still resumes -- the explicit unfreeze is "
+              "not what the latch holds");
+
+        doc->m_bCtrlZGoesToEndOfBuffer = savedCtrlZ;
+        pane->SetKeepPauseAtBottom(false);
         pane->ScrollToBottom();
         doc->ClearOutput();
     }

@@ -1390,6 +1390,13 @@ int RunPalMiniWindowSelfTest()
                 ds.dsBmih.biBitCount == ds.dsBm.bmBitsPixel &&
                 ds.dsBmih.biCompression == 0 && ds.dsBmih.biClrUsed == 0,
                 "...its DIB half is coherent, no byte left poisoned");
+        mwCheck(ds.dsBmih.biSizeImage != 0 &&
+                ds.dsBmih.biSizeImage ==
+                    (DWORD) ds.dsBm.bmWidthBytes * (DWORD) ds.dsBm.bmHeight,
+                "...and biSizeImage is the stride times the height, not 0");
+        mwCheck(doc->m_BackgroundBitmap.GetObject((int) sizeof ds, NULL)
+                    == (int) sizeof(DIBSECTION),
+                "GetObject(NULL) is Win32's size query and answers the size");
         // The other direction of "honours nCount": a BITMAP-sized buffer gets
         // the BITMAP and NOT ONE BYTE past it.
         memset(&ds, 0x7F, sizeof ds);
@@ -1424,6 +1431,8 @@ int RunPalMiniWindowSelfTest()
                 ds.dsBm.bmWidth == 0 && ds.dsBmih.biSize == 0 &&
                 ds.dsBmih.biBitCount == 0,
                 "...and GetObject zeroes the whole declared buffer before failing");
+        mwCheck(doc->m_BackgroundBitmap.GetObject((int) sizeof ds, NULL) == 0,
+                "...and the size query answers 0 with no bitmap to size");
         doc->WindowDelete("bgsrc");
         ::unlink(png);
     }

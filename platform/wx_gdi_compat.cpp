@@ -775,12 +775,23 @@ BOOL CBitmap::GetBitmap(BITMAP* pBitmap) {
 // leaves as stack garbage -- the D-15 shape again (a signature satisfied, a
 // protocol not).  Everything the caller's declared buffer can hold is zeroed
 // first, per the zero-before-fail contract above, and nothing past nCount is
-// ever written.  One deliberate simplification vs Win32: real GetObject
-// answers a DIBSECTION only for DIB-section bitmaps and falls back to BITMAP
-// for DDBs; on this side every live CBitmap is DIB-backed (a wxBitmap), so a
-// caller asking for the DIBSECTION always gets one.
+// ever written.  A NULL buffer is Win32's size query and answers the size a
+// full-size call would return.
+//
+// Two deliberate simplifications vs Win32, both currently unreachable (the
+// only caller, Splash.cpp, gets its bitmap from Attach):
+//  * real GetObject answers a DIBSECTION only for DIB-section bitmaps and
+//    falls back to BITMAP for DDBs.  This shim DOES have DDB-shaped CBitmaps
+//    (CreateBitmap's 1-bpp pattern above, the canvas bitmaps), and answers
+//    the DIBSECTION for those too -- the DIB half stays coherent with what
+//    GetBitmap reports, including the WORD-aligned DDB stride in biSizeImage,
+//    which a real BI_RGB DIB could not have.
+//  * Win32's sizeof(DIBSECTION) return promises dsBm.bmBits points at the
+//    pixels; here it stays NULL (the DIBSectionData is freed during Attach).
+//    A caller that wants pixels must use the surface API.
 int CBitmap::GetObject(int nCount, void* lpObject) const {
-    if (!lpObject || nCount < (int) sizeof(BITMAP)) return 0;
+    if (!lpObject) return m_impl ? (int) sizeof(DIBSECTION) : 0;
+    if (nCount < (int) sizeof(BITMAP)) return 0;
     const bool wantDib = nCount >= (int) sizeof(DIBSECTION);
     if (wantDib) *static_cast<DIBSECTION*>(lpObject) = {};
     BITMAP* pbm = static_cast<BITMAP*>(lpObject);

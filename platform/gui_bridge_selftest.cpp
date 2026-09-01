@@ -23,6 +23,7 @@
 #include <wx/listbox.h>
 #include <wx/listctrl.h>                // wxListCtrl (SysListView32 view mode)
 #include <wx/odcombo.h>                 // wxOwnerDrawnComboBox (owner-draw combos)
+#include <wx/valtext.h>                 // wxTextValidator (ES_NUMBER digit filter)
 #include <memory>
 #include <cstdio>
 #include <string>
@@ -294,6 +295,224 @@ void TestListBoxStyles()
                     (wxLB_MULTIPLE | wxLB_EXTENDED)) == 0,
               "a list box with neither style is single-select");
         dlg->Destroy();
+    }
+}
+
+// ── 2b. LBS_SORT / CBS_SORT keep Windows' alphabetical display order ──────
+// Windows sorts as AddString inserts and returns the sorted index; consumers
+// map rows via that index + item data, so dropping the styles was harmless to
+// correctness but showed Choose Notepad, Complete Word, Send to All Worlds
+// and utils.choose in insertion order where Windows users see them sorted.
+// The behavioural half (Append lands "Apple" ABOVE the earlier "Zebra") is
+// what proves the sort takes effect; the flag check alone could pass with a
+// wx build that ignores it.
+void TestSortedListStyles()
+{
+    printf("Dialog bridge (LBS_SORT / CBS_SORT):\n");
+
+
+    struct { int idd; int ctlId; const char* what; } sorted[] = {
+        { IDD_SEND_TO_ALL,    IDC_WORLD_LIST,   "Send to All Worlds' world list sorts" },
+        { IDD_CHOOSE_NOTEPAD, IDC_NOTEPAD_LIST, "Choose Notepad's list sorts" },
+        { IDD_COMPLETE_WORD,  IDC_WORD_LIST,    "Complete Word's candidate list sorts" },
+    };
+    for (const auto& r : sorted)
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(r.idd);
+        check(t != nullptr, "sorted-list template is in the recovered resources");
+        if (!t) continue;
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+        wxListBox* lb = wxDynamicCast(dlg->FindWindow(r.ctlId), wxListBox);
+        check(lb != nullptr, "its list is built as a wxListBox");
+        if (lb)
+        {
+            check((lb->GetWindowStyleFlag() & wxLB_SORT) != 0,
+                  "LBS_SORT builds wxLB_SORT");
+            lb->Append(wxT("Zebra"));
+            lb->Append(wxT("Apple"));
+            check(lb->GetString(0) == wxT("Apple"), r.what);
+        }
+        dlg->Destroy();
+    }
+
+    // The read-only combo arm: utils.choose (CLuaChooseBox) declares CBS_SORT
+    // on a CBS_DROPDOWNLIST, which builds a wxChoice.
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(IDD_LUA_CHOOSE);
+        check(t != nullptr, "IDD_LUA_CHOOSE is in the recovered resources");
+        if (t)
+        {
+            wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+            wxChoice* ch = wxDynamicCast(dlg->FindWindow(IDC_CHOOSE_COMBO), wxChoice);
+            check(ch != nullptr, "utils.choose's combo is built as a wxChoice");
+            if (ch)
+            {
+                check((ch->GetWindowStyleFlag() & wxCB_SORT) != 0,
+                      "CBS_SORT builds wxCB_SORT");
+
+                // The whole CLuaChooseBox pattern, through the CComboBox shim:
+                // AddString's RETURNED index is where the item landed (the
+                // CB_ADDSTRING contract), and item data attached through it
+                // stays with its string.  Raw wxChoice::Append does NOT keep
+                // that contract on wxOSX (it inserts sorted but returns the
+                // append-order count), so a fix that merely sets wxCB_SORT
+                // without correcting hook_combo_add_string fails here -- the
+                // data would land on the wrong row and utils.choose would
+                // answer the wrong value.
+                CComboBox combo;
+                combo.m_hWnd = (HWND) ch;
+                const int iZebra = combo.AddString("Zebra");
+                combo.SetItemData(iZebra, 100);
+                const int iApple = combo.AddString("Apple");
+                combo.SetItemData(iApple, 200);
+                check(iApple == 0,
+                      "AddString returns the SORTED index (CB_ADDSTRING contract)");
+                check(ch->GetString(0) == wxT("Apple"),
+                      "utils.choose drop-downs list alphabetically");
+                check(combo.GetItemData(0) == 200 && combo.GetItemData(1) == 100,
+                      "item data stays with its string (utils.choose's value mapping)");
+            }
+            dlg->Destroy();
+        }
+    }
+
+    // Negative control: a list WITHOUT LBS_SORT must stay in insertion order,
+    // so a fix that blanket-sorts every list fails here.  Same synthetic
+    // no-sort style TestListBoxStyles uses (no recovered template needed).
+    {
+        RcDialog synth;
+        synth.id = 1; synth.cx = 200; synth.cy = 100;
+        synth.caption = "sort-selftest";
+        RcControl plain;
+        plain.className = "ListBox"; plain.id = 1000;
+        plain.style = 0x50B10101;    // ordinary single-select, NO LBS_SORT
+        plain.x = 5; plain.y = 5; plain.cx = 100; plain.cy = 40;
+        synth.controls.push_back(plain);
+
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, synth);
+        wxListBox* lb = wxDynamicCast(dlg->FindWindow(1000), wxListBox);
+        check(lb != nullptr, "the unsorted control list box was built");
+        if (lb)
+        {
+            check((lb->GetWindowStyleFlag() & wxLB_SORT) == 0,
+                  "no LBS_SORT, no wxLB_SORT");
+            lb->Append(wxT("Zebra"));
+            lb->Append(wxT("Apple"));
+            check(lb->GetString(0) == wxT("Zebra"),
+                  "...and items stay in insertion order");
+        }
+        dlg->Destroy();
+    }
+}
+
+// ── 2d. BS_DEFPUSHBUTTON becomes the dialog's default item ────────────────
+// Windows' dialog manager presses the template's DEFPUSHBUTTON on Enter from
+// any non-button control.  The bridge dropped the style, and wx's own
+// machinery could not compensate: wxTextCtrl::OnChar presses the dialog's
+// default ITEM, which nothing set.  The last three fixtures are the
+// non-degenerate ones -- their default is NOT the IDOK button, so a fix that
+// hardcodes "the button whose id is IDOK" passes the first row and fails
+// them; the negative control fails a fix that defaults the first button.
+void TestDefaultButtons()
+{
+    printf("Dialog bridge (BS_DEFPUSHBUTTON -> wx default item):\n");
+
+    struct { int idd; int ctlId; const char* what; } rows[] = {
+        { IDD_GLOBAL_CHANGE,  IDOK,              "Global Change defaults to Change All (IDOK)" },
+        { IDD_CHOOSE_NOTEPAD, IDC_OPEN_EXISTING, "Choose Notepad defaults to Open existing" },
+        { IDD_LUA_DEBUG,      ID_DO_COMMAND,     "the Lua debugger defaults to Do Command" },
+        { IDD_IMPORT_XML,     IDC_PLUGINS_LIST,  "Import XML defaults to Load/View Plugins" },
+    };
+    for (const auto& r : rows)
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(r.idd);
+        check(t != nullptr, "default-button template is in the recovered resources");
+        if (!t) continue;
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+        wxWindow* def = dlg->GetDefaultItem();
+        check(def != nullptr && def == dlg->FindWindow(r.ctlId), r.what);
+        dlg->Destroy();
+    }
+
+    // Negative control: no BS_DEFPUSHBUTTON, no default item.
+    {
+        RcDialog synth;
+        synth.id = 3; synth.cx = 200; synth.cy = 100;
+        synth.caption = "default-selftest";
+        RcControl plain;
+        plain.className = "Button"; plain.id = 1000;
+        plain.style = 0x50010000;    // WS_* | BS_PUSHBUTTON -- not the default style
+        plain.x = 5; plain.y = 5; plain.cx = 50; plain.cy = 14;
+        plain.text = "Plain";
+        synth.controls.push_back(plain);
+
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, synth);
+        check(dlg->GetDefaultItem() == nullptr,
+              "a template with no BS_DEFPUSHBUTTON gets no default item");
+        dlg->Destroy();
+    }
+}
+
+// ── 2c. ES_NUMBER / ES_UPPERCASE reach the bridged edit controls ──────────
+// ES_NUMBER makes non-digit keystrokes (the minus sign included) untypeable on
+// Windows, which is the only guard on fields with no DDV -- Recall's line
+// count would otherwise hand a negative straight to RecallText.  ES_UPPERCASE
+// folds typed text to upper case (the Global Prefs locale field).
+void TestEditStyleValidators()
+{
+    printf("Dialog bridge (ES_NUMBER / ES_UPPERCASE):\n");
+
+    // ES_NUMBER: Recall's line count carries it; the search-text edit in the
+    // SAME template does not -- the non-degenerate pair.
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(IDD_RECALL);
+        check(t != nullptr, "IDD_RECALL is in the recovered resources");
+        if (t)
+        {
+            wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+            wxTextCtrl* num = wxDynamicCast(dlg->FindWindow(IDC_LINE_COUNT), wxTextCtrl);
+            wxTextCtrl* txt = wxDynamicCast(dlg->FindWindow(IDC_EDIT1), wxTextCtrl);
+            check(num && txt, "both Recall edits were built");
+            if (num && txt)
+            {
+                wxTextValidator* v =
+                    wxDynamicCast(num->GetValidator(), wxTextValidator);
+                check(v != nullptr, "ES_NUMBER attaches a wxTextValidator");
+                if (v)
+                {
+                    check(v->HasFlag(wxFILTER_DIGITS),
+                          "...with the digits-only filter");
+                    check(v->IsValid(wxT("100")).empty(),
+                          "digits pass the filter");
+                    check(!v->IsValid(wxT("-100")).empty(),
+                          "a minus sign is rejected (ES_NUMBER blocks it on Windows)");
+                }
+                check(txt->GetValidator() == nullptr ||
+                      wxDynamicCast(txt->GetValidator(), wxTextValidator) == nullptr,
+                      "an edit WITHOUT ES_NUMBER gets no digit filter");
+            }
+            dlg->Destroy();
+        }
+    }
+
+    // ES_UPPERCASE: the Global Prefs locale field.  ForceUpper converts on the
+    // text event SetValue raises synchronously, so no loop is needed.
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(IDD_GLOBAL_PREFSP2);
+        check(t != nullptr, "IDD_GLOBAL_PREFSP2 is in the recovered resources");
+        if (t)
+        {
+            wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+            wxTextCtrl* loc = wxDynamicCast(dlg->FindWindow(IDC_LOCALE), wxTextCtrl);
+            check(loc != nullptr, "the locale edit was built");
+            if (loc)
+            {
+                loc->SetValue(wxT("en"));
+                check(loc->GetValue() == wxT("EN"),
+                      "ES_UPPERCASE folds entered text to upper case");
+            }
+            dlg->Destroy();
+        }
     }
 }
 
@@ -667,11 +886,21 @@ void TestDialogKeyTranslation()
     check(DialogKeyToMsg(WXK_TAB, true, &msg) && msg.message == WM_KEYDOWN,
           "Alt+TAB is still a plain WM_KEYDOWN");
 
-    // Everything else must be refused, so the caller Skip()s it and wx's own
-    // Esc→Cancel and Enter→default-button keep working in every dialog.  A
-    // blanket hook here would break all of them.
+    // Esc: wx's own Esc→Cancel looks the Cancel button up by wxID_CANCEL
+    // (5101), which no bridged control carries (template ids are Win32's,
+    // IDCANCEL == 2), so the bridge translates Esc and dispatches IDCANCEL
+    // itself -- after PreTranslateMessage has had first refusal, which is how
+    // CDebugLuaDlg's "Continue Execution (Esc)" keeps winning.
+    msg = MSG{};
+    check(DialogKeyToMsg(WXK_ESCAPE, false, &msg) &&
+          msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE,
+          "ESCAPE becomes WM_KEYDOWN/VK_ESCAPE (the bridge's Esc->Cancel arm)");
+
+    // Everything else must be refused, so the caller Skip()s it and the
+    // focused control's own key handling keeps working in every dialog.  A
+    // blanket hook here would break all of it.
     const int kPassThrough[] = {
-        WXK_ESCAPE, WXK_SPACE, WXK_BACK, WXK_DELETE, WXK_LEFT, WXK_UP,
+        WXK_SPACE, WXK_BACK, WXK_DELETE, WXK_LEFT, WXK_UP,
         WXK_F1, WXK_HOME, WXK_PAGEUP, WXK_NUMPAD_ADD, 'a', 'Z', '0', '\'',
     };
     bool anyTranslated = false;
@@ -683,7 +912,7 @@ void TestDialogKeyTranslation()
         if (m.message != 0x1234) anyTranslated = true;   // and it left *msg alone
     }
     check(!anyTranslated,
-          "every other key is refused untouched (Esc, arrows, letters, F-keys)");
+          "every other key is refused untouched (arrows, letters, F-keys)");
 
     check(!DialogKeyToMsg(WXK_TAB, false, nullptr),
           "a null MSG is refused rather than written through");
@@ -2641,6 +2870,9 @@ int RunGuiBridgeSelfTest()
 
     TestGeometry();
     TestListBoxStyles();
+    TestSortedListStyles();
+    TestEditStyleValidators();
+    TestDefaultButtons();
     TestNewWorldDefaults();
     TestProgressDialog();
     TestMessageBoxDecode();

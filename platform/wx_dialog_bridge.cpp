@@ -20,6 +20,7 @@
 #include <wx/image.h>      // wxImage / wxInitAllImageHandlers (BMP / ICO art)
 #include <wx/listctrl.h>   // wxListCtrl (SysListView32 — entity managers)
 #include <wx/slider.h>     // wxSlider (msctls_trackbar32 — ColourPickerDlg RGB)
+#include <wx/valtext.h>     // wxTextValidator (ES_NUMBER digit filtering)
 #include <algorithm>       // std::min
 
 #include <cstdio>
@@ -143,13 +144,15 @@ enum {
     BS_DEFPUSHBUTTON = 1, BS_CHECKBOX = 2, BS_AUTOCHECKBOX = 3,
     BS_RADIOBUTTON = 4, BS_3STATE = 5, BS_AUTO3STATE = 6, BS_GROUPBOX = 7,
     BS_AUTORADIOBUTTON = 9,
-    ES_CENTER = 1, ES_RIGHT = 2, ES_MULTILINE = 4, ES_PASSWORD = 0x20,
-    ES_AUTOHSCROLL = 0x80, ES_READONLY = 0x800,
+    ES_CENTER = 1, ES_RIGHT = 2, ES_MULTILINE = 4, ES_UPPERCASE = 8,
+    ES_PASSWORD = 0x20, ES_AUTOHSCROLL = 0x80, ES_READONLY = 0x800,
+    ES_NUMBER = 0x2000,
     SS_TYPEMASK = 0x1F, SS_CENTER = 1, SS_RIGHT = 2, SS_ICON = 3, SS_BITMAP = 14,
     CBS_SIMPLE = 1, CBS_DROPDOWN = 2, CBS_DROPDOWNLIST = 3,
+    CBS_SORT = 0x100,
     CBS_OWNERDRAWFIXED = 0x10, CBS_OWNERDRAWVARIABLE = 0x20,
     CBS_OWNERDRAWMASK  = CBS_OWNERDRAWFIXED | CBS_OWNERDRAWVARIABLE,
-    LBS_EXTENDEDSEL = 0x800, LBS_MULTIPLESEL = 8,
+    LBS_SORT = 0x2, LBS_EXTENDEDSEL = 0x800, LBS_MULTIPLESEL = 8,
     SBS_VERT = 1,
 };
 
@@ -265,6 +268,37 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         w = new wxTextCtrl(parent, id, U(c.text), pos, size, st);
         if (st & wxTE_MULTILINE)   // keep typed/pasted Lua from being mangled
             wxOSXDisableSmartSubstitutions(static_cast<wxTextCtrl*>(w));
+        // ES_NUMBER: the Win32 control rejects every non-digit KEYSTROKE
+        // (including the minus sign), so e.g. Recall's line count -- which has
+        // no DDV to catch it at OK time -- can never even hold "-100" on
+        // Windows.  wxFILTER_DIGITS is the same rule at the same layer.  Like
+        // ES_NUMBER, it filters typing, not programmatic SetValue/DDX loads.
+        if (c.style & ES_NUMBER)
+            w->SetValidator(wxTextValidator(wxFILTER_DIGITS));
+        // ES_UPPERCASE folds text to upper case (the Global Prefs locale
+        // field is the one user).  Win32's edit folds EVERYTHING going in --
+        // typing, paste and WM_SETTEXT alike -- where wxTextEntry::ForceUpper
+        // on wxOSX is a native field formatter that only sees USER edits
+        // (measured: a programmatic SetValue("en") stayed lower case), so a
+        // DDX load would show the stored value unfolded.  Fold on the text
+        // event instead: SetValue raises it synchronously and typing raises
+        // it per edit, so both routes match Windows.  ChangeValue re-raises
+        // nothing, so the handler cannot recurse.
+        if (c.style & ES_UPPERCASE)
+        {
+            wxTextCtrl* tc = static_cast<wxTextCtrl*>(w);
+            tc->Bind(wxEVT_TEXT, [tc](wxCommandEvent& e) {
+                const wxString s  = tc->GetValue();
+                const wxString up = s.Upper();
+                if (up != s)
+                {
+                    const long ip = tc->GetInsertionPoint();
+                    tc->ChangeValue(up);
+                    tc->SetInsertionPoint(ip);
+                }
+                e.Skip();   // EN_CHANGE dispatch still reaches the dialog
+            });
+        }
     }
     else if (cls == "ComboBox")
     {
@@ -304,13 +338,19 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
             // an editable-style combo (click-on-text doesn't open it), which is
             // exactly the reported bug.
             w = new wxChoice(parent, id, pos,
-                             wxSize(size.GetWidth(), -1), 0, nullptr);
+                             wxSize(size.GetWidth(), -1), 0, nullptr,
+                             // CBS_SORT, same deal as LBS_SORT below: wxChoice
+                             // honours wxCB_SORT directly (wxChoiceBase::
+                             // IsSorted), so Append lands each item at its
+                             // alphabetical place -- utils.choose drop-downs.
+                             (c.style & CBS_SORT) ? wxCB_SORT : 0);
         }
         else
         {
             // Editable combo (CBS_DROPDOWN / CBS_SIMPLE).
             w = new wxComboBox(parent, id, wxEmptyString, pos,
-                               wxSize(size.GetWidth(), -1), 0, nullptr, 0);
+                               wxSize(size.GetWidth(), -1), 0, nullptr,
+                               (c.style & CBS_SORT) ? wxCB_SORT : 0);
         }
 
         // DLGINIT preset items, appended through wxItemContainer so all three
@@ -333,6 +373,13 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         long st = (c.style & LBS_EXTENDEDSEL) ? wxLB_EXTENDED
                 : (c.style & LBS_MULTIPLESEL) ? wxLB_MULTIPLE
                 :                               wxLB_SINGLE;
+        // LBS_SORT: Windows keeps the list alphabetised as AddString inserts
+        // (and AddString returns the SORTED index, which wx's Append matches).
+        // Consumers map rows via that returned index + SetItemData, so the
+        // flag changes display order only -- but Choose Notepad, Complete Word
+        // and Send to All Worlds all declare it, and without it their lists
+        // showed in insertion order where Windows users see them alphabetised.
+        if (c.style & LBS_SORT) st |= wxLB_SORT;
         w = new wxListBox(parent, id, pos, size, 0, nullptr, st | wxLB_NEEDED_SB);
     }
     else if (cls == "ScrollBar")
@@ -495,6 +542,30 @@ wxDialog* BuildWxDialogFromTemplate(wxWindow* parent, const RcDialog& t)
                                  wxDefaultPosition, wxDefaultSize,
                                  style);
     PopulateWindowFromTemplate(dlg, t);
+    // The template's BS_DEFPUSHBUTTON is the dialog's default button: Windows
+    // presses it on Enter from any non-button control (61 templates declare
+    // one, three of them on a non-IDOK id).  SetDefaultItem, NOT
+    // wxButton::SetDefault -- on wxOSX SetDefault also gives the NSButton the
+    // Return key equivalent, and AppKit runs performKeyEquivalent: BEFORE
+    // keyDown:, which would press the button ahead of the bridge's
+    // wxEVT_CHAR_HOOK -> PreTranslateMessage arm, breaking the Lua input
+    // boxes' deliberate <enter> swallow and the entity dialogs' Alt+Return
+    // editor chord.  SetDefaultItem alone sets the default item wx's own
+    // wxTextCtrl::OnChar presses on Return, keeping MFC's order:
+    // PreTranslateMessage first, then the default button.  (The cost: the
+    // button is not painted with the macOS accent fill.)  Deliberately done
+    // here and not in PopulateWindowFromTemplate: that also fills property-
+    // sheet page panels, whose top-level window is the sheet -- a page's
+    // default would steal the sheet's own ok->SetDefault().
+    for (const RcControl& c : t.controls)
+    {
+        if (c.className != "Button" || c.id <= 0) continue;
+        if (!(c.style & WS_VISIBLE)) continue;
+        if ((c.style & BS_TYPEMASK) != BS_DEFPUSHBUTTON) continue;
+        if (wxButton* btn = wxDynamicCast(dlg->FindWindow(c.id), wxButton))
+            dlg->SetDefaultItem(btn);
+        break;
+    }
     dlg->SetClientSize(dlg->GetMinClientSize());
     // The template size is the smallest sensible layout; let the user grow the
     // dialog but not shrink controls into each other.

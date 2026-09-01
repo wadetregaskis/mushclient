@@ -381,7 +381,7 @@ Confirmed real and uncovered, though the finding should be narrowed. The code is
 **18. PreTranslateMessage key translation (TAB / RETURN / Alt+RETURN -> synthetic MSG) inside the CHAR_HOOK lambda**  
 `platform/wx_mfc_impl.cpp:3999`
 
-*Trapped logic:* The bridge fabricates the Win32 message MFC's pump would have offered to PreTranslateMessage: WXK_TAB -> WM_KEYDOWN/VK_TAB; WXK_RETURN and WXK_NUMPAD_ENTER -> VK_RETURN, upgraded to WM_SYSKEYDOWN when Alt is down; every other key is Skip()ed untranslated (deliberately -- a blanket hook would disturb wxDialog's own Esc->Cancel and Enter->default-button). Then the return polarity: TRUE from PreTranslateMessage means consumed, so only a FALSE result Skip()s (4016).
+*Trapped logic:* The bridge fabricates the Win32 message MFC's pump would have offered to PreTranslateMessage: WXK_TAB -> WM_KEYDOWN/VK_TAB; WXK_RETURN and WXK_NUMPAD_ENTER -> VK_RETURN, upgraded to WM_SYSKEYDOWN when Alt is down; WXK_ESCAPE -> VK_ESCAPE, dispatched as the IDCANCEL command when PreTranslateMessage declines it (wx's own Esc->Cancel looks the button up by wxID_CANCEL, an id no bridged control carries -- the old claim here that a blanket hook "would disturb wxDialog's own Esc->Cancel" rested on machinery that never worked in a bridged dialog); every other key is Skip()ed untranslated. Then the return polarity: TRUE from PreTranslateMessage means consumed, so only a FALSE result Skip()s (4016).
 
 *Why unreachable:* It is a lambda bound inside hook_run_dialog (see above): reaching it needs both the modal loop and a focused control in a bridged dialog.
 

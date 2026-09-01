@@ -37,6 +37,7 @@
 #include <wx/wx.h>
 #include <wx/treebook.h>   // the tree sheet's book control (wxBookCtrlBase)
 #include <wx/notebook.h>   // the flat sheet's
+#include <wx/listctrl.h>   // wxListCtrl / wxListEvent (NM_RDBLCLK synthesis)
 
 // ── MUSHclient headers ────────────────────────────────────────────────────
 #include "stdafx.h"
@@ -329,6 +330,232 @@ void TestCommandRouting()
         "...but after the modal loop has ended");
     chk(probe.m_hWnd == nullptr,
         "m_hWnd is cleared only after OnDestroy has run");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// The caption close button must route through the canonical OnCancel virtual.
+//
+// On Windows the red X is WM_SYSCOMMAND/SC_CLOSE, which the dialog manager
+// turns into an IDCANCEL command, so a dialog's OnCancel override ALWAYS
+// runs.  The bridge's wxEVT_CLOSE_WINDOW bind used to call EndModal(IDCANCEL)
+// directly, skipping the virtual — and CImmediateDlg / CDebugLuaDlg both use
+// OnCancel to copy the live edit text into the member their caller persists
+// ("save the expression text for next time"), so closing either with the red
+// button silently lost what was typed.  The probe mirrors that shape exactly:
+// a CEdit bound by DDX_Control, read back inside OnCancel.
+// ══════════════════════════════════════════════════════════════════════════
+
+class CCloseBoxProbe : public CDialog
+{
+public:
+    CCloseBoxProbe() : CDialog(IDD_IMMEDIATE) {}
+
+    CEdit   m_ctlExpression;             // the CImmediateDlg shape, exactly
+    CString m_strSaved = "stale";        // pre-poisoned: "did nothing" must FAIL
+
+    void DoDataExchange(CDataExchange* pDX) override
+    {
+        CDialog::DoDataExchange(pDX);
+        DDX_Control(pDX, IDC_EXPRESSION, m_ctlExpression);
+    }
+
+    BOOL OnInitDialog() override
+    {
+        rec("OnInitDialog");
+        CDialog::OnInitDialog();
+        wxDialog* dlg = static_cast<wxDialog*>(m_hWnd);
+        // The "user": type into the edit, then click the caption close button.
+        wxTheApp->CallAfter([dlg]() {
+            chk(dlg->IsModal(), "the close-box driver runs inside the modal loop");
+            wxTextCtrl* ed = wxDynamicCast(dlg->FindWindow(IDC_EXPRESSION), wxTextCtrl);
+            if (chk(ed != nullptr, "IDD_IMMEDIATE's expression edit was built"))
+                ed->ChangeValue(wxT("say hello"));
+            // wxWindow::Close() generates the same wxEVT_CLOSE_WINDOW the
+            // titlebar close button does, and processes it synchronously.
+            dlg->Close();
+        });
+        return TRUE;
+    }
+
+    void OnCancel() override
+    {
+        rec("OnCancel");
+        // The canonical CImmediateDlg::OnCancel body: save the expression
+        // text for next time, from the STILL-LIVE control.
+        m_ctlExpression.GetWindowText(m_strSaved);
+        CDialog::OnCancel();
+    }
+    void OnDestroy() override { rec("OnDestroy"); }
+};
+
+void TestCloseBoxRunsOnCancel()
+{
+    printf("Caption close routes through the canonical OnCancel:\n");
+    ResetTranscript();
+
+    CCloseBoxProbe probe;
+    const INT_PTR rc = probe.DoModal();
+
+    chkSeq("OnInitDialog OnCancel OnDestroy",
+           "the close box ran the OnCancel virtual (not a bare EndModal)");
+    chk(rc == IDCANCEL, "and DoModal still returns IDCANCEL");
+    chk(probe.m_strSaved == "say hello",
+        "OnCancel read the live edit text (CImmediateDlg's save-for-next-time)");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Esc in a bridged dialog runs the canonical Cancel arm.
+//
+// wx's own Esc→Cancel looks the Cancel button up by wxID_CANCEL (5101), and
+// template controls keep their Win32 ids (IDCANCEL == 2), so no bridged
+// dialog has one -- Esc had NO route to Cancel at all.  The bridge's
+// CHAR_HOOK now translates it, offers it to PreTranslateMessage first (MFC's
+// order -- CDebugLuaDlg maps Esc to "continue execution"), and dispatches the
+// IDCANCEL command when the override declines.
+// ══════════════════════════════════════════════════════════════════════════
+
+class CEscProbe : public CDialog
+{
+public:
+    CEscProbe() : CDialog(IDD_SEND_TO_ALL) {}
+
+    bool m_eatEscape    = false;   // the CDebugLuaDlg shape when true
+    int  m_preSawEscape = 0;
+
+    BOOL OnInitDialog() override
+    {
+        rec("OnInitDialog");
+        CDialog::OnInitDialog();
+        wxDialog* dlg = static_cast<wxDialog*>(m_hWnd);
+        wxTheApp->CallAfter([this, dlg]() {
+            // The event AppKit hands wx for a real Escape key-down.
+            wxKeyEvent esc(wxEVT_CHAR_HOOK);
+            esc.m_keyCode = WXK_ESCAPE;
+            esc.SetEventObject(dlg);
+            dlg->GetEventHandler()->ProcessEvent(esc);
+            if (m_eatEscape)
+            {
+                chk(dlg->IsModal(),
+                    "an Esc consumed by PreTranslateMessage leaves the dialog open");
+                SendCommand(dlg, wxEVT_BUTTON, IDCANCEL);   // close for real
+            }
+        });
+        return TRUE;
+    }
+
+    BOOL PreTranslateMessage(MSG* pMsg) override
+    {
+        if (pMsg->message == WM_KEYDOWN && pMsg->wParam == VK_ESCAPE)
+        {
+            ++m_preSawEscape;
+            if (m_eatEscape) return TRUE;
+        }
+        return CDialog::PreTranslateMessage(pMsg);
+    }
+
+    void OnCancel()  override { rec("OnCancel"); CDialog::OnCancel(); }
+    void OnDestroy() override { rec("OnDestroy"); }
+};
+
+void TestEscapeRunsCancel()
+{
+    printf("Esc in a bridged dialog runs the canonical Cancel arm:\n");
+
+    {
+        ResetTranscript();
+        CEscProbe probe;
+        const INT_PTR rc = probe.DoModal();
+        chkSeq("OnInitDialog OnCancel OnDestroy",
+               "Esc dispatched the IDCANCEL command (no wxID_CANCEL button "
+               "exists for wx's own machinery to find)");
+        chk(rc == IDCANCEL, "and DoModal returns IDCANCEL");
+        chk(probe.m_preSawEscape == 1,
+            "PreTranslateMessage saw the key FIRST (MFC's order)");
+    }
+
+    // The CDebugLuaDlg shape: an override that consumes Esc must stop the
+    // Cancel arm -- exactly one OnCancel below, and it is the driver's own
+    // close click, not the swallowed Esc.
+    {
+        ResetTranscript();
+        CEscProbe probe;
+        probe.m_eatEscape = true;
+        probe.DoModal();
+        chk(probe.m_preSawEscape == 1, "the swallowing override saw the key");
+        chkSeq("OnInitDialog OnCancel OnDestroy",
+               "a PreTranslateMessage that consumes Esc stops the Cancel arm");
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// A right-click on a bridged list dispatches NM_RDBLCLK.
+//
+// bind_list_notifications synthesised LVN_COLUMNCLICK, NM_DBLCLK and
+// LVN_ITEMCHANGED but never NM_RDBLCLK, so CPluginsDlg's right-double-click
+// state-file editor (its ON_NOTIFY(NM_RDBLCLK, IDC_PLUGINS_LIST, ...) is the
+// only consumer in the app) was dead code on the port -- and there is no
+// other UI path to a plugin's state file from the Plugins dialog.  wx has no
+// right-DOUBLE-click list event, so a single right-click is the stand-in.
+// ══════════════════════════════════════════════════════════════════════════
+
+class CRClickProbe : public CDialog
+{
+public:
+    CRClickProbe() : CDialog(IDD_PLUGINS) {}
+
+    int  m_rclickItem = -2;   // pre-poisoned: "nothing dispatched" must FAIL
+    UINT m_rclickCode = 0;
+
+    BOOL OnInitDialog() override
+    {
+        CDialog::OnInitDialog();
+        wxDialog* dlg = static_cast<wxDialog*>(m_hWnd);
+        wxTheApp->CallAfter([dlg]() {
+            wxListCtrl* lv = wxDynamicCast(dlg->FindWindow(IDC_PLUGINS_LIST),
+                                           wxListCtrl);
+            chk(lv != nullptr, "IDD_PLUGINS' list was built as a wxListCtrl");
+            if (lv)
+            {
+                lv->InsertColumn(0, wxT("Name"));
+                lv->InsertItem(0, wxT("row0"));
+                lv->InsertItem(1, wxT("row1"));
+                // The same synthesis shape the existing selftests use for list
+                // events: the event a real right-click on row 1 produces.
+                wxListEvent e(wxEVT_LIST_ITEM_RIGHT_CLICK, IDC_PLUGINS_LIST);
+                e.SetEventObject(lv);
+                e.m_itemIndex = 1;
+                lv->GetEventHandler()->ProcessEvent(e);
+            }
+            dlg->EndModal(IDCANCEL);
+        });
+        return TRUE;
+    }
+
+    afx_msg void OnRClick(NMHDR* pNMHDR, LRESULT* pResult)
+    {
+        m_rclickCode = pNMHDR->code;
+        m_rclickItem = (int) ((NMITEMACTIVATE*) pNMHDR)->iItem;
+        *pResult = 0;
+    }
+    DECLARE_MESSAGE_MAP()
+};
+
+BEGIN_MESSAGE_MAP(CRClickProbe, CDialog)
+    // The exact map entry CPluginsDlg::OnRdblclkPluginsList uses.
+    ON_NOTIFY(NM_RDBLCLK, IDC_PLUGINS_LIST, OnRClick)
+END_MESSAGE_MAP()
+
+void TestListRightClickDispatchesRdblclk()
+{
+    printf("Right-click on a bridged list dispatches NM_RDBLCLK:\n");
+
+    CRClickProbe probe;
+    probe.DoModal();
+
+    chk(probe.m_rclickCode == (UINT) NM_RDBLCLK,
+        "the ON_NOTIFY(NM_RDBLCLK) handler ran (CPluginsDlg's state-file editor)");
+    chk(probe.m_rclickItem == 1,
+        "...and was handed the clicked row's index");
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -730,6 +957,9 @@ int RunDialogBridgeSelfTest()
            "property-sheet bridges.\n");
 
     TestCommandRouting();
+    TestCloseBoxRunsOnCancel();
+    TestEscapeRunsCancel();
+    TestListRightClickDispatchesRdblclk();
     TestDeferredListReload();
     TestTreeSheetLifecycle();
     TestFlatSheetLifecycle();

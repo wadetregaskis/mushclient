@@ -4452,6 +4452,17 @@ bool DialogKeyToMsg(int wxKeyCode, bool altDown, MSG* msg)
             msg->message = altDown ? WM_SYSKEYDOWN : WM_KEYDOWN;
             msg->wParam  = VK_RETURN;
             return true;
+        case WXK_ESCAPE:
+            // Esc must be translated too: wxDialog's own Esc handling looks
+            // for a button with wxID_CANCEL (5101), and template controls
+            // keep their Win32 ids (IDCANCEL is 2), so no bridged dialog has
+            // one and the key had NO route to Cancel at all.  The caller
+            // offers it to PreTranslateMessage first (CDebugLuaDlg maps Esc
+            // to "continue execution") and dispatches the IDCANCEL command
+            // itself when that declines.
+            msg->message = WM_KEYDOWN;
+            msg->wParam  = VK_ESCAPE;
+            return true;
         default:
             return false;
     }
@@ -4528,9 +4539,18 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
         if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();
     });
     bind_list_notifications(dlg, cdlg);   // list column-sort / double-click (e.g. CPluginsDlg)
-    // Closing the window (X / Esc) behaves like Cancel.
-    dlg->Bind(wxEVT_CLOSE_WINDOW, [dlg](wxCloseEvent&) {
-        if (dlg->IsModal()) dlg->EndModal(IDCANCEL);
+    // Closing the window (X) behaves like Cancel -- through the CANONICAL
+    // OnCancel virtual, not a bare EndModal.  On Windows the caption close is
+    // WM_SYSCOMMAND/SC_CLOSE, which the dialog manager turns into an IDCANCEL
+    // command, so a dialog's OnCancel override ALWAYS runs.  Two shipped
+    // dialogs do real work there -- CImmediateDlg and CDebugLuaDlg both copy
+    // the live edit text into the member their caller persists ("save the
+    // expression text for next time") -- and ending the modal directly lost
+    // whatever was typed when the red close button dismissed them.
+    // CDialog::OnCancel's EndDialog(IDCANCEL) reaches hook_end_dialog above,
+    // which performs the same EndModal this bind used to call itself.
+    dlg->Bind(wxEVT_CLOSE_WINDOW, [cdlg, dlg](wxCloseEvent&) {
+        if (dlg->IsModal()) cdlg->OnCancel();
     });
     // Resizeable dialogs (WS_THICKFRAME) drive the canonical OnSize handler,
     // which re-lays-out controls via CWnd::MoveWindow (now wired to wx).  OnSize
@@ -4551,11 +4571,20 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     //                 dialog wants no default button
     //   Alt+RETURN -> CTimerDlg / CTriggerDlg / CAliasDlg open the multi-line
     //                 editor for the "send" text (MFC sees WM_SYSKEYDOWN)
-    // Translate only those two keys and Skip() everything else: a blanket hook
-    // would disturb wxDialog's own Esc->Cancel and Enter->default-button in every
-    // dialog in the app.  (Don't be tempted to add wxTE_PROCESS_TAB in the dialog
-    // builder as a shortcut for the tab case -- that hardcodes the preference ON
-    // for every ES_MULTILINE edit regardless of the flag.)
+    //   ESCAPE     -> declined by nearly every override, and then dispatched
+    //                 as the IDCANCEL command below, NOT Skip()ed.  wx's own
+    //                 Esc->Cancel cannot work in a bridged dialog: it looks
+    //                 the button up by wxID_CANCEL (5101), and template
+    //                 controls keep their Win32 ids (IDCANCEL is 2), so
+    //                 before this arm Esc had no route to Cancel at all.
+    // Translate only those keys and Skip() everything else: a blanket hook
+    // would disturb the focused control's own key handling in every dialog in
+    // the app.  RETURN in particular is Skip()ed when PreTranslateMessage
+    // declines it, so wx's Enter -> default-item press (fed by SetDefaultItem
+    // in BuildWxDialogFromTemplate) still runs.  (Don't be tempted to add
+    // wxTE_PROCESS_TAB in the dialog builder as a shortcut for the tab case --
+    // that hardcodes the preference ON for every ES_MULTILINE edit regardless
+    // of the flag.)
     dlg->Bind(wxEVT_CHAR_HOOK, [cdlg](wxKeyEvent& e) {
         MSG msg{};
         if (!DialogKeyToMsg(e.GetKeyCode(), e.AltDown(), &msg)) {
@@ -4563,7 +4592,18 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
             return;
         }
         // MFC's contract: TRUE means the override consumed the key.
-        if (!cdlg->PreTranslateMessage(&msg)) e.Skip();
+        if (cdlg->PreTranslateMessage(&msg)) return;
+        if (msg.wParam == VK_ESCAPE) {
+            // The dialog manager's Esc: an IDCANCEL command.  A mapped
+            // ON_BN_CLICKED(IDCANCEL) handler wins -- the same precedence as
+            // the wxEVT_BUTTON bind above -- otherwise the OnCancel virtual,
+            // which every dialog has whether or not it shows a Cancel button
+            // (IDD_SCRIPT_ERROR and friends close this way on Windows too).
+            if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) IDCANCEL))
+                cdlg->OnCancel();
+            return;   // consumed either way, as the dialog manager consumes it
+        }
+        e.Skip();
     });
     // Command-UI: run each control's ON_UPDATE_COMMAND_UI handler on idle so
     // buttons enable/disable/check by state (e.g. after a list-selection change),
@@ -4636,6 +4676,24 @@ static void bind_list_notifications(wxWindow* win, CCmdTarget* target)
         nm.iItem      = e.GetIndex();
         LRESULT res = 0;
         if (!AfxDispatchNotify(target, (UINT) NM_DBLCLK, (UINT) e.GetId(), &nm.hdr, &res))
+            e.Skip();
+    });
+    // Right-click → NM_RDBLCLK.  wx has no "right double-click" list event
+    // (only wxEVT_LIST_ITEM_RIGHT_CLICK, a single right-click), so a single
+    // right-click is the closest achievable stand-in for Windows' gesture.
+    // One consumer exists: CPluginsDlg::OnRdblclkPluginsList, which opens the
+    // selected plugin's saved state file (worldID-pluginID-state.xml) in the
+    // notepad or external editor -- there is no other UI path to that file.
+    // Every other dialog with a list has no NM_RDBLCLK handler, so the
+    // dispatch declines and the event Skip()s on, same as the three
+    // notification codes above.
+    win->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK, [target](wxListEvent& e) {
+        NMITEMACTIVATE nm{};
+        nm.hdr.idFrom = (UINT) e.GetId();
+        nm.hdr.code   = (UINT) NM_RDBLCLK;
+        nm.iItem      = e.GetIndex();
+        LRESULT res = 0;
+        if (!AfxDispatchNotify(target, (UINT) NM_RDBLCLK, (UINT) e.GetId(), &nm.hdr, &res))
             e.Skip();
     });
     // Item selection change → LVN_ITEMCHANGED.  Without this, e.g. the canonical
@@ -5711,9 +5769,34 @@ inline wxItemContainer* CB(void* hwnd) {
 }
 static int hook_combo_add_string(void* hwnd, const char* text)
 {
+    wxWindow* win = (wxWindow*) hwnd;
     wxItemContainer* cb = CB(hwnd);
     if (!cb) return -1;   // CB_ERR
-    return (int) cb->Append(wxString::FromUTF8(text ? text : ""));
+    const wxString s = wxString::FromUTF8(text ? text : "");
+    // Windows' CB_ADDSTRING returns the index the item LANDED at, which for a
+    // CBS_SORT combo is its sorted position -- and CLuaChooseBox (utils.choose)
+    // tags item data through that returned index.  wxOSX's sorted wxChoice and
+    // wxComboBox insert at std::lower_bound but RETURN the append-order count
+    // (measured: Append("Apple") after "Zebra" lands at 0, returns 1), so the
+    // raw return would tag the wrong row.  Pre-compute the landing index the
+    // same way wx picks it -- the number of existing strings strictly less
+    // than the new one, i.e. lower_bound, so an equal string lands at the
+    // FRONT of its run (measured via client data) -- and answer that instead.
+    // wxOwnerDrawnComboBox is excluded: no owner-draw template carries
+    // CBS_SORT, and the generic implementation has its own insertion rule.
+    // (wxListBox does not route here, and its Append DOES return the sorted
+    // index -- also measured -- so hook_listbox_add_string needs none of this.)
+    int sortedIdx = -1;
+    if (win->HasFlag(wxCB_SORT) &&
+        (wxDynamicCast(win, wxComboBox) || wxDynamicCast(win, wxChoice)))
+    {
+        const unsigned n = cb->GetCount();
+        unsigned i = 0;
+        while (i < n && cb->GetString(i) < s) ++i;
+        sortedIdx = (int) i;
+    }
+    const int ret = (int) cb->Append(s);
+    return sortedIdx >= 0 ? sortedIdx : ret;
 }
 static int hook_combo_get_count(void* hwnd)
 {

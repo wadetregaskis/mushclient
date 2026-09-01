@@ -1889,6 +1889,218 @@ TEST(Ddx, UnparseableNumericTextIsRejectedRatherThanRead) {
     g_wxhook_message_box = saved;
 }
 
+// MFC's CDataExchange::Fail() puts the user IN the offending control: focus
+// returns to the last-prepared control, and an edit's text is selected so the
+// bad value is retype-ready.  The port's Fail() only threw -- after "Please
+// enter an integer between 20 and 500." on a dense page, nothing said WHICH
+// of the numeric fields was rejected.
+namespace {
+enum { ID_DDV_FIRST = 41, ID_DDV_SECOND = 42, ID_DDV_CHECK = 43 };
+
+class DdvFocusDialog : public CDialog {
+public:
+    int m_first = 5;
+    int m_second = 5;
+    DdvFocusDialog() : CDialog(998) { m_hWnd = (HWND)(void*)this; }
+    void DoDataExchange(CDataExchange* pDX) override {
+        // The MFC contract: each DDV immediately follows the DDX of the field
+        // it validates, which is what makes "last prepared" the right control.
+        DDX_Text(pDX, ID_DDV_FIRST, m_first);
+        DDV_MinMaxInt(pDX, m_first, 0, 10);
+        DDX_Text(pDX, ID_DDV_SECOND, m_second);
+        DDV_MinMaxInt(pDX, m_second, 0, 10);
+    }
+};
+
+// A non-edit control prepared last: focus moves, but no text selection.
+class DdvCheckFailDialog : public CDialog {
+public:
+    int m_check = 0;
+    DdvCheckFailDialog() : CDialog(997) { m_hWnd = (HWND)(void*)this; }
+    void DoDataExchange(CDataExchange* pDX) override {
+        DDX_Check(pDX, ID_DDV_CHECK, m_check);
+        if (pDX->m_bSaveAndValidate) pDX->Fail();
+    }
+};
+
+void* s_ddvFocused;
+int   s_ddvFocusCalls;
+void* s_ddvSelWnd;
+int   s_ddvSelStart, s_ddvSelEnd;
+} // namespace
+
+TEST(Ddv, FailurePutsFocusInTheOffendingEdit) {
+    fakewx::Install hooks;
+    s_ddvFocused = nullptr; s_ddvFocusCalls = 0;
+    s_ddvSelWnd = nullptr;  s_ddvSelStart = s_ddvSelEnd = 99;   // pre-poisoned
+    g_wxhook_set_focus = [](void* h) { s_ddvFocused = h; ++s_ddvFocusCalls; };
+    g_wxhook_edit_set_sel = [](void* h, int s, int e) {
+        s_ddvSelWnd = h; s_ddvSelStart = s; s_ddvSelEnd = e;
+    };
+    int (*const savedBox)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char*, const char*, unsigned) -> int { return IDOK; };
+
+    DdvFocusDialog dlg;
+    EXPECT_TRUE(dlg.UpdateData(FALSE));
+
+    // Fail the SECOND field: "focus the first field" and "focus anything"
+    // both flunk this, so the fixture can discriminate the mapping.
+    fakewx::widget(ID_DDV_SECOND).text = "999";
+    EXPECT_FALSE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_SECOND), s_ddvFocused);
+    EXPECT_EQ(1, s_ddvFocusCalls);
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_SECOND), s_ddvSelWnd);
+    EXPECT_EQ(0,  s_ddvSelStart);              // CEdit::SetSel(0, -1)
+    EXPECT_EQ(-1, s_ddvSelEnd);
+
+    // ...and failing the FIRST focuses the first (the degenerate-fixture guard:
+    // the two cases must land on DIFFERENT controls).
+    s_ddvFocused = nullptr; s_ddvFocusCalls = 0;
+    fakewx::widget(ID_DDV_SECOND).text = "5";
+    fakewx::widget(ID_DDV_FIRST).text  = "999";
+    EXPECT_FALSE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_FIRST), s_ddvFocused);
+
+    // A non-edit control focuses but does NOT select text.
+    s_ddvFocused = nullptr; s_ddvSelWnd = nullptr;
+    DdvCheckFailDialog cdlg;
+    EXPECT_FALSE(cdlg.UpdateData(TRUE));
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_CHECK), s_ddvFocused);
+    EXPECT_EQ((void*)nullptr, s_ddvSelWnd);
+
+    g_wxhook_set_focus = nullptr;
+    g_wxhook_edit_set_sel = nullptr;
+    g_wxhook_message_box = savedBox;
+}
+
+// DDV_MaxChars was a permanent no-op (its old comment blamed
+// DDV_validation.cpp, but on Windows MFC itself supplies it), so every
+// maximum-length validation was silently skipped: the 7 direct call sites and
+// the max half of every DDV_MinMaxString/DDV_MinMaxCBString, which delegate
+// their max check to it.
+namespace {
+class MaxCharsDialog : public CDialog {
+public:
+    CString m_text = "hi";
+    int     m_check = 0;
+    MaxCharsDialog() : CDialog(996) { m_hWnd = (HWND)(void*)this; }
+    void DoDataExchange(CDataExchange* pDX) override {
+        DDX_Text(pDX, ID_DDV_FIRST, m_text);
+        DDV_MaxChars(pDX, m_text, 20);
+        DDX_Check(pDX, ID_DDV_CHECK, m_check);  // a later non-edit exchange
+    }
+};
+int         s_ddvBoxes;
+std::string s_ddvMsg;
+} // namespace
+
+TEST(Ddv, MaxCharsRefusesOverlongStrings) {
+    fakewx::Install hooks;
+    s_ddvBoxes = 0; s_ddvMsg.clear();
+    int (*const savedBox)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char* text, const char*, unsigned) -> int {
+        ++s_ddvBoxes; s_ddvMsg = text ? text : ""; return IDOK;
+    };
+
+    CDataExchange dx;              // no dialog window: DDX inert, DDV decides
+    dx.m_bSaveAndValidate = TRUE;
+
+    CString ok("xxxxxxxxxx");      // exactly 10: at the limit is allowed
+    DDV_MaxChars(&dx, ok, 10);
+    EXPECT_EQ(0, s_ddvBoxes);
+
+    CString over("xxxxxxxxxxY");   // 11 > 10: refused, message names the limit
+    bool threw = false;
+    try { DDV_MaxChars(&dx, over, 10); }
+    catch (const CDdxValidationFail&) { threw = true; }
+    EXPECT_TRUE(threw);
+    EXPECT_EQ(1, s_ddvBoxes);
+    EXPECT_TRUE(s_ddvMsg.find("no more than 10 characters") != std::string::npos);
+
+    // The DELEGATED path: 28 DDV_MinMaxString/CBString sites reach the max
+    // check only through DDV_MaxChars, so pin it too -- asserting only the
+    // direct call would leave that half uncovered.
+    s_ddvBoxes = 0;
+    threw = false;
+    try { DDV_MinMaxString(&dx, over, 1, 10); }
+    catch (const CDdxValidationFail&) { threw = true; }
+    EXPECT_TRUE(threw);
+    EXPECT_EQ(1, s_ddvBoxes);
+
+    // The load direction never vetoes.
+    dx.m_bSaveAndValidate = FALSE;
+    s_ddvBoxes = 0;
+    DDV_MaxChars(&dx, over, 10);
+    EXPECT_EQ(0, s_ddvBoxes);
+
+    g_wxhook_message_box = savedBox;
+}
+
+// The other half of MFC's DDV_MaxChars: on load it applies EM_LIMITTEXT to
+// the last-prepared edit, so the user cannot even type past the limit.
+namespace {
+void* s_limWnd;
+int   s_limChars;
+int   s_limCalls;
+} // namespace
+
+TEST(Ddv, MaxCharsLimitsTypingOnLoad) {
+    fakewx::Install hooks;
+    s_limWnd = nullptr; s_limChars = -1; s_limCalls = 0;
+    g_wxhook_edit_set_max_length = [](void* h, int n) {
+        s_limWnd = h; s_limChars = n; ++s_limCalls;
+    };
+
+    MaxCharsDialog dlg;
+    EXPECT_TRUE(dlg.UpdateData(FALSE));            // load
+    EXPECT_EQ(1, s_limCalls);                      // the DDV'd edit and nothing else
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_FIRST), s_limWnd);
+    EXPECT_EQ(20, s_limChars);
+
+    // The save direction validates; it does not re-limit.
+    s_limCalls = 0;
+    EXPECT_TRUE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(0, s_limCalls);
+
+    g_wxhook_edit_set_max_length = nullptr;
+}
+
+// A real shipping page, headless: the Plugin Wizard's ID field is
+// DDV_MinMaxString(24, 24), whose max side never fired -- a 30-character ID
+// was accepted and written into the generated plugin.
+TEST(Ddv, PluginWizardIdLengthIsEnforced) {
+    s_ddvBoxes = 0;
+    int (*const savedBox)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+        ++s_ddvBoxes; return IDOK;
+    };
+
+    struct P1 : CPluginWizardPage1 { using CPluginWizardPage1::DoDataExchange; };
+    CMUSHclientDoc doc;
+    P1 page;
+    page.m_doc = &doc;                 // CheckObjectName dereferences it
+    page.m_strName = "TestPlugin";
+
+    CDataExchange dx;                  // control-less: only the DDV decides
+    dx.m_bSaveAndValidate = TRUE;
+
+    page.m_strID = "abcdefghijklmnopqrstuvwx";        // 24: the required length
+    bool threw = false;
+    try { page.DoDataExchange(&dx); }
+    catch (const CDdxValidationFail&) { threw = true; }
+    EXPECT_FALSE(threw);
+    EXPECT_EQ(0, s_ddvBoxes);
+
+    page.m_strID = "abcdefghijklmnopqrstuvwxyz0123";  // 30: Windows refuses it
+    threw = false;
+    try { page.DoDataExchange(&dx); }
+    catch (const CDdxValidationFail&) { threw = true; }
+    EXPECT_TRUE(threw);
+    EXPECT_EQ(1, s_ddvBoxes);
+
+    g_wxhook_message_box = savedBox;
+}
+
 static intptr_t s_modalResult;
 static unsigned s_modalIdd;
 
@@ -3975,7 +4187,9 @@ TEST(StubSweep, DialogAndDdxRemainder) {
     EXPECT_FALSE(dlg.DestroyWindow());
     EXPECT_FALSE(dlg.IsDialogMessage(&msg));
 
-    // DDX/DDV no-op family (no dialog hooks): must be inert
+    // DDX/DDV family with no dialog hooks: must be inert.  (DDV_MaxChars and
+    // the DDV_MinMax* are real now -- the values here are all IN range, which
+    // is what a hook-less pass must leave untouched.)
     CDataExchange dx;
     dx.m_pDlgWnd = &dlg;
     int radio = 5;

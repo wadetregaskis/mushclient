@@ -350,6 +350,40 @@ TEST(PosixSocket, CallbackDeletingSocketDuringPollDoesNotFireFreedSocket)
 
 // posix_socket.h Create: "Don't let a write to a peer-closed socket raise
 // SIGPIPE and kill the process" — send() reports an error instead.
+// The pump's send nudge (wx_mfc_impl.cpp): a successful Send requests ONE
+// expedited re-poll, so a lockstep peer's prompt reply is picked up within
+// the RTT instead of the rest of the 20 ms tick -- the MudMaster file
+// transfer's whole latency.  Pinned at the flag layer, which is what the GUI
+// pump consumes; both directions have a control (consumed-once, and a FAILED
+// send setting nothing).
+TEST(PosixSocket, ASuccessfulSendRequestsOneExpeditedRepoll)
+{
+    (void) CAsyncSocket::ConsumeSendNudge();     // drain earlier tests' sends
+    EXPECT_FALSE(CAsyncSocket::ConsumeSendNudge());
+
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    client.Connect("127.0.0.1", lis.port_);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+    Recorder server;
+    ASSERT_TRUE(lis.Accept(server));
+    (void) CAsyncSocket::ConsumeSendNudge();     // connect/accept noise, if any
+
+    EXPECT_GT(client.Send("ping", 4), 0);
+    EXPECT_TRUE(CAsyncSocket::ConsumeSendNudge());
+    EXPECT_FALSE(CAsyncSocket::ConsumeSendNudge());   // consumed exactly once
+
+    // A send the stack refuses sets no nudge: nothing will be arriving.
+    client.Close();
+    char junk[4] = {'j', 'u', 'n', 'k'};
+    (void) CAsyncSocket::ConsumeSendNudge();
+    EXPECT_EQ(SOCKET_ERROR, client.Send(junk, 4));
+    EXPECT_FALSE(CAsyncSocket::ConsumeSendNudge());
+    server.Close();
+}
+
 TEST(PosixSocket, SendAfterPeerCloseReturnsErrorNotSigpipe)
 {
     Listener lis;

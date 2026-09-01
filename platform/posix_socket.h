@@ -202,7 +202,26 @@ public:
     {
         int n = (int)::send(m_hSocket, lpBuf, (size_t)nBufLen, nFlags);
         if (n < 0 && errno == EWOULDBLOCK) return SOCKET_ERROR;
+        // The reply to what just went out is usually on the wire within the
+        // RTT, not a full pump tick away.  Winsock's FD_READ model delivers
+        // it event-driven; this Poll()-driven shim would sit out the rest of
+        // the 20 ms tick -- which is exactly why the MudMaster lockstep file
+        // transfer crawled (each 512-byte block cost one whole tick).  A
+        // successful send therefore requests ONE expedited re-poll; the pump
+        // decides when (wx_mfc_impl.cpp's 1 ms one-shot).  Self-limiting: the
+        // chain is sustained only by further sends.
+        if (n > 0) SendNudgeFlag() = true;
         return n;
+    }
+
+    // The pump consumes the nudge; anything else reading it would race the
+    // pump for it.  Same function-local-static pattern as AllSockets().
+    static bool ConsumeSendNudge()
+    {
+        bool& f = SendNudgeFlag();
+        const bool v = f;
+        f = false;
+        return v;
     }
 
     int Receive(void* lpBuf, int nBufLen, int nFlags = 0)
@@ -584,6 +603,12 @@ private:
 
     // ── Static registry of all live sockets ──────────────────────────────────
     // Uses a function-local static to avoid static-initialisation order issues.
+    static bool& SendNudgeFlag()
+    {
+        static bool f = false;
+        return f;
+    }
+
     static std::vector<CAsyncSocket*>& AllSockets()
     {
         static std::vector<CAsyncSocket*> v;

@@ -1533,12 +1533,26 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // deliver OnConnect / OnReceive / OnClose callbacks.  20 ms is a
     // responsive polling interval that keeps the UI smooth.
     wxTimer* pollTimer = new wxTimer(frame);
-    frame->Bind(wxEVT_TIMER, [](wxTimerEvent&) {
+    // The send nudge: a successful Send sets a flag (posix_socket.h) and this
+    // one-shot re-polls 1 ms later, so a prompt reply -- MudMaster's lockstep
+    // file blocks, a MUD's echo -- is picked up within the RTT instead of
+    // sitting out the rest of the 20 ms tick.  The chain sustains itself only
+    // while callbacks keep sending (each nudged poll can set the flag again),
+    // so it cannot busy-loop an idle connection; a peer whose RTT exceeds
+    // 1 ms simply falls back to the regular tick, exactly as before.
+    wxTimer* nudgeTimer = new wxTimer(frame);
+    auto pumpOnce = [nudgeTimer]() {
         CAsyncSocket::Poll(0);
         // Deliver PAL-transport main-thread completions (async DNS results)
         // alongside the socket pump — platform/posix_transport.h (T2d).
         pal::PumpTransportCompletions();
-    }, pollTimer->GetId());
+        if (CAsyncSocket::ConsumeSendNudge() && !nudgeTimer->IsRunning())
+            nudgeTimer->StartOnce(1);
+    };
+    frame->Bind(wxEVT_TIMER, [pumpOnce](wxTimerEvent&) { pumpOnce(); },
+                pollTimer->GetId());
+    frame->Bind(wxEVT_TIMER, [pumpOnce](wxTimerEvent&) { pumpOnce(); },
+                nudgeTimer->GetId());
     pollTimer->Start(20);
 
     // ── App-level close confirmation ──────────────────────────────────────

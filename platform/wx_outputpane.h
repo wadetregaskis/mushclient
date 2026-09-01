@@ -792,6 +792,12 @@ public:
     // Called when auto-scroll state changes (true = pinned to bottom).
     std::function<void(bool)> m_fn_autoscroll_changed;
 
+    // Fired whenever the selection ACTUALLY changed, deduplicated and
+    // recursion-guarded exactly like CMUSHView::NotifySelectionChanged
+    // (mushview.cpp:6423-6450).  The frame wires it to the
+    // ON_PLUGIN_SELECTION_CHANGED plugin broadcast.
+    std::function<void()> m_fn_selection_changed;
+
     // Called after the user finishes a mouse selection (or clicks without
     // selecting).  Typically wired to re-focus the command input bar.
     std::function<void()> m_fn_return_focus;
@@ -1114,6 +1120,13 @@ private:
     // Returns false if there is no selection (both points invalid or equal).
     bool GetNormalizedSel(SelPoint& start, SelPoint& end) const;
 
+    // Fire m_fn_selection_changed if the selection differs from the last
+    // notified state.  Cheap to call from every mutation site; a site that
+    // forgets only DELAYS the notification to the next site, exactly as
+    // Windows' scattered SelectionChanged() calls behave against their
+    // central m_old_sel* dedup.
+    void NotifySelectionMaybeChanged();
+
     // ── PULL MODEL: the read path ─────────────────────────────────────────
     // Committed line count.  The engine's when the pull seam is wired, the
     // pane's own deque otherwise, so both models share every caller.
@@ -1270,6 +1283,11 @@ private:
     // Selection: anchor is where the mouse went down; focus tracks the drag.
     // When anchor == focus, there is no selection (just a cursor position).
     SelPoint m_selAnchor;
+    // NotifySelectionMaybeChanged's dedup state -- the m_old_sel* quartet of
+    // CMUSHView::NotifySelectionChanged (mushview.cpp:6430-6439).
+    SelPoint m_notifiedSelAnchor;
+    SelPoint m_notifiedSelFocus;
+    bool     m_inSelectionNotify = false;
     SelPoint m_selFocus;
 
     // See WantsSelectAll().

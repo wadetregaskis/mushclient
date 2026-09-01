@@ -980,6 +980,15 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             UpdateStatusBar();
     };
 
+    // CMUSHView::NotifySelectionChanged's broadcast half (mushview.cpp:6447):
+    // every real selection change reaches plugins as OnPluginSelectionChanged.
+    // The pane owns the dedup and the recursion guard; Windows' own
+    // m_ScriptEngine gate is kept verbatim.
+    m_output->m_fn_selection_changed = [this]() {
+        if (m_doc && m_doc->m_ScriptEngine)
+            m_doc->SendToAllPluginCallbacks(ON_PLUGIN_SELECTION_CHANGED);
+    };
+
     // When the font zoom changes, the character grid changes without a resize
     // event.  Use CallAfter so the new metrics are already committed before we
     // read CharWidth()/LineHeight() and send NAWS.

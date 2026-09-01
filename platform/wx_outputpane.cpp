@@ -1319,6 +1319,7 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
         m_selAnchor = SelPoint{};
         m_selFocus  = SelPoint{};
         Refresh(false);
+        NotifySelectionMaybeChanged();
         return;
     }
 
@@ -1336,6 +1337,7 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
         m_selAnchor = SelPoint{};
         m_selFocus  = SelPoint{};
         Refresh(false);
+        NotifySelectionMaybeChanged();
         return;
     }
 
@@ -1354,6 +1356,7 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
     m_selAnchor = SelPoint{sl, sc};
     m_selFocus  = SelPoint{el, ec};
     Refresh(false);
+    NotifySelectionMaybeChanged();
 }
 
 bool COutputPane::GetSelectionInfo(long& startLine, long& startCol,
@@ -2952,6 +2955,29 @@ void COutputPane::ClearSelectionOnNewOutput()
     if (!m_selAnchor.valid() && !m_selFocus.valid()) return;   // nothing to drop
     m_selAnchor = SelPoint{};
     m_selFocus  = SelPoint{};
+    // Deliberately no NotifySelectionMaybeChanged here: Windows' new-output
+    // clear does not run SelectionChanged either, so the plugin callback for
+    // this transition fires from whichever notify site runs NEXT -- the same
+    // late catch-up its m_old_sel* dedup produces.
+}
+
+// ── NotifySelectionMaybeChanged ──────────────────────────────────────────────
+// CMUSHView::NotifySelectionChanged (mushview.cpp:6423-6450), pane-shaped: a
+// recursion guard first (a plugin's OnPluginSelectionChanged can move the
+// selection, e.g. world.SetSelection), then the not-really-changed compare,
+// then the broadcast through the frame's callback -- the pane cannot see the
+// doc, the same reason m_fn_autoscroll_changed exists.
+void COutputPane::NotifySelectionMaybeChanged()
+{
+    if (m_inSelectionNotify) return;
+    if (m_selAnchor == m_notifiedSelAnchor && m_selFocus == m_notifiedSelFocus)
+        return;                            // not really changed
+    m_notifiedSelAnchor = m_selAnchor;
+    m_notifiedSelFocus  = m_selFocus;
+    if (!m_fn_selection_changed) return;
+    m_inSelectionNotify = true;
+    m_fn_selection_changed();
+    m_inSelectionNotify = false;
 }
 
 void COutputPane::FreezeIfSelection()
@@ -3086,6 +3112,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
         m_selFocus = MouseToSelPoint(evt);
         Refresh(false);
         FreezeIfSelection();     // extend_selection's freeze (mushview.cpp:2453)
+        NotifySelectionMaybeChanged();       // extend_selection, :1980
         evt.Skip();
         return;
     }
@@ -3138,6 +3165,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     // Begin a new selection.  Anchor = focus = click position (empty selection).
     m_selAnchor = MouseToSelPoint(evt);
     m_selFocus  = m_selAnchor;
+    NotifySelectionMaybeChanged();           // CMUSHView::OnLButtonDown, :2263
     m_dragging  = true;
     m_dragStartY = evt.GetY();
     CaptureMouse();
@@ -3156,6 +3184,7 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
         m_selFocus  = MouseToSelPoint(evt);
         if (HasCapture()) ReleaseMouse();
         Refresh(false);
+        NotifySelectionMaybeChanged();       // extend_selection, :1980
 
         // Fire a link click only when the mouse didn't move (no drag).
         // This lets the user drag over link text to select/copy it.
@@ -3301,6 +3330,7 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
         }
     }
 
+    NotifySelectionMaybeChanged();     // CMUSHView::OnLButtonDblClk, :4790
     evt.Skip();
 }
 
@@ -3482,6 +3512,7 @@ bool COutputPane::AutoScrollTick()
     m_selFocus = PointToChar(m_lastDragX, m_lastDragY);
     FreezeIfSelection();
     Refresh(false);
+    NotifySelectionMaybeChanged();           // extend_selection, :1980
     return true;
 }
 
@@ -3519,6 +3550,7 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
     if (m_dragging && evt.LeftIsDown()) {
         m_selFocus = MouseToSelPoint(evt);
         Refresh(false);
+        NotifySelectionMaybeChanged();       // extend_selection, :1980
 
         // Windows freezes the instant the dragged region becomes non-empty, not
         // at the release (mushview.cpp:2613, CMUSHView::OnMouseMove) — on a busy
@@ -3663,6 +3695,7 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
         }
     }
 
+    NotifySelectionMaybeChanged();     // the macOS select-on-right-click
     wxMenu menu;
     BuildContextMenu(menu, evt.GetX(), evt.GetY());
     if (m_fn_popup_context_menu) m_fn_popup_context_menu(menu, evt.GetPosition());
@@ -4327,6 +4360,7 @@ void COutputPane::SelectAll()
     m_selAnchor = SelPoint{0, 0};
     m_selFocus  = SelPoint{lastLine, lastCol};
     Refresh(false);
+    NotifySelectionMaybeChanged();
 }
 
 wxString COutputPane::SelectedText() const
@@ -4563,6 +4597,7 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
 
     m_selAnchor = SelPoint{foundIdx, matchStart};
     m_selFocus  = SelPoint{foundIdx, matchEnd};
+    NotifySelectionMaybeChanged();           // did_jump, :2900
 
     // CSendView::DoFind's last act on the view is
     // `m_topview->EnsureSelectionVisible ()` (sendvw.cpp:1475) — the SAME

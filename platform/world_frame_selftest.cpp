@@ -3286,6 +3286,83 @@ int RunWorldFrameSelfTest()
         }
     }
 
+    // ── a selection change reaches plugins as OnPluginSelectionChanged ──────
+    // The port fired this callback NOWHERE before: its only Windows sender is
+    // CMUSHView::NotifySelectionChanged (mushview.cpp:6447), and CMUSHView is
+    // never constructed here.  Counted through a REAL plugin appending to a
+    // file, like the close-count block above; the dedup arm is the control.
+    {
+        SelfTestEnablePluginLoading();
+
+        char selLog[512];
+        snprintf(selLog, sizeof(selLog), "/tmp/mc_selftest_selchg_%d.log",
+                 (int) getpid());
+        remove(selLog);
+
+        char body[1024];
+        snprintf(body, sizeof(body),
+                 "function OnPluginSelectionChanged()\n"
+                 "  local h = io.open(\"%s\", \"a\")\n"
+                 "  if h then h:write(\"sel\\n\") h:close() end\n"
+                 "end", selLog);
+
+        const std::string pluginPath = SelfTestWritePlugin(
+            "selchg", "abcdefabcdefabcdef990022", "SelChangeCounter", body);
+        check(!pluginPath.empty(), "sel-changed: wrote a plugin file");
+
+        if (!pluginPath.empty()) {
+            CMUSHclientDoc* cd = new CMUSHclientDoc();
+            cd->m_mush_name   = "zz_selftest_selchg";
+            cd->m_nWrapColumn = 80;
+            cd->m_maxlines    = 5000;
+            cd->SetUpOutputWindow();
+            CWorldChildFrame* cf =
+                new CWorldChildFrame(parent, cd, wxT("zz_selftest_selchg"));
+
+            const long rc = cd->LoadPlugin(CString(pluginPath.c_str()));
+            check(rc == 0 && cd->m_PluginList.size() == 1,
+                  "sel-changed: the plugin loaded, with its script engine");
+
+            // The broadcast is gated on the WORLD's own engine, verbatim
+            // Windows (mushview.cpp:6446) -- give the world one.
+            cd->m_bEnableScripts = TRUE;
+            cd->CreateScriptEngine();
+            check(cd->m_ScriptEngine != NULL,
+                  "sel-changed: the world has a script engine (the Windows gate)");
+
+            COutputPane* p2 = cf->OutputPane();
+            for (int i = 0; i < 5; ++i) {
+                const char* l = "sel line here\n";
+                cd->DisplayMsg(l, (int) strlen(l), 0);
+            }
+            cd->UpdateAllViews(NULL);
+
+            auto selFires = [&]() {
+                int n = 0;
+                if (FILE* lf = fopen(selLog, "rb")) {
+                    int ch;
+                    while ((ch = fgetc(lf)) != EOF) if (ch == '\n') ++n;
+                    fclose(lf);
+                }
+                return n;
+            };
+
+            p2->SetSelectionRange(2, 2, 1, 4);
+            check(selFires() == 1,
+                  "sel-changed: a selection change reaches the plugin");
+            p2->SetSelectionRange(2, 2, 1, 4);
+            check(selFires() == 1,
+                  "...deduplicated, as NotifySelectionChanged's compare is");
+            cf->FireScrollCommand(CWorldChildFrame::eScrollEnd);
+            check(selFires() == 2,
+                  "...and End's clear notifies too (OnTestEnd -> SelectionChanged)");
+
+            cf->Close(true);          // forced: no prompts; nothing asserted after
+            remove(selLog);
+            remove(pluginPath.c_str());
+        }
+    }
+
     // ── output pane ▸ "Send to MUD" goes through Execute ────────────────────
     // The context-menu item called EvaluateCommand directly, which is the exact
     // bypass the Enter handler, the macro path, the keypad path and Repeat Last

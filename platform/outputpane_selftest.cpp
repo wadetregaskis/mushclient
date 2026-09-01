@@ -324,6 +324,54 @@ void TestSelectionFreezesOutput()
     }
 }
 
+static COutputPane* s_paneForRecursion = nullptr;
+
+// ── m_fn_selection_changed: fires on change, dedups, survives recursion ──────
+// CMUSHView::NotifySelectionChanged (mushview.cpp:6423-6450) pinned on the
+// pane: the not-really-changed compare keeps repeated identical selections
+// silent, and the recursion guard lets a callback move the selection without
+// re-entering itself.  Every arm has a control: the repeat that must NOT fire.
+void TestSelectionChangedCallback()
+{
+    printf("Selection-changed callback (dedup + recursion guard):\n");
+    Harness h;
+    h.Feed(10);
+
+    static int s_fires;
+    s_fires = 0;
+    h.pane->m_fn_selection_changed = []() { ++s_fires; };
+
+    h.pane->SetSelectionRange(2, 2, 1, 4);
+    opCheck(s_fires == 1, "a real selection change fires the callback once");
+    h.pane->SetSelectionRange(2, 2, 1, 4);
+    opCheck(s_fires == 1, "...and the identical range again does NOT (dedup)");
+    h.pane->SetSelectionRange(3, 3, 1, 4);
+    opCheck(s_fires == 2, "a different range fires again");
+    h.pane->SetSelectionRange(0, 0, 0, 0);
+    opCheck(s_fires == 3, "clearing a live selection is a change and fires");
+    h.pane->SetSelectionRange(0, 0, 0, 0);
+    opCheck(s_fires == 3, "...but clearing an already-clear selection is not");
+
+    // Recursion: a callback that moves the selection itself (a plugin calling
+    // world.SetSelection from OnPluginSelectionChanged) must not re-enter.
+    h.pane->m_fn_selection_changed = []() {
+        ++s_fires;
+        // the recursive poke -- would recurse forever without the guard
+        s_paneForRecursion->SetSelectionRange(0, 0, 0, 0);
+    };
+    s_paneForRecursion = h.pane;
+    h.pane->SetSelectionRange(2, 2, 1, 4);
+    opCheck(s_fires == 4,
+            "a callback that clears the selection fires once, not forever");
+    opCheck(h.pane->GetSelectionText().IsEmpty(),
+            "...and its own clear took effect");
+    h.pane->SetSelectionRange(4, 4, 1, 4);
+    opCheck(s_fires == 5,
+            "...and the next real change still notifies (guard released)");
+    s_paneForRecursion = nullptr;
+    h.pane->m_fn_selection_changed = nullptr;
+}
+
 // ── 1a. A click inside the selection leaves it alone ─────────────────────
 //
 // CMUSHView::OnLButtonDown builds the old selection region and returns early
@@ -4193,6 +4241,8 @@ int RunOutputPaneSelfTest()
     const ClipboardGuard clipAll;
 
     TestSelectionFreezesOutput();
+
+    TestSelectionChangedCallback();
     TestClickInsideSelectionKeepsIt();
     TestWantsSelectAll();
     TestDoubleClickAutoCopy();

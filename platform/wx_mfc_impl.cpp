@@ -5638,9 +5638,34 @@ inline wxItemContainer* CB(void* hwnd) {
 }
 static int hook_combo_add_string(void* hwnd, const char* text)
 {
+    wxWindow* win = (wxWindow*) hwnd;
     wxItemContainer* cb = CB(hwnd);
     if (!cb) return -1;   // CB_ERR
-    return (int) cb->Append(wxString::FromUTF8(text ? text : ""));
+    const wxString s = wxString::FromUTF8(text ? text : "");
+    // Windows' CB_ADDSTRING returns the index the item LANDED at, which for a
+    // CBS_SORT combo is its sorted position -- and CLuaChooseBox (utils.choose)
+    // tags item data through that returned index.  wxOSX's sorted wxChoice and
+    // wxComboBox insert at std::lower_bound but RETURN the append-order count
+    // (measured: Append("Apple") after "Zebra" lands at 0, returns 1), so the
+    // raw return would tag the wrong row.  Pre-compute the landing index the
+    // same way wx picks it -- the number of existing strings strictly less
+    // than the new one, i.e. lower_bound, so an equal string lands at the
+    // FRONT of its run (measured via client data) -- and answer that instead.
+    // wxOwnerDrawnComboBox is excluded: no owner-draw template carries
+    // CBS_SORT, and the generic implementation has its own insertion rule.
+    // (wxListBox does not route here, and its Append DOES return the sorted
+    // index -- also measured -- so hook_listbox_add_string needs none of this.)
+    int sortedIdx = -1;
+    if (win->HasFlag(wxCB_SORT) &&
+        (wxDynamicCast(win, wxComboBox) || wxDynamicCast(win, wxChoice)))
+    {
+        const unsigned n = cb->GetCount();
+        unsigned i = 0;
+        while (i < n && cb->GetString(i) < s) ++i;
+        sortedIdx = (int) i;
+    }
+    const int ret = (int) cb->Append(s);
+    return sortedIdx >= 0 ? sortedIdx : ret;
 }
 static int hook_combo_get_count(void* hwnd)
 {

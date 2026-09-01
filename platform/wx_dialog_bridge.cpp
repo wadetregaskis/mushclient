@@ -147,9 +147,10 @@ enum {
     ES_AUTOHSCROLL = 0x80, ES_READONLY = 0x800,
     SS_TYPEMASK = 0x1F, SS_CENTER = 1, SS_RIGHT = 2, SS_ICON = 3, SS_BITMAP = 14,
     CBS_SIMPLE = 1, CBS_DROPDOWN = 2, CBS_DROPDOWNLIST = 3,
+    CBS_SORT = 0x100,
     CBS_OWNERDRAWFIXED = 0x10, CBS_OWNERDRAWVARIABLE = 0x20,
     CBS_OWNERDRAWMASK  = CBS_OWNERDRAWFIXED | CBS_OWNERDRAWVARIABLE,
-    LBS_EXTENDEDSEL = 0x800, LBS_MULTIPLESEL = 8,
+    LBS_SORT = 0x2, LBS_EXTENDEDSEL = 0x800, LBS_MULTIPLESEL = 8,
     SBS_VERT = 1,
 };
 
@@ -304,13 +305,19 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
             // an editable-style combo (click-on-text doesn't open it), which is
             // exactly the reported bug.
             w = new wxChoice(parent, id, pos,
-                             wxSize(size.GetWidth(), -1), 0, nullptr);
+                             wxSize(size.GetWidth(), -1), 0, nullptr,
+                             // CBS_SORT, same deal as LBS_SORT below: wxChoice
+                             // honours wxCB_SORT directly (wxChoiceBase::
+                             // IsSorted), so Append lands each item at its
+                             // alphabetical place -- utils.choose drop-downs.
+                             (c.style & CBS_SORT) ? wxCB_SORT : 0);
         }
         else
         {
             // Editable combo (CBS_DROPDOWN / CBS_SIMPLE).
             w = new wxComboBox(parent, id, wxEmptyString, pos,
-                               wxSize(size.GetWidth(), -1), 0, nullptr, 0);
+                               wxSize(size.GetWidth(), -1), 0, nullptr,
+                               (c.style & CBS_SORT) ? wxCB_SORT : 0);
         }
 
         // DLGINIT preset items, appended through wxItemContainer so all three
@@ -333,6 +340,13 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         long st = (c.style & LBS_EXTENDEDSEL) ? wxLB_EXTENDED
                 : (c.style & LBS_MULTIPLESEL) ? wxLB_MULTIPLE
                 :                               wxLB_SINGLE;
+        // LBS_SORT: Windows keeps the list alphabetised as AddString inserts
+        // (and AddString returns the SORTED index, which wx's Append matches).
+        // Consumers map rows via that returned index + SetItemData, so the
+        // flag changes display order only -- but Choose Notepad, Complete Word
+        // and Send to All Worlds all declare it, and without it their lists
+        // showed in insertion order where Windows users see them alphabetised.
+        if (c.style & LBS_SORT) st |= wxLB_SORT;
         w = new wxListBox(parent, id, pos, size, 0, nullptr, st | wxLB_NEEDED_SB);
     }
     else if (cls == "ScrollBar")

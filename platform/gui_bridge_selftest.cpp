@@ -297,6 +297,113 @@ void TestListBoxStyles()
     }
 }
 
+// ── 2b. LBS_SORT / CBS_SORT keep Windows' alphabetical display order ──────
+// Windows sorts as AddString inserts and returns the sorted index; consumers
+// map rows via that index + item data, so dropping the styles was harmless to
+// correctness but showed Choose Notepad, Complete Word, Send to All Worlds
+// and utils.choose in insertion order where Windows users see them sorted.
+// The behavioural half (Append lands "Apple" ABOVE the earlier "Zebra") is
+// what proves the sort takes effect; the flag check alone could pass with a
+// wx build that ignores it.
+void TestSortedListStyles()
+{
+    printf("Dialog bridge (LBS_SORT / CBS_SORT):\n");
+
+
+    struct { int idd; int ctlId; const char* what; } sorted[] = {
+        { IDD_SEND_TO_ALL,    IDC_WORLD_LIST,   "Send to All Worlds' world list sorts" },
+        { IDD_CHOOSE_NOTEPAD, IDC_NOTEPAD_LIST, "Choose Notepad's list sorts" },
+        { IDD_COMPLETE_WORD,  IDC_WORD_LIST,    "Complete Word's candidate list sorts" },
+    };
+    for (const auto& r : sorted)
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(r.idd);
+        check(t != nullptr, "sorted-list template is in the recovered resources");
+        if (!t) continue;
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+        wxListBox* lb = wxDynamicCast(dlg->FindWindow(r.ctlId), wxListBox);
+        check(lb != nullptr, "its list is built as a wxListBox");
+        if (lb)
+        {
+            check((lb->GetWindowStyleFlag() & wxLB_SORT) != 0,
+                  "LBS_SORT builds wxLB_SORT");
+            lb->Append(wxT("Zebra"));
+            lb->Append(wxT("Apple"));
+            check(lb->GetString(0) == wxT("Apple"), r.what);
+        }
+        dlg->Destroy();
+    }
+
+    // The read-only combo arm: utils.choose (CLuaChooseBox) declares CBS_SORT
+    // on a CBS_DROPDOWNLIST, which builds a wxChoice.
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(IDD_LUA_CHOOSE);
+        check(t != nullptr, "IDD_LUA_CHOOSE is in the recovered resources");
+        if (t)
+        {
+            wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+            wxChoice* ch = wxDynamicCast(dlg->FindWindow(IDC_CHOOSE_COMBO), wxChoice);
+            check(ch != nullptr, "utils.choose's combo is built as a wxChoice");
+            if (ch)
+            {
+                check((ch->GetWindowStyleFlag() & wxCB_SORT) != 0,
+                      "CBS_SORT builds wxCB_SORT");
+
+                // The whole CLuaChooseBox pattern, through the CComboBox shim:
+                // AddString's RETURNED index is where the item landed (the
+                // CB_ADDSTRING contract), and item data attached through it
+                // stays with its string.  Raw wxChoice::Append does NOT keep
+                // that contract on wxOSX (it inserts sorted but returns the
+                // append-order count), so a fix that merely sets wxCB_SORT
+                // without correcting hook_combo_add_string fails here -- the
+                // data would land on the wrong row and utils.choose would
+                // answer the wrong value.
+                CComboBox combo;
+                combo.m_hWnd = (HWND) ch;
+                const int iZebra = combo.AddString("Zebra");
+                combo.SetItemData(iZebra, 100);
+                const int iApple = combo.AddString("Apple");
+                combo.SetItemData(iApple, 200);
+                check(iApple == 0,
+                      "AddString returns the SORTED index (CB_ADDSTRING contract)");
+                check(ch->GetString(0) == wxT("Apple"),
+                      "utils.choose drop-downs list alphabetically");
+                check(combo.GetItemData(0) == 200 && combo.GetItemData(1) == 100,
+                      "item data stays with its string (utils.choose's value mapping)");
+            }
+            dlg->Destroy();
+        }
+    }
+
+    // Negative control: a list WITHOUT LBS_SORT must stay in insertion order,
+    // so a fix that blanket-sorts every list fails here.  Same synthetic
+    // no-sort style TestListBoxStyles uses (no recovered template needed).
+    {
+        RcDialog synth;
+        synth.id = 1; synth.cx = 200; synth.cy = 100;
+        synth.caption = "sort-selftest";
+        RcControl plain;
+        plain.className = "ListBox"; plain.id = 1000;
+        plain.style = 0x50B10101;    // ordinary single-select, NO LBS_SORT
+        plain.x = 5; plain.y = 5; plain.cx = 100; plain.cy = 40;
+        synth.controls.push_back(plain);
+
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, synth);
+        wxListBox* lb = wxDynamicCast(dlg->FindWindow(1000), wxListBox);
+        check(lb != nullptr, "the unsorted control list box was built");
+        if (lb)
+        {
+            check((lb->GetWindowStyleFlag() & wxLB_SORT) == 0,
+                  "no LBS_SORT, no wxLB_SORT");
+            lb->Append(wxT("Zebra"));
+            lb->Append(wxT("Apple"));
+            check(lb->GetString(0) == wxT("Zebra"),
+                  "...and items stay in insertion order");
+        }
+        dlg->Destroy();
+    }
+}
+
 // ── 3. A new world keeps Gammon's custom-colour palette ───────────────────
 // Both world-creation hooks used to re-seed m_customtext[] before the document
 // was loaded (from m_normalcolour[i % 8], black background), and File ▸ New
@@ -2490,6 +2597,7 @@ int RunGuiBridgeSelfTest()
 
     TestGeometry();
     TestListBoxStyles();
+    TestSortedListStyles();
     TestNewWorldDefaults();
     TestProgressDialog();
     TestMessageBoxDecode();

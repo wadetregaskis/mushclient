@@ -9,3 +9,10 @@
 
 // Create the activity window, or raise it if already open (singleton).
 void ShowActivityWindow();
+
+// Is it open?  CMainFrame::OnUpdateDisplayActivitylist (mainfrm.cpp:1164) ticks
+// Game ▸ Activity List from `App.m_pActivityView != NULL`; the port has no
+// CActivityView, so the menu bar's update-UI arm asks this instead.  The window
+// is a singleton, and on Windows the tick is the only sign it is already open —
+// choosing the item again merely re-activates it.
+bool ActivityWindowIsOpen();

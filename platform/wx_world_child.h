@@ -361,6 +361,34 @@ public:
     // is empty or out of range, so a key-driven caller can fall through.
     bool FireMacro(int idx);
 
+    // ── the view-level commands, by COMMAND ID ─────────────────────────
+    // Every one of these has a canonical ON_COMMAND on CMUSHView or CSendView
+    // and no other route on the port: the key that does the same thing was
+    // implemented in OnInputKeyDown, but the id itself reached nothing, so
+    // world.DoCommand("PageUp") / ("CommandEnd") / ("Minimize") posted, was
+    // skipped, and still returned eOK.  Bodies are the port's existing key
+    // handlers, lifted so both entry points share one.
+    void CommandCaretHome();                // ID_COMMAND_HOME
+    void CommandCaretEnd();                 // ID_COMMAND_END
+    void ActivateInputArea();               // ID_KEYS_ACTIVATECOMMANDVIEW
+    void TabCompleteInput();                // ID_KEYS_TAB
+    void ProcessEscape();                   // ID_KEYS_ESCAPE
+    void CompleteFunctionName();            // ID_COMPLETE_FUNCTION
+    void MinimizeWorldWindow();             // ID_WINDOW_MINIMIZE (a TOGGLE)
+    void MaximizeWorldWindow();             // ID_WINDOW_MAXIMIZE
+    void RestoreWorldWindow();              // ID_WINDOW_RESTORE
+
+    // Fire keypad slot idx (the port's half of CSendView::OnKeypadCommand).
+    // False if the keypad is disabled or the slot is empty, so a key-driven
+    // caller can fall through and type the digit instead.
+    bool FireKeypad(int idx);
+
+    // Command-id entry point for the 30 keypad slots — world.DoCommand
+    // ("Keypad1") .. ("CtrlKeypadPlus").  Always claims a keypad id: with no
+    // keystroke to fall through to, a declining slot types its digit, which is
+    // Windows' own else-arm.  False for an id that is not a keypad command.
+    bool FireKeypadCommand(int id);
+
     // Command-id entry point for the 17 NAMED macro slots (up/down/north/…/
     // logout/quit), which have no key binding on any platform and are reached
     // only by id — world.DoCommand, the Input menu, the world toolbar.  False

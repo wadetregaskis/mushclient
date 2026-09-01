@@ -3801,6 +3801,55 @@ is the real property sheet and the real common dialogs.
   integer between 0 and 10000." and refuses.  Confirm 100001 is still refused
   and that the neighbouring *delay per lines* field (1..100000) is unchanged.
 
+### Frame-routing wave — shared source (2026-09-01)
+
+Port-side command-routing work whose engine half is compiled by MSVC.  Each is
+a textual change to a line Windows executes; each is meant to leave Windows
+behaviour bit-identical, and each is unrunnable here because the class that
+would prove it (`CMUSHView` / `CSendView`) is never constructed on the port.
+
+- **The trigger sound's "only if inactive" test now goes through
+  `IsWorldViewActive()`** (`ProcessPreviousLine.cpp:1218`).  The raw
+  `m_pActiveCommandView == NULL && m_pActiveOutputView == NULL` pair was
+  vacuously true off Windows, so the option suppressed nothing there; on
+  Windows `IsWorldViewActive()` is *defined* as that pair (`doc.h:1214`), so
+  the new expression is its De Morgan equal.  **To check:** a trigger with a
+  sound file and *Only if inactive* ticked, on a world whose window is
+  frontmost — no sound; click another world (or another app) and make the same
+  line arrive — the sound plays.  Also confirm a trigger with the box
+  **un**ticked still sounds in both states, and that Game ▸ *enable trigger
+  sounds* off still silences both.  Nothing else reads those two pointers on
+  this path, so the only way to see a regression is the sound itself.
+
+- **`CSendView::OnKeypadCommand`'s id → slot switch is hoisted**
+  (`utilities_shared.cpp` `KeypadCommandIdToSlot` / `KeypadSlotDigit`;
+  `sendvw.cpp:1053` now calls both).  Same shape as `MacroCommandIdToSlot`
+  before it, and for the same reason — the port has no `CSendView`, so
+  `world.DoCommand ("Keypad1")` reached nothing.  The view's body is otherwise
+  untouched: the auto-say save/restore, the `m_keypad_enable` branch, the
+  `SendCommand` call and the `ReplaceSel` else-arm all stay where they were.
+  **To check:** with *Enable keypad* on and the Keypad page configured, press
+  each of the fifteen numpad keys and the fifteen Ctrl+numpad ones — every one
+  must send exactly the slot it did before.  Then turn *Enable keypad* off and
+  press them again: each must TYPE its own character into the command bar at
+  the caret (`0`-`9`, `.`, `/`, `*`, `-`, `+`), which is the arm that reads
+  `sValues[]`.  Finally `world.DoCommand ("Keypad1")` and
+  `("CtrlKeypadPlus")` from the Immediate window, which is the route that was
+  broken on the port and has always worked on Windows.
+
+- **The colour swatch's right-click menu forks off Windows**
+  (`dialogs/world_prefs/ButtonColour.cpp`, `docs/UPSTREAM-DIVERGENCES.md` 23).
+  The `#ifdef _WIN32` arm is the original code verbatim; the only thing that
+  moved on the Windows side is `bool bEnable = GetClipboardColour (...)`, which
+  now runs a few lines earlier, before `LoadMenu` rather than after it (nothing
+  between them touches the clipboard or the menu).  `ButtonColour.h` gains one
+  inline method inside `#ifndef _WIN32`.  **To check:** right-click a colour
+  swatch on World Properties ▸ Custom Colours.  The two-item *Copy* / *Paste*
+  menu must appear at the pointer exactly as before, *Paste* greyed until a
+  colour has been copied, and both items must work.  Also try the keyboard
+  context-menu key on a focused swatch — that is the `(-1, -1)` arm, and it is
+  the same code on both platforms.
+
 ---
 
 ## 10. Round two — results of the second empirical pass (2026-08-20)

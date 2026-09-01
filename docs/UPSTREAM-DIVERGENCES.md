@@ -995,3 +995,55 @@ reloads byte-identically — fails without the writer half),
 route, LF and TAB), and `WorldLoad.RawLinefeedInAttributeValueIsRejected`
 (negative control: the parser still rejects the raw form, which is what makes
 the escape load-bearing).
+
+## 23 — A colour swatch's right-click menu is built by hand off Windows
+
+**Where:** `dialogs/world_prefs/ButtonColour.cpp`, `CColourButton::OnRButtonDown`
+(an `#ifdef _WIN32` fork), plus a port-only public entry point
+`CColourButton::ShowColourPopup` in `ButtonColour.h` and the right-click binds
+on `OwnerDrawButton` (`platform/wx_mfc_impl.cpp`).
+
+**Was (upstream):** the handler loads `IDR_COLOUR_POPUP` — a dedicated two-item
+resource, *&Copy* / *&Paste* — with `CMenu::LoadMenu`, greys *Paste* when the
+clipboard holds no colour, and calls `TrackPopupMenu`, which posts `WM_COMMAND`
+to the owner so `ON_COMMAND(ID_POPUP_COPYCOLOUR/PASTECOLOUR)` runs.
+
+**Now:** off Windows the same handler appends the two items itself and acts on
+`TrackPopupMenu`'s return value. Three port facts make that necessary, and
+fixing any two of them would have left the feature just as dead:
+
+1. `CMenu::LoadMenu` is a permanent `FALSE` — the port has no menu-resource
+   loader — and `GetSubMenu(0)` then materialises an **empty** popup. The menu
+   would have appeared with nothing in it.
+2. The port's `TrackPopupMenu` behaves as though `TPM_RETURNCMD` were set: it
+   *answers* the chosen id rather than posting `WM_COMMAND`, so the canonical
+   code, which discards the return value, would have shown a menu whose choice
+   went nowhere. `CMainFrame::LeftTrayClick` already carries the identical
+   `#else` arm for the identical reason.
+3. `ON_WM_RBUTTONDOWN()` / `ON_WM_CONTEXTMENU()` are **empty macros** here, and
+   an owner-draw swatch is a wx control with no message map behind it, so no
+   gesture could reach `OnRButtonDown` at all. `OwnerDrawButton` now binds
+   `wxEVT_RIGHT_UP` (consumed, which is also what stops wx synthesising a
+   second `wxEVT_CONTEXT_MENU` from it) and `wxEVT_CONTEXT_MENU` (the keyboard
+   menu key and AppKit's `menuForEvent:`), and calls the canonical body through
+   `ShowColourPopup` — a `dynamic_cast`, so every other owner-draw button still
+   falls through untouched.
+
+The *behaviour* is upstream's: the same two labels in the same order, the same
+grey-out rule, the same two handlers. Only the plumbing differs, and the
+Windows arm is byte-for-byte what it was.
+
+**Why it matters:** the menu is the only way to copy a colour from one swatch to
+another, and it was unreachable on all ~50 colour swatches in the app — the
+world-prefs colour pages, Global Prefs, Highlight Phrase and Text Attributes.
+
+**Verification:** `--gui-bridge-selftest`'s *Colour swatch right-click* block
+drives the real `IDD_PREFS_P3` template: it asserts a right-click raises a menu
+at all, that the menu carries exactly `ID_POPUP_COPYCOLOUR` and
+`ID_POPUP_PASTECOLOUR`, that *Paste* is greyed with no colour on the clipboard
+and live with one, that the anchor is the swatch's screen origin plus the click
+offset (arithmetic nothing had ever exercised), that choosing *Copy* really
+writes `&hBBGGRR` and choosing *Paste* really changes `m_colour`, that the
+keyboard `(-1, -1)` route works, and that a plain owner-draw button raises
+nothing. Every assertion was confirmed to fail with its half of the fix
+reverted.

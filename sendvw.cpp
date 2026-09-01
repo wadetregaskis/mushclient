@@ -1060,54 +1060,11 @@ ASSERT_VALID(pDoc);
   BOOL bSavedAutoSay = pDoc->m_bEnableAutoSay;
   pDoc->m_bEnableAutoSay = FALSE;
 
-const char * sValues [eKeypad_Max_Items] =
-  {
-  // normal
-  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "/", "*", "-", "+",
-  // ctrl
-  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "/", "*", "-", "+"
-  };
+// The id -> slot mapping, and the digit an id types when the keypad is off,
+// are in utilities_shared.cpp so the port's command-id route reads the same
+// table (it has no CSendView to reach this one).  Behaviour here is unchanged.
+const int iIndex = KeypadCommandIdToSlot (nIDC);
 
-int iIndex = -1;
-
-  switch (nIDC)
-    {
-    // normal keys
-    case ID_KEYPAD_0          : iIndex = eKeypad_0    ; break;
-    case ID_KEYPAD_1          : iIndex = eKeypad_1    ; break;
-    case ID_KEYPAD_2          : iIndex = eKeypad_2    ; break;
-    case ID_KEYPAD_3          : iIndex = eKeypad_3    ; break;
-    case ID_KEYPAD_4          : iIndex = eKeypad_4    ; break;
-    case ID_KEYPAD_5          : iIndex = eKeypad_5    ; break;
-    case ID_KEYPAD_6          : iIndex = eKeypad_6    ; break;
-    case ID_KEYPAD_7          : iIndex = eKeypad_7    ; break;
-    case ID_KEYPAD_8          : iIndex = eKeypad_8    ; break;
-    case ID_KEYPAD_9          : iIndex = eKeypad_9    ; break;
-    case ID_KEYPAD_DOT        : iIndex = eKeypad_Dot  ; break;
-    case ID_KEYPAD_SLASH      : iIndex = eKeypad_Slash; break;
-    case ID_KEYPAD_STAR       : iIndex = eKeypad_Star ; break;
-    case ID_KEYPAD_DASH       : iIndex = eKeypad_Dash ; break;
-    case ID_KEYPAD_PLUS       : iIndex = eKeypad_Plus ; break;
-
-    // control keys
-    case  ID_CTRL_KEYPAD_0    : iIndex = eCtrl_Keypad_0    ; break;
-    case  ID_CTRL_KEYPAD_1    : iIndex = eCtrl_Keypad_1    ; break;
-    case  ID_CTRL_KEYPAD_2    : iIndex = eCtrl_Keypad_2    ; break;
-    case  ID_CTRL_KEYPAD_3    : iIndex = eCtrl_Keypad_3    ; break;
-    case  ID_CTRL_KEYPAD_4    : iIndex = eCtrl_Keypad_4    ; break;
-    case  ID_CTRL_KEYPAD_5    : iIndex = eCtrl_Keypad_5    ; break;
-    case  ID_CTRL_KEYPAD_6    : iIndex = eCtrl_Keypad_6    ; break;
-    case  ID_CTRL_KEYPAD_7    : iIndex = eCtrl_Keypad_7    ; break;
-    case  ID_CTRL_KEYPAD_8    : iIndex = eCtrl_Keypad_8    ; break;
-    case  ID_CTRL_KEYPAD_9    : iIndex = eCtrl_Keypad_9    ; break;
-    case  ID_CTRL_KEYPAD_DOT  : iIndex = eCtrl_Keypad_Dot  ; break;
-    case  ID_CTRL_KEYPAD_SLASH: iIndex = eCtrl_Keypad_Slash; break;
-    case  ID_CTRL_KEYPAD_STAR : iIndex = eCtrl_Keypad_Star ; break;
-    case  ID_CTRL_KEYPAD_DASH : iIndex = eCtrl_Keypad_Dash ; break;
-    case  ID_CTRL_KEYPAD_PLUS : iIndex = eCtrl_Keypad_Plus ; break;
-
-    } // end of switch
-         
   // if command found
   if (iIndex != -1)
     {
@@ -1118,7 +1075,7 @@ int iIndex = -1;
       pDoc->m_iCurrentActionSource = eUnknownActionSource;
       }
     else
-      GetEditCtrl().ReplaceSel (sValues [iIndex], TRUE);
+      GetEditCtrl().ReplaceSel (KeypadSlotDigit (iIndex), TRUE);
     }
 
 // restore auto-say

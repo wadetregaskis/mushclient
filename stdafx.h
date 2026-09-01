@@ -515,6 +515,10 @@ bool GetSelection (CEdit * pEdit, CString & strSelection);
 CString QuoteForumCodes(const CString & strText) ;
 // Which m_macros[] slot a macro command id names, or -1 (utilities_shared.cpp).
 int MacroCommandIdToSlot (const unsigned int nIDC);
+// Which m_keypad[] slot a keypad command id names, or -1 (utilities_shared.cpp),
+// and the digit that slot TYPES when the keypad is disabled.
+int KeypadCommandIdToSlot (const unsigned int nIDC);
+const char * KeypadSlotDigit (const int iIndex);
 
 #ifndef _WIN32
 // ── Notepad Convert menu (notepad_convert_shared.cpp) ───────────────────────

@@ -61,6 +61,7 @@
 #include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 #include "platform/wx_statusitem.h"   // ApplyTrayItemFromPrefs (the menu-bar "tray" item)
 #include "platform/wx_activity.h"     // ShowActivityWindow (Game ▸ Activity List)
+#include "dialogs/world_prefs/ButtonColour.h"  // CColourButton — the swatch right-click menu
 #include "platform/ma_sound.h"        // miniaudio sound engine (volume/pan/buffers)
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
@@ -144,11 +145,18 @@ static const int ID_CONN_LOG_TOGGLE    = wxID_HIGHEST + 410;
 // ── Game menu IDs ─────────────────────────────────────────────────────────────
 static const int ID_MENU_GAME_LUA_EVAL = wxID_HIGHEST + 411;
 
-// ── View menu IDs (port-local; real wx implementations, not canonical) ────────
-// +420..422 are the Configure ▸ Import/Export items (above); the View toggles
-// must use a distinct range or wx can't tell the commands apart (the View branch
-// ran first, so Import/Export silently toggled View state and were unreachable).
-static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 430;
+// ── View menu IDs ────────────────────────────────────────────────────────────
+// A canonical command id, not a private wxID — the same reason its two siblings
+// ID_MENU_VIEW_FULLSCREEN / ID_MENU_VIEW_STATUSBAR carry theirs (below):
+// world.DoCommand("AlwaysOnTop") posts 32322 through Frame.PostMessage ->
+// hook_post_message -> wxEVT_MENU, and accelerators.cpp:39 publishes the name to
+// scripts.  On a private id that command matched no arm of the frame dispatcher,
+// so it returned eOK and did nothing while the menu item itself worked.
+// (resource.h:1427 ID_VIEW_ALWAYSONTOP.)  The IMPLEMENTATION stays port-local:
+// CMainFrame::OnViewAlwaysontop bottoms out in the inert SetWindowPos shim, so
+// the last-resort AfxDispatchCommand must not be given &Frame to reach it —
+// that would flip and persist the preference with no window pinned.
+static const int ID_MENU_VIEW_ALWAYSONTOP = 32322;
 
 // ── Display menu: the macOS-shaped clear ──────────────────────────────────────
 // Port-local, with no canonical counterpart: Windows has exactly one clear
@@ -1031,8 +1039,9 @@ static CCmdTarget* canon_target(char t, CMUSHclientDoc* doc)
 //                    m_bAutoMenuEnable does for itself on Windows.
 //   3. the DOCUMENT's own ON_UPDATE_COMMAND_UI, for ids neither table names
 //                    (World Configuration is the one this menu needs: doc.cpp
-//                    :1988 greys it mid-connect, which is stricter than the
-//                    "doc != nullptr" the menu bar settles for).
+//                    :1988 greys it mid-connect, which is stricter than
+//                    "doc != nullptr" — the menu bar used to settle for that
+//                    and now comes here too, so all three surfaces agree).
 //
 // Seeds enabled=true / checked=-1 and returns false when nothing owned the id,
 // which leaves the caller free to keep the seeded "live" answer — that is what
@@ -1319,7 +1328,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->AppendSeparator();
     gameMenu->Append(32320 /*ID_INPUT_GLOBALCHANGE*/,    wxT("&Global Change…\tCtrl+Shift+G"));
     gameMenu->Append(32325 /*ID_GAME_SENDTOALLWORLDS*/,  wxT("&Send To All Worlds…\tCtrl+Alt+S"));
-    gameMenu->Append(32203 /*ID_DISPLAY_ACTIVITYLIST*/,  wxT("&Activity List"));
+    // A CHECK item: Windows ticks it while the Activity window exists
+    // (CMainFrame::OnUpdateDisplayActivitylist, mainfrm.cpp:1164), and a plain
+    // wx item ignores wxUpdateUIEvent::Check() even when an arm calls it.
+    gameMenu->AppendCheckItem(32203 /*ID_DISPLAY_ACTIVITYLIST*/,
+                              wxT("&Activity List"));
     gameMenu->Append(32326 /*ID_EDIT_GENERATECHARACTERNAME*/, wxT("Generate Character &Name…"));
     gameMenu->Append(32323 /*ID_EDIT_SPELLCHECK*/,       wxT("Chec&k Spelling"));
     append_canon_section(gameMenu, SEC_GAME);   // Mapper, Reset Timers, Auto Say, Send File, Wrap Output, …
@@ -1606,7 +1619,6 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // rest, and are answered by the MenuCommandUiState arm below.
         if (id == wxID_SAVE || id == wxID_SAVEAS ||
             id == wxID_CLOSE ||
-            id == 32158 /*ID_GAME_PREFERENCES*/ ||
             id == ID_DISPLAY_CLEAR_COMMAND_HISTORY ||
             id == ID_MENU_CFG_TRIGGERS  ||
             id == ID_MENU_CFG_ALIASES   ||
@@ -1627,6 +1639,19 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             id == ID_MENU_EXPORT_MACROS) {
             // Need an active world.
             evt.Enable(doc != nullptr);
+        } else if (id == 32158 /*ID_GAME_PREFERENCES*/) {
+            // Not "any world will do".  CMUSHclientDoc::OnUpdateGamePreferences
+            // (doc.cpp:1988) greys World Properties unless the phase is
+            // eConnectNotConnected or eConnectConnectedToMud — "no changing of
+            // address whilst connecting".  This item sat in the list above, so
+            // the menu bar was the one surface that settled for doc != nullptr
+            // while the output pane's context menu and the World toolbar (both
+            // of which reach the document's own handler) greyed it: three
+            // surfaces, two answers.  Step 3 of wx_canonical_menu_ui_state is
+            // that handler.
+            bool enabled = true; int checked = -1;
+            wx_canonical_menu_ui_state(id, doc, enabled, checked);
+            evt.Enable(doc != nullptr && enabled);
         } else if (id == ID_MENU_PRINT_SELECTION ||
                    id == 32255 /*ID_FILE_SAVESELECTION*/) {
             // Needs an active world WITH a selection — the whole point of the
@@ -1650,6 +1675,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             // reading the parent's style flag reported the wrong thing once the
             // pin started being applied to the world frames as well.
             evt.Check(App.m_bAlwaysOnTop != 0);
+        } else if (id == 32203 /*ID_DISPLAY_ACTIVITYLIST*/) {
+            // Windows: Enable(TRUE) unconditionally, SetCheck from whether the
+            // activity view exists (mainfrm.cpp:1164).  The port's equivalent
+            // state is the singleton frame in wx_activity.cpp.
+            evt.Enable(true);
+            evt.Check(ActivityWindowIsOpen());
         } else if (id == ID_MENU_VIEW_FULLSCREEN) {
             // Same target as the command arm, or the tick reports one window
             // while the other is the one that moved.
@@ -1911,10 +1942,25 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
         // ── View-level output/input commands (canonical handlers live on the
         // un-instantiated CMUSHView/CSendView; reimplemented on the child frame).
+        // The second group (32107..33051) is the scroll / caret / window
+        // family: CMUSHView::OnTest* and CSendView::OnCommandHome et al.  Every
+        // one has a working KEY on this port already (OnInputKeyDown), so the
+        // gap was invisible from the keyboard — but the command ids themselves
+        // reached no arm, so world.DoCommand("PageUp"), ("CommandEnd"),
+        // ("Minimize") and the rest posted, fell through to evt.Skip() and
+        // still returned eOK.  ID_KEYS_TAB / ID_KEYS_ESCAPE take CSendView's
+        // reading (OnKeysTab / OnProcessEscape) rather than CMUSHView's, which
+        // maps both to "activate the command view": the command bar is where
+        // this port's focus lives, so CSendView is the view MFC would route to.
         if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
             id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
             id == 32946 || id == 32947 || id == 33046 ||
             id == 32318 || id == 32319 || id == 32973 ||
+            id == 32107 || id == 32111 || id == 32112 ||
+            id == 32114 || id == 32115 || id == 32116 ||
+            id == 32978 || id == 32979 ||
+            id == 32142 || id == 32288 || id == 32317 || id == 33048 ||
+            id == 32235 || id == 33050 || id == 33051 ||
             id == ID_DISPLAY_CLEAR_COMMAND_HISTORY) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
                 switch (id) {
@@ -1934,6 +1980,22 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 case 32319: child->GotoBookmark();         break; // ID_DISPLAY_GOTOBOOKMARK
                 case ID_DISPLAY_CLEAR_COMMAND_HISTORY:
                     child->ClearCommandHistory();          break;
+                // The scroll / caret / window family.
+                case 32111: child->FireScrollCommand(CWorldChildFrame::eScrollPageUp);   break; // ID_TEST_PAGEUP
+                case 32112: child->FireScrollCommand(CWorldChildFrame::eScrollPageDown); break; // ID_TEST_PAGEDOWN
+                case 32115: child->FireScrollCommand(CWorldChildFrame::eScrollLineUp);   break; // ID_TEST_LINEUP
+                case 32116: child->FireScrollCommand(CWorldChildFrame::eScrollLineDown); break; // ID_TEST_LINEDOWN
+                case 32114: child->FireScrollCommand(CWorldChildFrame::eScrollStart);    break; // ID_TEST_START
+                case 32107: child->FireScrollCommand(CWorldChildFrame::eScrollEnd);      break; // ID_TEST_END
+                case 32978: child->CommandCaretHome();     break; // ID_COMMAND_HOME
+                case 32979: child->CommandCaretEnd();      break; // ID_COMMAND_END
+                case 32142: child->ActivateInputArea();    break; // ID_KEYS_ACTIVATECOMMANDVIEW
+                case 32288: child->TabCompleteInput();     break; // ID_KEYS_TAB
+                case 32317: child->ProcessEscape();        break; // ID_KEYS_ESCAPE
+                case 33048: child->CompleteFunctionName(); break; // ID_COMPLETE_FUNCTION
+                case 32235: child->MinimizeWorldWindow();  break; // ID_WINDOW_MINIMIZE
+                case 33050: child->MaximizeWorldWindow();  break; // ID_WINDOW_MAXIMIZE
+                case 33051: child->RestoreWorldWindow();   break; // ID_WINDOW_RESTORE
                 }
             }
             else if (id == 33046) {
@@ -6019,6 +6081,19 @@ public:
         // A swatch click edits the colour; route to the canonical handler
         // (BN_CLICKED) so e.g. CPrefsP5::On<colour> opens the colour picker.
         Bind(wxEVT_LEFT_UP, &OwnerDrawButton::OnClick, this);
+        // A swatch RIGHT-click is Copy colour / Paste colour
+        // (CColourButton::OnRButtonDown, dialogs/world_prefs/ButtonColour.cpp).
+        // Nothing was bound, so that menu was unreachable on every one of the
+        // ~50 colour swatches in the app -- the message map's ON_WM_RBUTTONDOWN
+        // and ON_WM_CONTEXTMENU are empty macros here, and no wx event routed
+        // to either handler.
+        //
+        // RIGHT_UP is CONSUMED (no Skip), which is also what stops the pair
+        // firing twice: wx only synthesises wxEVT_CONTEXT_MENU from a right-up
+        // nobody handled.  The CONTEXT_MENU bind is for the routes that never
+        // produce one -- the keyboard menu key, and AppKit's menuForEvent:.
+        Bind(wxEVT_RIGHT_UP, &OwnerDrawButton::OnRightUp, this);
+        Bind(wxEVT_CONTEXT_MENU, &OwnerDrawButton::OnContextMenu, this);
     }
     CButton* m_cbtn = nullptr;   // canonical backing button (set by bind hook)
 
@@ -6043,6 +6118,40 @@ private:
         if (painted) {
             pdc.DrawBitmap(*painted, 0, 0, false);
             delete painted;
+        }
+    }
+
+    // Both arms hand CLIENT coordinates to the canonical handler, which is
+    // what Win32's WM_RBUTTONDOWN carries: CColourButton::OnRButtonDown does
+    // its own GetClientRect + ClientToScreen and offsets by the point, and both
+    // of those are hook-wired for a bridged control (mfc_ui.h:3434/3438).
+    // The only owner-draw button in the app with a context menu is the colour
+    // swatch, and its handler is protected, so the canonical class supplies a
+    // port-only public entry point (ButtonColour.h).  A dynamic_cast rather
+    // than an assumption: every other owner-draw button must still fall
+    // through to whatever the parent does.
+    CColourButton* Swatch() const { return dynamic_cast<CColourButton*>(m_cbtn); }
+
+    void OnRightUp(wxMouseEvent& e)
+    {
+        CColourButton* sw = Swatch();
+        if (!sw) { e.Skip(); return; }
+        sw->ShowColourPopup(CPoint(e.GetX(), e.GetY()));
+    }
+
+    void OnContextMenu(wxContextMenuEvent& e)
+    {
+        CColourButton* sw = Swatch();
+        if (!sw) { e.Skip(); return; }
+        // wxContextMenuEvent carries SCREEN coordinates, or wxDefaultPosition
+        // for a keyboard invocation -- which is the (-1, -1) the canonical
+        // handler already has an arm for.
+        const wxPoint pos = e.GetPosition();
+        if (pos == wxDefaultPosition)
+            sw->ShowColourPopup(CPoint(-1, -1));
+        else {
+            const wxPoint client = ScreenToClient(pos);
+            sw->ShowColourPopup(CPoint(client.x, client.y));
         }
     }
 

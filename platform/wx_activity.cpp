@@ -254,6 +254,11 @@ CActivityFrame* CActivityFrame::s_instance = nullptr;
 
 } // namespace
 
+bool ActivityWindowIsOpen()
+{
+    return CActivityFrame::s_instance != nullptr;
+}
+
 void ShowActivityWindow()
 {
     if (CActivityFrame::s_instance)

@@ -28,6 +28,14 @@
 // compat.h's macros in this translation unit.
 void wx_activate_world_frame(CMUSHclientDoc* doc);
 
+// Also wx_mfc_impl.cpp, and declared here for the same reason: the one answer
+// to "may the user choose this command right now", layered canonical table ->
+// menu_ui_rules -> the document's own ON_UPDATE_COMMAND_UI.  The menu bar and
+// the output pane's context menu both ask it; the toolbar used to ask the
+// DOCUMENT alone, which is a strictly smaller question (see UpdateState).
+bool wx_canonical_menu_ui_state(int id, CMUSHclientDoc* doc,
+                                bool& enabled, int& checked);
+
 // MFC/AFX standard command ids.  These live in afxres.h, not resource.h, and the
 // port already routes them by number elsewhere (wx_mfc_impl.cpp) — same values.
 #define MC_ID_FILE_NEW      0xE100
@@ -86,7 +94,10 @@ const TbButton kStandard[] = {
 
 const TbButton kWorld[] = {
     { ID_GAME_WRAPLINES,     eFwd, ID_GAME_WRAPLINES,  true,  "Wrap output" },
-    { ID_FILE_LOGSESSION,    eFwd, ID_FILE_LOGSESSION, false, "Log session" },
+    // A CHECK item: CMUSHclientDoc::OnUpdateFileLogsession (doc.cpp:1008) is
+    // SetCheck(m_logfile != NULL), and MFC's CToolCmdUI::SetCheck presses any
+    // toolbar button, so Windows needs no declaration.  wx does.
+    { ID_FILE_LOGSESSION,    eFwd, ID_FILE_LOGSESSION, true,  "Log session" },
     { 0,                     eFwd, 0,                  false, nullptr },
     { ID_CONNECT_DISCONNECT, eConnectTgl, 0,           false, "Connect / disconnect" },
     { 0,                     eFwd, 0,                  false, nullptr },
@@ -792,18 +803,25 @@ void CWorldToolBars::UpdateState (CMUSHclientDoc* activeDoc)
 
             if (b.act == eUnsupported) { bar->EnableTool(b.id, false); continue; }
 
+            // Ask the LAYERED source, not the document alone.  Windows' MFC
+            // routes a toolbar update through view -> document -> frame -> app,
+            // so every button whose canonical ON_UPDATE_COMMAND_UI lives on
+            // CMUSHView / CSendView / CMainFrame got no answer here at all —
+            // Freeze Output's handler is CMUSHView::OnUpdateDisplayFreezeoutput
+            // (mushview.cpp:3240), and the document's map ends in
+            // OnFixMenus, which returns before capturing anything.
             bool enabled = true;
             int  checked = -1;
-            if (activeDoc) {
-                CCmdUI cmdui;
-                cmdui.m_nID            = (UINT) b.id;
-                cmdui.m_pCaptureEnable = &enabled;
-                cmdui.m_pCaptureCheck  = &checked;
-                AfxDispatchUpdateUI(activeDoc, &cmdui);
-            }
+            wx_canonical_menu_ui_state(b.id, activeDoc, enabled, checked);
             bar->EnableTool(b.id, enabled);
-            if (b.check && checked >= 0)
-                bar->ToggleTool(b.id, checked != 0);
+            // Unconditionally for a check item, NOT "only if something
+            // answered".  wxToolBarTool::Action presses a wxITEM_CHECK tool
+            // BEFORE dispatching the click, so a silent source leaves whatever
+            // that auto-toggle wrote: freeze the pane from the Display menu and
+            // the button stayed up; then press the button and it went down
+            // while FreezeOutput() un-froze — the exact inverse, permanently.
+            if (b.check)
+                bar->ToggleTool(b.id, checked > 0);
         }
     }
 

@@ -48,6 +48,7 @@
 #include "platform/wx_toolbar.h"     // CWorldToolBars — the Connect/Disconnect toggle
 #include "platform/app_config.h"     // OpenAppConfig — redirected around the toolbar blocks
 #include "platform/menu_ui_rules.h"  // kPortMenuIdDisconnect — the id both must agree on
+#include "platform/wx_activity.h"    // ActivityWindowIsOpen — the Activity List tick
 #include "dialogs/world_prefs/TreePropertySheet.h"   // m_iWantedPage — which page a Configure command asked for
 
 // Defined in wx_toolbar.cpp: the world in activity slot 1..10.  The menu/
@@ -175,6 +176,20 @@ int   g_saveCalls  = 0;
 void* g_saveDoc    = NULL;
 bool  g_saveAs     = false;
 void* g_saveParent = NULL;
+
+
+// The wxToolBar inside a CWorldToolBars strip that carries `id`.  The bars are
+// private to CWorldToolBars and are built with wxID_ANY, so FindWindowById
+// cannot reach them; this walk can, and it is what lets the harness read a
+// button's PRESSED state, which is the whole of the defect below.
+wxToolBar* findToolBarWith(wxWindow* root, int id)
+{
+    if (wxToolBar* tb = dynamic_cast<wxToolBar*>(root))
+        if (tb->FindById(id)) return tb;
+    for (wxWindow* c : root->GetChildren())
+        if (wxToolBar* r = findToolBarWith(c, id)) return r;
+    return NULL;
+}
 
 // Click a toolbar button.  wxEVT_TOOL is delivered to the bar's FRAME, which is
 // where CWorldToolBars binds its handler.
@@ -839,6 +854,92 @@ int RunMenuBarSelfTest()
             check(!logAns.setText,
                   "...and its caption is left alone rather than reset");
 
+
+            // ── the three View toggles answer their CANONICAL ids ───────────
+            // world.DoCommand("AlwaysOnTop") / ("FullScreenMode") /
+            // ("ViewStatusbar") post the canonical id through
+            // Frame.PostMessage -> hook_post_message -> wxEVT_MENU.  Two of the
+            // three were moved onto their canonical ids for exactly that reason
+            // (038dc88); Always On Top was left on wxID_HIGHEST + 430, so the
+            // command matched no arm, was skipped, and DoCommand still returned
+            // eOK.  Firing 32322 is the half that fails on the private id.
+            {
+                // The harness exits from wxApp::OnInit, so InitInstance never
+                // ran and the sqlite preferences database is not open: the
+                // db_write_int inside the arm is a no-op.  Assert that rather
+                // than trust it -- this is the one arm here that persists.
+                check(App.db == NULL,
+                      "the preferences database is closed, so the toggle cannot "
+                      "write the tester's real prefs");
+
+                const unsigned int savedOnTop = App.m_bAlwaysOnTop;
+                App.m_bAlwaysOnTop = 0;
+
+                const bool claimed1 = fireCmd(frame, 32322 /*ID_VIEW_ALWAYSONTOP*/);
+                const bool onAfter1 = App.m_bAlwaysOnTop != 0;
+                const UiAnswer uiOn = probeUi(frame, 32322);
+
+                const bool claimed2 = fireCmd(frame, 32322);
+                const bool onAfter2 = App.m_bAlwaysOnTop != 0;
+                const UiAnswer uiOff = probeUi(frame, 32322);
+
+                check(claimed1 && claimed2,
+                      "DoCommand(\"AlwaysOnTop\") is claimed by a handler");
+                // Both directions, so an arm that merely SET the flag fails.
+                check(onAfter1 && !onAfter2,
+                      "...and toggles the preference, then toggles it back");
+                check(uiOn.setChecked && uiOn.checked,
+                      "...with the menu tick following it on");
+                check(uiOff.setChecked && !uiOff.checked,
+                      "...and off again");
+
+                App.m_bAlwaysOnTop = savedOnTop;
+            }
+
+
+            // ── Game ▸ Activity List ticks while the window is open ─────────
+            // CMainFrame::OnUpdateDisplayActivitylist (mainfrm.cpp:1164) is
+            // Enable(TRUE) + SetCheck(App.m_pActivityView != NULL).  The port
+            // built the item with Append (so wx discards a Check() outright)
+            // and had no update-UI arm for the id at all, so the tick — which
+            // on Windows is the ONLY sign the window is already open, since
+            // choosing the item again merely raises it — was never shown.
+            {
+                wxMenuItem* activity = mb->FindItem(32203);
+                check(activity != NULL,
+                      "Game > Activity List is in the menu bar");
+                check(activity && activity->IsCheckable(),
+                      "...as a check item, or wx drops the answer");
+
+                check(!ActivityWindowIsOpen(),
+                      "the activity window is closed to begin with");
+                const UiAnswer shut = probeUi(frame, 32203);
+                check(shut.claimed && shut.setEnabled && shut.enabled,
+                      "...and the item is live regardless, as on Windows");
+                check(shut.setChecked && !shut.checked,
+                      "...and unticked");
+
+                // Open it through the command id, which is the route a user
+                // takes; that also proves the command arm and the update arm
+                // agree about which id they are talking about.
+                fireCmd(frame, 32203);
+                check(ActivityWindowIsOpen(),
+                      "choosing Activity List opens the activity window");
+                const UiAnswer open = probeUi(frame, 32203);
+                check(open.setChecked && open.checked,
+                      "...and the menu item is now ticked");
+
+                // Both directions: an arm that ticked unconditionally passes
+                // the assertion above and fails this one.
+                if (wxWindow* w = wxWindow::FindWindowByLabel(wxT("Activity")))
+                    w->Close(true);
+                check(!ActivityWindowIsOpen(),
+                      "closing it clears the singleton again");
+                const UiAnswer reshut = probeUi(frame, 32203);
+                check(reshut.setChecked && !reshut.checked,
+                      "...and the tick goes away with it");
+            }
+
             // A View item that deliberately stays live with nothing open --
             // proof the probe is reading a real answer and not just "false".
             const Item* statusBar = find_by_label(items, "Status Bar");
@@ -924,6 +1025,13 @@ int RunMenuBarSelfTest()
             check(!probeUi(frame, 0xE200).enabled,
                   "Disconnect is dead while the world is disconnected");
             bool liveThroughout = true, connectDead = true, reconnectDead = true;
+            // World Properties is greyed for the whole of a connect in flight —
+            // "no changing of address whilst connecting"
+            // (CMUSHclientDoc::OnUpdateGamePreferences, doc.cpp:1988).  The menu
+            // bar used to answer `doc != nullptr` for it from a hard-coded list,
+            // while the output pane's context menu and the World toolbar both
+            // reached that handler: three surfaces, two answers.
+            bool prefsDeadMidConnect = true;
             for (int phase = eConnectMudNameLookup; phase <= eConnectDisconnecting;
                  ++phase) {
                 doc->m_iConnectPhase = phase;
@@ -933,12 +1041,34 @@ int RunMenuBarSelfTest()
                 }
                 if (probeUi(frame, 32239).enabled) connectDead   = false;
                 if (probeUi(frame, 0xE201).enabled) reconnectDead = false;
+                // Phase 9 is eConnectConnectedToMud, which the rule allows —
+                // it is inside this loop only because Disconnect's rule spans
+                // the whole range.
+                if (phase != eConnectConnectedToMud) {
+                    const UiAnswer prefs =
+                        probeUi(frame, 32158 /*ID_GAME_PREFERENCES*/);
+                    if (!prefs.setEnabled || prefs.enabled) {
+                        prefsDeadMidConnect = false;
+                        printf("    (World Properties live in connect phase %d)\n",
+                               phase);
+                    }
+                }
             }
             check(liveThroughout,
                   "Disconnect stays live through every phase of a hanging connect");
             check(connectDead && reconnectDead,
                   "...while Connect and Reconnect are dead in all of them");
+            check(prefsDeadMidConnect,
+                  "World Properties is greyed while a connect is in flight");
 
+            doc->m_iConnectPhase = eConnectNotConnected;
+            // ...and the other direction, at both ends of the rule, so an arm
+            // that simply greyed the item could not pass either.
+            check(probeUi(frame, 32158).enabled,
+                  "...and live again on a disconnected world");
+            doc->m_iConnectPhase = eConnectConnectedToMud;
+            check(probeUi(frame, 32158).enabled,
+                  "...and on a fully connected one");
             doc->m_iConnectPhase = eConnectNotConnected;
 
             // Scripting and the log caption, the two port-only rules.
@@ -1343,6 +1473,289 @@ int RunMenuBarSelfTest()
                 }
             }
 
+
+            // ── keypad command ids reach the keypad, not evt.Skip() ─────────
+            // The same gap one table over.  All 30 keypad slots work from a
+            // real numpad (OnInputKeyDown maps WXK_NUMPAD* straight to a slot),
+            // but the COMMAND-ID way in -- world.DoCommand("Keypad1"), which
+            // accelerators.cpp publishes and GetInternalCommandsList lists --
+            // arrived at CSendView::OnKeypadCommand on Windows and at nothing
+            // at all here, so it was skipped while DoCommand returned eOK.
+            {
+                wxTextCtrl* bar = child->ActiveInputPublic();
+                check(bar != NULL, "the world window has a command bar (keypad)");
+
+                // "0.0.0.0" is CheckConnected's own escape hatch (doc.cpp:2785)
+                // -- it returns "not connected" without a message box, so the
+                // send half is silent and nothing modal can appear in this
+                // loop-free harness.  The alias fires before that check.
+                const CString savedServer = doc->m_server;
+                doc->m_server = "0.0.0.0";
+                const unsigned short savedAliases = doc->m_enable_aliases;
+                const unsigned short savedKeypad  = doc->m_keypad_enable;
+                doc->m_enable_aliases = TRUE;
+                doc->m_keypad_enable  = TRUE;
+
+                auto addAlias = [&](const char* text) -> CAlias* {
+                    CAlias* a    = new CAlias();
+                    a->name      = CString(text);
+                    a->contents  = "";
+                    a->bEnabled  = TRUE;
+                    a->bRegexp   = false;
+                    a->iSendTo   = eSendToVariable;
+                    a->strVariable = "zz_keypad_probe";
+                    a->iSequence = DEFAULT_ALIAS_SEQUENCE;
+                    a->strLabel  = CString(text);
+                    a->regexp    = regcomp(
+                        ConvertToRegularExpression(a->name, true, true), 0);
+                    doc->GetAliasMap().SetAt(a->strLabel, a);
+                    doc->GetAliasArray().Add(a);
+                    doc->GetAliasRevMap()[a] = std::string(text);
+                    return a;
+                };
+
+                CAlias* aPlain = addAlias("zz_kp_plain");
+                CAlias* aCtrl  = addAlias("zz_kp_ctrl");
+                doc->m_keypad[eKeypad_1]      = "zz_kp_plain";
+                doc->m_keypad[eCtrl_Keypad_1] = "zz_kp_ctrl";
+
+                // Two DIFFERENT slots, one from each half of the table, so a
+                // handler wired to one fixed slot passes the first and fails
+                // the second.
+                check(fireCmd(frame, ID_KEYPAD_1),
+                      "DoCommand(\"Keypad1\") is claimed by a handler");
+                check(aPlain->nMatched == 1 && aCtrl->nMatched == 0,
+                      "...and sends the keypad 1 slot, not some other one");
+                check(fireCmd(frame, ID_CTRL_KEYPAD_1),
+                      "DoCommand(\"CtrlKeypad1\") is claimed too");
+                check(aCtrl->nMatched == 1,
+                      "...and sends the CTRL keypad 1 slot, a different one");
+
+                // The declining arm.  A command id has no keystroke to fall
+                // through to, so where the KEY path lets an unbound numpad key
+                // type its digit, the id path must type the digit itself --
+                // literally CSendView's else-arm,
+                // GetEditCtrl().ReplaceSel(sValues[iIndex]).
+                doc->m_keypad_enable = FALSE;
+                if (bar) {
+                    bar->SetValue(wxT("ab"));
+                    bar->SetInsertionPoint(1);
+                    const bool claimed = fireCmd(frame, ID_KEYPAD_5);
+                    check(claimed,
+                          "with the keypad off the id is still claimed, not skipped");
+                    check(bar->GetValue() == wxT("a5b"),
+                          "...and types its digit at the caret, as Windows does");
+                    bar->SetValue(wxEmptyString);
+                }
+                doc->m_keypad_enable = TRUE;
+
+                // The arm matches thirty ids, not a range: an id no message
+                // map knows must still be passed on, and must fire no slot.
+                // (The adjacent ID_GAME_CONFIGURE_KEYPAD would be the sharper
+                // control, but it opens the modal prefs sheet -- there is no
+                // event loop here to close one.  tests/test_utilities.cpp
+                // pins that id against KeypadCommandIdToSlot instead.)
+                const long plainBefore = aPlain->nMatched;
+                check(!fireCmd(frame, 30054),
+                      "...while an id the arm does not own is still skipped");
+                check(aPlain->nMatched == plainBefore,
+                      "...and fires no keypad slot");
+
+                doc->m_keypad[eKeypad_1]      = "";
+                doc->m_keypad[eCtrl_Keypad_1] = "";
+                doc->m_enable_aliases = savedAliases;
+                doc->m_keypad_enable  = savedKeypad;
+                doc->m_server         = savedServer;
+            }
+
+
+            // ── the scroll / caret / window command ids ─────────────────────
+            // Their canonical handlers are CMUSHView::OnTest* and
+            // CSendView::OnCommandHome/OnKeysTab/OnProcessEscape/OnWindow*, on
+            // views the port never constructs.  The KEY that does each of these
+            // was implemented in OnInputKeyDown, which is exactly what hid the
+            // gap: the ids themselves matched no arm, so world.DoCommand
+            // ("PageUp") / ("CommandEnd") / ("Minimize") posted, were skipped,
+            // and still returned eOK.
+            {
+                COutputPane* pane = child->OutputPane();
+                wxTextCtrl*  bar  = child->ActiveInputPublic();
+                check(pane != NULL && bar != NULL,
+                      "the world window has an output pane and a command bar");
+
+                // More than a screenful, or every scroll command is a no-op and
+                // "did nothing" would pass.
+                for (int i = 0; i < 400; ++i)
+                    doc->Note(CFormat("scroll probe line %d", i));
+                doc->UpdateAllViews(nullptr);
+
+                if (pane && bar) {
+                    auto viewY = [pane]() -> int {
+                        int x = 0, y = 0;
+                        pane->GetViewStart(&x, &y);
+                        return y;
+                    };
+
+                    check(fireCmd(frame, 32107 /*ID_TEST_END*/),
+                          "DoCommand(\"End\") is claimed by a handler");
+                    const int bottom = viewY();
+                    check(bottom > 0,
+                          "...and the fixture really is longer than the window");
+
+                    check(fireCmd(frame, 32111 /*ID_TEST_PAGEUP*/),
+                          "DoCommand(\"PageUp\") is claimed too");
+                    const int afterPage = viewY();
+                    check(afterPage < bottom, "...and scrolls the pane UP");
+
+                    fireCmd(frame, 32107 /*ID_TEST_END*/);
+                    fireCmd(frame, 32115 /*ID_TEST_LINEUP*/);
+                    const int afterLine = viewY();
+                    check(afterLine < bottom, "DoCommand(\"LineUp\") scrolls up too");
+                    // The pair is what tells the two apart: a handler wired to
+                    // the wrong action passes one of these and fails this.
+                    check(bottom - afterLine < bottom - afterPage,
+                          "...by LESS than a page, so the two are not the same command");
+
+                    check(fireCmd(frame, 32114 /*ID_TEST_START*/),
+                          "DoCommand(\"Start\") is claimed");
+                    check(viewY() == 0, "...and goes to the very top");
+
+                    fireCmd(frame, 32116 /*ID_TEST_LINEDOWN*/);
+                    const int downOne = viewY();
+                    check(downOne > 0, "DoCommand(\"LineDown\") comes back down");
+                    fireCmd(frame, 32112 /*ID_TEST_PAGEDOWN*/);
+                    check(viewY() > downOne,
+                          "...and DoCommand(\"PageDown\") goes further, a page at a time");
+
+                    // End re-engages auto-scroll, which LineDown alone does not:
+                    // that is the difference between "at the end" and "one row
+                    // further on".
+                    fireCmd(frame, 32114 /*ID_TEST_START*/);
+                    check(pane->IsPaused(),
+                          "scrolled to the top, the pane is paused");
+                    fireCmd(frame, 32107 /*ID_TEST_END*/);
+                    check(!pane->IsPaused(),
+                          "...and End re-engages auto-scroll");
+
+                    // ── the caret commands ────────────────────────────────
+                    bar->SetValue(wxT("hello"));
+                    bar->SetInsertionPoint(2);
+                    check(fireCmd(frame, 32978 /*ID_COMMAND_HOME*/),
+                          "DoCommand(\"CommandHome\") is claimed");
+                    check(bar->GetInsertionPoint() == 0,
+                          "...and puts the caret at the start of the command bar");
+                    check(fireCmd(frame, 32979 /*ID_COMMAND_END*/),
+                          "DoCommand(\"CommandEnd\") is claimed");
+                    check(bar->GetInsertionPoint() == 5,
+                          "...and at the end - a different place, so one arm "
+                          "cannot serve both");
+
+                    // ── Escape ────────────────────────────────────────────
+                    {
+                        const unsigned short savedDel  = doc->m_bEscapeDeletesInput;
+                        const unsigned short savedSave = doc->m_bSaveDeletedCommand;
+                        doc->m_bEscapeDeletesInput = TRUE;
+                        doc->m_bSaveDeletedCommand = TRUE;
+                        bar->SetValue(wxT("zz_escape_probe"));
+                        check(fireCmd(frame, 32317 /*ID_KEYS_ESCAPE*/),
+                              "DoCommand(\"KeysEscape\") is claimed");
+                        check(bar->GetValue().IsEmpty(),
+                              "...and clears the command bar (escape_deletes_input)");
+                        // The half that separates "handled" from "swallowed":
+                        // what Escape throws away is kept, so it can be recalled.
+                        const std::vector<std::string> hist = child->commandList(0);
+                        bool kept = false;
+                        for (const std::string& h : hist)
+                            if (h == "zz_escape_probe") kept = true;
+                        check(kept, "...and what it discarded reached the history");
+                        doc->m_bEscapeDeletesInput = savedDel;
+                        doc->m_bSaveDeletedCommand = savedSave;
+                    }
+
+                    // ── Tab completion ────────────────────────────────────
+                    {
+                        doc->Note("zz_tabcompletion_target");
+                        doc->UpdateAllViews(nullptr);
+                        bar->SetValue(wxT("zz_tabcompl"));
+                        bar->SetInsertionPointEnd();
+                        check(fireCmd(frame, 32288 /*ID_KEYS_TAB*/),
+                              "DoCommand(\"KeysTab\") is claimed");
+                        // The completed word, not merely "changed".
+                        check(bar->GetValue().StartsWith(wxT("zz_tabcompletion_target")),
+                              "...and completes the word from the output buffer");
+                        bar->SetValue(wxEmptyString);
+                    }
+
+                    // ── Shift+Tab function completion ─────────────────────
+                    // With nothing to offer it must take the early-out rather
+                    // than open the modal chooser, which no loop-free harness
+                    // could answer.  Claiming the event is the observable.
+                    {
+                        const unsigned short savedFns = doc->m_bTabCompleteFunctions;
+                        doc->m_bTabCompleteFunctions = FALSE;
+                        doc->m_ExtraShiftTabCompleteItems.clear();
+                        bar->SetValue(wxT("zz_untouched"));
+                        check(fireCmd(frame, 33048 /*ID_COMPLETE_FUNCTION*/),
+                              "DoCommand(\"CompleteFunction\") is claimed");
+                        check(bar->GetValue() == wxT("zz_untouched"),
+                              "...and offers nothing when there is nothing to offer");
+                        doc->m_bTabCompleteFunctions = savedFns;
+                        bar->SetValue(wxEmptyString);
+                    }
+
+                    // ── activate the input area ───────────────────────────
+                    // Read as "an arm claimed it": wxWindow::FindFocus is null
+                    // in a process that was never activated (the edit-commands
+                    // work measured this), so the focus itself is not
+                    // observable here.
+                    check(fireCmd(frame, 32142 /*ID_KEYS_ACTIVATECOMMANDVIEW*/),
+                          "DoCommand(\"ActivateInputArea\") is claimed");
+
+                    // ── the window commands ───────────────────────────────
+                    // The target is the world's own frame, not the MDI parent:
+                    // on macOS the active child IS the visible window (see the
+                    // MDI-geometry note), so minimising the parent minimises
+                    // nothing the user can see.  Windows' OnWindowMinimize
+                    // TOGGLES (mushview.cpp:3400), which is why this fires it
+                    // twice and expects to come back.
+                    {
+                        const wxSize savedSize = child->GetSize();
+
+                        // Make the window SMALLER than the client area first.
+                        // Without this the fixture is degenerate: a freshly
+                        // built child already fills the parent, so "maximise"
+                        // and "do nothing" are the same size and the assertion
+                        // below could not tell them apart.
+                        child->SetSize(wxSize(320, 240));
+                        const wxRect want = frame->GetScreenRect();
+                        check(fireCmd(frame, 33050 /*ID_WINDOW_MAXIMIZE*/),
+                              "DoCommand(\"Maximize\") is claimed by a handler");
+                        check(child->GetSize().x > 320 && child->GetSize().y > 240,
+                              "...and grows the WORLD window, not the hidden parent");
+                        check(child->GetSize() == want.GetSize(),
+                              "...to exactly the client area, not the whole screen");
+                        check(!child->IsFullScreen(),
+                              "...and without zooming it full-screen");
+
+                        // Minimize and Restore can only be read as "an arm
+                        // claimed it" here.  wxOSX's Iconize is
+                        // -[NSWindow miniaturize:], which the window server
+                        // completes on the run loop this harness exits before:
+                        // measured, IsIconized() is still false immediately
+                        // after.  Same limit the ID_WORLDS_WORLD block records
+                        // for Activate().
+                        check(fireCmd(frame, 32235 /*ID_WINDOW_MINIMIZE*/),
+                              "DoCommand(\"Minimize\") is claimed");
+                        check(fireCmd(frame, 32235),
+                              "...and again, since Windows' handler TOGGLES");
+                        check(fireCmd(frame, 33051 /*ID_WINDOW_RESTORE*/),
+                              "DoCommand(\"Restore\") is claimed");
+                        child->Restore();
+                        child->SetSize(savedSize);
+                    }
+                }
+            }
+
             // ── a canonical command with no menu item of its own still runs ──
             // The port's Configure menu items carry PRIVATE ids, so the
             // canonical ID_GAME_CONFIGURE_* ids only ever arrive from
@@ -1578,6 +1991,94 @@ int RunMenuBarSelfTest()
         frame->Unbind(wxEVT_MENU, &recordForwardedCmd);
         delete bars;              // UnInits its wxAuiManager -- before the host goes
         tbHost->Destroy();
+        wxYield();
+    }
+
+
+    // ── the World bar's check buttons follow the truth (2026-09-01) ─────────
+    // CWorldToolBars::UpdateState ran the canonical ON_UPDATE_COMMAND_UI for
+    // each button against the DOCUMENT alone, where Windows' MFC routes a
+    // toolbar update view -> document -> frame -> app.  Freeze Output's
+    // canonical handler is CMUSHView::OnUpdateDisplayFreezeoutput
+    // (mushview.cpp:3240) on the never-constructed view, and the document's map
+    // ends in OnFixMenus, which returns before capturing anything -- so
+    // `checked` stayed -1 and ToggleTool was never called for that button at
+    // all.  Its pressed state was therefore whatever wxToolBarTool::Action's
+    // auto-toggle last wrote, which inverts as soon as the freeze is changed
+    // from any of the other four doors (the Display menu, the output pane's
+    // context item, the status-bar pane, scrolling back).
+    //
+    // Driven through a real COutputPane, because the port's answer for this
+    // command is `doc->m_pWorldView->isPaused()` and the world frame IS that
+    // view.  The bar is a standalone strip fed the real document, which is the
+    // only way in to UpdateState from out here.
+    {
+        CMUSHclientDoc* fdoc = new CMUSHclientDoc();
+        fdoc->m_mush_name   = "zz_selftest_toolbarcheck";
+        fdoc->m_nWrapColumn = 80;
+        fdoc->m_maxlines    = 5000;
+        fdoc->SetUpOutputWindow();
+        CWorldChildFrame* wf =
+            new CWorldChildFrame(frame, fdoc, wxT("zz_selftest_toolbarcheck"));
+        wf->Show();
+        wxYield();
+
+        wxFrame*    tbHost  = new wxFrame(frame, wxID_ANY, wxT("toolbar-checks"));
+        wxBoxSizer* tbSizer = new wxBoxSizer(wxVERTICAL);
+        tbHost->SetSizer(tbSizer);
+        CWorldToolBars* bars = new CWorldToolBars(tbHost, tbSizer);
+
+        wxToolBar* wb = findToolBarWith(tbHost, ID_DISPLAY_FREEZEOUTPUT);
+        check(wb != NULL, "the World toolbar carries a Freeze Output button");
+        check(wf->OutputPane() != NULL, "...and the world window has an output pane");
+
+        if (wb && wf->OutputPane()) {
+            // FREEZE through one of the other doors -- not the button.  This is
+            // the assertion that fails at HEAD: nothing ever ticked it.
+            wf->OutputPane()->SetPaused(true);
+            bars->UpdateState(fdoc);
+            check(wb->GetToolState(ID_DISPLAY_FREEZEOUTPUT),
+                  "freezing the pane presses the toolbar's Freeze button");
+
+            // Both polarities, so an implementation stuck on `true` fails here.
+            wf->OutputPane()->SetPaused(false);
+            bars->UpdateState(fdoc);
+            check(!wb->GetToolState(ID_DISPLAY_FREEZEOUTPUT),
+                  "...and un-freezing releases it again");
+
+            // The inversion itself.  wxToolBarTool::Action presses a
+            // wxITEM_CHECK tool BEFORE dispatching the click, so this is
+            // exactly the state a click leaves behind; with the pane running,
+            // the next update must correct it rather than leave the button
+            // reading the opposite of the truth.
+            wb->ToggleTool(ID_DISPLAY_FREEZEOUTPUT, true);
+            bars->UpdateState(fdoc);
+            check(!wb->GetToolState(ID_DISPLAY_FREEZEOUTPUT),
+                  "...and a click's own auto-toggle is corrected, not kept");
+
+            // Log Session: the document HAS always answered this one
+            // (OnUpdateFileLogsession, doc.cpp:1008) -- the button was simply
+            // built wxITEM_NORMAL, so the answer had nowhere to go.
+            check(!wb->GetToolState(ID_FILE_LOGSESSION),
+                  "the Log Session button is up on a world that is not logging");
+            FILE* const saved = fdoc->m_logfile;
+            fdoc->m_logfile = fopen("/dev/null", "w");
+            bars->UpdateState(fdoc);
+            check(fdoc->m_logfile == NULL ||
+                  wb->GetToolState(ID_FILE_LOGSESSION),
+                  "...and pressed while the session IS being logged");
+            if (fdoc->m_logfile) fclose(fdoc->m_logfile);
+            fdoc->m_logfile = saved;
+            bars->UpdateState(fdoc);
+            check(!wb->GetToolState(ID_FILE_LOGSESSION),
+                  "...and up again when the log closes");
+        }
+
+        delete bars;              // UnInits its wxAuiManager -- before the host
+        tbHost->Destroy();
+        fdoc->m_pWorldView = NULL;
+        wx_unregister_world_frame(fdoc);
+        wf->Destroy();
         wxYield();
     }
 

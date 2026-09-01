@@ -687,10 +687,19 @@ static inline int wx_logical_extent(int physical, double scale)
     return (s > 0) ? physical / s : physical;
 }
 
+// Both entry points ALWAYS zero the caller's struct before they can fail.  Ten
+// call sites in miniwindow.cpp declare `BITMAP bi;` uninitialised and read
+// bi.bmBitsPixel without checking the return, so a bare `return FALSE` lets
+// them branch on stack garbage -- and on this side the garbage is usually a
+// PREVIOUS successful call's values, which look entirely plausible.  The
+// headless twin (platform/headless_surface.cpp) has always zeroed first and is
+// pinned with a poisoned struct; this build returned before zeroing, so the two
+// disagreed on the failure path.
 BOOL CBitmap::GetBitmap(BITMAP* pBitmap) {
-    if (!pBitmap || !m_impl) return FALSE;
-    wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
+    if (!pBitmap) return FALSE;
     *pBitmap = {};
+    if (!m_impl) return FALSE;
+    wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
     const double sc = bmp->GetScaleFactor();
     pBitmap->bmWidth   = wx_logical_extent(bmp->GetWidth(),  sc);
     pBitmap->bmHeight  = wx_logical_extent(bmp->GetHeight(), sc);
@@ -700,10 +709,11 @@ BOOL CBitmap::GetBitmap(BITMAP* pBitmap) {
 }
 
 int CBitmap::GetObject(int /*nCount*/, void* lpObject) const {
-    if (!lpObject || !m_impl) return 0;
-    wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
+    if (!lpObject) return 0;
     BITMAP* pbm = static_cast<BITMAP*>(lpObject);
     *pbm = {};
+    if (!m_impl) return 0;
+    wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
     const double sc = bmp->GetScaleFactor();
     pbm->bmWidth      = wx_logical_extent(bmp->GetWidth(),  sc);
     pbm->bmHeight     = wx_logical_extent(bmp->GetHeight(), sc);

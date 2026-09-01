@@ -1248,8 +1248,21 @@ int RunPalMiniWindowSelfTest()
                 "...and the bitmap is real (9 wide)");
         mwCheck(doc->SetBackgroundImage("", 0) == eOK,
                 "SetBackgroundImage('') accepts the clear");
+        // The zero-first contract, which this build did not keep: ten call sites
+        // in miniwindow.cpp declare `BITMAP bi;` uninitialised and read
+        // bi.bmBitsPixel without checking the return, so a bare `return FALSE`
+        // lets them branch on stack garbage.  POISON the struct first -- without
+        // that, the assertion below passes on the broken code, because the
+        // struct still holds the ZEROES it was initialised with.  Same shape as
+        // the headless twin's pin in tests/test_gdi_headless.cpp.
+        memset(&bmInfo, 0x7F, sizeof bmInfo);
         mwCheck(doc->m_BackgroundBitmap.GetBitmap(&bmInfo) == FALSE,
                 "...and the image is really GONE (it used to survive)");
+        mwCheck(bmInfo.bmWidth == 0 && bmInfo.bmHeight == 0 &&
+                bmInfo.bmWidthBytes == 0 && bmInfo.bmPlanes == 0 &&
+                bmInfo.bmBitsPixel == 0 && bmInfo.bmType == 0 &&
+                bmInfo.bmBits == NULL,
+                "...and GetBitmap zeroed the caller's BITMAP before failing");
         doc->WindowDelete("bgsrc");
         ::unlink(png);
     }

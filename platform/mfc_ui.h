@@ -2850,25 +2850,57 @@ public:
     static bool GetStatus(LPCTSTR, void*) { return false; }
 };
 
+// ── Text-mode line endings ────────────────────────────────────────────────
+// Windows reads these files through the CRT's TEXT mode -- CFile::typeText, or
+// a plain fopen(path, "r") -- which translates every CRLF to a lone LF before
+// the caller ever sees it.  POSIX has no text mode ("r" and "rb" are the same
+// call), so the port has to do the translation itself or every line read out of
+// a CRLF file carries a stray '\r' that the Windows build never sees.
+//
+// Collapse a "\r\n" pair only, which is exactly what the CRT does: a lone '\r'
+// is left alone on Windows too.  (A CRLF split across two fgets buffers is not
+// handled -- the '\r' ends one call and the '\n' starts the next -- which needs
+// state this shim does not carry and no caller in the tree can reach.)
+inline void McTextModeCollapse(char* s)
+{
+    if (!s) return;
+    size_t len = strlen(s);
+    if (len >= 2 && s[len - 2] == '\r' && s[len - 1] == '\n') {
+        s[len - 2] = '\n';
+        s[len - 1] = '\0';
+    }
+}
+
 class CStdioFile : public CFile {
 public:
     CStdioFile() = default;
     CStdioFile(LPCTSTR path, UINT mode) : CFile(path, mode) {}
     CStdioFile(FILE* fp) { m_fp = fp; }  // attach to existing FILE*
 
+    // MFC drops the newline from the CString form and keeps it in the buffer
+    // form; both see text-mode bytes, so neither ever hands back a '\r'.
+    // CArchive::ReadString (below) has always stripped it -- these two were the
+    // odd ones out, and the two ReadStrings disagreed.
     bool ReadString(CString& rString) {
         if (!m_fp) return false;
         rString.Empty();
         int c;
         while ((c = fgetc(m_fp)) != EOF) {
-            if (c == '\n') return true;
+            if (c == '\n') {
+                const int n = rString.GetLength();
+                if (n > 0 && rString[n - 1] == '\r')
+                    rString = rString.Left(n - 1);
+                return true;
+            }
             rString += (char)c;
         }
         return !rString.IsEmpty();
     }
     bool ReadString(LPTSTR buf, UINT max) {
         if (!m_fp || max == 0) return false;
-        return fgets(buf, (int)max, m_fp) != nullptr;
+        if (fgets(buf, (int)max, m_fp) == nullptr) return false;
+        McTextModeCollapse(buf);
+        return true;
     }
     void WriteString(LPCTSTR str) {
         // MFC-faithful: throws on a failed write (see CFile::Write above).
@@ -6871,7 +6903,18 @@ inline DWORD GetModuleFileName(void* /*hModule*/, LPTSTR buf, DWORD n) {
 #  define _fstat(fd,buf) fstat(fd,buf)
 #endif
 #ifndef _fgetts
-#  define _fgetts  fgets
+// fgets on a file the caller opened "r" -- i.e. text mode on Windows.  Its one
+// call site in the tree is CTipDlg::GetNextTipString (dialogs/TipDlg.cpp:133),
+// which ReleaseBuffer()s the bytes verbatim into the tip it displays; tips.txt
+// ships CRLF, so every Tip of the Day carried a trailing "\r\n", and the
+// blank/comment skip test one line down (*lpsz != '\n') could not recognise a
+// CRLF blank line because the leading byte was '\r'.
+inline char* McFgetts(char* buf, int max, FILE* fp) {
+    char* r = fgets(buf, max, fp);
+    if (r) McTextModeCollapse(r);
+    return r;
+}
+#  define _fgetts  McFgetts
 #endif
 #ifndef _tcstok
 #  define _tcstok  strtok

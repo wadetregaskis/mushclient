@@ -1105,6 +1105,74 @@ TEST(Files, CStdioFileReadWriteString) {
     EXPECT_FALSE(closed.ReadString(s));
 }
 
+// Windows reads a CFile::typeText / fopen("r") file through the CRT's text
+// mode, which turns every CRLF into a lone LF before the caller sees it.  POSIX
+// has no such mode, so the shim has to do it: without this, the notepad, the
+// name generator, the variables import and -- the one caller that does not
+// defensively TrimRight -- Tip of the Day all saw a trailing '\r' the Windows
+// build never sees.  tips.txt itself ships CRLF.
+//
+// LF-only input is the control: it must come back byte-identical, so a fix that
+// merely chopped the last character would fail here.
+TEST(Files, TextModeReadsCollapseCrlfLikeTheCrtDoes) {
+    std::string path = temp_path("crlf.txt");
+    {
+        FILE* f = fopen(path.c_str(), "wb");        // raw bytes, exactly as shipped
+        ASSERT_TRUE(f != nullptr);
+        fputs("line one\r\nline two\r\n\r\nlf only\nbare\rcr\r\n", f);
+        fclose(f);
+    }
+    {
+        CStdioFile f(path.c_str(), CFile::modeRead);
+        ASSERT_TRUE(f.IsOpen());
+        CString s;
+        EXPECT_TRUE(f.ReadString(s));
+        EXPECT_STREQ("line one", (LPCTSTR)s);
+        EXPECT_TRUE(f.ReadString(s));
+        EXPECT_STREQ("line two", (LPCTSTR)s);
+        EXPECT_TRUE(f.ReadString(s));               // a CRLF blank line is BLANK
+        EXPECT_STREQ("", (LPCTSTR)s);
+        EXPECT_TRUE(f.ReadString(s));               // LF-only line: unchanged
+        EXPECT_STREQ("lf only", (LPCTSTR)s);
+        EXPECT_TRUE(f.ReadString(s));               // a lone '\r' mid-line stays,
+        EXPECT_STREQ("bare\rcr", (LPCTSTR)s);       // exactly as on Windows
+    }
+    {
+        // Buffer variant: MFC keeps the newline here, so the '\r' must go and
+        // the '\n' must stay -- "line one\n", not "line one\r\n" and not
+        // "line one".
+        CStdioFile f(path.c_str(), CFile::modeRead);
+        ASSERT_TRUE(f.IsOpen());
+        char buf[64];
+        EXPECT_TRUE(f.ReadString(buf, sizeof buf));
+        EXPECT_STREQ("line one\n", buf);
+        EXPECT_TRUE(f.ReadString(buf, sizeof buf));
+        EXPECT_STREQ("line two\n", buf);
+        EXPECT_TRUE(f.ReadString(buf, sizeof buf));
+        EXPECT_STREQ("\n", buf);
+    }
+    {
+        // _fgetts is the alias CTipDlg::GetNextTipString reads its lines with,
+        // straight off a raw fopen(path, "r") FILE* -- not a CStdioFile.
+        FILE* fp = fopen(path.c_str(), "r");
+        ASSERT_TRUE(fp != nullptr);
+        char buf[64];
+        // Boolean forms, not EXPECT_EQ/ASSERT_NE: mc_test's describe() streams a
+        // const char* into an ostringstream, and libc++ strlen()s a null one, so
+        // a FAILING comparison against a null char* crashes inside the report.
+        ASSERT_TRUE(_fgetts(buf, (int)sizeof buf, fp) != nullptr);
+        EXPECT_STREQ("line one\n", buf);
+        EXPECT_TRUE(strchr(buf, '\r') == nullptr);
+        ASSERT_TRUE(_fgetts(buf, (int)sizeof buf, fp) != nullptr);
+        ASSERT_TRUE(_fgetts(buf, (int)sizeof buf, fp) != nullptr);
+        // TipDlg.cpp:139 decides "blank or comment" from the FIRST byte, so a
+        // CRLF blank line has to arrive with '\n' there, not '\r'.
+        EXPECT_EQ('\n', buf[0]);
+        fclose(fp);
+    }
+    CFile::Remove(path.c_str());
+}
+
 TEST(Files, CMemFileWritableGrowsAndDetaches) {
     CMemFile mf;
     EXPECT_EQ((DWORD)0, mf.GetLength());

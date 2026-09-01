@@ -3572,8 +3572,10 @@ int RunWorldFrameSelfTest()
         doc->Note(shortLine.c_str());
         doc->Note(longLine.c_str());
         doc->UpdateAllViews(NULL);
-        wxYield();
-
+        // No wxYield here: the drain is synchronous, and a yield in this
+        // loop-free harness is the recorded hazard (CLAUDE.md) -- under ASan
+        // it delivered stray queued work between the two LineCount samples
+        // and n1 == n0 + 1 flaked (seen 2026-09-01, once, full-suite only).
         const int n0 = pane->LineCount();
         check(n0 >= 2, "note: the two fixture lines reached the pane");
         const int w1 = pane->VisualRowsForLine(n0 - 2);
@@ -3582,7 +3584,6 @@ int RunWorldFrameSelfTest()
         check(w1 != w2, "note: the two fixture lines wrap differently (control)");
 
         pane->AppendNote("** selftest note **", RGB(200, 200, 0));
-        wxYield();
 
         const int n1 = pane->LineCount();
         check(n1 == n0 + 1, "note: AppendNote added exactly one line");

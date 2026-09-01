@@ -1250,6 +1250,9 @@ int RunWorldFrameSelfTest()
         // The head-trim's selection clamp notifies (did_jump,
         // mushview.cpp:2889-2900): select a line that is about to be freed.
         static int s_trimFires; s_trimFires = 0;
+        // SAVE the frame's own lambda -- nulling it would silently unwire the
+        // plugin broadcast and the CancelSelection half for every later block.
+        const std::function<void()> savedSelCb = pane->m_fn_selection_changed;
         pane->m_fn_selection_changed = []() { ++s_trimFires; };
         pane->SetSelectionRange(1, 1, 1, 4);
         const int trimBase = s_trimFires;
@@ -1258,7 +1261,7 @@ int RunWorldFrameSelfTest()
         wxYield();
         check(s_trimFires == trimBase + 1,
               "clearing scrollback above a selection notifies (did_jump)");
-        pane->m_fn_selection_changed = nullptr;
+        pane->m_fn_selection_changed = savedSelCb;
         check(freed == target, "Alt-Cmd-K frees exactly what was above the viewport");
         check(pane->LineCount() == paneN - target,
               "...and the pane keeps everything from the viewport down");
@@ -3293,6 +3296,54 @@ int RunWorldFrameSelfTest()
 
             remove(logPath);
             remove(pluginPath.c_str());
+        }
+    }
+
+    // ── only one selection: command bar vs output pane ──────────────────────
+    // Windows enforces this in both directions: CSendView::CheckForSelectionChange
+    // (sendvw.cpp:2593, polled from the world timer) drops the OUTPUT selection
+    // when the command bar has one, and CMUSHView::SelectionChanged's tail
+    // (mushview.cpp:6464 -> CSendView::CancelSelection) collapses the BAR's
+    // selection when the output gains one.  Neither half existed on the port.
+    {
+        wxTextCtrl* bar = child->ActiveInputPublic();
+        check(bar != NULL, "sel-pair: the world window has a command bar");
+        if (bar) {
+            for (int i = 1; i <= 6; ++i) {
+                const char* l = "sel pair line\n";
+                doc->DisplayMsg(l, (int) strlen(l), 0);
+            }
+            doc->UpdateAllViews(NULL);
+
+            // Output wins on change: a new pane selection collapses the bar's,
+            // caret at the cancelled selection's END.
+            bar->SetValue(wxT("hello world"));
+            bar->SetSelection(0, 5);
+            pane->SetSelectionRange(2, 2, 1, 4);
+            long f = 0, t = 0;
+            bar->GetSelection(&f, &t);
+            check(f == t && t == 5,
+                  "a new output selection cancels the command bar's, caret at "
+                  "its end (CancelSelection)");
+
+            // Input wins on the poll: a bar selection drops the pane's.
+            bar->SetSelection(0, 5);
+            child->CheckForSelectionChange();
+            check(pane->GetSelectionText().IsEmpty(),
+                  "a command-bar selection drops the output selection "
+                  "(CheckForSelectionChange)");
+            bar->GetSelection(&f, &t);
+            check(f == 0 && t == 5, "...and keeps its own selection");
+
+            // Control: no bar selection, the poll must leave the pane alone.
+            bar->SetSelection(3, 3);
+            pane->SetSelectionRange(2, 2, 1, 4);
+            child->CheckForSelectionChange();
+            check(!pane->GetSelectionText().IsEmpty(),
+                  "...and with no bar selection the poll touches nothing");
+
+            pane->SetSelectionRange(0, 0, 0, 0);
+            bar->Clear();
         }
     }
 

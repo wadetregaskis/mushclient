@@ -987,6 +987,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_output->m_fn_selection_changed = [this]() {
         if (m_doc && m_doc->m_ScriptEngine)
             m_doc->SendToAllPluginCallbacks(ON_PLUGIN_SELECTION_CHANGED);
+        // CMUSHView::SelectionChanged's tail (mushview.cpp:6453-6464): a
+        // non-empty output selection cancels the command bar's, caret left
+        // at the cancelled selection's END (CSendView::CancelSelection,
+        // sendvw.cpp:2619-2634).  The reverse priority -- input selection
+        // dropping the output's -- is CheckForSelectionChange, on the timer.
+        long a, b, c, d;
+        if (m_output && m_output->GetSelectionInfo(a, b, c, d)) {
+            if (wxTextCtrl* inp = ActiveInput()) {
+                long f = 0, t = 0;
+                inp->GetSelection(&f, &t);
+                if (f != t) inp->SetSelection(t, t);
+            }
+        }
     };
 
     // When the font zoom changes, the character grid changes without a resize
@@ -4236,6 +4249,23 @@ void CWorldChildFrame::FireScrollCommand(EScrollCommand which)
 // failure return), and the hyperlink path runs it at click time, before the
 // dispatch, which is where CMUSHView::OnLButtonDown has it (mushview.cpp:
 // 2176-2181).
+// See the header.  Windows polls this every world-timer tick; the port polls
+// it from the same place (OnWorldTimer, beside CheckTimers).  The mirror half
+// -- a new OUTPUT selection cancelling the command bar's -- lives in the
+// m_fn_selection_changed lambda, as CMUSHView::SelectionChanged's tail does
+// (mushview.cpp:6464).
+void CWorldChildFrame::CheckForSelectionChange()
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp || !m_output) return;
+    long f = 0, t = 0;
+    inp->GetSelection(&f, &t);
+    if (f == t) return;                      // no input selection: leave alone
+    long a, b, c, d;
+    if (!m_output->GetSelectionInfo(a, b, c, d)) return;   // no output selection
+    m_output->SetSelectionRange(0, 0, 0, 0); // clears, refreshes, notifies
+}
+
 void CWorldChildFrame::UnpauseOutputOnSend()
 {
     if (!m_doc || !m_output) return;
@@ -5846,6 +5876,10 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         m_timerCheckAccum = 0;
         m_doc->CheckTimers();
     }
+
+    // Polled here as timers.cpp:384 polls it on Windows: a command-bar
+    // selection drops the output window's selection.
+    CheckForSelectionChange();
 
     // ── Script file monitoring: poll mtime every 2 s ─────────────────────
     // Equivalent to the Windows FindFirstChangeNotification thread, but runs

@@ -445,6 +445,11 @@ public:
     void CopySelectionHTML();     // Edit ▸ Copy as HTML
     void EditSelectAll();         // Edit ▸ Select All (output pane or command bar)
     void RepeatLastCommand();     // Input ▸ Repeat Last Command
+
+    // CSendView::CheckForSelectionChange (sendvw.cpp:2593, polled from the
+    // world timer, timers.cpp:384): a selection in the command bar drops the
+    // output window's selection -- only one of the two ever holds one.
+    void CheckForSelectionChange();
     void RecallLastWord();        // Edit ▸ Recall Last Word (also Ctrl+Backspace)
     void ShowCommandHistory();    // Input ▸ Command History (pick a past command)
     void ClearCommandHistory();   // Display ▸ Clear Command History (confirm, then wipe)

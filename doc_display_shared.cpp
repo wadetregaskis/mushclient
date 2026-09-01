@@ -94,6 +94,12 @@ static void BuildLineFromCLine (const CMUSHclientDoc & doc,
     // fetch, or a RebuildOutputView re-emit -- gets the bookmark back without
     // having to save and restore it itself.
     out.bookmark = (pLine->flags & BOOKMARK) != 0;
+    // The engine's own wrap: a CLine with hard_return clear is a soft
+    // continuation of the next one, and Copy must not put a line break
+    // between the two (CMUSHView::GetSelection, mushview.cpp:4069-4085).
+    // The view cannot work this out for itself -- it sees only the split
+    // CLines -- so it has to travel with the line.
+    out.hardReturn = pLine->hard_return;
 
     // Horizontal rule: emit a single sentinel run rather than text.
     if (pLine->flags & HORIZ_RULE) {

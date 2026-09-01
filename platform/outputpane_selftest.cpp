@@ -257,6 +257,47 @@ void TestSelectionFreezesOutput()
         SendMouse(h.pane, wxEVT_LEFT_UP, cw * 5, lh / 2);
         opCheck(!h.pane->IsPaused(),
                 "with auto-freeze off a selection does NOT freeze");
+
+        // ...and because it did not freeze, the next line of output DROPS it:
+        // `if (!m_freeze) OnTestEnd ();` (CMUSHView::addedstuff,
+        // mushview.cpp:1815) and OnTestEnd's tail zeroes the four selection
+        // members (:1649-1653).  The port kept the selection indefinitely, so a
+        // later Copy -- or a script reading world.GetSelectionStartLine --
+        // returned text the user had chosen minutes before.
+        opCheck(!h.pane->GetSelectionText().IsEmpty(),
+                "fixture: there really is a selection to lose");
+        h.pane->AppendLine(MakeLine("more output arrives"));
+        opCheck(h.pane->GetSelectionText().IsEmpty(),
+                "new output at an UNfrozen view clears the selection");
+
+        // The prompt row is output too: addedstuff fires for the in-progress
+        // line as well (doc_shared.cpp:3679), not only for completed ones.
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, cw * 5, lh / 2, true);
+        SendMouse(h.pane, wxEVT_LEFT_UP, cw * 5, lh / 2);
+        opCheck(!h.pane->GetSelectionText().IsEmpty(), "fixture: selected again");
+        h.pane->AppendLine(MakeLine("HP:100 > ", /*pending*/ true));
+        opCheck(h.pane->GetSelectionText().IsEmpty(),
+                "...and so does a prompt-row update");
+    }
+    {
+        // The control, and the one that stops "always clear" passing: with
+        // auto_pause ON (the default) the selection FROZE the view, and a
+        // frozen view keeps it -- that is where Windows' `if (!m_freeze)` guard
+        // ends.  Same drag, same append, opposite answer.
+        Harness h;
+        h.Feed(10);
+        const int cw = h.pane->CharWidth();
+        const int lh = h.pane->LineHeight();
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, cw * 5, lh / 2, true);
+        SendMouse(h.pane, wxEVT_LEFT_UP, cw * 5, lh / 2);
+        const wxString held = h.pane->GetSelectionText();
+        opCheck(h.pane->IsPaused() && !held.IsEmpty(),
+                "control fixture: frozen, with a selection");
+        h.pane->AppendLine(MakeLine("more output arrives"));
+        opCheck(h.pane->GetSelectionText() == held,
+                "control: a FROZEN view keeps its selection across new output");
     }
 
     {
@@ -280,6 +321,93 @@ void TestSelectionFreezesOutput()
         h.Feed(10);
         h.pane->FreezeIfSelection();
         opCheck(!h.pane->IsPaused(), "no selection means nothing to freeze for");
+    }
+}
+
+// ── 1a. A click inside the selection leaves it alone ─────────────────────
+//
+// CMUSHView::OnLButtonDown builds the old selection region and returns early
+// when the click is inside it -- taking no capture and starting no new
+// selection: `if (oldrgn.PtInRegion (point)) { oldrgn.DeleteObject (); return; }`
+// (mushview.cpp:2248-2253).  The port reset anchor = focus = click point
+// unconditionally, so clicking anywhere in a highlighted paragraph -- to bring
+// the window forward, or on the way to Edit > Copy -- destroyed the selection
+// and left Copy with nothing to copy.
+void TestClickInsideSelectionKeepsIt()
+{
+    printf("a click inside the selection keeps it (mushview.cpp:2248-2253)\n");
+
+    Harness h;
+    h.pane->AppendLine(MakeLine("alpha bravo charlie delta echo"));
+    h.pane->AppendLine(MakeLine("foxtrot golf hotel india juliet"));
+
+    const int cw = h.pane->CharWidth();
+    const int lh = h.pane->LineHeight();
+    auto dragOut = [&]() {
+        // Columns 6..19 of the first line: "bravo charlie".
+        h.pane->SetSelectionRange(0, 0, 0, 0);
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 6, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION,    cw * 19, lh / 2, /*leftDown*/ true);
+        SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 19, lh / 2);
+        if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+        return h.pane->GetSelectionText();
+    };
+
+    const wxString made = dragOut();
+    opCheck(made == wxT("bravo charlie"),
+            "fixture: a drag really selected \"bravo charlie\"");
+
+    // The click under test: down and up in the middle of that region.
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 12, lh / 2);
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 12, lh / 2);
+    if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+    opCheck(h.pane->GetSelectionText() == made,
+            "a click INSIDE the selection leaves it exactly as it was");
+
+    // The control, and it is what stops "suppress OnLeftDown entirely" passing:
+    // a click OUTSIDE the region must still collapse the selection, as it
+    // always did.
+    dragOut();
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 3, lh + lh / 2);   // the second line
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 3, lh + lh / 2);
+    if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+    opCheck(h.pane->GetSelectionText().IsEmpty(),
+            "control: a click OUTSIDE it still collapses the selection");
+
+    // ...and a drag that STARTS outside still makes a new selection, so the
+    // guard has not cost the pane its ordinary behaviour.
+    dragOut();
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 0,  lh + lh / 2);
+    SendMouse(h.pane, wxEVT_MOTION,    cw * 7,  lh + lh / 2, /*leftDown*/ true);
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 7,  lh + lh / 2);
+    if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+    opCheck(h.pane->GetSelectionText() == wxT("foxtrot"),
+            "control: a drag starting outside it selects afresh");
+
+    // A click on a LINK inside the selection is a link click, not a region
+    // click: Windows tests the hyperlink first and fires it on the way down,
+    // before it ever builds the region (mushview.cpp:2158-2225).
+    {
+        Harness h2;
+        SOutputRun plain;  plain.text = "go ";        plain.fg = 0x00FFFFFFu;
+        SOutputRun link;   link.text  = "north here"; link.fg  = 0x00FFFFFFu;
+        link.setLink("north", "", 0x0400 /*ACTION_SEND*/);
+        SOutputLine line;  line.push_back(plain);  line.push_back(link);
+        h2.pane->AppendLine(std::move(line));
+
+        int fired = 0;
+        h2.pane->m_fn_link_clicked =
+            [&](const std::string&, int, bool, SRunEncoding) { ++fired; };
+
+        const int cw2 = h2.pane->CharWidth();
+        const int lh2 = h2.pane->LineHeight();
+        h2.pane->SelectAll();                       // the link is inside it
+        opCheck(!h2.pane->GetSelectionText().IsEmpty(), "fixture: all selected");
+        SendMouse(h2.pane, wxEVT_LEFT_DOWN, cw2 * 5, lh2 / 2);
+        SendMouse(h2.pane, wxEVT_LEFT_UP,   cw2 * 5, lh2 / 2);
+        if (h2.pane->HasCapture()) h2.pane->ReleaseMouse();
+        opCheckEq(fired, 1,
+                  "a link inside the selection still fires when clicked");
     }
 }
 
@@ -1219,6 +1347,177 @@ void TestFindNext()
             "after Clear Output there is nothing to find");
 }
 
+// ── 7a. Go To Bookmark scans from the SELECTION, not from call history ────
+//
+// Windows reads m_selstart_line fresh on every invocation
+// (CMUSHView::OnDisplayGotobookmark, mushview.cpp:4862-4877), and every click
+// and selection writes it -- so the command means "the next bookmark after
+// where I am".  The port cycled from m_lastBookmarkLine, a member only the
+// command itself ever wrote, so where the user was made no difference and a
+// head-trim silently re-pointed it at another line.
+//
+// The discriminating case is the LAST one: a jump followed by a selection
+// somewhere else.  Everything before it passes under both behaviours.
+void TestGotoBookmarkStartsFromTheSelection()
+{
+    printf("Go To Bookmark scans from the selection "
+           "(mushview.cpp:4862-4877)\n");
+
+    Harness h;
+    h.Feed(200);
+    h.pane->SetBookmark(10,  true);
+    h.pane->SetBookmark(150, true);
+
+    // Where the command left the selection, 0-based.
+    auto landedOn = [&]() {
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        return h.pane->GetSelectionInfo(sl, sc, el, ec) ? (int)(sl - 1) : -1;
+    };
+    // Put the selection on a line without going through the command.
+    auto selectLineDirectly = [&](int line) {
+        h.pane->SetSelectionRange(line + 1, line + 1, 1, 4);
+    };
+
+    {
+        // No selection at all: Windows' `m_selstart_line <= 0` arm -- start at
+        // the head, so the FIRST bookmark.
+        h.pane->SetSelectionRange(0, 0, 0, 0);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 10, "with no selection it starts at the head");
+    }
+    {
+        // Sitting between the two: the next one after the selection.
+        selectLineDirectly(100);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 150, "from line 100 it goes to the bookmark at 150");
+    }
+    {
+        // Past the last one: wrap.
+        selectLineDirectly(160);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 10, "from line 160 it wraps round to the one at 10");
+    }
+    {
+        // Called twice with nothing in between, it still cycles: the command's
+        // own SelectLine leaves the selection on the line it landed at, which
+        // is the next call's origin.  (Windows relies on exactly this.)
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 150, "called again it moves on to the next one");
+    }
+    {
+        // THE case that separates the two behaviours.  The last jump left the
+        // selection at 150; move it back to line 20 -- as a click would -- and
+        // the answer must follow the SELECTION (150), not the call history
+        // (which would say 10, the one after 150).
+        selectLineDirectly(20);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 150,
+                  "a selection moved back before a bookmark is where the next "
+                  "scan starts -- NOT where the last jump ended");
+    }
+    {
+        // The mirror, so the case above cannot pass by simply always answering
+        // 150: move the selection PAST 150 and the answer must change.
+        selectLineDirectly(151);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 10,
+                  "control: moved past it, the same command answers differently");
+    }
+    {
+        // Only one bookmark, and the selection is already on it: Windows' "if
+        // we didn't find one *but* we were on one anyway, re-go to it" tail
+        // (mushview.cpp:4907-4912).
+        Harness h2;
+        h2.Feed(50);
+        h2.pane->SetBookmark(20, true);
+        h2.pane->SetSelectionRange(21, 21, 1, 4);
+        h2.pane->GotoNextBookmark();
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        opCheck(h2.pane->GetSelectionInfo(sl, sc, el, ec) && sl - 1 == 20,
+                "the only bookmark, already selected, is selected again");
+    }
+}
+
+// ── 7b. Find Next visits every OCCURRENCE, not every matching line ────────
+//
+// Windows' Find sets m_bRepeatOnSameLine (sendvw.cpp:1399, comment "we can find
+// multiple instances on the same line") and FindRoutine builds the line's whole
+// match list, popping one entry per press and moving to another line only when
+// it is empty (Finding.cpp:123-130, :189-219).  The port's cache is per LINE and
+// it resumed from selEnd.line + 1, always selecting the FIRST occurrence on
+// whatever line it landed on -- so the second "gold" in "Gold coins and more
+// gold dust" could not be reached at all, and if that line were the only match
+// the same first occurrence came back for ever.
+//
+// The fixture puts the two occurrences in DIFFERENT case and searches
+// case-insensitively, so the selected TEXT says which one was found: a test
+// that only asserted the line number could not tell "stayed put" from "advanced
+// within the line".
+void TestFindVisitsEveryOccurrenceOnALine()
+{
+    printf("Find Next: every occurrence, including several on one line "
+           "(sendvw.cpp:1399)\n");
+
+    Harness h;
+    h.pane->AppendLine(MakeLine("gold nugget"));                   // line 0: one
+    h.pane->AppendLine(MakeLine("Gold coins and more gold dust")); // line 1: two
+    h.pane->AppendLine(MakeLine("silver only"));                   // line 2: none
+
+    int line = -1, ord = 0, total = 0;
+    auto press = [&](bool forward) {
+        h.pane->FindNext("gold", forward, &line, &ord, &total, false);
+        // NOTE the named local: utf8_str() can hand back a NON-owning view into
+        // the wxString's own buffer, so taking it from the temporary would leave
+        // it dangling at the semicolon -- and read back as "".
+        const wxString sel = h.pane->GetSelectionText();
+        const wxScopedCharBuffer b = sel.utf8_str();
+        return std::string(b.data() ? b.data() : "");
+    };
+    auto step = [&](bool forward, int wantLine, const char* wantText,
+                    const char* what) {
+        const std::string got = press(forward);
+        const bool ok = (line == wantLine && got == wantText);
+        printf("  [%s] %s (line %d %s, got \"%s\" wanted \"%s\")\n",
+               ok ? "PASS" : "FAIL", what, line,
+               line == wantLine ? "as wanted" : "WRONG", got.c_str(), wantText);
+        (ok ? g_pass : g_fail)++;
+    };
+
+    // Forward, from the top.  Note steps 2 and 3: the SAME line twice, with a
+    // different occurrence each time.
+    step(true, 0, "gold", "1st: the only match on line 0");
+    step(true, 1, "Gold", "2nd: the first match on line 1");
+    step(true, 1, "gold", "3rd: the SECOND match on the SAME line "
+                          "(this is the whole finding)");
+    step(true, 0, "gold", "4th: only now does it leave the line, wrapping");
+
+    // Backward is the mirror image, and it needs its own arm: the direction
+    // decides both which occurrence a landing selects (the LAST, so the next
+    // press has somewhere to go) and which end of the selection the in-line
+    // scan measures from.  Start below line 1 so the first press walks back
+    // onto it.
+    // 1-based, and it must not be EMPTY: GetNormalizedSel refuses a collapsed
+    // region, which would leave Find with no start point at all.
+    h.pane->SetSelectionRange(3, 3, 1, 2);     // line 2, its first character
+    step(false, 1, "gold", "back 1st: the LAST match on line 1");
+    step(false, 1, "Gold", "back 2nd: the earlier match on the SAME line");
+    step(false, 0, "gold", "back 3rd: and only then the previous line");
+
+    // The control that keeps the case-insensitive arms honest: searching
+    // case-SENSITIVELY for "gold" leaves line 1 with a single occurrence, so
+    // the second press must move OFF the line.  A same-line scan that ignored
+    // the case flag would find "Gold" here and stay.
+    h.pane->SetSelectionRange(0, 0, 0, 0);
+    h.pane->FindNext("gold", true, &line, &ord, &total, /*caseSensitive*/ true);
+    opCheckEq(total, 2, "control: case-sensitive \"gold\" matches two lines");
+    while (line != 1)                          // walk to the two-occurrence line
+        h.pane->FindNext("gold", true, &line, &ord, &total, true);
+    opCheck(h.pane->GetSelectionText() == wxT("gold"),
+            "control: on line 1 it selects the lower-case occurrence");
+    h.pane->FindNext("gold", true, &line, &ord, &total, true);
+    opCheckEq(line, 0, "control: with one match on the line it moves on");
+}
+
 // ── 8. A mouse release does no work the world did not ask for ─────────────
 //
 // AutoCopySelection used to materialise SelectedText() before looking at
@@ -1255,6 +1554,15 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
     auto releases = [&](int n) {
         const auto t0 = std::chrono::steady_clock::now();
         for (int i = 0; i < n; ++i) {
+            // Start each cycle with nothing selected.  A LEFT_DOWN inside an
+            // existing selection now leaves it alone and takes no capture
+            // (mushview.cpp:2248-2253), and the SelectAll below means every
+            // cycle after the first would otherwise be clicking inside the
+            // whole buffer -- no drag, no release work, nothing measured.  What
+            // is being timed is unchanged: the SelectAll still happens before
+            // the release, so the release still ends a drag over the whole
+            // buffer.
+            h.pane->SetSelectionRange(0, 0, 0, 0);
             SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
             SendMouse(h.pane, wxEVT_MOTION, cw * 5, lh / 2, /*leftDown*/ true);
             h.pane->SelectAll();
@@ -2909,6 +3217,235 @@ struct CanonSpy {
     }
 };
 
+// ── 18c-bis. an unsubstituted "&text;" is not a link ─────────────────────
+//
+// "&text;" is the MXP entity for a tag's own enclosed text.  It survives into
+// the action only when the substitution never happened -- the enclosed text ran
+// past MAX_TEXT (mxp/mxpClose.cpp:18) -- so what is left is not a command
+// anybody meant to send.  Windows refuses every affordance for such a run: the
+// click (mushview.cpp:2158-2160), the hand cursor (:2848-2850, whose comment is
+// "we know what &text; is"), the MXP menu (:3538-3541) and the tooltip
+// (:4280-4282).  The port tested only isLink(), so the run underlined,
+// hand-cursored and, on a click, sent the literal "say &text;" to the MUD.
+//
+// Every arm has the same-shaped control one row below it, with an ordinary
+// action, so "the affordance is gone for everything" cannot pass either.
+void TestUnsubstitutedTextPlaceholderIsNotALink()
+{
+    printf("an action still carrying \"&text;\" is refused everywhere "
+           "(mushview.cpp:2158-2160)\n");
+
+    Harness h;
+    auto linkLine = [](const char* action) {
+        SOutputRun run;
+        run.text = "click here";
+        run.fg   = 0x00FFFFFFu;
+        run.setLink(action, "the hint", 0x0400 /*ACTION_SEND*/);
+        SOutputLine line;
+        line.push_back(run);
+        return line;
+    };
+    h.pane->AppendLine(linkLine("say &text;"));   // row 0: substitution failed
+    h.pane->AppendLine(linkLine("say hello"));    // row 1: the control
+
+    std::vector<std::string> fired;
+    h.pane->m_fn_link_clicked =
+        [&](const std::string& a, int, bool, SRunEncoding) { fired.push_back(a); };
+
+    const int cw = h.pane->CharWidth();
+    const int lh = h.pane->LineHeight();
+    auto clickRow = [&](int row) {
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 2 + cw / 2, row * lh + lh / 2);
+        SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 2 + cw / 2, row * lh + lh / 2);
+    };
+
+    // ── the click ────────────────────────────────────────────────────────
+    clickRow(0);
+    opCheck(fired.empty(),
+            "clicking a link whose action still has \"&text;\" sends nothing");
+    clickRow(1);
+    opCheck(fired.size() == 1 && fired[0] == "say hello",
+            "control: the ordinary link beside it still fires");
+
+    // ── the context menu ─────────────────────────────────────────────────
+    {
+        wxMenu menu;
+        h.pane->BuildContextMenu(menu, cw * 2 + 1, lh / 2);
+        opCheck(ItemNamed(menu, "Copy Action") == nullptr,
+                "...and it is offered no link items in the context menu");
+    }
+    {
+        wxMenu menu;
+        h.pane->BuildContextMenu(menu, cw * 2 + 1, lh + lh / 2);
+        opCheck(ItemNamed(menu, "Copy Action") != nullptr,
+                "control: the ordinary link IS offered them");
+    }
+
+    // ── the hand cursor ──────────────────────────────────────────────────
+    // Asked through PointIsOverUsableLink, which is the whole of OnMotion's
+    // hand-cursor test.  Not through GetCursor(): two wxCursor objects built
+    // from the same stock id do not compare equal (measured -- IsSameAs
+    // compares ref data, and each construction makes its own), so the cursor
+    // itself cannot be read back at all.
+    opCheck(h.pane->PointIsOverUsableLink(cw * 2 + cw / 2, lh + lh / 2),
+            "fixture: an ordinary link really is hand-cursor material");
+    opCheck(!h.pane->PointIsOverUsableLink(cw * 2 + cw / 2, lh / 2),
+            "...and the \"&text;\" one is not (no affordance at all)");
+    opCheck(!h.pane->PointIsOverUsableLink(cw * 40, lh + lh / 2),
+            "control: nor is ordinary space past the end of the link run");
+}
+
+// ── 18d. the link cluster: what the items SAY and what they SEND ─────────
+//
+// Windows' IDR_MXP_MENU is exactly one item per alternative, labelled with the
+// MUD's HINT and falling back to the action when there is none, after dropping
+// an extra leading hint that belongs to the run's tooltip
+// (CMUSHView::OnContextMenu, mushview.cpp:3555-3595).  The port labelled every
+// item "Send: <action>" and never read the hints at all, so a MUD that supplied
+// "Go north" / "Go south" got "Send: n" / "Send: s".
+//
+// It also offered "Send All (in order)", which bound the WHOLE pipe-delimited
+// string: the receiver splits it, sees more than one alternative and pops up
+// the very chooser the item was picked from (wx_world_child.cpp:1526-1547), so
+// it never sent anything.  It is gone; these assertions pin that it is, and
+// that what each remaining item sends is its OWN action.
+void TestLinkContextMenuLabelsAndDispatch()
+{
+    printf("MXP link menu: hint labels, one item per alternative "
+           "(mushview.cpp:3555-3595)\n");
+
+    // A pane carrying one link run, and a recorder for what a picked item sends.
+    struct LinkFixture {
+        Harness h;
+        std::vector<std::string> sent;
+
+        LinkFixture(const char* action, const char* hint)
+        {
+            SOutputRun run;
+            run.text = "click here";        // ASCII: the column maths is plain
+            run.fg   = 0x00FFFFFFu;
+            run.setLink(action, hint, 0x0400 /*ACTION_SEND*/);
+            SOutputLine line;
+            line.push_back(run);
+            h.pane->AppendLine(std::move(line));
+            h.pane->m_fn_link_clicked =
+                [this](const std::string& a, int, bool, SRunEncoding) {
+                    sent.push_back(a);
+                };
+        }
+
+        void Build(wxMenu& menu)
+        {
+            // Inside the run, and inside the first row of the first line.
+            h.pane->BuildContextMenu(menu, h.pane->CharWidth() * 2 + 1,
+                                     h.pane->LineHeight() / 2);
+        }
+    };
+
+    // The labels of the items BEFORE the first separator: the link cluster.
+    auto clusterLabels = [](const wxMenu& menu) {
+        std::vector<std::string> out;
+        for (const auto& row : FlattenMenu(menu)) {
+            if (row.first == kSep) break;
+            out.push_back(row.second);
+        }
+        return out;
+    };
+    auto joined = [](const std::vector<std::string>& v) {
+        std::string s;
+        for (const auto& e : v) { if (!s.empty()) s += " | "; s += e; }
+        return s;
+    };
+
+    {
+        // One hint per alternative: each item is labelled with its own hint.
+        LinkFixture f("north|south|east", "Go north|Go south|Go east");
+        wxMenu menu;
+        f.Build(menu);
+
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = {
+            "Go north", "Go south", "Go east", "Copy Action" };
+        opCheck(got == want,
+                ("each alternative is labelled with the MUD's hint [got: "
+                 + joined(got) + "]").c_str());
+        opCheck(ItemNamed(menu, "Send All (in order)") == nullptr,
+                "...and there is no \"Send All\" item, which could never send");
+
+        // What the FIRST item sends: its own action, not the pipe string that
+        // "Send All" used to hand over (and that the receiver answers with a
+        // second chooser).
+        const wxMenuItem* first = ItemNamed(menu, "Go north");
+        opCheck(first != nullptr, "the first alternative is a real item");
+        if (first) {
+            wxCommandEvent pick(wxEVT_MENU, first->GetId());
+            menu.ProcessEvent(pick);
+        }
+        opCheck(f.sent.size() == 1 && f.sent[0] == "north",
+                ("picking the first alternative sends \"north\" [got: "
+                 + joined(f.sent) + "]").c_str());
+
+        // The control: a DIFFERENT item must send a different action, so the
+        // assertion above cannot be passing on a hardcoded first choice.
+        const wxMenuItem* second = ItemNamed(menu, "Go south");
+        if (second) {
+            wxCommandEvent pick(wxEVT_MENU, second->GetId());
+            menu.ProcessEvent(pick);
+        }
+        opCheck(f.sent.size() == 2 && f.sent[1] == "south",
+                "control: the second alternative sends its own action");
+    }
+    {
+        // More hints than actions: the FIRST hint is the run's tooltip and is
+        // dropped, so the labels still pair up (mushview.cpp:3556-3558).
+        LinkFixture f("n|s", "Exits|Go north|Go south");
+        wxMenu menu;
+        f.Build(menu);
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = { "Go north", "Go south", "Copy Action" };
+        opCheck(got == want,
+                ("an extra leading hint is the tooltip and is dropped [got: "
+                 + joined(got) + "]").c_str());
+    }
+    {
+        // No hints at all: fall back to the action, exactly as Windows does.
+        LinkFixture f("n|s", "");
+        wxMenu menu;
+        f.Build(menu);
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = { "n", "s", "Copy Action" };
+        opCheck(got == want,
+                ("with no hint the label falls back to the action [got: "
+                 + joined(got) + "]").c_str());
+    }
+    {
+        // A single alternative: one send item, and no menu is ever raised for a
+        // choice that does not exist.  This is also the control that makes the
+        // multi-alternative arms above provably the multi branch.
+        LinkFixture f("north", "Go north");
+        wxMenu menu;
+        f.Build(menu);
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = { "Go north", "Copy Action" };
+        opCheck(got == want,
+                ("a single-alternative link offers exactly one send item [got: "
+                 + joined(got) + "]").c_str());
+    }
+    {
+        // "ampersands won't come out right" (mushview.cpp:3583).  The label is
+        // read back with GetItemLabelText, which undoes the mnemonic escaping,
+        // so an unescaped '&' would show up here as a LOST character.
+        LinkFixture f("buy", "Buy A&W");
+        wxMenu menu;
+        f.Build(menu);
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = { "Buy A&W", "Copy Action" };
+        opCheck(got == want,
+                ("an ampersand in a hint survives as text [got: "
+                 + joined(got) + "]").c_str());
+    }
+}
+
 void TestContextMenuShape()
 {
     printf("output-pane right-click menu: CG_IDR_POPUP_MUSHVIEW merged in\n");
@@ -3342,6 +3879,233 @@ void TestRightClickSelectsWord()
 }
 
 
+// ── Copy respects the engine's soft wrap (mushview.cpp:4069-4085) ─────────
+//
+// The port's "logical lines" ARE the engine's CLines, and the engine splits a
+// long line at the wrap column into several of them (doc_shared.cpp:2975,
+// StartNewLine (false, flags)).  CMUSHView::GetSelection writes ENDLINE only
+// after a line whose hard_return is set, so on Windows a wrapped paragraph
+// arrives on the clipboard -- and at Send to MUD -- as ONE run.  SelectedText
+// used to put a newline between every pair of selected lines, so a 200-char
+// paragraph copied as three lines and "Send to MUD" sent three commands.
+//
+// Both polarities are asserted here: an "always join" is as wrong as the
+// "always break" this replaces, and neither passes both arms.
+void TestCopyJoinsSoftWrappedLines()
+{
+    printf("Copy breaks only where the LINE ended (mushview.cpp:4069-4085)\n");
+
+    auto wrapped = [](const char* text, bool hardReturn) {
+        SOutputLine l = MakeLine(text);
+        l.hardReturn = hardReturn;
+        return l;
+    };
+
+    {
+        // The engine wrapped "alphabravo" into two CLines; "charlie" is a line
+        // of its own.
+        Harness h;
+        h.pane->AppendLine(wrapped("alpha",   false));
+        h.pane->AppendLine(wrapped("bravo",   true));
+        h.pane->AppendLine(wrapped("charlie", true));
+        h.pane->SelectAll();
+        const wxString got = h.pane->GetSelectionText();
+        opCheck(got == wxT("alphabravo\ncharlie"),
+                "a soft wrap copies as one run, a real line end as a break");
+        if (got != wxT("alphabravo\ncharlie"))
+            printf("    (got \"%s\")\n", (const char*) got.utf8_str());
+    }
+    {
+        // The control: the SAME three lines with every hard_return set must
+        // still copy with a break at each one, so "join everything" fails.
+        Harness h;
+        h.pane->AppendLine(wrapped("alpha",   true));
+        h.pane->AppendLine(wrapped("bravo",   true));
+        h.pane->AppendLine(wrapped("charlie", true));
+        h.pane->SelectAll();
+        opCheck(h.pane->GetSelectionText() == wxT("alpha\nbravo\ncharlie"),
+                "control: three hard-ended lines still copy as three lines");
+    }
+    {
+        // A partial selection: the last selected line never gets a trailing
+        // separator on either platform, and the interior join still follows the
+        // flag rather than the selection's shape.
+        Harness h;
+        h.pane->AppendLine(wrapped("alpha",   false));
+        h.pane->AppendLine(wrapped("bravo",   true));
+        h.pane->AppendLine(wrapped("charlie", true));
+        h.pane->SetSelectionRange(1, 2, 3, 4);   // 1-based: line 1 col 3 -> line 2 col 4
+        opCheck(h.pane->GetSelectionText() == wxT("phabra"),
+                "a partial selection joins across the wrap and ends bare");
+    }
+}
+
+// ── Drag auto-scroll repeats while the pointer sits still ────────────────
+//
+// Windows keeps scrolling AND extending the selection for as long as the button
+// is held past the edge of the text area: CMUSHclientApp::OnIdle calls
+// CMUSHView::mouse_still_down (MUSHclient.cpp:1148), which scrolls one line per
+// idle pass and re-extends from the remembered pointer position
+// (mushview.cpp:2550-2634).  The port scrolled exactly once per EVT_MOTION and
+// had no repeat at all, so holding the hand still below the pane stopped the
+// scroll -- and the selection -- dead, and selecting 200 lines meant jiggling
+// the mouse the whole way.
+//
+// The repeat is driven here by calling AutoScrollTick directly rather than by
+// waiting for the wxTimer: this harness exits from wxApp::OnInit, so there is
+// no event loop to deliver a timer event, and wxYield is a heap-corruption
+// hazard here (CLAUDE.md, 8f12c1c).  The tick IS the behaviour; the timer is
+// the binding.
+void TestDragAutoScrollRepeats()
+{
+    printf("drag auto-scroll: the repeat past the edge "
+           "(mushview.cpp:2550-2634)\n");
+
+    // Park well above the bottom so there is somewhere to scroll TO -- at the
+    // buffer end ScrollLines(1) is a no-op and every assertion below would be
+    // vacuous.
+    auto parked = [](Harness& h) {
+        h.Feed(400);
+        h.pane->ScrollToBottom();
+        h.pane->Scroll(0, 5);
+    };
+    auto selEndLine = [](Harness& h) {
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        return h.pane->GetSelectionInfo(sl, sc, el, ec) ? el : -1;
+    };
+    // GetScrollPositionY answers in PIXELS; the assertions below are about
+    // ROWS, so they divide rather than comparing raw positions.
+    auto rowPos = [](Harness& h) {
+        const int lh = h.pane->LineHeight();
+        return lh > 0 ? (int)(h.pane->GetScrollPositionY() / lh) : -1;
+    };
+    // Every arm below must leave the pane with no drag, no capture and no armed
+    // timer.  wxFrame::Destroy only QUEUES the deletion and this harness runs no
+    // event loop, so a pane left mid-drag outlives its own test -- and then
+    // meets the one wxYield in this file (PumpDeferred), which processes the
+    // queued deletion and any pending timer event together.  A window destroyed
+    // while it still holds the mouse capture is the crash that follows, in a
+    // later, unrelated test.
+    auto endDrag = [](Harness& h, int x, int y) {
+        SendMouse(h.pane, wxEVT_LEFT_UP, x, y);
+        if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+    };
+
+    {
+        Harness h;
+        parked(h);
+        int clientH = 0;
+        h.pane->GetClientSize(nullptr, &clientH);
+        const int lh = h.pane->LineHeight();
+
+        const int start = rowPos(h);
+        opCheck(start > 0 && clientH > 4 * lh,
+                "fixture: parked above the end, with room to scroll");
+
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 10, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, 20, clientH + 50, /*leftDown*/ true);
+
+        // The motion's OWN scroll, asserted separately: without this a broken
+        // tick could hide behind the one scroll the motion already does.
+        opCheckEq(rowPos(h) - start, 1,
+                  "one motion past the edge scrolls exactly one line");
+        const int afterMotion = rowPos(h);
+        const long selAfterMotion = selEndLine(h);
+        opCheck(selAfterMotion > 0, "...and the drag really selected something");
+
+        // Now the mouse does NOTHING.  Three repeats, three lines, and three
+        // more lines of selection: the exact delta, not merely "it changed".
+        for (int i = 1; i <= 3; ++i) {
+            const bool again = h.pane->AutoScrollTick();
+            opCheck(again, "the tick asks to be called again while past the edge");
+            opCheckEq(rowPos(h) - afterMotion, i,
+                      "...and each repeat scrolls exactly one more line");
+            // i + 1, not i: OnMotion extends the selection to the pointer
+            // BEFORE it scrolls, so the first repeat also catches up the line
+            // the motion's own scroll had already moved past.  Windows has the
+            // same shape -- extend_selection runs before doLinedown in
+            // OnMouseMove, and mouse_still_down re-extends afterwards.
+            opCheckEq((int)(selEndLine(h) - selAfterMotion), i + 1,
+                      "...and drags the selection out with it");
+        }
+
+        // The stop: after the release the tick must do nothing at all.  This is
+        // the runaway-timer guard -- a repeat that outlives its drag scrolls
+        // the pane for ever.
+        endDrag(h, 20, clientH + 50);
+        const int atRelease = rowPos(h);
+        opCheck(!h.pane->AutoScrollTick(),
+                "after the release the tick refuses");
+        opCheckEq(rowPos(h) - atRelease, 0, "...and moves nothing");
+    }
+    {
+        // The pointer back INSIDE the text: Windows' `else return 0; // don't
+        // want any more idle calls` (mushview.cpp:2604).  Without this arm the
+        // repeat would never stop until the button came up.
+        Harness h;
+        parked(h);
+        int clientH = 0;
+        h.pane->GetClientSize(nullptr, &clientH);
+        const int lh = h.pane->LineHeight();
+
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 10, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, 20, clientH / 2, /*leftDown*/ true);
+        const int inside = rowPos(h);
+        opCheck(!h.pane->AutoScrollTick(),
+                "a tick with the pointer inside the text refuses");
+        opCheckEq(rowPos(h) - inside, 0, "...and moves nothing");
+        endDrag(h, 20, clientH / 2);
+    }
+    {
+        // Upwards, which is the other half of the same handler: y < 10 scrolls
+        // BACK, so a fixture parked at the top could not tell the two apart.
+        Harness h;
+        parked(h);
+        h.pane->Scroll(0, 40);
+        const int lh = h.pane->LineHeight();
+        const int start = rowPos(h);
+
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 10, 5 * lh);
+        SendMouse(h.pane, wxEVT_MOTION, 20, 2, /*leftDown*/ true);
+        opCheckEq(rowPos(h) - start, -1,
+                  "one motion past the TOP edge scrolls one line back");
+        const int afterMotion = rowPos(h);
+        opCheck(h.pane->AutoScrollTick(), "...and the repeat runs upwards too");
+        opCheckEq(rowPos(h) - afterMotion, -1,
+                  "...one line per repeat, the other way");
+        // End the drag before the fixture goes away.  wxFrame::Destroy only
+        // QUEUES the deletion, and this harness runs no event loop, so a pane
+        // left mid-drag survives with its auto-scroll timer still armed -- and
+        // then fires it inside the one wxYield this file does have
+        // (PumpDeferred), against a window that is by then being destroyed.
+        endDrag(h, 20, 2);
+    }
+    {
+        // Capture loss ends the drag exactly as a release does -- the second
+        // half of the runaway-timer guard, since a capture snatched away by a
+        // modal never produces a LEFT_UP.
+        Harness h;
+        parked(h);
+        int clientH = 0;
+        h.pane->GetClientSize(nullptr, &clientH);
+        const int lh = h.pane->LineHeight();
+
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 10, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, 20, clientH + 50, /*leftDown*/ true);
+        opCheck(h.pane->AutoScrollTick(), "control: the repeat is running");
+
+        wxMouseCaptureLostEvent lost(h.pane->GetId());
+        lost.SetEventObject(h.pane);
+        h.pane->ProcessWindowEvent(lost);
+
+        const int atLoss = rowPos(h);
+        opCheck(!h.pane->AutoScrollTick(),
+                "losing the capture stops the repeat");
+        opCheckEq(rowPos(h) - atLoss, 0, "...and it moves nothing afterwards");
+        endDrag(h, 20, clientH + 50);
+    }
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -3354,6 +4118,7 @@ int RunOutputPaneSelfTest()
     const ClipboardGuard clipAll;
 
     TestSelectionFreezesOutput();
+    TestClickInsideSelectionKeepsIt();
     TestWantsSelectAll();
     TestDoubleClickAutoCopy();
     TestClearOutputDropsPendingLine();
@@ -3364,7 +4129,11 @@ int RunOutputPaneSelfTest()
     TestPlainScrollsObeyAutoPause();
     TestTextRectangleOffsetForm();
     TestLeaveWindowCancelsMouseOver();
+    TestDragAutoScrollRepeats();
     TestFindNext();
+    TestGotoBookmarkStartsFromTheSelection();
+    TestFindVisitsEveryOccurrenceOnALine();
+    TestCopyJoinsSoftWrappedLines();
     TestReleaseDoesNotMaterialiseUnlessAsked();
     TestSearchHighlightOffsets();
     TestMeasuredMetrics();
@@ -3378,9 +4147,11 @@ int RunOutputPaneSelfTest()
     TestPullSeamReads();
     TestPullSeamDetectsURLs();
     TestLinkEncodingTravelsWithTheAction();
+    TestUnsubstitutedTextPlaceholderIsNotALink();
     TestPendingRowUsesTheRunPipeline();
     TestMiddleClickIsInert();
     TestContextMenuShape();
+    TestLinkContextMenuLabelsAndDispatch();
     TestRightClickSelectsWord();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);

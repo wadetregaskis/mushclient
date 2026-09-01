@@ -562,6 +562,58 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── Copy joins the engine's soft wrap, through the PULL model ───────────
+    // The end-to-end half of the SelectedText fix: this frame runs the pull
+    // model (m_fn_fetch_line), so every line the pane copies is rebuilt by
+    // BuildOutputLine and then passed through COutputPane's DetectURLs -- which
+    // constructs a FRESH SOutputLine and so drops any line-level flag it does
+    // not copy across.  The paragraph therefore carries an "http://" on
+    // purpose: without that flag copy the wrap group would break again here and
+    // ONLY here, with the loop-free pane selftest still green.
+    {
+        const int  savedWrap = doc->m_nWrapColumn;
+        const BOOL savedAuto = doc->m_bAutoWrapWindowWidth;
+        doc->m_bAutoWrapWindowWidth = FALSE;
+        doc->m_nWrapColumn = 20;
+        doc->ClearOutput();
+
+        // 45 characters and NOT ONE SPACE, so the wrap is purely the column's
+        // doing (a space would let the engine split there instead and change
+        // the line count): 20 + 20 + 5, of which the first two CLines have
+        // hard_return clear.
+        const char* para =
+            "http://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaa\n";
+        doc->DisplayMsg(para, (int) strlen(para), 0);
+        doc->UpdateAllViews(NULL);
+
+        check(pane->LineCount() == 3,
+              "copy/pull: the engine really wrapped the paragraph into 3 lines");
+        pane->SelectAll();
+        const wxString copied = pane->GetSelectionText();
+        const int breaks = (int) copied.Freq(wxT('\n'));
+        check(breaks == 0,
+              "copy/pull: a wrapped paragraph copies with no break at the wraps");
+        check(copied == wxString::FromUTF8(para).BeforeFirst(wxT('\n')),
+              "...and reads back as the one line the MUD sent");
+        if (breaks != 0)
+            printf("    (copied \"%s\")\n", (const char*) copied.utf8_str());
+
+        // The control, in the same fixture: two separately-sent lines must
+        // still copy with the break between them, so "join everything" fails.
+        doc->ClearOutput();
+        doc->DisplayMsg("alpha\n", 6, 0);
+        doc->DisplayMsg("bravo\n", 6, 0);
+        doc->UpdateAllViews(NULL);
+        pane->SelectAll();
+        check(pane->GetSelectionText() == wxT("alpha\nbravo"),
+              "copy/pull: control -- two real lines still copy as two");
+
+        pane->SetSelectionRange(0, 0, 0, 0);
+        doc->ClearOutput();
+        doc->m_nWrapColumn          = savedWrap;
+        doc->m_bAutoWrapWindowWidth = savedAuto;
+    }
+
     // ── File ▸ Print Selection (2026-08-12) ─────────────────────────────────
     // A separate menu item on the port (Windows puts the choice on its print
     // dialog, which the preview frame replaces).  BuildPrintLines is the

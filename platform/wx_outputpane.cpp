@@ -374,6 +374,16 @@ const SOutputRun* COutputPane::RunAtCharColumn(const SOutputLine& line, int col,
 // Kept as a file-scope constant so OnPaint and OnLeftDown stay in sync.
 static constexpr int kHintBarH = 22;
 
+// ── Drag auto-scroll repeat ───────────────────────────────────────────────────
+// Windows repeats as fast as MFC's idle loop spins, i.e. paint-bound, so ANY
+// fixed rate here is the port's own invention -- stated rather than guessed at.
+// 50 ms is 20 lines a second, which is the usual macOS drag-autoscroll feel and
+// slow enough to stay controllable at the edge of a 5,000-line scrollback.  No
+// distance-proportional acceleration: that would be a second invention with no
+// Windows referent.
+static constexpr int kAutoScrollMs     = 50;
+static constexpr int kAutoScrollTimerId = 4711;
+
 // ── Event table ───────────────────────────────────────────────────────────────
 wxBEGIN_EVENT_TABLE(COutputPane, wxScrolledWindow)
     EVT_PAINT(                      COutputPane::OnPaint)
@@ -388,6 +398,7 @@ wxBEGIN_EVENT_TABLE(COutputPane, wxScrolledWindow)
     EVT_RIGHT_UP(                   COutputPane::OnRightUp)
     EVT_MOTION(                     COutputPane::OnMotion)
     EVT_LEAVE_WINDOW(               COutputPane::OnLeaveWindow)
+    EVT_MOUSE_CAPTURE_LOST(         COutputPane::OnCaptureLost)
     EVT_MOUSEWHEEL(                 COutputPane::OnMouseWheel)
     EVT_KEY_DOWN(                   COutputPane::OnKeyDown)
     EVT_MENU(ID_COPY,               COutputPane::OnMenuCopy)
@@ -448,6 +459,14 @@ COutputPane::COutputPane(wxWindow* parent, int maxLines)
     {
         Bind(evtType, &COutputPane::OnScrollWinUpdate, this);
     }
+
+    // The drag auto-scroll repeat (see AutoScrollTick).  A member wxTimer stops
+    // itself when the pane is destroyed, so there is no window in which it can
+    // outlive what it scrolls.
+    m_autoScrollTimer.SetOwner(this, kAutoScrollTimerId);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        if (!AutoScrollTick()) m_autoScrollTimer.Stop();
+    }, kAutoScrollTimerId);
 }
 
 // ── Font variant cache ────────────────────────────────────────────────────────
@@ -486,6 +505,28 @@ static void RebuildFontVariants(const wxFont& base,
 // wxLaunchDefaultBrowser().  Only runs with no existing action and no
 // horiz_rule flag are scanned (MXP links are already labelled).
 
+// ── IsUsableLink ─────────────────────────────────────────────────────────────
+// Whether a run's link may be ACTED on -- clicked, hand-cursored, offered in
+// the context menu, or described in a tooltip.
+//
+// Windows gates all four on the same pair of tests: the action is not empty,
+// and it does not contain the literal "&text;" (mushview.cpp:2158-2160 the
+// click, :2848-2850 the cursor, :3538-3541 the menu, :4280-4282 the tooltip;
+// the cursor one even carries the comment "we know what &text; is").  "&text;"
+// is the MXP entity standing for a tag's own enclosed text, and it survives
+// into the action only when the substitution never happened -- the enclosed
+// text ran past MAX_TEXT (mxp/mxpClose.cpp:18) -- so what is left is not a
+// command anyone meant to send.  The port had no such check: such a run looked
+// live, and clicking it sent the literal "say &text;" to the MUD.
+//
+// Deliberately NOT folded into SOutputRun::isLink(), which DetectURLs also uses
+// to decide which runs it may scan for bare URLs -- a different question.
+static bool IsUsableLink(const SOutputRun* run)
+{
+    return run && run->isLink() && !run->action().empty() &&
+           run->action().find("&text;") == std::string::npos;
+}
+
 static SOutputLine DetectURLs(SOutputLine line)
 {
     // Quick scan: skip the whole line if it has no "http" substring at all.
@@ -497,6 +538,12 @@ static SOutputLine DetectURLs(SOutputLine line)
     if (!hasHttp) return line;
 
     SOutputLine result;
+    // The line-level flags live on SOutputLine itself, so a freshly
+    // constructed result drops every one of them -- bookmark, comment,
+    // userInput, arrived and hardReturn -- for any line carrying "http".
+    // Under the PULL model this function is on the fetch path, so that is the
+    // line the pane actually shows.
+    result.copyFlagsFrom(line);
     result.reserve(line.size() * 2);
 
     for (SOutputRun run : line) {
@@ -623,6 +670,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
     // never added to m_lines; they simply replace m_pendingLine.
     if (line.pending) {
         m_pendingLine = std::move(line);
+        ClearSelectionOnNewOutput();
         if (m_batchDepth == 0) {
             UpdateScrollbars(m_autoScroll);
             Refresh(false);
@@ -687,6 +735,11 @@ void COutputPane::AppendLine(SOutputLine&& line)
     // Notify the logging hook (if any) immediately after the line is accepted.
     // Done before the batch-depth check so every line is logged even in batches.
     if (m_fn_on_line_appended) m_fn_on_line_appended(loggedLine);
+
+    // Before the batch check, not inside it: a batched drain must drop the
+    // selection exactly as an unbatched one does, and Windows' addedstuff runs
+    // per line either way.
+    ClearSelectionOnNewOutput();
 
     if (m_batchDepth == 0) {
         UpdateScrollbars(m_autoScroll);
@@ -1207,10 +1260,34 @@ void COutputPane::GotoNextBookmark()
 {
     const int n = LineCountI();
     if (n == 0) return;
-    for (int i = 1; i <= n; ++i) {     // start just past the last one we jumped to
-        int idx = (((m_lastBookmarkLine % n) + n + i) % n);
+
+    // Where to scan FROM: the current selection's start line, read fresh on
+    // every invocation, exactly as CMUSHView::OnDisplayGotobookmark reads
+    // m_selstart_line (mushview.cpp:4862-4877) -- including its
+    // `<= 0 || >= count` arm, which means "no usable origin, start at the head".
+    //
+    // It used to cycle from m_lastBookmarkLine, a member nothing but this
+    // function ever wrote.  Two consequences, both silent: clicking or
+    // selecting between two bookmarks did not move the origin (Windows jumps to
+    // the next bookmark after the CLICK; the port jumped to wherever its last
+    // jump had left off), and a head-trim slid every line index down while
+    // leaving this one where it was -- DropFrontLines shifts m_selAnchor and
+    // m_selFocus and knew nothing about it -- so after a trim the origin named
+    // a different line than the one it had been set from.  Deriving it from the
+    // selection closes both, and needs no separate index to keep in step.
+    //
+    // "Continue from the last jump" still falls out for free, because the
+    // SelectLine below leaves the selection on the line it lands at.
+    int origin = 0;
+    {
+        SelPoint s, e;
+        if (GetNormalizedSel(s, e) && s.line > 0 && s.line < n)
+            origin = s.line;
+    }
+
+    for (int i = 1; i <= n; ++i) {     // start just past the origin, and wrap
+        const int idx = (origin + i) % n;
         if (LineAt(idx).bookmark) {
-            m_lastBookmarkLine = idx;
             // CMUSHView::OnDisplayGotobookmark ends `SelectLine (nNewLine)`
             // (mushview.cpp:4920) — the same call Go To Line makes.  This used
             // to be a bare ScrollToLine: no selection, no visibility guard and
@@ -1219,6 +1296,8 @@ void COutputPane::GotoNextBookmark()
             return;
         }
     }
+    // i == n revisited the origin itself, which is Windows' "if we didn't find
+    // one *but* we were on one anyway, re-go to it" tail (mushview.cpp:4907).
 }
 
 void COutputPane::SetSelectionRange(int startLine, int endLine,
@@ -2813,6 +2892,25 @@ bool COutputPane::GetNormalizedSel(SelPoint& start, SelPoint& end) const
 // text scrolls out from under the cursor before the user reaches Cmd-C, and
 // once the scrollback trim kicks in the selection indices slide onto different
 // text, so the wrong line is copied.
+// ── ClearSelectionOnNewOutput ────────────────────────────────────────────────
+// See the header.  m_autoScroll is the port's m_freeze twin, so the guard is
+// the same `!m_freeze` Windows uses.
+//
+// In a default world this is a no-op, and deliberately so: making a selection
+// FREEZES the view (auto_pause), so m_autoScroll is already false by the time
+// the next line lands.  What it changes is the auto_pause-OFF world and the
+// script that calls world.SetSelection while output flows -- there the port
+// kept the selection indefinitely, sliding it down with every head trim, so a
+// later Copy, or world.GetSelectionStartLine, read text chosen minutes ago
+// where Windows had long since dropped it.
+void COutputPane::ClearSelectionOnNewOutput()
+{
+    if (!m_autoScroll) return;             // frozen: Windows keeps the selection
+    if (!m_selAnchor.valid() && !m_selFocus.valid()) return;   // nothing to drop
+    m_selAnchor = SelPoint{};
+    m_selFocus  = SelPoint{};
+}
+
 void COutputPane::FreezeIfSelection()
 {
     if (!m_allowAutoFreeze) return;
@@ -2960,11 +3058,36 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY(),
                                    false /*containment: which cell holds it*/);
             const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), clickCol);
-            if (run && run->isLink()) {
+            if (IsUsableLink(run)) {
                 m_linkAtDown     = run->action();
                 m_linkTypeAtDown = run->action_type();
                 m_linkNoteAtDown = LineAt(lineIdx).comment;
                 m_linkEncAtDown  = run->encoding();
+            }
+        }
+    }
+
+    // A click INSIDE the existing selection leaves it alone and takes no
+    // capture: `if (oldrgn.PtInRegion (point)) { ...; return; }`
+    // (CMUSHView::OnLButtonDown, mushview.cpp:2248-2253).  The port reset the
+    // anchor to the click point unconditionally, so clicking anywhere in a
+    // highlighted paragraph -- to bring the window forward, or on the way to
+    // Edit > Copy -- collapsed the selection and left Copy with nothing.
+    //
+    // Placed here for two reasons, both taken from the order upstream uses.
+    // AFTER the link stash and skipped when a link was hit, because Windows
+    // tests the hyperlink FIRST and fires it on the way down (:2158-2225),
+    // returning before it ever builds the region.  And after the shift-click
+    // branch above, because that one extends the selection wherever the click
+    // lands -- Windows' `nFlags & MK_SHIFT` arm is likewise reached only past
+    // the region test.
+    if (m_linkAtDown.empty()) {
+        SelPoint s, e;
+        if (GetNormalizedSel(s, e)) {
+            const SelPoint click = MouseToSelPoint(evt);
+            if (s <= click && click < e) {
+                evt.Skip();
+                return;
             }
         }
     }
@@ -2986,6 +3109,7 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
 
     if (m_dragging) {
         m_dragging  = false;
+        m_autoScrollTimer.Stop();      // the drag is over; nothing left to chase
         m_selFocus  = MouseToSelPoint(evt);
         if (HasCapture()) ReleaseMouse();
         Refresh(false);
@@ -3104,6 +3228,7 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                 // sit INSIDE the callback guard, so it only held when a frame
                 // had wired m_fn_word_double_clicked.
                 m_dragging = false;
+                m_autoScrollTimer.Stop();
                 if (HasCapture()) ReleaseMouse();
 
                 // "Double-click Sends Word" / "…Pastes Word".  Dispatch the word
@@ -3232,6 +3357,101 @@ static wxCursor MiniWindowCursor(int id)
     }
 }
 
+// ── ScrollByRows ─────────────────────────────────────────────────────────────
+// One visual row per unit, up or down.
+//
+// This exists because the drag auto-scroll called wxWindow::ScrollLines, and on
+// this toolkit that is the BASE CLASS body -- `virtual bool ScrollLines(int)
+// { return false; }` (wx/window.h:1423).  wxScrolledWindow does not override
+// it; only two ribbon classes in the whole library do.  So the pane's
+// drag-past-the-edge scroll has never moved anything at all, in either
+// direction: the call compiled, ran, returned false and was discarded.  Scroll()
+// is what every other scrolling site in this class already uses.
+//
+// Deliberately does NOT re-evaluate the freeze from the new position
+// (RefreshAutoScrollFromPosition).  A drag scroll is not a user scroll: the
+// freeze during a drag is decided by FreezeIfSelection, which both callers run,
+// and re-deciding it from the position here THAWS a just-frozen selection
+// whenever the viewport is already against the end -- which is exactly the
+// state a drag near the bottom of a short buffer is in.
+void COutputPane::ScrollByRows(int rows)
+{
+    if (rows == 0) return;
+    int unitH = 0;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH <= 0) return;
+    // Ask for the row pitch rather than assuming the scroll rate is still
+    // m_lineH: AdoptMeasuredMetrics can change it after construction.
+    const int units = std::max(1, pal::pixelsToScrollUnits(m_lineH, unitH));
+    int scrollX = 0, scrollY = 0;
+    GetViewStart(&scrollX, &scrollY);
+    Scroll(scrollX, std::max(0, scrollY + rows * units));   // Scroll clamps the far end
+}
+
+bool COutputPane::PointIsOverUsableLink(int clientX, int clientY) const
+{
+    SelPoint pt = PointToChar(clientX, clientY,
+                              false /*containment: hover, not caret*/);
+    if (!pt.valid() || pt.line < 0 || pt.line >= LineCountI()) return false;
+    // pt.col is the absolute char column in the logical line (already
+    // wrap-aware via XToChar in PointToChar).
+    return IsUsableLink(RunAtCharColumn(LineAt(pt.line), pt.col));
+}
+
+int COutputPane::DragBottomEdge() const
+{
+    int clientH;
+    GetClientSize(nullptr, &clientH);
+    // When the hint bar is visible it is painted over the last rows, so treat
+    // its upper edge as the boundary and the drag does not fight the hint bar's
+    // own click region.
+    return (!m_autoScroll && LineCountI() != 0) ? clientH - kHintBarH - 10
+                                                : clientH - 10;
+}
+
+// ── AutoScrollTick ───────────────────────────────────────────────────────────
+// See the header.  One repeat of CMUSHView::mouse_still_down
+// (mushview.cpp:2550-2634): scroll a line, drag the selection out to the
+// remembered pointer position, and ask to be called again.
+bool COutputPane::AutoScrollTick()
+{
+    // Windows' gate is `GetCapture () != this` (mushview.cpp:2556).  m_dragging
+    // is the port's twin: set only by the mouse-down that captures, cleared by
+    // the release, by the double-click's early drag end, and by OnCaptureLost.
+    if (!m_dragging) return false;
+
+    const int bottomEdge = DragBottomEdge();
+    if (m_lastDragY > bottomEdge)
+        ScrollByRows(1);
+    else if (m_lastDragY < 10)
+        ScrollByRows(-1);
+    else
+        return false;      // back inside the text: mushview.cpp:2604's
+                           // `else return 0; // don't want any more idle calls`
+
+    // Re-extend to the SAME pointer position, which now names a different line
+    // because the view moved under it.  Deliberately NOT Windows'
+    // `m_last_mouse_position.y += m_FontHeight` walk (mushview.cpp:2601): that
+    // exists because calculate_line_and_column is handed a PRE-scroll device
+    // point, where PointToChar already folds GetViewStart into its answer, so
+    // bumping the stored y here would double-count and run the selection ahead
+    // of the scroll.
+    m_selFocus = PointToChar(m_lastDragX, m_lastDragY);
+    FreezeIfSelection();
+    Refresh(false);
+    return true;
+}
+
+// Capture taken away from under a drag -- a modal, a system gesture, or another
+// window grabbing it.  wx requires this handler once CaptureMouse has been
+// called, and it is what stops an auto-scroll repeat that would otherwise have
+// no release to end it.
+void COutputPane::OnCaptureLost(wxMouseCaptureLostEvent&)
+{
+    m_dragging = false;
+    m_autoScrollTimer.Stop();
+}
+
 void COutputPane::OnMotion(wxMouseEvent& evt)
 {
     int mwCursor = -999;
@@ -3262,18 +3482,24 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         // MUD the difference is a whole drag's worth of scrolling.
         FreezeIfSelection();
 
-        // Auto-scroll when dragging past the top or bottom edges.
-        // When the hint bar is visible, treat its upper edge as the bottom
-        // boundary so the drag doesn't fight with the hint-bar click region.
-        int clientW, clientH;
-        GetClientSize(&clientW, &clientH);
-        int bottomEdge = (!m_autoScroll && !LineCountI() == 0)
-                       ? clientH - kHintBarH - 10
-                       : clientH - 10;
+        // Auto-scroll when dragging past the top or bottom edges.  Windows
+        // does exactly this one scroll per move too (CMUSHView::OnMouseMove,
+        // mushview.cpp:2510-2517); what it ALSO has, and what the timer below
+        // supplies, is the repeat while the pointer sits still past the edge.
+        m_lastDragX = evt.GetX();
+        m_lastDragY = evt.GetY();
+        const int bottomEdge = DragBottomEdge();
         if (evt.GetY() > bottomEdge)
-            ScrollLines(1);
+            ScrollByRows(1);
         else if (evt.GetY() < 10)
-            ScrollLines(-1);
+            ScrollByRows(-1);
+
+        if (evt.GetY() > bottomEdge || evt.GetY() < 10) {
+            if (!m_autoScrollTimer.IsRunning())
+                m_autoScrollTimer.Start(kAutoScrollMs);
+        } else {
+            m_autoScrollTimer.Stop();   // back inside: mouse_still_down's
+        }                               // `else return 0` (mushview.cpp:2604)
     } else {
         // Update cursor.  Priority order:
         //   1. Hint bar area → pointing hand (clicking snaps to bottom).
@@ -3289,17 +3515,9 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         } else if (mwCursor != -999) {
             SetCursor(MiniWindowCursor(mwCursor));
         } else {
-            SelPoint pt = PointToChar(evt.GetX(), evt.GetY(),
-                                      false /*containment: hover, not caret*/);
-            bool overLink = false;
-            if (pt.valid() && pt.line < LineCountI()) {
-                // pt.col is the absolute char column in the logical line
-                // (already wrap-aware via XToChar in MouseToSelPoint).
-                const SOutputRun* run = RunAtCharColumn(LineAt(pt.line), pt.col);
-                overLink = run && run->isLink();
-            }
-            SetCursor(overLink ? wxCursor(wxCURSOR_HAND)
-                               : wxCursor(wxCURSOR_IBEAM));
+            SetCursor(PointIsOverUsableLink(evt.GetX(), evt.GetY())
+                          ? wxCursor(wxCURSOR_HAND)
+                          : wxCursor(wxCURSOR_IBEAM));
         }
     }
     evt.Skip();
@@ -3476,6 +3694,7 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
     // XToChar returns the absolute char column in the logical line,
     // correctly accounting for visual-row wrapping.
     std::string linkAtClick;
+    std::string linkHintAtClick;   // the MUD's labels for the alternatives
     int  linkTypeAtClick = 0;
     bool linkNoteAtClick = false;
     SRunEncoding linkEncAtClick;   // how to read linkAtClick's bytes
@@ -3485,8 +3704,9 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
             int col = XToChar(lineIdx, x, y,
                               false /*containment*/);
             const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), col);
-            if (run && run->isLink()) {
+            if (IsUsableLink(run)) {
                 linkAtClick     = run->action();
+                linkHintAtClick = run->hint();
                 linkTypeAtClick = run->action_type();
                 linkNoteAtClick = LineAt(lineIdx).comment;
                 linkEncAtClick  = run->encoding();
@@ -3526,23 +3746,41 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
         } else {
             // MXP send-link or Lua Hyperlink() action.
             // Split pipe-delimited alternatives and show each as a menu item.
-            std::vector<std::string> choices;
-            {
+            // ONE splitter for the actions and the hints: the pairing below
+            // compares their COUNTS, so two splitters with different ideas
+            // about an empty segment would silently mislabel every item.
+            auto splitPipes = [](const std::string& s) {
+                std::vector<std::string> out;
                 size_t start = 0;
                 for (;;) {
-                    size_t sep = linkAtClick.find('|', start);
-                    std::string part = linkAtClick.substr(start,
+                    size_t sep = s.find('|', start);
+                    std::string part = s.substr(start,
                         (sep == std::string::npos) ? std::string::npos : sep - start);
-                    if (!part.empty()) choices.push_back(std::move(part));
+                    if (!part.empty()) out.push_back(std::move(part));
                     if (sep == std::string::npos) break;
                     start = sep + 1;
                 }
-            }
-            for (const std::string& ch : choices) {
-                // DecodeRunBytes, not FromUTF8: one legacy-charset byte in the
-                // action made this label "Send: " with nothing after it.
-                wxString label = wxString::Format(wxT("Send: %s"),
-                    DecodeRunBytes(ch, linkEncAtClick));
+                return out;
+            };
+            const std::vector<std::string> choices = splitPipes(linkAtClick);
+            const std::vector<std::string> hints   = splitPipes(linkHintAtClick);
+            // "more hints than actions? first one must be the tooltip text"
+            // (mushview.cpp:3556-3558) -- <send "n|s" hint="Exits|Go north|Go
+            // south"> gives the run's TOOLTIP first and then one label each.
+            const size_t hintBase = (hints.size() > choices.size()) ? 1 : 0;
+            for (size_t i = 0; i < choices.size(); ++i) {
+                const std::string& ch = choices[i];
+                // Windows labels each alternative with the MUD's HINT, falling
+                // back to the action itself when there is none (mushview.cpp:
+                // 3571-3581).  The action is still what gets sent; only the
+                // label changes.  DecodeRunBytes, not FromUTF8: one
+                // legacy-charset byte used to leave the label empty.
+                const size_t h = hintBase + i;
+                wxString label = DecodeRunBytes(
+                    (h < hints.size()) ? hints[h] : ch, linkEncAtClick);
+                // "ampersands won't come out right" (mushview.cpp:3583): a bare
+                // '&' is a mnemonic marker to wx exactly as it is to Win32.
+                label.Replace(wxT("&"), wxT("&&"));
                 wxMenuItem* item = menu.Append(wxID_ANY, label);
                 menu.Bind(wxEVT_MENU,
                     [this, cmd = ch, linkTypeAtClick, linkNoteAtClick,
@@ -3552,18 +3790,13 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
                                               linkNoteAtClick, linkEncAtClick);
                     }, item->GetId());
             }
-            if (choices.size() > 1) {
-                // Also offer "Send first" as a quick one-click action.
-                wxMenuItem* itemAll = menu.Append(wxID_ANY,
-                    wxT("Send All (in order)"));
-                menu.Bind(wxEVT_MENU,
-                    [this, linkAtClick, linkTypeAtClick, linkNoteAtClick,
-                     linkEncAtClick](wxCommandEvent&) {
-                        if (m_fn_link_clicked)
-                            m_fn_link_clicked(linkAtClick, linkTypeAtClick,
-                                              linkNoteAtClick, linkEncAtClick);
-                    }, itemAll->GetId());
-            }
+            // No "Send All (in order)" item.  It handed the WHOLE pipe-
+            // delimited string to m_fn_link_clicked, whose multi-alternative
+            // arm answers by popping up the same chooser again
+            // (wx_world_child.cpp:1526-1547), so it could never send anything,
+            // let alone all of them in order.  Windows offers no such thing
+            // either: IDR_MXP_MENU is exactly one item per alternative
+            // (mushview.cpp:3565-3595), and the items above are that.
             wxMenuItem* itemCopy = menu.Append(wxID_ANY, "Copy Action");
             menu.Bind(wxEVT_MENU,
                 [linkAtClick, linkEncAtClick](wxCommandEvent&) {
@@ -4075,7 +4308,15 @@ wxString COutputPane::SelectedText() const
         endCol   = std::max(startCol, std::min((int)lineText.size(), endCol));
 
         result += lineText.substr(startCol, endCol - startCol);
-        if (i < hi) result += "\n";   // newline between lines, not after the last
+        // A break only where the LINE ended, never where the engine wrapped
+        // it: CMUSHView::GetSelection writes ENDLINE only `if
+        // (pLine->hard_return)` (mushview.cpp:4069-4085), so a soft-wrapped
+        // paragraph reaches the clipboard -- and Send to MUD -- as the one
+        // command the user sees, not as one per screen row.  ("\n" rather than
+        // ENDLINE's "\r\n" stays a separate, deliberate macOS choice.)  Copy
+        // as HTML keeps its unconditional break: OnEditCopyashtml writes one
+        // after EVERY line (mushview.cpp:5861/5873/5881).
+        if (i < hi && LineAt(i).hardReturn) result += "\n";
     }
     return result;
 }
@@ -4185,45 +4426,83 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         if (startIdx < 0) startIdx = n - 1;
     }
 
-    // Returns the (optionally lowercased) plain text of line i.  Used only for
-    // locating the match WITHIN the found line, i.e. once per search, not once
-    // per line -- the scan itself goes through the cache below.
-    auto lineText = [this, caseSensitive](int i) -> wxString {
-        wxString s;
-        for (const auto& run : LineAt(i))
-            if (!run.horiz_rule)
-                s += DecodeRunText(run);
-        return caseSensitive ? s : s.Lower();
-    };
-
     // One scan for this (term, case flag, buffer generation); repeated Find
     // Next presses reuse it.
     RebuildFindCache(term, caseSensitive);
     if (m_findCache.empty()) return false;
 
+    // ── the rest of the CURRENT line first ────────────────────────────────
+    // Windows visits every OCCURRENCE, not every matching line:
+    // CSendView::DoFind sets m_bRepeatOnSameLine (sendvw.cpp:1399, comment "we
+    // can find multiple instances on the same line") and FindRoutine builds the
+    // line's whole match list, popping one entry per press and only moving on
+    // when it is empty (Finding.cpp:123-130, :189-219).  The port's cache is
+    // per LINE, so without this the second "gold" in "gold coins and more gold
+    // dust" was unreachable -- Find Next jumped past it to the next matching
+    // line, or, if that line was the only match, reselected the first "gold"
+    // for ever.
+    //
+    // Only the ONE line the selection is on is re-scanned, so the
+    // O(1)-per-keypress cost of the cache is untouched.
+    int foundIdx = -1;
+    int matchStart = -1, matchEnd = -1;
+    std::vector<HighlightHit> hits;
+    {
+        const int curLine = forward ? (selEnd.valid()   ? selEnd.line   : -1)
+                                    : (selStart.valid() ? selStart.line : -1);
+        if (curLine >= 0 && curLine < n) {
+            MatchesOnLine(curLine, searchTerm, caseSensitive, hits);
+            for (const HighlightHit& hit : hits) {
+                // Strictly past the current selection, so a repeated press
+                // cannot land on the occurrence it is already sitting on.
+                if (forward) {
+                    if (hit.start >= selEnd.col)
+                        { foundIdx = curLine; matchStart = hit.start;
+                          matchEnd = hit.end; break; }
+                } else {
+                    if (hit.end <= selStart.col)
+                        { foundIdx = curLine; matchStart = hit.start;
+                          matchEnd = hit.end; }   // keep the LAST such one
+                }
+            }
+        }
+    }
+
+    // ── otherwise the next matching LINE ──────────────────────────────────
     // The first cached match at or after (forward) / at or before (backward)
     // the start point, wrapping.  upper_bound/lower_bound rather than a walk so
     // this stays O(log matches) with a capped-at-9999 cache.
-    int foundIdx = -1;
-    if (forward) {
-        auto it = std::lower_bound(m_findCache.begin(), m_findCache.end(), startIdx);
-        foundIdx = (it != m_findCache.end()) ? *it : m_findCache.front();
-    } else {
-        auto it = std::upper_bound(m_findCache.begin(), m_findCache.end(), startIdx);
-        foundIdx = (it != m_findCache.begin()) ? *(it - 1) : m_findCache.back();
+    if (foundIdx < 0) {
+        if (forward) {
+            auto it = std::lower_bound(m_findCache.begin(), m_findCache.end(), startIdx);
+            foundIdx = (it != m_findCache.end()) ? *it : m_findCache.front();
+        } else {
+            auto it = std::upper_bound(m_findCache.begin(), m_findCache.end(), startIdx);
+            foundIdx = (it != m_findCache.begin()) ? *(it - 1) : m_findCache.back();
+        }
+
+        // Select the precise matched substring (not the whole line) so the user
+        // can see exactly which occurrence was found: the FIRST on the line
+        // going forwards, the LAST going backwards, so that the very next press
+        // continues through the line's own occurrences in the direction of
+        // travel rather than skipping them.
+        MatchesOnLine(foundIdx, searchTerm, caseSensitive, hits);
+        if (!hits.empty()) {
+            const HighlightHit& hit = forward ? hits.front() : hits.back();
+            matchStart = hit.start;
+            matchEnd   = hit.end;
+        } else {
+            // The cache said this line matches and the enumerator disagrees:
+            // select from the head rather than nothing, which is what the old
+            // `lt.find(...) == npos` arm did.
+            matchStart = 0;
+            matchEnd   = (int) searchTerm.size();
+        }
     }
     (void) n;
 
-    // Select the precise matched substring (not the whole line) so the user
-    // can see exactly which occurrence was found.
-    {
-        wxString lt      = lineText(foundIdx);
-        size_t   matchOff = lt.find(searchTerm);
-        int selStart = (matchOff != wxString::npos) ? (int)matchOff : 0;
-        int selEnd   = selStart + (int)searchTerm.size();
-        m_selAnchor  = SelPoint{foundIdx, selStart};
-        m_selFocus   = SelPoint{foundIdx, selEnd};
-    }
+    m_selAnchor = SelPoint{foundIdx, matchStart};
+    m_selFocus  = SelPoint{foundIdx, matchEnd};
 
     // CSendView::DoFind's last act on the view is
     // `m_topview->EnsureSelectionVisible ()` (sendvw.cpp:1475) — the SAME
@@ -4251,12 +4530,23 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
 }
 
 // ── HighlightHitsForLine ──────────────────────────────────────────────────
-// See the header.  Character ranges of the current search term in line
-// `lineIdx`, using the raw-bytes path where that is exactly equivalent.
+// See the header.  Character ranges of the CURRENT search term in line
+// `lineIdx` -- the paint's caller, which asks about the term the find bar last
+// highlighted with.
 void COutputPane::HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& out)
 {
+    MatchesOnLine(lineIdx, m_searchTermLower, m_searchCaseSensitive, out);
+}
+
+// ── MatchesOnLine ─────────────────────────────────────────────────────────
+// See the header.  Every occurrence on one line, using the raw-bytes path
+// where that is exactly equivalent.
+void COutputPane::MatchesOnLine(int lineIdx, const wxString& termFolded,
+                                bool caseSensitive,
+                                std::vector<HighlightHit>& out)
+{
     out.clear();
-    if (m_searchTerm.IsEmpty()) return;
+    if (termFolded.IsEmpty()) return;
     if (lineIdx < 0 || lineIdx >= LineCountI()) return;
     const SOutputLine& line = LineAt(lineIdx);
 
@@ -4273,10 +4563,10 @@ void COutputPane::HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& o
             if (c >= 0x80) { fastable = false; break; }
 
     if (fastable) {
-        const wxScopedCharBuffer tb = m_searchTermLower.utf8_str();
+        const wxScopedCharBuffer tb = termFolded.utf8_str();
         const std::string term(tb.data(), tb.length());
         if (!term.empty()) {
-            if (!m_searchCaseSensitive)
+            if (!caseSensitive)
                 for (char& c : m_hlScratch)
                     if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
             size_t p = 0;
@@ -4291,8 +4581,8 @@ void COutputPane::HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& o
             if (!run.horiz_rule)
                 plain += DecodeRunText(run);
 
-        wxString cmpPlain = m_searchCaseSensitive ? plain : plain.Lower();
-        const wxString& cmpTerm = m_searchTermLower;
+        wxString cmpPlain = caseSensitive ? plain : plain.Lower();
+        const wxString& cmpTerm = termFolded;
         if (!cmpTerm.empty()) {
             std::wstring pw = cmpPlain.ToStdWstring();
             std::wstring tw = cmpTerm.ToStdWstring();

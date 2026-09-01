@@ -156,6 +156,28 @@ struct SOutputLine : std::vector<SOutputRun> {
     // the view has to know, and the pane holds no CLine of its own.  0 means
     // "unknown", which the fade treats as "do not fade".
     time_t arrived = 0;
+    // CLine::hard_return: false when the ENGINE wrapped this line at the wrap
+    // column and the text continues on the next one.  Copy takes it from here:
+    // CMUSHView::GetSelection writes ENDLINE only after a line whose
+    // hard_return is set (mushview.cpp:4069-4085), so a soft-wrapped group is
+    // one unbroken run on the clipboard.  TRUE by default deliberately: a line
+    // built by anything other than BuildLineFromCLine (a selftest fixture, a
+    // synthesised rule) is a whole line, and defaulting the other way would
+    // silently glue such lines together.
+    bool hardReturn = true;
+    // Copy every LINE-level flag -- not the runs -- from another line.
+    // DetectURLs rebuilds a line's runs into a fresh SOutputLine and would
+    // otherwise drop all of these for any line containing "http"; keeping the
+    // list here means the next flag added cannot be forgotten there.
+    void copyFlagsFrom (const SOutputLine & other)
+    {
+        pending   = other.pending;
+        bookmark  = other.bookmark;
+        comment   = other.comment;
+        userInput = other.userInput;
+        arrived   = other.arrived;
+        hardReturn = other.hardReturn;
+    }
     // Inherit all std::vector constructors (default, initializer_list, etc.).
     using std::vector<SOutputRun>::vector;
 };

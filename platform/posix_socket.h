@@ -26,6 +26,7 @@
 
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/ioctl.h>   // FIONREAD (the Poll() drain loop's progress check)
 #include <poll.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -132,12 +133,21 @@ public:
             Close(); return FALSE;
         }
 
-        // Disable Nagle for TCP
-        if (nSocketType == SOCK_STREAM) {
-            int opt = 1;
-            ::setsockopt(m_hSocket, IPPROTO_TCP, TCP_NODELAY,
-                         &opt, sizeof(opt));
-        }
+        // NAGLE IS DELIBERATELY LEFT ON.  This used to set TCP_NODELAY on
+        // every stream socket, which read as an obvious kindness to an
+        // interactive client and was in fact the port's own invention: MFC's
+        // CAsyncSocket::Create does not touch it, and neither does
+        // pal/win_transport.cpp's connect(), whose comment says it reproduces
+        // "the exact call sequence the shipping Windows client used" -- it
+        // applies the keepalive ioctl and nothing else.  So the two adapters
+        // ran the same connection with different socket options: two commands
+        // typed inside one RTT reach the MUD as one segment on Windows and as
+        // two here, and a server that keys on packet boundaries (a prompt/GA
+        // heuristic that reads "one packet" rather than "one line") sees a
+        // different stream from the same bytes.  Parity is the bar, so the
+        // option is gone rather than duplicated onto Windows.  Pinned by
+        // PosixSocket.CreatedStreamSocketLeavesNagleAlone -- do not re-add it
+        // without changing win_transport.cpp in the same commit.
 
         // MFC binds unconditionally — port 0 with no address just asks the
         // kernel for an ephemeral port, which is what an outbound socket wants
@@ -212,8 +222,26 @@ public:
             addr.sin_addr.s_addr = inet_addr(lpszSocketAddress);
         else
             addr.sin_addr.s_addr = INADDR_ANY;
-        int opt = 1;
-        ::setsockopt(m_hSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        // SO_REUSEADDR for a SERVER socket only, and it is a port-only
+        // addition -- MFC sets it nowhere.  A requested port means a listener:
+        // world.ChatAcceptCalls (methods_chat.cpp:530) and world.UdpListen
+        // (methods_udp.cpp:92) are the only callers that name one; the world
+        // connection and an outgoing chat call both pass 0 and take an
+        // ephemeral port, which can never need it.  It used to be set on every
+        // bind, outbound sockets included, where it says nothing and hides
+        // nothing -- but it also meant the option had never been thought about.
+        //
+        // It stays for listeners because BSD's SO_REUSEADDR is not Winsock's:
+        // here it only permits rebinding a port still held by TIME_WAIT
+        // connections, so restarting chat listening on the configured port
+        // works after a peer disconnects.  It does NOT let a second socket
+        // steal a live listener the way the Windows option would, so keeping it
+        // costs none of the hijacking hazard that makes it the wrong default
+        // there.  Pinned by PosixSocket.ReuseAddrIsForListenersNotEveryBind.
+        if (nSocketPort != 0) {
+            int opt = 1;
+            ::setsockopt(m_hSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        }
         return (::bind(m_hSocket, (struct sockaddr*)&addr, sizeof(addr)) == 0)
                ? TRUE : FALSE;
     }
@@ -472,7 +500,51 @@ public:
                         if (IsLive(s, gen) && s->m_hSocket != INVALID_SOCKET)
                             s->Close();
                     } else {
-                        s->OnReceive(0);
+                        // Drain the backlog inside THIS pass, the way Winsock
+                        // does.  FD_READ is edge-triggered on recv(): the socket
+                        // window re-records and re-posts it whenever recv() is
+                        // called and data still remains, so a Windows message
+                        // loop consumes a burst within one turn.  Here the only
+                        // pump is a 20 ms wxTimer (wx_mfc_impl.cpp), so one
+                        // OnReceive per pass was a throughput ceiling Windows
+                        // does not have: the world socket reads 9999 bytes per
+                        // call (posix_transport.cpp) and a chat socket 999, i.e.
+                        // ~500 KB/s and ~50 KB/s at 50 passes a second.
+                        //
+                        // The re-arm condition is Winsock's, and it is NOT
+                        // "there is still data": the callback must have CONSUMED
+                        // something.  A callback that is notified and reads
+                        // nothing gets no FD_READ re-post on Windows either, and
+                        // demanding progress here is what stops such a callback
+                        // burning the whole budget on every pass.  FIONREAD is
+                        // the only instrument that can tell the two apart --
+                        // MSG_PEEK answers "is there data", never "did you take
+                        // any".
+                        //
+                        // The budget bounds one busy socket's share of a pass so
+                        // it cannot starve the other sockets or the UI: Poll()
+                        // runs on the GUI thread.
+                        constexpr int kMaxReceivesPerPass = 64;
+                        for (int calls = 0; ; ) {
+                            int before = 0;
+                            if (::ioctl(fd, FIONREAD, &before) != 0)
+                                before = -1;   // unmeasurable: one call, as before
+
+                            s->OnReceive(0);
+                            ++calls;
+
+                            if (calls >= kMaxReceivesPerPass) break;
+                            if (before <= 0) break;
+                            // A callback may have closed, freed or reopened the
+                            // slot — same discipline as the arms around this one.
+                            if (!IsLive(s, gen) || s->m_hSocket == INVALID_SOCKET)
+                                break;
+                            fd = s->m_hSocket;
+                            int after = 0;
+                            if (::ioctl(fd, FIONREAD, &after) != 0) break;
+                            if (after <= 0)     break;   // nothing left to drain
+                            if (after >= before) break;  // consumed nothing
+                        }
                     }
                 }
             }

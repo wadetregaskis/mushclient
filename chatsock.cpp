@@ -434,7 +434,17 @@ int count = Receive (buff, sizeof (buff) - 1);
         else
           {   // not a file block - use variable-length terminator
 
-          int iTerminator = m_outstanding_input.Find ((char) CHAT_END_OF_COMMAND);
+          // pal::chatFindChar, not CString::Find: MFC's Find(char) is _tcschr
+          // and gives up at the first embedded NUL, while the port's
+          // std::string-backed Find scans the whole length.  m_outstanding_input
+          // deliberately carries NULs (see ChatAppendBytes above), so a peer that
+          // puts one before the 0xFF terminator was framed here on this platform
+          // and left the Windows client's buffer wedged forever.  Searching in
+          // MFC's terms is what makes the two builds act on the same bytes --
+          // the same conversion the handshake parser already had.
+          int iTerminator = pal::chatFindChar (m_outstanding_input.GetString (),
+                                               m_outstanding_input.GetLength (),
+                                               (char) CHAT_END_OF_COMMAND);
 
           // if no terminator, wait for one to arrive in the next packet
           if (iTerminator == -1)

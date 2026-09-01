@@ -454,7 +454,13 @@ ConnectionEstablished/ReceiveMsg/SendPacket/StartSSLHandshake/
 ContinueSSLHandshake/LookupHostName/OnConnectionDisconnect), their hand-written
 doc_portable.cpp twins, the POSIX `CAsyncSocket` shim (platform/posix_socket.h —
 a select(2) pump driven by a 20 ms wx timer; generation-tagged registry against
-callback self-deletion), and the OpenSSL usage.
+callback self-deletion), and the OpenSSL usage.  (The pump now drains a
+socket's whole backlog within one pass, re-arming on "the callback consumed
+something" the way Winsock's edge-triggered `FD_READ` does; before that, one
+`OnReceive` per 20 ms tick was a throughput ceiling Windows does not have.  The
+tick *period* is still the port's own, so a strictly lockstep exchange — the
+MudMaster chat file transfer, one block per round trip — still costs a tick per
+round trip.)
 
 ### What the survey established
 
@@ -472,11 +478,14 @@ callback self-deletion), and the OpenSSL usage.
   up (doc_shared.cpp:414-417). Proxy logic is engine state, NOT a transport
   concern — the transport is proxy-unaware except for which address it dials.
 - **The engine requires exactly these operations** of the socket layer:
-  create+options (keepalives, Nagle-off), async resolve with cancellation and
-  a staleness guard, async connect, buffered append-and-it-drains write, read
-  on readiness, close notification (peer and locally synthesized), graceful
-  shutdown, TLS session (start/step/verify/read/write/pending-drain/clean-
-  shutdown/metadata), normalized error codes + strings.
+  create+options (keepalives — and *only* keepalives; the "Nagle-off" this line
+  used to claim was never a requirement and was never implemented on Windows.
+  It was the POSIX shim's own unexamined addition, surveyed from that shim
+  rather than from the engine, and it has since been removed from it), async
+  resolve with cancellation and a staleness guard, async connect, buffered
+  append-and-it-drains write, read on readiness, close notification (peer and
+  locally synthesized), graceful shutdown, TLS session (start/step/verify/read/
+  write/pending-drain/clean-shutdown/metadata), normalized error codes + strings.
 - **Interaction points back into the engine/GUI**: connect complete/failed,
   bytes ready (with the SSL_pending re-drain), writable, closed (the
   disconnect-UX body in CWorldSocket::OnClose is really ENGINE logic — scripts,

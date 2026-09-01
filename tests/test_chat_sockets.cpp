@@ -183,6 +183,85 @@ TEST(ChatSockets, HandshakePromotesThePeerToConnected)
     doc.ChatDisconnectAll();
 }
 
+// ── the MudMaster message framer, and MFC's NUL-bounded Find ────────────────
+//
+// A MudMaster frame ends at CHAT_END_OF_COMMAND (0xFF), and the framer locates
+// that byte with what used to be CString::Find.  MFC's Find(char) is _tcschr:
+// it gives up at the first embedded NUL even though GetLength() counts past it.
+// The port's CString is std::string-backed and does not stop, so a peer that
+// puts a NUL before its terminator was framed and DISPATCHED here while the
+// same bytes left a Windows client's m_outstanding_input growing forever.
+//
+// The NULs genuinely survive to this point on both platforms -- ChatAppendBytes
+// exists precisely so they do -- so the divergence was the search alone, and
+// pal::chatFindChar (already used by the handshake splits) is what removes it.
+//
+// Both directions, because either half alone proves nothing: a framer that
+// dispatched nothing at all would pass the NUL half, and the pre-fix code
+// passes the clean half.
+TEST(ChatSockets, AnEmbeddedNulHidesTheMudMasterTerminatorTheWayMfcDoes)
+{
+    const short port = next_port();
+    CMUSHclientDoc doc;
+    doc.m_bValidateIncomingCalls = false;     // no modal ask
+    ASSERT_EQ(eOK, doc.ChatAcceptCalls(port));
+
+    LoopbackClient client;
+    ASSERT_TRUE(client.connect_to(port));
+    ASSERT_TRUE(pump_until([&] { return chat_count(doc) == 1; }));
+    CChatSocket* peer = doc.m_ChatList.GetHead();
+
+    client.send(handshake("someone"));
+    ASSERT_TRUE(pump_until([&] { return peer->m_iChatStatus == eChatConnected; }));
+    ASSERT_EQ(std::string("someone"),
+              std::string((const char*) peer->m_strRemoteUserName));
+
+    // CONTROL: a clean frame IS framed and dispatched.  CHAT_NAME_CHANGE is the
+    // oracle because its handler writes m_strRemoteUserName, so "dispatched" is
+    // observable without a script engine, a plugin or a view.
+    std::string clean;
+    clean += (char) CHAT_NAME_CHANGE;
+    clean += "renamed";
+    clean += (char) (unsigned char) CHAT_END_OF_COMMAND;
+    client.send(clean);
+    ASSERT_TRUE(pump_until([&] {
+        return std::string((const char*) peer->m_strRemoteUserName) == "renamed";
+    }));
+    EXPECT_EQ(0, peer->m_outstanding_input.GetLength());   // frame fully consumed
+
+    // THE DIVERGENCE: the same frame with a NUL in the middle of its payload.
+    // strchr never reaches the 0xFF, so Windows sees no terminator -- and now
+    // neither do we.
+    std::string hidden;
+    hidden += (char) CHAT_NAME_CHANGE;
+    hidden += "ab";
+    hidden += '\0';
+    hidden += "cd";
+    hidden += (char) (unsigned char) CHAT_END_OF_COMMAND;
+    ASSERT_EQ(7u, hidden.size());
+    client.send(hidden);
+
+    // The bytes really did reach the framer.  This is the load-bearing
+    // assertion, and the one that fails on the pre-fix code: std::string::find
+    // located the terminator inside the very OnReceive that appended these
+    // bytes, so m_outstanding_input went 0 -> 0 and never held all seven.
+    ASSERT_TRUE(pump_until([&] {
+        return peer->m_outstanding_input.GetLength() == (int) hidden.size();
+    }));
+
+    // ...and they stay put.  A framer that consumed them would empty the buffer
+    // and rename the peer to "ab\0cd" (which reads as "ab" through LPCTSTR).
+    for (int i = 0; i < 20; ++i)
+        CAsyncSocket::Poll(1);
+
+    EXPECT_EQ((int) hidden.size(), peer->m_outstanding_input.GetLength());
+    EXPECT_EQ(std::string("renamed"),
+              std::string((const char*) peer->m_strRemoteUserName));
+
+    doc.ChatStopAcceptingCalls();
+    doc.ChatDisconnectAll();
+}
+
 // The VALIDATE-INCOMING-CALLS arm, in both directions.
 //
 // Finding 23 called the accept veto out as "the one arm with a security shape

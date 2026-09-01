@@ -4076,6 +4076,208 @@ bool CWorldChildFrame::FireNamedMacroCommand(int id)
     return false;
 }
 
+// ── the view-level commands, by COMMAND ID ─────────────────────────────────
+// Each of these is the body of a key handler below, lifted to a member so the
+// COMMAND-ID route can run the same code.  On Windows every one has an
+// ON_COMMAND on CMUSHView or CSendView; neither view exists here, so the ids
+// reached nothing at all — world.DoCommand(name) returned eOK having done
+// nothing, while the equivalent keystroke worked.
+
+// Scrolling also CANCELS the output-buffer fade — the whole point of the
+// cancel: you scrolled back to read something.  Windows does the same in these
+// three commands (CSendView::OnTestPageup / OnTestPagedown / OnTestEnd,
+// sendvw.cpp:564-580).
+void CWorldChildFrame::ScrollOutputPage(int direction)
+{
+    CancelOutputFade();
+    if (m_output) m_output->ScrollPage(direction);
+}
+
+void CWorldChildFrame::ScrollOutputRows(int rows)
+{
+    CancelOutputFade();
+    if (m_output) m_output->ScrollRows(rows);
+}
+
+void CWorldChildFrame::ScrollOutputToTop()
+{
+    CancelOutputFade();
+    if (m_output) m_output->ScrollToTop();
+}
+
+void CWorldChildFrame::ScrollOutputToBottom()
+{
+    CancelOutputFade();
+    if (m_output) m_output->ScrollToBottom();
+}
+
+// CSendView::OnCommandHome / OnCommandEnd (sendvw.cpp:2289) — SetSel(0,0) and
+// SetSel(len,len) on the command bar.
+void CWorldChildFrame::CommandCaretHome()
+{
+    if (wxTextCtrl* inp = ActiveInput()) inp->SetInsertionPoint(0);
+}
+
+void CWorldChildFrame::CommandCaretEnd()
+{
+    if (wxTextCtrl* inp = ActiveInput()) inp->SetInsertionPointEnd();
+}
+
+// CMUSHView::OnKeysActivatecommandview (mushview.cpp) — put the focus in the
+// command bar.
+void CWorldChildFrame::ActivateInputArea()
+{
+    if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
+}
+
+// CSendView::OnKeysTab (sendvw.cpp:1987) — pDoc->TabCompleteCommand().
+void CWorldChildFrame::TabCompleteInput()
+{
+    if (m_doc) m_doc->TabCompleteCommand();
+}
+
+// CSendView::OnProcessEscape (sendvw.cpp:1599), plus the port's own "snap back
+// to the bottom", which is what Escape does when the pane is scrolled up.
+void CWorldChildFrame::ProcessEscape()
+{
+    if (m_output) m_output->ScrollToBottom();
+    if (m_doc && m_doc->m_bEscapeDeletesInput) {
+        wxTextCtrl* inp = ActiveInput();
+        if (inp) {
+            // "Save deleted command in history" (m_bSaveDeletedCommand):
+            // keep what Escape throws away so it can still be recalled.
+            // Never for a masked password prompt.
+            wxString discarded = inp->GetValue();
+            if (m_doc->m_bSaveDeletedCommand && !discarded.empty() &&
+                !m_doc->m_bNoEcho) {
+                if (m_history.empty() || m_history.back() != discarded)
+                    m_history.push_back(discarded);
+                if ((int) m_history.size() > HistoryLimit()) {
+                    m_history.erase(m_history.begin());
+                    // Keeping the browse position across Escape is correct
+                    // -- OnProcessEscape does the same on Windows -- but it
+                    // holds a POSITION, which survives RemoveHead, while
+                    // this holds an INDEX, and every index just shifted
+                    // down by one.  Without this the next Up re-shows the
+                    // entry already on screen.
+                    if (m_histIdx >= 0) --m_histIdx;
+                }
+            }
+            inp->Clear();
+        }
+    }
+}
+
+// CSendView::OnCompleteFunction (sendvw.cpp) — the Shift+Tab completion list.
+// Returns without showing anything when there is nothing to offer, which is
+// also the only path a harness can drive: the chooser is modal.
+void CWorldChildFrame::CompleteFunctionName()
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp || !m_doc) return;
+
+    std::vector<std::string> candidates;
+
+    // ── Lua global functions ──────────────────────────────────────────
+    if (m_doc->m_bTabCompleteFunctions) {
+        CScriptEngine* eng = m_doc->GetScriptEngine();
+        if (eng && eng->L) {
+            lua_State* LS = eng->L;
+            lua_pushvalue(LS, LUA_GLOBALSINDEX);
+            lua_pushnil(LS);
+            while (lua_next(LS, -2)) {
+                if (lua_type(LS, -1) == LUA_TFUNCTION &&
+                    lua_type(LS, -2) == LUA_TSTRING) {
+                    const char* fname = lua_tostring(LS, -2);
+                    if (fname && fname[0] != '_')
+                        candidates.push_back(fname);
+                }
+                lua_pop(LS, 1);
+            }
+            lua_pop(LS, 1);
+        }
+    }
+
+    // ── Script-registered completion items ───────────────────────────
+    for (const auto& item : m_doc->m_ExtraShiftTabCompleteItems)
+        candidates.push_back(item);
+
+    if (candidates.empty()) return;  // nothing to show — consume Shift+Tab
+
+    // Sort and deduplicate (case-insensitive).
+    std::sort(candidates.begin(), candidates.end(),
+        [](const std::string& a, const std::string& b) {
+            return strcasecmp(a.c_str(), b.c_str()) < 0;
+        });
+    candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                     candidates.end());
+
+    // Filter to items that start with the current (partial) input.
+    wxString partial = inp->GetValue().Lower();
+    if (!partial.IsEmpty()) {
+        std::vector<std::string> filtered;
+        for (const auto& c : candidates) {
+            wxString lc = wxString::FromUTF8(c.c_str()).Lower();
+            if (lc.StartsWith(partial))
+                filtered.push_back(c);
+        }
+        if (!filtered.empty())
+            candidates = std::move(filtered);
+    }
+
+    // Build wxArrayString for the dialog.
+    wxArrayString wxCands;
+    wxCands.Alloc(candidates.size());
+    for (const auto& c : candidates)
+        wxCands.Add(wxString::FromUTF8(c.c_str()));
+
+    wxSingleChoiceDialog dlg(this,
+        "Choose a function or command:",
+        "Shift+Tab Completion",
+        wxCands);
+
+    // Pre-select the first entry.
+    dlg.SetSelection(0);
+
+    if (dlg.ShowModal() == wxID_OK) {
+        inp->SetValue(wxCands[dlg.GetSelection()]);
+        inp->SetInsertionPointEnd();
+    }
+}
+
+// CMUSHView::OnWindowMinimize (mushview.cpp:3400) TOGGLES: it restores an
+// already-iconic frame rather than minimising it again.  The target is the
+// world's own window — on macOS the active MDI child IS the visible window, so
+// minimising the parent would minimise nothing you can see.
+void CWorldChildFrame::MinimizeWorldWindow()
+{
+    if (IsIconized())
+        Restore();
+    else
+        Iconize(true);
+}
+
+// CSendView::OnWindowMaximize — SW_SHOWMAXIMIZED on the world's frame.
+// NOT wxTopLevelWindow::Maximize(), which zooms to the whole screen here and
+// defeats the wrap column; "fill the main window" is what the port's
+// "Open worlds Maximized" already means (wx_mfc_impl.cpp).
+void CWorldChildFrame::MaximizeWorldWindow()
+{
+    wxWindow* parent = GetParent();
+    if (!parent) return;
+    const wxRect want = parent->GetScreenRect();
+    if (want.width > 100 && want.height > 100)
+        SetSize(want);
+}
+
+// CSendView::OnWindowRestore — SW_RESTORE: back to the normal state from
+// either iconic or maximised.
+void CWorldChildFrame::RestoreWorldWindow()
+{
+    if (IsIconized() || IsMaximized())
+        Restore();
+}
+
 // ── OnInputKeyDown ─────────────────────────────────────────────────────────
 // Up/Down arrows navigate command history; all other keys pass through normally.
 void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
@@ -4095,32 +4297,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Escape: snap the output pane back to the bottom (re-engage auto-scroll).
     // If escape_deletes_input is set, also clear the command bar.
     if (code == WXK_ESCAPE) {
-        if (m_output) m_output->ScrollToBottom();
-        if (m_doc && m_doc->m_bEscapeDeletesInput) {
-            wxTextCtrl* inp = ActiveInput();
-            if (inp) {
-                // "Save deleted command in history" (m_bSaveDeletedCommand):
-                // keep what Escape throws away so it can still be recalled.
-                // Never for a masked password prompt.
-                wxString discarded = inp->GetValue();
-                if (m_doc->m_bSaveDeletedCommand && !discarded.empty() &&
-                    !m_doc->m_bNoEcho) {
-                    if (m_history.empty() || m_history.back() != discarded)
-                        m_history.push_back(discarded);
-                    if ((int) m_history.size() > HistoryLimit()) {
-                        m_history.erase(m_history.begin());
-                        // Keeping the browse position across Escape is correct
-                        // -- OnProcessEscape does the same on Windows -- but it
-                        // holds a POSITION, which survives RemoveHead, while
-                        // this holds an INDEX, and every index just shifted
-                        // down by one.  Without this the next Up re-shows the
-                        // entry already on screen.
-                        if (m_histIdx >= 0) --m_histIdx;
-                    }
-                }
-                inp->Clear();
-            }
-        }
+        ProcessEscape();
         return;   // consume — don't close dialogs or deselect in the input bar
     }
 
@@ -4133,13 +4310,11 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // same three commands (CSendView::OnTestPageup / OnTestPagedown /
     // OnTestEnd, sendvw.cpp:564-580).
     if (code == WXK_PAGEUP) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollPage(-1);
+        ScrollOutputPage(-1);
         return;
     }
     if (code == WXK_PAGEDOWN) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollPage(+1);
+        ScrollOutputPage(+1);
         return;
     }
 
@@ -4147,13 +4322,11 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // without leaving the input bar.  Mirrors the Ctrl+Home/End shortcuts that
     // work when the output pane itself has focus (COutputPane::OnKeyDown).
     if (code == WXK_HOME && evt.RawControlDown()) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollToTop();
+        ScrollOutputToTop();
         return;
     }
     if (code == WXK_END && evt.RawControlDown()) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollToBottom();
+        ScrollOutputToBottom();
         return;
     }
 
@@ -4348,73 +4521,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Scripts populate the list with world.ShiftTabCompleteItem(); the list
     // is filtered to items that start with whatever is currently in the input.
     if (code == WXK_TAB && inp == m_input && evt.ShiftDown() && m_doc) {
-        std::vector<std::string> candidates;
-
-        // ── Lua global functions ──────────────────────────────────────────
-        if (m_doc->m_bTabCompleteFunctions) {
-            CScriptEngine* eng = m_doc->GetScriptEngine();
-            if (eng && eng->L) {
-                lua_State* LS = eng->L;
-                lua_pushvalue(LS, LUA_GLOBALSINDEX);
-                lua_pushnil(LS);
-                while (lua_next(LS, -2)) {
-                    if (lua_type(LS, -1) == LUA_TFUNCTION &&
-                        lua_type(LS, -2) == LUA_TSTRING) {
-                        const char* fname = lua_tostring(LS, -2);
-                        if (fname && fname[0] != '_')
-                            candidates.push_back(fname);
-                    }
-                    lua_pop(LS, 1);
-                }
-                lua_pop(LS, 1);
-            }
-        }
-
-        // ── Script-registered completion items ───────────────────────────
-        for (const auto& item : m_doc->m_ExtraShiftTabCompleteItems)
-            candidates.push_back(item);
-
-        if (candidates.empty()) return;  // nothing to show — consume Shift+Tab
-
-        // Sort and deduplicate (case-insensitive).
-        std::sort(candidates.begin(), candidates.end(),
-            [](const std::string& a, const std::string& b) {
-                return strcasecmp(a.c_str(), b.c_str()) < 0;
-            });
-        candidates.erase(std::unique(candidates.begin(), candidates.end()),
-                         candidates.end());
-
-        // Filter to items that start with the current (partial) input.
-        wxString partial = inp->GetValue().Lower();
-        if (!partial.IsEmpty()) {
-            std::vector<std::string> filtered;
-            for (const auto& c : candidates) {
-                wxString lc = wxString::FromUTF8(c.c_str()).Lower();
-                if (lc.StartsWith(partial))
-                    filtered.push_back(c);
-            }
-            if (!filtered.empty())
-                candidates = std::move(filtered);
-        }
-
-        // Build wxArrayString for the dialog.
-        wxArrayString wxCands;
-        wxCands.Alloc(candidates.size());
-        for (const auto& c : candidates)
-            wxCands.Add(wxString::FromUTF8(c.c_str()));
-
-        wxSingleChoiceDialog dlg(this,
-            "Choose a function or command:",
-            "Shift+Tab Completion",
-            wxCands);
-
-        // Pre-select the first entry.
-        dlg.SetSelection(0);
-
-        if (dlg.ShowModal() == wxID_OK) {
-            inp->SetValue(wxCands[dlg.GetSelection()]);
-            inp->SetInsertionPointEnd();
-        }
+        CompleteFunctionName();
         return;
     }
 
@@ -4431,7 +4538,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // now lives in doc_tabcomplete_shared.cpp and drives the input bar through
     // pal::IWorldView (replaceCommandSelection), so both frontends share it.
     if (code == WXK_TAB && inp == m_input) {
-        if (m_doc) m_doc->TabCompleteCommand();
+        TabCompleteInput();
         return;
     }
 

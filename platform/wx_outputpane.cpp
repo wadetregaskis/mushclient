@@ -3374,6 +3374,14 @@ static wxCursor MiniWindowCursor(int id)
 // and re-deciding it from the position here THAWS a just-frozen selection
 // whenever the viewport is already against the end -- which is exactly the
 // state a drag near the bottom of a short buffer is in.
+void COutputPane::ScrollRows(int rows)
+{
+    ScrollByRows(rows);
+    // Same tail as ScrollPage: a row-wise scroll can take the view off the end
+    // of the buffer, or bring it back, and the pause state is derived from that.
+    RefreshAutoScrollFromPosition();
+}
+
 void COutputPane::ScrollByRows(int rows)
 {
     if (rows == 0) return;

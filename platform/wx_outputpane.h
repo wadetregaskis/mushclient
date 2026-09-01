@@ -519,6 +519,12 @@ public:
     // Updates the auto-scroll state accordingly.
     void ScrollPage(int direction);
 
+    // The row-wise sibling: scroll by whole visual rows, then re-evaluate
+    // whether we are at the buffer end.  Public because ID_TEST_LINEUP /
+    // ID_TEST_LINEDOWN (CMUSHView::OnTestLineup, mushview.cpp:2988) scroll by
+    // one line, and those commands have no other way in on this port.
+    void ScrollRows(int rows);
+
     // Line height / char width in pixels (updated on font change).
     int LineHeight() const { return m_lineH; }
     int CharWidth()  const { return m_charW; }

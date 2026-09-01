@@ -334,6 +334,27 @@ public:
     // is empty or out of range, so a key-driven caller can fall through.
     bool FireMacro(int idx);
 
+    // ── the view-level commands, by COMMAND ID ─────────────────────────
+    // Every one of these has a canonical ON_COMMAND on CMUSHView or CSendView
+    // and no other route on the port: the key that does the same thing was
+    // implemented in OnInputKeyDown, but the id itself reached nothing, so
+    // world.DoCommand("PageUp") / ("CommandEnd") / ("Minimize") posted, was
+    // skipped, and still returned eOK.  Bodies are the port's existing key
+    // handlers, lifted so both entry points share one.
+    void ScrollOutputPage(int direction);   // ID_TEST_PAGEUP / PAGEDOWN
+    void ScrollOutputRows(int rows);        // ID_TEST_LINEUP / LINEDOWN
+    void ScrollOutputToTop();               // ID_TEST_START
+    void ScrollOutputToBottom();            // ID_TEST_END
+    void CommandCaretHome();                // ID_COMMAND_HOME
+    void CommandCaretEnd();                 // ID_COMMAND_END
+    void ActivateInputArea();               // ID_KEYS_ACTIVATECOMMANDVIEW
+    void TabCompleteInput();                // ID_KEYS_TAB
+    void ProcessEscape();                   // ID_KEYS_ESCAPE
+    void CompleteFunctionName();            // ID_COMPLETE_FUNCTION
+    void MinimizeWorldWindow();             // ID_WINDOW_MINIMIZE (a TOGGLE)
+    void MaximizeWorldWindow();             // ID_WINDOW_MAXIMIZE
+    void RestoreWorldWindow();              // ID_WINDOW_RESTORE
+
     // Fire keypad slot idx (the port's half of CSendView::OnKeypadCommand).
     // False if the keypad is disabled or the slot is empty, so a key-driven
     // caller can fall through and type the digit instead.

@@ -1500,6 +1500,194 @@ int RunMenuBarSelfTest()
                 doc->m_server         = savedServer;
             }
 
+
+            // ── the scroll / caret / window command ids ─────────────────────
+            // Their canonical handlers are CMUSHView::OnTest* and
+            // CSendView::OnCommandHome/OnKeysTab/OnProcessEscape/OnWindow*, on
+            // views the port never constructs.  The KEY that does each of these
+            // was implemented in OnInputKeyDown, which is exactly what hid the
+            // gap: the ids themselves matched no arm, so world.DoCommand
+            // ("PageUp") / ("CommandEnd") / ("Minimize") posted, were skipped,
+            // and still returned eOK.
+            {
+                COutputPane* pane = child->OutputPane();
+                wxTextCtrl*  bar  = child->ActiveInputPublic();
+                check(pane != NULL && bar != NULL,
+                      "the world window has an output pane and a command bar");
+
+                // More than a screenful, or every scroll command is a no-op and
+                // "did nothing" would pass.
+                for (int i = 0; i < 400; ++i)
+                    doc->Note(CFormat("scroll probe line %d", i));
+                doc->UpdateAllViews(nullptr);
+
+                if (pane && bar) {
+                    auto viewY = [pane]() -> int {
+                        int x = 0, y = 0;
+                        pane->GetViewStart(&x, &y);
+                        return y;
+                    };
+
+                    check(fireCmd(frame, 32107 /*ID_TEST_END*/),
+                          "DoCommand(\"End\") is claimed by a handler");
+                    const int bottom = viewY();
+                    check(bottom > 0,
+                          "...and the fixture really is longer than the window");
+
+                    check(fireCmd(frame, 32111 /*ID_TEST_PAGEUP*/),
+                          "DoCommand(\"PageUp\") is claimed too");
+                    const int afterPage = viewY();
+                    check(afterPage < bottom, "...and scrolls the pane UP");
+
+                    fireCmd(frame, 32107 /*ID_TEST_END*/);
+                    fireCmd(frame, 32115 /*ID_TEST_LINEUP*/);
+                    const int afterLine = viewY();
+                    check(afterLine < bottom, "DoCommand(\"LineUp\") scrolls up too");
+                    // The pair is what tells the two apart: a handler wired to
+                    // the wrong action passes one of these and fails this.
+                    check(bottom - afterLine < bottom - afterPage,
+                          "...by LESS than a page, so the two are not the same command");
+
+                    check(fireCmd(frame, 32114 /*ID_TEST_START*/),
+                          "DoCommand(\"Start\") is claimed");
+                    check(viewY() == 0, "...and goes to the very top");
+
+                    fireCmd(frame, 32116 /*ID_TEST_LINEDOWN*/);
+                    const int downOne = viewY();
+                    check(downOne > 0, "DoCommand(\"LineDown\") comes back down");
+                    fireCmd(frame, 32112 /*ID_TEST_PAGEDOWN*/);
+                    check(viewY() > downOne,
+                          "...and DoCommand(\"PageDown\") goes further, a page at a time");
+
+                    // End re-engages auto-scroll, which LineDown alone does not:
+                    // that is the difference between "at the end" and "one row
+                    // further on".
+                    fireCmd(frame, 32114 /*ID_TEST_START*/);
+                    check(pane->IsPaused(),
+                          "scrolled to the top, the pane is paused");
+                    fireCmd(frame, 32107 /*ID_TEST_END*/);
+                    check(!pane->IsPaused(),
+                          "...and End re-engages auto-scroll");
+
+                    // ── the caret commands ────────────────────────────────
+                    bar->SetValue(wxT("hello"));
+                    bar->SetInsertionPoint(2);
+                    check(fireCmd(frame, 32978 /*ID_COMMAND_HOME*/),
+                          "DoCommand(\"CommandHome\") is claimed");
+                    check(bar->GetInsertionPoint() == 0,
+                          "...and puts the caret at the start of the command bar");
+                    check(fireCmd(frame, 32979 /*ID_COMMAND_END*/),
+                          "DoCommand(\"CommandEnd\") is claimed");
+                    check(bar->GetInsertionPoint() == 5,
+                          "...and at the end - a different place, so one arm "
+                          "cannot serve both");
+
+                    // ── Escape ────────────────────────────────────────────
+                    {
+                        const unsigned short savedDel  = doc->m_bEscapeDeletesInput;
+                        const unsigned short savedSave = doc->m_bSaveDeletedCommand;
+                        doc->m_bEscapeDeletesInput = TRUE;
+                        doc->m_bSaveDeletedCommand = TRUE;
+                        bar->SetValue(wxT("zz_escape_probe"));
+                        check(fireCmd(frame, 32317 /*ID_KEYS_ESCAPE*/),
+                              "DoCommand(\"KeysEscape\") is claimed");
+                        check(bar->GetValue().IsEmpty(),
+                              "...and clears the command bar (escape_deletes_input)");
+                        // The half that separates "handled" from "swallowed":
+                        // what Escape throws away is kept, so it can be recalled.
+                        const std::vector<std::string> hist = child->commandList(0);
+                        bool kept = false;
+                        for (const std::string& h : hist)
+                            if (h == "zz_escape_probe") kept = true;
+                        check(kept, "...and what it discarded reached the history");
+                        doc->m_bEscapeDeletesInput = savedDel;
+                        doc->m_bSaveDeletedCommand = savedSave;
+                    }
+
+                    // ── Tab completion ────────────────────────────────────
+                    {
+                        doc->Note("zz_tabcompletion_target");
+                        doc->UpdateAllViews(nullptr);
+                        bar->SetValue(wxT("zz_tabcompl"));
+                        bar->SetInsertionPointEnd();
+                        check(fireCmd(frame, 32288 /*ID_KEYS_TAB*/),
+                              "DoCommand(\"KeysTab\") is claimed");
+                        // The completed word, not merely "changed".
+                        check(bar->GetValue().StartsWith(wxT("zz_tabcompletion_target")),
+                              "...and completes the word from the output buffer");
+                        bar->SetValue(wxEmptyString);
+                    }
+
+                    // ── Shift+Tab function completion ─────────────────────
+                    // With nothing to offer it must take the early-out rather
+                    // than open the modal chooser, which no loop-free harness
+                    // could answer.  Claiming the event is the observable.
+                    {
+                        const unsigned short savedFns = doc->m_bTabCompleteFunctions;
+                        doc->m_bTabCompleteFunctions = FALSE;
+                        doc->m_ExtraShiftTabCompleteItems.clear();
+                        bar->SetValue(wxT("zz_untouched"));
+                        check(fireCmd(frame, 33048 /*ID_COMPLETE_FUNCTION*/),
+                              "DoCommand(\"CompleteFunction\") is claimed");
+                        check(bar->GetValue() == wxT("zz_untouched"),
+                              "...and offers nothing when there is nothing to offer");
+                        doc->m_bTabCompleteFunctions = savedFns;
+                        bar->SetValue(wxEmptyString);
+                    }
+
+                    // ── activate the input area ───────────────────────────
+                    // Read as "an arm claimed it": wxWindow::FindFocus is null
+                    // in a process that was never activated (the edit-commands
+                    // work measured this), so the focus itself is not
+                    // observable here.
+                    check(fireCmd(frame, 32142 /*ID_KEYS_ACTIVATECOMMANDVIEW*/),
+                          "DoCommand(\"ActivateInputArea\") is claimed");
+
+                    // ── the window commands ───────────────────────────────
+                    // The target is the world's own frame, not the MDI parent:
+                    // on macOS the active child IS the visible window (see the
+                    // MDI-geometry note), so minimising the parent minimises
+                    // nothing the user can see.  Windows' OnWindowMinimize
+                    // TOGGLES (mushview.cpp:3400), which is why this fires it
+                    // twice and expects to come back.
+                    {
+                        const wxSize savedSize = child->GetSize();
+
+                        // Make the window SMALLER than the client area first.
+                        // Without this the fixture is degenerate: a freshly
+                        // built child already fills the parent, so "maximise"
+                        // and "do nothing" are the same size and the assertion
+                        // below could not tell them apart.
+                        child->SetSize(wxSize(320, 240));
+                        const wxRect want = frame->GetScreenRect();
+                        check(fireCmd(frame, 33050 /*ID_WINDOW_MAXIMIZE*/),
+                              "DoCommand(\"Maximize\") is claimed by a handler");
+                        check(child->GetSize().x > 320 && child->GetSize().y > 240,
+                              "...and grows the WORLD window, not the hidden parent");
+                        check(child->GetSize() == want.GetSize(),
+                              "...to exactly the client area, not the whole screen");
+                        check(!child->IsFullScreen(),
+                              "...and without zooming it full-screen");
+
+                        // Minimize and Restore can only be read as "an arm
+                        // claimed it" here.  wxOSX's Iconize is
+                        // -[NSWindow miniaturize:], which the window server
+                        // completes on the run loop this harness exits before:
+                        // measured, IsIconized() is still false immediately
+                        // after.  Same limit the ID_WORLDS_WORLD block records
+                        // for Activate().
+                        check(fireCmd(frame, 32235 /*ID_WINDOW_MINIMIZE*/),
+                              "DoCommand(\"Minimize\") is claimed");
+                        check(fireCmd(frame, 32235),
+                              "...and again, since Windows' handler TOGGLES");
+                        check(fireCmd(frame, 33051 /*ID_WINDOW_RESTORE*/),
+                              "DoCommand(\"Restore\") is claimed");
+                        child->Restore();
+                        child->SetSize(savedSize);
+                    }
+                }
+            }
+
             // ── a canonical command with no menu item of its own still runs ──
             // The port's Configure menu items carry PRIVATE ids, so the
             // canonical ID_GAME_CONFIGURE_* ids only ever arrive from

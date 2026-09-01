@@ -1908,10 +1908,25 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
         // ── View-level output/input commands (canonical handlers live on the
         // un-instantiated CMUSHView/CSendView; reimplemented on the child frame).
+        // The second group (32107..33051) is the scroll / caret / window
+        // family: CMUSHView::OnTest* and CSendView::OnCommandHome et al.  Every
+        // one has a working KEY on this port already (OnInputKeyDown), so the
+        // gap was invisible from the keyboard — but the command ids themselves
+        // reached no arm, so world.DoCommand("PageUp"), ("CommandEnd"),
+        // ("Minimize") and the rest posted, fell through to evt.Skip() and
+        // still returned eOK.  ID_KEYS_TAB / ID_KEYS_ESCAPE take CSendView's
+        // reading (OnKeysTab / OnProcessEscape) rather than CMUSHView's, which
+        // maps both to "activate the command view": the command bar is where
+        // this port's focus lives, so CSendView is the view MFC would route to.
         if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
             id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
             id == 32946 || id == 32947 || id == 33046 ||
             id == 32318 || id == 32319 || id == 32973 ||
+            id == 32107 || id == 32111 || id == 32112 ||
+            id == 32114 || id == 32115 || id == 32116 ||
+            id == 32978 || id == 32979 ||
+            id == 32142 || id == 32288 || id == 32317 || id == 33048 ||
+            id == 32235 || id == 33050 || id == 33051 ||
             id == ID_DISPLAY_CLEAR_COMMAND_HISTORY) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
                 switch (id) {
@@ -1931,6 +1946,22 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 case 32319: child->GotoBookmark();         break; // ID_DISPLAY_GOTOBOOKMARK
                 case ID_DISPLAY_CLEAR_COMMAND_HISTORY:
                     child->ClearCommandHistory();          break;
+                // The scroll / caret / window family.
+                case 32111: child->ScrollOutputPage(-1);   break; // ID_TEST_PAGEUP
+                case 32112: child->ScrollOutputPage(+1);   break; // ID_TEST_PAGEDOWN
+                case 32115: child->ScrollOutputRows(-1);   break; // ID_TEST_LINEUP
+                case 32116: child->ScrollOutputRows(+1);   break; // ID_TEST_LINEDOWN
+                case 32114: child->ScrollOutputToTop();    break; // ID_TEST_START
+                case 32107: child->ScrollOutputToBottom(); break; // ID_TEST_END
+                case 32978: child->CommandCaretHome();     break; // ID_COMMAND_HOME
+                case 32979: child->CommandCaretEnd();      break; // ID_COMMAND_END
+                case 32142: child->ActivateInputArea();    break; // ID_KEYS_ACTIVATECOMMANDVIEW
+                case 32288: child->TabCompleteInput();     break; // ID_KEYS_TAB
+                case 32317: child->ProcessEscape();        break; // ID_KEYS_ESCAPE
+                case 33048: child->CompleteFunctionName(); break; // ID_COMPLETE_FUNCTION
+                case 32235: child->MinimizeWorldWindow();  break; // ID_WINDOW_MINIMIZE
+                case 33050: child->MaximizeWorldWindow();  break; // ID_WINDOW_MAXIMIZE
+                case 33051: child->RestoreWorldWindow();   break; // ID_WINDOW_RESTORE
                 }
             }
             else if (id == 33046) {

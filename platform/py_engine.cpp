@@ -9,8 +9,14 @@
 //
 // One CPython interpreter is shared process-wide (Py_Initialize once); each world
 // or plugin (each CScriptEngine) gets its own module-namespace dict so globals
-// don't collide.  All scripting runs on the UI thread, so the GIL is simply held
-// throughout — no per-call GIL juggling.
+// don't collide.  All HOST-initiated scripting runs on the UI thread, but the
+// GIL is NOT parked there between callbacks: ensure_init releases it
+// (PyEval_SaveThread) and every entry point takes it for the call's duration
+// (the PyGIL guard below).  "Runs on the UI thread" is a statement about the
+// port's threads, not the script's -- holding the GIL across the idle wx event
+// loop froze every thread a script created (threading.Timer, a worker doing
+// socket.recv), except while some other Python callback happened to be
+// executing: plugins "worked while typing and stopped when idle".
 //
 // Built only when CMake finds Python3 (MUSHCLIENT_PYTHON_SCRIPTING) in the full
 // (mushapp) build; scriptengine.cpp provides link stubs otherwise.
@@ -306,6 +312,7 @@ int World_setattro(PyObject* self, PyObject* nameobj, PyObject* value)
   }
 
 bool g_inited = false;
+PyThreadState* g_mainThreadState = nullptr;   // saved by ensure_init's release
 
 void ensure_init()
   {
@@ -358,7 +365,28 @@ void ensure_init()
   MethodType.tp_dealloc   = Method_dealloc;
   MethodType.tp_str       = Method_str;
   PyType_Ready(&MethodType);
+
+  // Release the GIL that Py_Initialize left held.  From here on, every
+  // host->interpreter entry point takes it for the call's duration (PyGIL
+  // below), and between callbacks it is free -- which is the only thing that
+  // lets a thread a SCRIPT created run while the app sits in the wx event
+  // loop.  (There is no Py_Finalize anywhere in this file, so the saved state
+  // is never restored for teardown; the process just exits.)
+  g_mainThreadState = PyEval_SaveThread ();
   }
+
+// Hold the GIL for the duration of one host->interpreter entry point, on
+// every exit path.  PyGILState_Ensure nests correctly (it detects that the
+// calling thread already holds a live thread state), so an entry point
+// re-entered from inside a callback composes fine.  Everything that only ever
+// runs INSIDE one of these -- Method_call, World_getattro/setattro,
+// py_to_variant, report_error -- needs no guard of its own.
+struct PyGIL
+  {
+  PyGILState_STATE s;
+  PyGIL () : s (PyGILState_Ensure ()) {}
+  ~PyGIL () { PyGILState_Release (s); }
+  };
 
 // Resolve a (possibly dotted) procedure name in the namespace; new ref or null.
 PyObject* resolve(PyObject* ns, const char* dotted)
@@ -469,6 +497,7 @@ void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
 void CScriptEngine::OpenPython ()
   {
   ensure_init ();
+  PyGIL gil;
   CPythonEngine* e = new CPythonEngine ();
   e->doc = m_pDoc;
   e->ns  = PyDict_New ();
@@ -494,6 +523,7 @@ void CScriptEngine::OpenPython ()
 void CScriptEngine::ClosePython ()
   {
   if (!m_pyEngine) return;
+  PyGIL gil;
   Py_XDECREF (m_pyEngine->world);
   Py_XDECREF (m_pyEngine->ns);
   delete m_pyEngine;
@@ -503,6 +533,7 @@ void CScriptEngine::ClosePython ()
 bool CScriptEngine::ParsePython (const CString & strCode, const CString & strWhat)
   {
   if (!m_pyEngine) return true;
+  PyGIL gil;
   PyObject* r = PyRun_String ((LPCTSTR) strCode, Py_file_input, m_pyEngine->ns, m_pyEngine->ns);
   if (!r) { report_error (m_pDoc, strWhat, ""); return true; }
   Py_DECREF (r);
@@ -512,6 +543,7 @@ bool CScriptEngine::ParsePython (const CString & strCode, const CString & strWha
 DISPID CScriptEngine::GetPythonDispid (const CString & strName)
   {
   if (!m_pyEngine || strName.IsEmpty ()) return DISPID_UNKNOWN;
+  PyGIL gil;
   PyObject* fn = resolve (m_pyEngine->ns, (LPCTSTR) strName);
   bool ok = fn && PyCallable_Check (fn);
   Py_XDECREF (fn);
@@ -529,6 +561,7 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   {
   if (!m_pyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
+  PyGIL gil;
 
   PyObject* fn = resolve (m_pyEngine->ns, szProcedure);
   if (!fn || !PyCallable_Check (fn))
@@ -651,6 +684,7 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   {
   if (!m_pyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
+  PyGIL gil;
 
   PyObject* fn = resolve (m_pyEngine->ns, szProcedure);
   if (!fn || !PyCallable_Check (fn))

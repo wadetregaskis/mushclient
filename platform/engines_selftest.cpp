@@ -44,6 +44,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>          // atof -- the thread battery reads a stamped delta
+#include <unistd.h>         // usleep -- an idle window with NO Python running
 #include <list>
 #include <map>
 #include <string>
@@ -379,6 +381,10 @@ const Dialect kDialects[] = {
   "class Ambiguous:\n    def __bool__(self):\n        raise ValueError('ambiguous truth')\n"
   "def badbool():\n    return Ambiguous()\n"
   "def hugeint():\n    world.SetVariable('huge', 10**400)\n    world.SetVariable('hugeafter', 'clean')\n"
+  "import threading, time\n"
+  "def spawnthread():\n    global fired_at, spawn_t0\n    fired_at = None\n    spawn_t0 = time.monotonic()\n    threading.Thread(target=_bg, daemon=True).start()\n"
+  "def _bg():\n    global fired_at\n    time.sleep(0.05)\n    fired_at = time.monotonic()\n"
+  "def threadreport():\n    d = -1.0 if fired_at is None else (fired_at - spawn_t0)\n    world.SetVariable('th', '%.3f' % d)\n"
   "def params(a, b, c, d):\n"
   "    world.SetVariable('p', '%d|%d|%s|%s' % (int(a), int(b), c, d))\n"
   "def tbl(s, t):\n    world.SetVariable('t', t.get('key', '?'))\n"
@@ -1835,6 +1841,41 @@ void battery_py_overflow(Engine& e, const Dialect& d)
           "...and the world call right after is not poisoned by a leaked OverflowError");
 }
 
+// 6a-quinquies. A thread the SCRIPT creates must run while the app is idle.
+//     ensure_init used to leave the GIL held by the UI thread for the process
+//     lifetime, and CPython's "drop the GIL for a waiting thread" check lives
+//     in the bytecode eval loop -- so between callbacks, with the app parked
+//     in the wx event loop running no bytecode, a plugin's threading.Timer or
+//     worker thread was frozen: "works while I'm typing, stops when I'm
+//     idle".  The worker here stamps time.monotonic() ITSELF when it finally
+//     runs, which makes the race harmless: whether the report reads None
+//     (never ran) or a late stamp, a starved thread cannot produce a small
+//     delta -- only a thread scheduled during the idle usleep window can.
+//     CPython-specific; run_language gates the call.
+void battery_py_threads(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    bool err = false;
+    e.callRich("spawnthread", &err);
+    check(!err, L, "a handler can start a threading.Thread");
+
+    // One second in which NO Python bytecode runs.  The worker sleeps 50 ms
+    // and then needs the GIL for one assignment: released between callbacks,
+    // it stamps ~0.05 s into the window; parked on the idle UI thread, it
+    // blocks until the threadreport call below is already executing and
+    // stamps >= ~1 s (or None if the read wins the race).  0.5 s splits the
+    // two regimes with a 10x margin on each side.
+    usleep(1000 * 1000);
+
+    e.seed("th", "handler never ran");
+    e.callRich("threadreport", &err);
+    const std::string th = e.var("th");
+    const double delta = atof(th.c_str());
+    check(!err && delta >= 0.0 && delta < 0.5, L,
+          "a script-created thread runs while the app is idle (GIL released between callbacks)");
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -1910,6 +1951,7 @@ bool run_language(const Dialect& d)
     if (strcmp(d.key, "python") == 0) {   // CPython-specific behaviours
         battery_py_namespace(e, d);
         battery_py_overflow (e, d);
+        battery_py_threads  (e, d);
     }
     battery_trace     (d);
     battery_error_routing(d);

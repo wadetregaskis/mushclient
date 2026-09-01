@@ -1396,6 +1396,16 @@ void COutputPane::ScrollPage(int direction)
     RefreshAutoScrollFromPosition();
 }
 
+// See the header.  ScrollByRows deliberately leaves the freeze alone (a drag
+// scroll is not a user scroll), so the ScrollToPosition tail is added here --
+// the same pairing ScrollPage above uses.
+void COutputPane::ScrollLine(int direction)
+{
+    if (direction == 0) return;
+    ScrollByRows(direction < 0 ? -1 : +1);
+    RefreshAutoScrollFromPosition();
+}
+
 // ── IsAtBufferEnd ─────────────────────────────────────────────────────────
 // The m_bAtBufferEnd twin (mushview.cpp:3255): "is the scroll position at its
 // maximum?", with no tolerance.  A separate question from the freeze flag,
@@ -4108,6 +4118,16 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         // This called ScrollToBottom, the explicit-unfreeze API, so Ctrl+End
         // always resumed output and the next burst scrolled the text away.
         ScrollToBufferEnd();
+        return;
+    }
+    if (evt.RawControlDown() &&
+        (code == WXK_UP || code == WXK_DOWN)) {
+        // Ctrl+Up / Ctrl+Down: nudge the view one line, the Display menu's
+        // Line Up / Line Down (ID_TEST_LINEUP / ID_TEST_LINEDOWN).  Here as
+        // well as on the command bar for the same reason Ctrl+Home and
+        // Ctrl+End are: the key should mean the same thing whichever half of
+        // the window has the focus.
+        ScrollLine(code == WXK_UP ? -1 : +1);
         return;
     }
 

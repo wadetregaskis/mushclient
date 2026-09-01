@@ -540,6 +540,14 @@ public:
     // Updates the auto-scroll state accordingly.
     void ScrollPage(int direction);
 
+    // Scroll one LINE up (-1) or down (+1) — ID_TEST_LINEUP / ID_TEST_LINEDOWN,
+    // i.e. CMUSHView::OnTestLineup / OnTestLinedown (mushview.cpp:2963-2999),
+    // which move the scroll position by exactly one m_FontHeight and then hand
+    // it to ScrollToPosition.  So, like ScrollPage and ScrollToBufferEnd, it
+    // ends in RefreshAutoScrollFromPosition rather than deciding the freeze
+    // itself.
+    void ScrollLine(int direction);
+
     // Line height / char width in pixels (updated on font change).
     int LineHeight() const { return m_lineH; }
     int CharWidth()  const { return m_charW; }

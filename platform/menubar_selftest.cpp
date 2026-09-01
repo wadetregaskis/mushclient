@@ -427,6 +427,74 @@ int RunMenuBarSelfTest()
         }
     }
 
+    // ── the six scroll commands Windows' Display menu opens with ────────────
+    // mushclient_dialogs.rc:3013-3018.  The port carried NONE of them: four
+    // were reachable only as hard-coded keys in the command bar, and Line Up /
+    // Line Down existed nowhere at all.  The ids are the canonical ID_TEST_*
+    // ones, so world.DoCommand and any accelerator that names them reach the
+    // same handler.
+    {
+        struct Expect { const char* label; int id;
+                        const char* accel; int flags; int key; };
+        const Expect kScroll[] = {
+            { "Start",     ID_TEST_START,
+              CWorldChildFrame::kAccelScrollStart,
+              wxACCEL_RAW_CTRL, WXK_HOME },
+            { "Page Up",   ID_TEST_PAGEUP,    "", 0, 0 },
+            { "Page Down", ID_TEST_PAGEDOWN,  "", 0, 0 },
+            { "End",       ID_TEST_END,
+              CWorldChildFrame::kAccelScrollEnd,
+              wxACCEL_RAW_CTRL, WXK_END },
+            { "Line Up",   ID_TEST_LINEUP,
+              CWorldChildFrame::kAccelScrollLineUp,
+              wxACCEL_RAW_CTRL, WXK_UP },
+            { "Line Down", ID_TEST_LINEDOWN,
+              CWorldChildFrame::kAccelScrollLineDown,
+              wxACCEL_RAW_CTRL, WXK_DOWN },
+        };
+
+        for (const Expect& e : kScroll) {
+            const Item* found = NULL;
+            for (const Item& it : items)
+                if (it.path == std::string("Display > ") + e.label)
+                    { found = &it; break; }
+
+            const std::string what = std::string("Display > ") + e.label;
+            checkf(found != NULL, what + " is in the menu bar");
+            if (!found) continue;
+            checkf(found->id == e.id,
+                   what + " carries the canonical ID_TEST_* id");
+            checkf(found->accel == e.accel,
+                   what + std::string(" shows ") +
+                   (e.accel[0] ? e.accel : "no shortcut"));
+            checkf(found->accelFlags == e.flags && found->accelKey == e.key,
+                   what + " binds the modifiers it advertises");
+
+            // ...and the id reaches a handler.  With no world open the
+            // dispatcher returns early, but it must still CLAIM the event --
+            // an item wired to nothing draws and highlights and does nothing.
+            wxCommandEvent cmd(wxEVT_MENU, found->id);
+            cmd.SetEventObject(frame);
+            checkf(frame->GetEventHandler()->ProcessEvent(cmd),
+                   what + " is bound to a handler");
+        }
+
+        // Page Up / Page Down deliberately have no key equivalent: theirs carry
+        // no modifier on Windows, and an unmodified menu accelerator on macOS
+        // is claimed app-wide -- it would scroll the world's output when the
+        // user pressed Page Up in a notepad or a dialog.  Asserted, because
+        // "no accelerator" is exactly what an accidental one would look like
+        // in the loop above only if someone also updated the table.
+        int bareParagraphKeys = 0;
+        for (const Item& it : items)
+            if (it.accelFlags == 0 &&
+                (it.accelKey == WXK_PAGEUP || it.accelKey == WXK_PAGEDOWN))
+                bareParagraphKeys++;
+        check(bareParagraphKeys == 0,
+              "no menu item claims a BARE Page Up / Page Down (it would fire "
+              "app-wide, including in notepads and dialogs)");
+    }
+
     // ── Edit ▸ Select All must not be back on the standard id (BUG-3) ───────
     // wxID_SELECTALL is claimed natively by AppKit for whatever text control
     // has REAL wx focus, which is always the command bar (nothing ever calls

@@ -4068,6 +4068,35 @@ bool CWorldChildFrame::FireNamedMacroCommand(int id)
     return false;
 }
 
+// ── FireScrollCommand ──────────────────────────────────────────────────────
+// The six Display-menu scroll commands, in one place: the menu items
+// (wx_mfc_impl.cpp) and the command bar's own keys both call this, so they
+// cannot drift apart the way they would with two copies.
+//
+// Every one of them CANCELS the output-buffer fade first.  That is the whole
+// point of the cancel -- you scrolled back to read something, so it returns to
+// full intensity for one fade's worth of time -- and Windows does it in the
+// same commands (CSendView::OnTestPageup / OnTestPagedown / OnTestEnd,
+// sendvw.cpp:564-580).
+//
+// Note which pane call each one makes.  Start / Page Up / Page Down / Line Up
+// / Line Down / End all reach CMUSHView::ScrollToPosition upstream, so each
+// ends in RefreshAutoScrollFromPosition (inside the pane method) rather than
+// forcing the freeze either way -- see COutputPane::ScrollToBufferEnd.
+void CWorldChildFrame::FireScrollCommand(EScrollCommand which)
+{
+    CancelOutputFade();
+    if (!m_output) return;
+    switch (which) {
+    case eScrollStart:    m_output->ScrollToTop();      break;
+    case eScrollPageUp:   m_output->ScrollPage(-1);     break;
+    case eScrollPageDown: m_output->ScrollPage(+1);     break;
+    case eScrollEnd:      m_output->ScrollToBufferEnd();break;
+    case eScrollLineUp:   m_output->ScrollLine(-1);     break;
+    case eScrollLineDown: m_output->ScrollLine(+1);     break;
+    }
+}
+
 // ── OnInputKeyDown ─────────────────────────────────────────────────────────
 // Up/Down arrows navigate command history; all other keys pass through normally.
 void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
@@ -4116,41 +4145,24 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;   // consume — don't close dialogs or deselect in the input bar
     }
 
-    // Page Up / Page Down: scroll the output pane one page without leaving the
-    // input bar.  This lets the user page through output while still typing.
+    // The six Display-menu scroll commands, from the command bar, which is
+    // where Windows puts them too: CSendView owns the ON_COMMAND entries
+    // (sendvw.cpp:53-58) precisely so the caret never has to leave the input
+    // box.  They all go through FireScrollCommand, the same body the menu
+    // items reach, so a key and its menu item cannot drift apart.
     //
-    // Scrolling also CANCELS the output-buffer fade, which is the whole point
-    // of the cancel: you scrolled back to read something, so it comes back to
-    // full intensity for one fade's worth of time.  Windows does this in the
-    // same three commands (CSendView::OnTestPageup / OnTestPagedown /
-    // OnTestEnd, sendvw.cpp:564-580).
-    if (code == WXK_PAGEUP) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollPage(-1);
-        return;
-    }
-    if (code == WXK_PAGEDOWN) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollPage(+1);
-        return;
-    }
-
-    // Ctrl+Home / Ctrl+End: jump to the very top or bottom of the output buffer
-    // without leaving the input bar.  Mirrors the Ctrl+Home/End shortcuts that
-    // work when the output pane itself has focus (COutputPane::OnKeyDown).
-    if (code == WXK_HOME && evt.RawControlDown()) {
-        CancelOutputFade();
-        if (m_output) m_output->ScrollToTop();
-        return;
-    }
-    if (code == WXK_END && evt.RawControlDown()) {
-        CancelOutputFade();
-        // ScrollToBufferEnd, not ScrollToBottom: ID_TEST_END goes through
-        // CMUSHView::OnTestEnd -> ScrollToPosition, whose tail leaves a frozen
-        // view frozen when the world sets keep_pause_at_bottom.  See the
-        // header note on the two APIs.
-        if (m_output) m_output->ScrollToBufferEnd();
-        return;
+    // Ctrl+Up / Ctrl+Down had no arm at all, and the fall-through was not
+    // harmless: neither the m_bArrowsChangeHistory skip nor the caret-at-edge
+    // skip excludes RawControlDown, so control reached the ordinary
+    // history-walk block below and Ctrl+Up quietly did exactly what plain Up
+    // does.  This arm has to sit ahead of that block, which is why it is here.
+    if (code == WXK_PAGEUP)   { FireScrollCommand(eScrollPageUp);   return; }
+    if (code == WXK_PAGEDOWN) { FireScrollCommand(eScrollPageDown); return; }
+    if (evt.RawControlDown()) {
+        if (code == WXK_HOME) { FireScrollCommand(eScrollStart);    return; }
+        if (code == WXK_END)  { FireScrollCommand(eScrollEnd);      return; }
+        if (code == WXK_UP)   { FireScrollCommand(eScrollLineUp);   return; }
+        if (code == WXK_DOWN) { FireScrollCommand(eScrollLineDown); return; }
     }
 
     wxTextCtrl* inp = ActiveInput();

@@ -4510,9 +4510,18 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
         if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();
     });
     bind_list_notifications(dlg, cdlg);   // list column-sort / double-click (e.g. CPluginsDlg)
-    // Closing the window (X / Esc) behaves like Cancel.
-    dlg->Bind(wxEVT_CLOSE_WINDOW, [dlg](wxCloseEvent&) {
-        if (dlg->IsModal()) dlg->EndModal(IDCANCEL);
+    // Closing the window (X) behaves like Cancel -- through the CANONICAL
+    // OnCancel virtual, not a bare EndModal.  On Windows the caption close is
+    // WM_SYSCOMMAND/SC_CLOSE, which the dialog manager turns into an IDCANCEL
+    // command, so a dialog's OnCancel override ALWAYS runs.  Two shipped
+    // dialogs do real work there -- CImmediateDlg and CDebugLuaDlg both copy
+    // the live edit text into the member their caller persists ("save the
+    // expression text for next time") -- and ending the modal directly lost
+    // whatever was typed when the red close button dismissed them.
+    // CDialog::OnCancel's EndDialog(IDCANCEL) reaches hook_end_dialog above,
+    // which performs the same EndModal this bind used to call itself.
+    dlg->Bind(wxEVT_CLOSE_WINDOW, [cdlg, dlg](wxCloseEvent&) {
+        if (dlg->IsModal()) cdlg->OnCancel();
     });
     // Resizeable dialogs (WS_THICKFRAME) drive the canonical OnSize handler,
     // which re-lays-out controls via CWnd::MoveWindow (now wired to wx).  OnSize

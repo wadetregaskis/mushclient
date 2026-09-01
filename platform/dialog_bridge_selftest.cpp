@@ -332,6 +332,77 @@ void TestCommandRouting()
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// The caption close button must route through the canonical OnCancel virtual.
+//
+// On Windows the red X is WM_SYSCOMMAND/SC_CLOSE, which the dialog manager
+// turns into an IDCANCEL command, so a dialog's OnCancel override ALWAYS
+// runs.  The bridge's wxEVT_CLOSE_WINDOW bind used to call EndModal(IDCANCEL)
+// directly, skipping the virtual — and CImmediateDlg / CDebugLuaDlg both use
+// OnCancel to copy the live edit text into the member their caller persists
+// ("save the expression text for next time"), so closing either with the red
+// button silently lost what was typed.  The probe mirrors that shape exactly:
+// a CEdit bound by DDX_Control, read back inside OnCancel.
+// ══════════════════════════════════════════════════════════════════════════
+
+class CCloseBoxProbe : public CDialog
+{
+public:
+    CCloseBoxProbe() : CDialog(IDD_IMMEDIATE) {}
+
+    CEdit   m_ctlExpression;             // the CImmediateDlg shape, exactly
+    CString m_strSaved = "stale";        // pre-poisoned: "did nothing" must FAIL
+
+    void DoDataExchange(CDataExchange* pDX) override
+    {
+        CDialog::DoDataExchange(pDX);
+        DDX_Control(pDX, IDC_EXPRESSION, m_ctlExpression);
+    }
+
+    BOOL OnInitDialog() override
+    {
+        rec("OnInitDialog");
+        CDialog::OnInitDialog();
+        wxDialog* dlg = static_cast<wxDialog*>(m_hWnd);
+        // The "user": type into the edit, then click the caption close button.
+        wxTheApp->CallAfter([dlg]() {
+            chk(dlg->IsModal(), "the close-box driver runs inside the modal loop");
+            wxTextCtrl* ed = wxDynamicCast(dlg->FindWindow(IDC_EXPRESSION), wxTextCtrl);
+            if (chk(ed != nullptr, "IDD_IMMEDIATE's expression edit was built"))
+                ed->ChangeValue(wxT("say hello"));
+            // wxWindow::Close() generates the same wxEVT_CLOSE_WINDOW the
+            // titlebar close button does, and processes it synchronously.
+            dlg->Close();
+        });
+        return TRUE;
+    }
+
+    void OnCancel() override
+    {
+        rec("OnCancel");
+        // The canonical CImmediateDlg::OnCancel body: save the expression
+        // text for next time, from the STILL-LIVE control.
+        m_ctlExpression.GetWindowText(m_strSaved);
+        CDialog::OnCancel();
+    }
+    void OnDestroy() override { rec("OnDestroy"); }
+};
+
+void TestCloseBoxRunsOnCancel()
+{
+    printf("Caption close routes through the canonical OnCancel:\n");
+    ResetTranscript();
+
+    CCloseBoxProbe probe;
+    const INT_PTR rc = probe.DoModal();
+
+    chkSeq("OnInitDialog OnCancel OnDestroy",
+           "the close box ran the OnCancel virtual (not a bare EndModal)");
+    chk(rc == IDCANCEL, "and DoModal still returns IDCANCEL");
+    chk(probe.m_strSaved == "say hello",
+        "OnCancel read the live edit text (CImmediateDlg's save-for-next-time)");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // Finding 19 — the deferred list-reload transition.
 //
 // pump_dialog_update_ui is the port's ONLY consumer of m_bReloadList: there is
@@ -730,6 +801,7 @@ int RunDialogBridgeSelfTest()
            "property-sheet bridges.\n");
 
     TestCommandRouting();
+    TestCloseBoxRunsOnCancel();
     TestDeferredListReload();
     TestTreeSheetLifecycle();
     TestFlatSheetLifecycle();

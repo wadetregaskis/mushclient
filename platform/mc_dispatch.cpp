@@ -18,6 +18,8 @@
 #include <type_traits>
 #include <cstdlib>
 #include <cstdio>    // snprintf — MC_DispatchBadArgsMessage()
+#include <cmath>     // nearbyint — round_to_long()
+#include <climits>   // LONG_MIN / LONG_MAX — round_to_long()
 #include <strings.h>   // strcasecmp — bool_word()
 
 // COM constants not in the port's VT_* set.
@@ -92,6 +94,55 @@ static bool bool_word (const char* s, long& out)
   return false;
   }
 
+// ── Fractional value -> integer parameter: oleaut rounds, C truncates ──────
+// On Windows these five languages ride the real IDispatch::Invoke, which
+// coerces a mistyped argument through VariantChangeType — and VarI4FromR8 /
+// VarI4FromStr round to NEAREST with ties to EVEN, where a C cast truncates
+// toward zero.  Every fraction of .5 or more therefore landed one short here,
+// silently and with eOK: a JScript plugin's world.WindowLine (w, x * 0.7, …)
+// with 10.7 drew at 10 rather than 11, and world.DeleteLines (n / 2) for odd
+// n removed one line too few.
+//
+// JavaScript feels it most — all its arithmetic is double, and js_engine
+// routes any non-integral number as VT_R8 — and Tcl feels it through the
+// string arm below, because tcl_to_variant marshals EVERY argument as
+// VT_BSTR, so "45.7" reached atol and became 45.
+//
+// nearbyint is ties-to-even under FE_TONEAREST, the default rounding mode,
+// which nothing in this tree ever changes.  std::round would be wrong: it is
+// ties-AWAY-from-zero, and so disagrees with oleaut on precisely the .5 cases
+// this function exists for (10.5 is 10, not 11).
+static long round_to_long (const double d)
+  {
+  if (d != d)                          // NaN — the cast/atol it replaces gave 0
+    return 0;
+  const double r = std::nearbyint (d);
+  // Out of range is DISP_E_OVERFLOW on Windows, which this substrate has no
+  // channel to report.  Clamp rather than leave the cast undefined — atol,
+  // which the string arm used to call, saturated the same way.
+  if (r <= -9223372036854775808.0) return LONG_MIN;   // -2^63, exactly a double
+  if (r >=  9223372036854775808.0) return LONG_MAX;   //  2^63, one past LONG_MAX
+  return (long) r;
+  }
+
+// The same rounding for a numeric STRING (VarI4FromStr's job on Windows).
+static long str_to_long (const char* s)
+  {
+  if (!s) return 0;
+  const char* p = s;
+  while (*p == ' ' || (*p >= '\t' && *p <= '\r')) ++p;
+  if (*p == '+' || *p == '-') ++p;
+  // strtod (C99) additionally accepts hex floats ("0x10" -> 16), "inf" and
+  // "nan"; oleaut's decimal parser accepts none of them and atol read all
+  // three as 0.  Keep the 0 — widening what counts as a number is a different
+  // question from how a number is rounded.
+  if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'))
+    return 0;
+  if (!(*p >= '0' && *p <= '9') && *p != '.')
+    return 0;
+  return round_to_long (strtod (s, nullptr));
+  }
+
 // ── VARIANT readers (input arg -> C++ scalar/string) ───────────────────────
 long var_to_long(const VARIANT* a)
   {
@@ -100,14 +151,43 @@ long var_to_long(const VARIANT* a)
     {
     case VT_I2:   return a->iVal;
     case VT_I4:   return a->lVal;
-    case VT_R4:   return (long) a->fltVal;
-    case VT_R8:   return (long) a->dblVal;
-    case VT_BOOL: return a->boolVal ? 1 : 0;
+    case VT_R4:   return round_to_long ((double) a->fltVal);
+    case VT_R8:   return round_to_long (a->dblVal);
+    // The VARIANT_BOOL value ITSELF, not its truth: oleaut's VarI4FromBool
+    // hands the number straight across, and a script's true is VARIANT_TRUE,
+    // which is -1.  See the boolean note above var_to_bool below.
+    case VT_BOOL: return a->boolVal;
     case VT_BSTR: { long b;
                     if (bool_word (a->bstrVal, b)) return b;
-                    return a->bstrVal ? atol (a->bstrVal) : 0; }
+                    return str_to_long (a->bstrVal); }
     default:      return 0;
     }
+  }
+
+// ── A language boolean is VARIANT_TRUE (-1), and stays -1 where a NUMBER or
+// STRING was declared ──────────────────────────────────────────────────────
+// The scripting hosts the Windows build rides (ActiveScript's Python, JScript
+// and Ruby) marshal `true` as VARIANT_TRUE, whose value is -1, not 1.  When
+// that lands in a parameter the dispatch map declares VTS_I4 or VTS_BSTR,
+// oleaut's VarI4FromBool / VarBstrFromBool pass the NUMBER through: the method
+// sees -1, and a string parameter receives "-1" (there is no VARIANT_ALPHABOOL
+// in MFC's coercion, so it is never "True").  The port's engines sent 1 and
+// the substrate coerced to 1 / "1", so the same plugin line ended with
+// different world state on the two platforms, silently:
+//     world.SetVariable ("flag", True)   stored "1" here, "-1" on Windows
+//     world.SetOption (<a boolean option>, True)  succeeded here, and on
+//         Windows is refused eOptionOutOfRange, the option's range being 0..1
+//
+// A parameter the map declares VTS_BOOL is a different question and keeps its
+// canonical 0/1 (var_to_bool below): VARIANT_BOOL is 16-bit and MFC's BOOL is
+// 32-bit, so that conversion cannot be a copy, and every shipping method with
+// a BOOL parameter normalises for itself anyway (`Enabled != 0`,
+// `bNewValue != 0`).  Keeping the two apart is what stops -1 reaching a BOOL
+// member that is stored raw — m_bMapping and m_bRemoveMapReverses are written
+// straight from the property setter.
+static int var_to_bool (const VARIANT* a)
+  {
+  return var_to_long (a) != 0 ? 1 : 0;
   }
 
 double var_to_double(const VARIANT* a)
@@ -119,7 +199,7 @@ double var_to_double(const VARIANT* a)
     case VT_I4:   return a->lVal;
     case VT_R4:   return a->fltVal;
     case VT_R8:   return a->dblVal;
-    case VT_BOOL: return a->boolVal ? 1 : 0;
+    case VT_BOOL: return a->boolVal;          // VARIANT_TRUE is -1.0, as above
     case VT_BSTR: { long b;
                     if (bool_word (a->bstrVal, b)) return b;
                     return a->bstrVal ? atof (a->bstrVal) : 0.0; }
@@ -144,7 +224,10 @@ CString var_to_cstr(const VARIANT* a)
     // float precision so a widened 2.6f does not print representation noise.
     case VT_R4:   s.Format ("%.7g",  (double) a->fltVal);   break;
     case VT_R8:   s.Format ("%.14g", a->dblVal);            break;
-    case VT_BOOL: s = a->boolVal ? "1" : "0";               break;
+    // "-1"/"0", not "1"/"0": VarBstrFromBool renders the VARIANT_BOOL
+    // NUMBER, and MFC's coercion passes no VARIANT_ALPHABOOL, so a script's
+    // true reaching a VTS_BSTR parameter is "-1" on Windows.
+    case VT_BOOL: s.Format ("%d", (int) a->boolVal);        break;
     default:                                                break;
     }
   return s;
@@ -167,7 +250,7 @@ void to_variant(VARIANT& r, const CString& v) { r.vt = VT_BSTR; r.bstrVal = SysA
 template<class T> T prop_from(const VARIANT* v);
 template<> long           prop_from<long>          (const VARIANT* v) { return var_to_long(v); }
 template<> short          prop_from<short>         (const VARIANT* v) { return (short) var_to_long(v); }
-template<> int            prop_from<int>           (const VARIANT* v) { return (int) var_to_long(v); }   // BOOL
+template<> int            prop_from<int>           (const VARIANT* v) { return var_to_bool(v); }   // BOOL — every int-typed property is VT_BOOL
 template<> unsigned short prop_from<unsigned short>(const VARIANT* v) { return (unsigned short) var_to_long(v); }
 template<> double         prop_from<double>        (const VARIANT* v) { return var_to_double(v); }
 template<> CString        prop_from<CString>       (const VARIANT* v) { return var_to_cstr(v); }
@@ -181,7 +264,7 @@ template<class T> struct Holder;
 
 template<> struct Holder<long>   { long v;   Holder(const VARIANT* a):v(var_to_long(a)){}            long   get(){return v;} void finalize(std::vector<VARIANT>*){} };
 template<> struct Holder<short>  { short v;  Holder(const VARIANT* a):v((short)var_to_long(a)){}     short  get(){return v;} void finalize(std::vector<VARIANT>*){} };
-template<> struct Holder<int>    { int v;    Holder(const VARIANT* a):v((int)var_to_long(a)){}       int    get(){return v;} void finalize(std::vector<VARIANT>*){} };  // BOOL
+template<> struct Holder<int>    { int v;    Holder(const VARIANT* a):v(var_to_bool(a)){}            int    get(){return v;} void finalize(std::vector<VARIANT>*){} };  // BOOL — canonical 0/1, see var_to_bool
 template<> struct Holder<double> { double v; Holder(const VARIANT* a):v(var_to_double(a)){}          double get(){return v;} void finalize(std::vector<VARIANT>*){} };
 template<> struct Holder<float>  { float v;  Holder(const VARIANT* a):v((float)var_to_double(a)){}   float  get(){return v;} void finalize(std::vector<VARIANT>*){} };
 
@@ -399,9 +482,22 @@ void build_table()
 // fire and are gone; and MoveWorldWindow / GetWorldWindowPosition do not take
 // the Which parameter at all (they hand 1 to the X variant themselves), so the
 // window rows name MoveWorldWindowX / GetWorldWindowPositionX, which do.
-struct ArgDefault { const char* method; int slot; long value; };
+//
+// A default is a NUMBER (`value`) unless `str` is set, in which case the slot
+// is padded with a borrowed VT_BSTR instead.  Only three Lua opt* defaults are
+// non-empty strings -- the array delimiters, all "," -- and they need the
+// string arm because the zero-fill's "" is not merely a different default but
+// an INVALID one: ArrayExport/ArrayExportKeys/ArrayImport all reject a
+// delimiter whose length is not 1 (methods_arrays.cpp), so
+// world.ArrayExport("a") from Python/Perl/JS/Tcl/Ruby returned the NUMBER
+// eBadDelimiter where Lua returns the exported string.  (Every other string
+// opt* default in lua_methods.cpp is "", which the zero-fill already produces.)
+struct ArgDefault { const char* method; int slot; long value; const char* str = nullptr; };
 static const ArgDefault kArgDefaults[] = {
   { "addtriggerex",          9, DEFAULT_TRIGGER_SEQUENCE },
+  { "arrayexport",           1, 0, "," },               // Delimiter
+  { "arrayexportkeys",       1, 0, "," },               // Delimiter
+  { "arrayimport",           2, 0, "," },               // Delimiter
   { "blendpixel",            3, 1 },                    // Opacity
   { "bookmark",              1, 1 },
   { "chatacceptcalls",       0, DEFAULT_CHAT_PORT },
@@ -517,7 +613,7 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
   std::vector<VARIANT> padded;
   const int nSupplied = nargs;      // before the padding below rewrites it
 
-  // Skip the 34-entry kArgDefaults scan for every method that has no defaults
+  // Skip the 35-entry kArgDefaults scan for every method that has no defaults
   // (the common case) with one O(1) membership test.
   if (it->second.hasDefaults)
     {
@@ -546,7 +642,15 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
       if (unsupplied (v))
         for (const ArgDefault& d : kArgDefaults)
           if (d.slot == i && key == d.method)
-            { v.vt = VT_I4; v.lVal = d.value; break; }
+            {
+            // A string default is BORROWED, exactly like the caller's own
+            // VARIANTs above: `padded` holds shallow views that nothing
+            // var_clears, and the holders copy out of it before the call.
+            // (bstrVal is a plain char* here -- windows_types.h:39.)
+            if (d.str) { v.vt = VT_BSTR; v.bstrVal = const_cast<char*> (d.str); }
+            else       { v.vt = VT_I4;   v.lVal    = d.value; }
+            break;
+            }
       padded.push_back(v);
       }
     args  = padded.data();

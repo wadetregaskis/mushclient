@@ -118,7 +118,8 @@ void ruby_to_variant (VALUE r, VARIANT& out)
   switch (TYPE (r))
     {
     case T_NIL:    out.vt = VT_EMPTY; return;
-    case T_TRUE:   out.vt = VT_BOOL; out.boolVal = 1; return;
+    // -1 is VARIANT_TRUE; see the boolean note in platform/mc_dispatch.cpp.
+    case T_TRUE:   out.vt = VT_BOOL; out.boolVal = -1; return;
     case T_FALSE:  out.vt = VT_BOOL; out.boolVal = 0; return;
     case T_FIXNUM: out.vt = VT_I4; out.lVal = (long) NUM2LONG (r); return;
     case T_FLOAT:  out.vt = VT_R8; out.dblVal = NUM2DBL (r); return;

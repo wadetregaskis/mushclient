@@ -31,6 +31,7 @@
 #define VT_DISPATCH 9
 #endif
 
+#include <climits>   // LONG_MIN / LONG_MAX -- the clamping test
 #include <set>
 #include <string>
 #include <vector>
@@ -51,7 +52,12 @@ VARIANT vstr(const char* s)  { VARIANT v; VariantInit(&v); v.vt = VT_BSTR; v.bst
 VARIANT vi4(long n)          { VARIANT v; VariantInit(&v); v.vt = VT_I4;   v.lVal    = n; return v; }
 VARIANT vi2(short n)         { VARIANT v; VariantInit(&v); v.vt = VT_I2;   v.iVal    = n; return v; }
 VARIANT vr8(double d)        { VARIANT v; VariantInit(&v); v.vt = VT_R8;   v.dblVal  = d; return v; }
-VARIANT vbool(bool b)        { VARIANT v; VariantInit(&v); v.vt = VT_BOOL; v.boolVal = b ? 1 : 0; return v; }
+VARIANT vr4(float f)         { VARIANT v; VariantInit(&v); v.vt = VT_R4;   v.fltVal  = f; return v; }
+// VARIANT_TRUE is -1, which is what py/js/ruby_to_variant now send and what a
+// COM scripting host sends on Windows -- see the boolean note in
+// platform/mc_dispatch.cpp.  Writing 1 here would make the fixture disagree
+// with every engine that feeds the substrate in the shipping app.
+VARIANT vbool(bool b)        { VARIANT v; VariantInit(&v); v.vt = VT_BOOL; v.boolVal = b ? -1 : 0; return v; }
 // The language's nil: Python None, Ruby nil, Perl undef and JavaScript
 // undefined/null all marshal to VT_EMPTY (py_engine.cpp:79 and friends).
 VARIANT vnil()               { VARIANT v; VariantInit(&v); v.vt = VT_EMPTY; v.lVal = 0; return v; }
@@ -320,7 +326,10 @@ TEST(McDispatch, EveryScalarVariantCoercesToTheDeclaredStringParameter)
     EXPECT_EQ(std::string("42"),    roundtrip_variable(doc, "i4", vi4(42)));
     EXPECT_EQ(std::string("-7"),    roundtrip_variable(doc, "i2", vi2(-7)));
     EXPECT_EQ(std::string("2.5"),   roundtrip_variable(doc, "r8", vr8(2.5)));
-    EXPECT_EQ(std::string("1"),     roundtrip_variable(doc, "bt", vbool(true)));
+    // "-1", not "1": VarBstrFromBool renders the VARIANT_BOOL number, and
+    // MFC passes no VARIANT_ALPHABOOL, so a Windows plugin doing
+    // world.SetVariable("flag", True) then testing == "-1" is right.
+    EXPECT_EQ(std::string("-1"),    roundtrip_variable(doc, "bt", vbool(true)));
     EXPECT_EQ(std::string("0"),     roundtrip_variable(doc, "bf", vbool(false)));
 }
 
@@ -341,6 +350,236 @@ TEST(McDispatch, StringsCoerceToNumericParameters)
     EXPECT_EQ((int) VT_BOOL, (int) info.vt);
     EXPECT_TRUE(info.boolVal != 0);
     MC_VariantClear(info);
+}
+
+// ── a fraction meeting an integer parameter: oleaut ROUNDS ────────────────
+//
+// On Windows these five languages ride the real IDispatch::Invoke, whose
+// VariantChangeType coercion (VarI4FromR8 / VarI4FromStr) rounds to nearest
+// with ties to EVEN.  var_to_long used a C cast and atol, i.e. truncation
+// toward zero, so every fraction of .5 or more landed one short -- silently,
+// eOK either way.  JavaScript feels it most (all its arithmetic is double and
+// js_engine routes a non-integral number as VT_R8); Tcl feels it through the
+// string arm, since tcl_to_variant marshals EVERY argument as VT_BSTR.
+//
+// MoveWorldWindowX's four coordinates are the observable: VTS_I4 each, stored
+// on the view verbatim -- signed and unmasked, unlike the colour properties --
+// and four at a time, so one call pins four values.
+//
+// The pairs are chosen to discriminate the three candidate rules from each
+// other, which a single .5 case cannot do:
+//     truncate      10.5 -> 10   11.5 -> 11   -10.5 -> -10
+//     half-away     10.5 -> 11   11.5 -> 12   -10.5 -> -11
+//     half-to-even  10.5 -> 10   11.5 -> 12   -10.5 -> -10   (oleaut, and ours)
+
+namespace {
+
+struct Coords { long x, y, w, h; };
+
+// Poison the destination first: a coercion that did nothing at all -- or a
+// method that never ran -- must not be able to read as a pass.
+Coords move4(FakeWorldView& view, CMUSHclientDoc& doc,
+             VARIANT a, VARIANT b, VARIANT c, VARIANT d)
+{
+    view.mwX = view.mwY = view.mwW = view.mwH = 0x5EED;
+    VARIANT r; VariantInit(&r);
+    call(doc, "MoveWorldWindowX", { a, b, c, d, vi2(1) }, r);
+    MC_VariantClear(r);
+    return { view.mwX, view.mwY, view.mwW, view.mwH };
+}
+
+}   // namespace
+
+TEST(McDispatch, FractionalNumbersRoundHalfToEvenIntoIntegerParameters)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc;
+    doc.m_pWorldView = &view;
+
+    // The two ties are what separate half-to-even from half-away-from-zero;
+    // 10.7 and 10.2 separate rounding from truncation at all.
+    Coords c = move4(view, doc, vr8(10.5), vr8(11.5), vr8(10.7), vr8(10.2));
+    EXPECT_EQ(10L, c.x);        // tie -> 10 is even
+    EXPECT_EQ(12L, c.y);        // tie -> 12 is even   (truncation gave 11)
+    EXPECT_EQ(11L, c.w);        // truncation gave 10
+    EXPECT_EQ(10L, c.h);
+
+    // Negatives round by the same rule -- toward the even neighbour, not
+    // toward or away from zero.
+    Coords n = move4(view, doc, vr8(-10.5), vr8(-11.5), vr8(-10.7), vr8(-10.2));
+    EXPECT_EQ(-10L, n.x);
+    EXPECT_EQ(-12L, n.y);
+    EXPECT_EQ(-11L, n.w);       // truncation gave -10
+    EXPECT_EQ(-10L, n.h);
+
+    // VT_R4 travels the same road (Perl's NV and Ruby's Float arrive as R8,
+    // but a direct caller can hand a float).  These four are all exact in
+    // binary32, so the float itself contributes no rounding of its own.
+    Coords f = move4(view, doc, vr4(10.5f), vr4(11.5f), vr4(-10.5f), vr4(0.5f));
+    EXPECT_EQ(10L, f.x);
+    EXPECT_EQ(12L, f.y);
+    EXPECT_EQ(-10L, f.w);
+    EXPECT_EQ(0L,  f.h);        // 0 is even
+
+    // Whole numbers are untouched -- the fix must not perturb the common case.
+    Coords w = move4(view, doc, vr8(0), vr8(-1), vr8(4096), vr8(2147483647.0));
+    EXPECT_EQ(0L, w.x);
+    EXPECT_EQ(-1L, w.y);
+    EXPECT_EQ(4096L, w.w);
+    EXPECT_EQ(2147483647L, w.h);
+}
+
+TEST(McDispatch, NumericStringsRoundTheSameWayAsNumbers)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc;
+    doc.m_pWorldView = &view;
+
+    // Tcl reaches this arm for every argument it sends, so it is the widest
+    // of the three.  atol stopped at the '.' and answered 45 for "45.7".
+    Coords c = move4(view, doc, vstr("10.5"), vstr("11.5"), vstr("10.7"), vstr("-10.5"));
+    EXPECT_EQ(10L, c.x);
+    EXPECT_EQ(12L, c.y);
+    EXPECT_EQ(11L, c.w);
+    EXPECT_EQ(-10L, c.h);
+
+    // Plain integers, leading whitespace and a sign are unchanged: this is a
+    // rounding fix, not a re-parse.
+    Coords i = move4(view, doc, vstr("42"), vstr("-7"), vstr("  8"), vstr("+3"));
+    EXPECT_EQ(42L, i.x);
+    EXPECT_EQ(-7L, i.y);
+    EXPECT_EQ(8L,  i.w);
+    EXPECT_EQ(3L,  i.h);
+
+    // ...and the strings atol read as 0 still read as 0.  The port's leniency
+    // for a non-numeric string is deliberate (D-24 / UPSTREAM-DIVERGENCES §17
+    // keep strict checking to arity, never types, because Tcl marshals
+    // everything as a string); strtod would otherwise have widened the set
+    // silently, accepting C99 hex floats and "inf"/"nan" that oleaut's decimal
+    // parser rejects.
+    Coords z = move4(view, doc, vstr("abc"), vstr("0x10"), vstr("inf"), vstr(""));
+    EXPECT_EQ(0L, z.x);
+    EXPECT_EQ(0L, z.y);
+    EXPECT_EQ(0L, z.w);
+    EXPECT_EQ(0L, z.h);
+
+    // The boolean words Tcl sends still win over the numeric read.
+    Coords b = move4(view, doc, vstr("true"), vstr("off"), vstr("yes"), vstr("no"));
+    EXPECT_EQ(1L, b.x);
+    EXPECT_EQ(0L, b.y);
+    EXPECT_EQ(1L, b.w);
+    EXPECT_EQ(0L, b.h);
+}
+
+// ── a language boolean is VARIANT_TRUE, and it stays -1 ───────────────────
+//
+// The scripting hosts the Windows build rides marshal `true` as VARIANT_TRUE,
+// whose value is -1.  Where the dispatch map declares a NUMBER or a STRING,
+// oleaut's VarI4FromBool / VarBstrFromBool pass that number through, so the
+// method sees -1 and a string parameter receives "-1".  The port sent 1 and
+// coerced to 1 / "1", so the same plugin line left the two platforms with
+// different world state, silently and successfully both times.
+//
+// A VTS_BOOL parameter is a separate question and is unchanged: VARIANT_BOOL
+// is 16-bit where MFC's BOOL is 32-bit, so that conversion cannot be a copy,
+// and every shipping method with a BOOL parameter normalises for itself.
+TEST(McDispatch, ALanguageBooleanReachesANumericParameterAsMinusOne)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc;
+    doc.m_pWorldView = &view;
+
+    // MoveWorldWindowX's four coordinates are VTS_I4 and land on the view
+    // verbatim, so the number the method actually received is readable.
+    Coords c = move4(view, doc, vbool(true), vbool(false), vbool(true), vi4(7));
+    EXPECT_EQ(-1L, c.x);        // was 1
+    EXPECT_EQ(0L,  c.y);
+    EXPECT_EQ(-1L, c.w);
+    EXPECT_EQ(7L,  c.h);        // the control: a real number is untouched
+
+    // The consequence a plugin actually meets.  Every boolean world option's
+    // row is min 0 / max 1 (SetBaseOptionItem turns a 0,0 row into 0,1), so
+    // -1 is out of range -- Windows refuses this call, and now so does the
+    // port, rather than quietly succeeding where Windows quietly failed.
+    VARIANT before; VariantInit(&before);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetOption", { vstr("enable_triggers") }, before));
+    const long was = before.lVal;
+    MC_VariantClear(before);
+
+    VARIANT s; VariantInit(&s);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "SetOption",
+        { vstr("enable_triggers"), vbool(true) }, s));
+    EXPECT_EQ((long) eOptionOutOfRange, s.lVal);
+    MC_VariantClear(s);
+
+    VARIANT after; VariantInit(&after);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetOption", { vstr("enable_triggers") }, after));
+    EXPECT_EQ(was, after.lVal);          // ...and the option really is unchanged
+    MC_VariantClear(after);
+
+    // The control for that: an explicit 1 is still accepted, so the refusal
+    // above is about the VALUE -1 and not about SetOption being broken.
+    VARIANT ok; VariantInit(&ok);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "SetOption",
+        { vstr("enable_triggers"), vi4(1) }, ok));
+    EXPECT_EQ((long) eOK, ok.lVal);
+    MC_VariantClear(ok);
+}
+
+// ...and the other side of that split: a parameter or property the map
+// declares VT_BOOL still stores canonical truth, so -1 cannot reach a BOOL
+// member that is written raw.  m_bMapping is the one such member whose stored
+// value is readable -- GetInfo 112 hands it back through SetUpVariantBool,
+// which copies the BOOL into boolVal without normalising, so this assertion
+// sees the number itself and fails if var_to_bool is removed.
+TEST(McDispatch, ABooleanParameterStillStoresCanonicalTruth)
+{
+    CMUSHclientDoc doc;
+    doc.m_bMapping = FALSE;
+
+    ASSERT_TRUE(MC_DispatchSetProperty(&doc, "Mapping", vbool(true)));
+    EXPECT_EQ(1, (int) doc.m_bMapping);           // 1, not VARIANT_TRUE's -1
+
+    VARIANT info; VariantInit(&info);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetInfo", { vi2(112) }, info));
+    EXPECT_EQ((int) VT_BOOL, (int) info.vt);
+    EXPECT_EQ(1, (int) info.boolVal);
+    MC_VariantClear(info);
+
+    ASSERT_TRUE(MC_DispatchSetProperty(&doc, "Mapping", vbool(false)));
+    EXPECT_EQ(0, (int) doc.m_bMapping);
+
+    // A VTS_BOOL argument behaves the same way, and the effect is unchanged by
+    // any of this: the trigger starts disabled, so a call that did nothing
+    // fails here.
+    add_trigger(doc, "b_true", false);
+    VARIANT e; VariantInit(&e);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("b_true"), vbool(true) }, e));
+    EXPECT_EQ((long) eOK, e.lVal);
+    MC_VariantClear(e);
+    EXPECT_TRUE(trigger_enabled(doc, "b_true"));
+
+    VARIANT d; VariantInit(&d);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("b_true"), vbool(false) }, d));
+    MC_VariantClear(d);
+    EXPECT_FALSE(trigger_enabled(doc, "b_true"));
+}
+
+// A double too large for a long used to be an undefined cast (and, on the
+// string arm, a saturating atol).  Windows answers DISP_E_OVERFLOW, which this
+// substrate has no channel to report; clamping is the honest stand-in, and it
+// is at least well defined.
+TEST(McDispatch, OutOfRangeNumbersClampInsteadOfBeingUndefined)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc;
+    doc.m_pWorldView = &view;
+
+    Coords c = move4(view, doc, vr8(1e300), vr8(-1e300), vr8(0.0 / 0.0), vstr("1e400"));
+    EXPECT_EQ(LONG_MAX, c.x);
+    EXPECT_EQ(LONG_MIN, c.y);
+    EXPECT_EQ(0L, c.w);          // NaN -- what the cast it replaces produced
+    EXPECT_EQ(LONG_MAX, c.h);
 }
 
 // Arguments the script did not supply arrive as VT_ERROR ("not supplied") and
@@ -458,6 +697,117 @@ TEST(McDispatch, OmittedTrailingArgsTakeTheLuaDefaults)
     call(doc, "DatabaseClose", { vstr("db") }, dbc);
     MC_VariantClear(dbc);
     ::unlink(dbpath);
+}
+
+// ...and a default that is a STRING, not a number.
+//
+// kArgDefaults could only carry a `long`, so the three Lua opt* defaults that
+// are strings -- ArrayExport/ArrayExportKeys' Delimiter (slot 1) and
+// ArrayImport's (slot 2), all "," -- were silently absent, and the omitted
+// delimiter zero-filled to "".  That is not merely a different default: all
+// three methods reject a delimiter whose length is not 1, so the export
+// methods returned the NUMBER eBadDelimiter where Lua returns the exported
+// string, and the import stored nothing.  A plugin written against the
+// Lua-flavoured docs got an integer where it expected text, with no error.
+//
+// Every assertion below fails on the unfixed code -- the exports return VT_I4
+// and the import returns eBadDelimiter -- so "the padding did nothing" cannot
+// pass.
+TEST(McDispatch, OmittedStringArgsTakeTheLuaStringDefault)
+{
+    CMUSHclientDoc doc;
+
+    VARIANT r; VariantInit(&r);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayCreate", { vstr("a") }, r));
+    ASSERT_EQ((long) eOK, r.lVal);
+    MC_VariantClear(r);
+
+    // Two entries, so the JOINING delimiter is exercised and not just the
+    // key/value one: a one-entry array would leave the two roles degenerate.
+    VARIANT s1; VariantInit(&s1);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArraySet", { vstr("a"), vstr("k1"), vstr("v1") }, s1));
+    MC_VariantClear(s1);
+    VARIANT s2a; VariantInit(&s2a);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArraySet", { vstr("a"), vstr("k2"), vstr("v2") }, s2a));
+    MC_VariantClear(s2a);
+
+    // ArrayExport(name) -- Lua's my_optstring(L, 2, ",") default.
+    VARIANT e; VariantInit(&e);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a") }, e));
+    EXPECT_EQ((int) VT_BSTR, (int) e.vt);            // was VT_I4 eBadDelimiter
+    EXPECT_EQ(std::string("k1,v1,k2,v2"), bstr_of(e));
+    MC_VariantClear(e);
+
+    // ...and a SUPPLIED delimiter still wins over the default.
+    VARIANT e2; VariantInit(&e2);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a"), vstr("|") }, e2));
+    EXPECT_EQ(std::string("k1|v1|k2|v2"), bstr_of(e2));
+    MC_VariantClear(e2);
+
+    // ArrayExportKeys(name) -- same slot, same default.
+    VARIANT k; VariantInit(&k);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExportKeys", { vstr("a") }, k));
+    EXPECT_EQ((int) VT_BSTR, (int) k.vt);
+    EXPECT_EQ(std::string("k1,k2"), bstr_of(k));
+    MC_VariantClear(k);
+
+    // ArrayImport(name, values) -- the default is slot 2 here.
+    VARIANT c; VariantInit(&c);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayCreate", { vstr("b") }, c));
+    MC_VariantClear(c);
+    VARIANT i; VariantInit(&i);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayImport",
+        { vstr("b"), vstr("k,v,k2,v2") }, i));
+    EXPECT_EQ((long) eOK, i.lVal);                   // was eBadDelimiter
+    MC_VariantClear(i);
+    VARIANT g; VariantInit(&g);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayGet", { vstr("b"), vstr("k2") }, g));
+    EXPECT_EQ(std::string("v2"), bstr_of(g));
+    MC_VariantClear(g);
+
+    // An explicit nil takes the string default too -- the padding treats
+    // "omitted" and "nil" as one rule, and a string row must not escape it.
+    VARIANT n; VariantInit(&n);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a"), vnil() }, n));
+    EXPECT_EQ(std::string("k1,v1,k2,v2"), bstr_of(n));
+    MC_VariantClear(n);
+
+    // ...and with strict checking ON the delimiter is no longer demanded:
+    // slot_has_default reads the same table, so a string row must shorten
+    // required_args exactly as a numeric one does.
+    doc.m_bStrictScriptArguments = TRUE;
+    EXPECT_EQ(1, MC_DispatchRequiredArgs("ArrayExport"));
+    EXPECT_EQ(2, MC_DispatchRequiredArgs("ArrayImport"));
+    VARIANT s2; VariantInit(&s2);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a") }, s2));
+    EXPECT_EQ(std::string("k1,v1,k2,v2"), bstr_of(s2));
+    MC_VariantClear(s2);
+    doc.m_bStrictScriptArguments = FALSE;
+}
+
+// The borrowed string default must survive being handed out repeatedly, and
+// must not be freed with the call: `padded` holds a shallow VIEW of a static
+// literal, so a single var_clear of it would corrupt the table for every later
+// call.  Two hundred invocations in a row is the cheapest way to say so --
+// under a sanitizer or Guard Malloc a freed literal fails here, not somewhere
+// unrelated later.
+TEST(McDispatch, TheBorrowedStringDefaultIsNotConsumedByTheCall)
+{
+    CMUSHclientDoc doc;
+    VARIANT r; VariantInit(&r);
+    call(doc, "ArrayCreate", { vstr("a") }, r);
+    MC_VariantClear(r);
+    VARIANT s; VariantInit(&s);
+    call(doc, "ArraySet", { vstr("a"), vstr("k"), vstr("v") }, s);
+    MC_VariantClear(s);
+
+    for (int n = 0; n < 200; ++n)
+    {
+        VARIANT e; VariantInit(&e);
+        ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a") }, e));
+        ASSERT_EQ(std::string("k,v"), bstr_of(e));
+        MC_VariantClear(e);
+    }
 }
 
 

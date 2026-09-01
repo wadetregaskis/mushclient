@@ -8315,6 +8315,137 @@ that today hands an RGB PNG to either op gets a drawn image and will now get
 nothing. `WindowMergeImageAlpha` has no such gate on either platform and is
 unaffected.
 
+### §10bc — OWED: how oleaut rounds a fraction into an integer parameter
+
+Not a result — a question this side cannot answer, recorded so the next
+Windows run can settle it.
+
+`platform/mc_dispatch.cpp`'s `var_to_long` used to hand an integer parameter
+`(long) a->dblVal` and `atol (a->bstrVal)`, i.e. truncation toward zero. It
+now rounds to nearest with **ties to even** (`round_to_long`), on the reading
+that Windows reaches the same methods through the real `IDispatch::Invoke`,
+whose `VariantChangeType` coercion is `VarI4FromR8` / `VarI4FromStr` — both
+documented as round-to-nearest, banker's ties.
+
+That reading is **documented oleaut behaviour, not a measurement**, and this
+project's own rule is never to assert the other platform's result from this
+side. `doc_dispatch_map.inc` declares no `VTS_VARIANT`, so every parameter is
+typed and the coercion definitely happens; what is unmeasured is only which
+way it breaks a tie. Run this on the Windows build, in a **JScript** world
+(all JScript arithmetic is double, so `10.5` crosses as `VT_R8`):
+
+```javascript
+var v = [10.5, 11.5, 10.7, 10.2, 0.5, 1.5];
+for (var i = 0; i < v.length; i++) {
+  world.SetOption("paste_delay", v[i]);
+  world.Note(v[i] + " -> " + world.GetOption("paste_delay"));
+}
+```
+
+`paste_delay` is chosen because its row in `scriptingoptions_numeric.inc` is
+`0, 100000` with no `OPT_FIX_*` flag, so nothing rewrites the value on the way
+in or out.
+
+- `10.5 -> 10` **and** `11.5 -> 12` → ties to even; the fix is right and this
+  row closes.
+- `10.5 -> 11` and `11.5 -> 12` → ties away from zero; change `round_to_long`
+  to `std::round` and flip the two tie rows in
+  `McDispatch.FractionalNumbersRoundHalfToEvenIntoIntegerParameters`.
+- `10.5 -> 10` and `11.5 -> 11` → no rounding at all; revert the fix and
+  restore the C cast, since the port was right and the finding was wrong.
+
+`10.7 -> 11` and `10.2 -> 10` must hold in the first two cases and fail in the
+third, so they say which of the three answers you are looking at without
+relying on the ties alone. `0.5`/`1.5` are the same tie question one step down,
+where half-away and half-even differ on the FIRST of the pair — a fixture that
+only ever asked about 10.5 could not tell a rule from an off-by-one in it.
+
+**The string arm needs its own run**, because it is a different oleaut entry
+point (`VarI4FromStr`, not `VarI4FromR8`) and it is the one Tcl always takes —
+`tcl_engine.cpp`'s `tcl_to_variant` marshals *every* argument as `VT_BSTR`, so
+a Tcl plugin's numbers all arrive as text. In a **Tcl** world:
+
+```tcl
+foreach n {10.5 11.5 10.7 42 abc 0x10} {
+  world SetOption paste_delay $n
+  world Note "$n -> [world GetOption paste_delay]"
+}
+```
+
+- `10.5 -> 10`, `11.5 -> 12`, `10.7 -> 11` → matches the new `str_to_long`.
+- `abc` and `0x10`: the port answers **0** for both, deliberately — `atol` did,
+  and widening what counts as a number is a separate decision (D-24 /
+  `docs/UPSTREAM-DIVERGENCES.md` §17 keep strict checking to arity precisely
+  because Tcl sends everything as a string). If Windows instead raises
+  `DISP_E_TYPEMISMATCH` — a visible script error — record that here; it is a
+  divergence worth deciding on, not something to fix silently.
+
+Also worth reading in the same run: what an **out-of-range** double does.
+`world.SetOption("paste_delay", 1e300)` should be `DISP_E_OVERFLOW` on
+Windows — a script error. The port has no channel to report that from
+`var_to_long`, so it clamps to `LONG_MAX` and the option's own range check
+then refuses it with `eOptionOutOfRange`. Both end in a refusal, but only one
+of them is catchable, and that gap is recorded rather than fixed.
+
+### §10bd — OWED: what a script's `true` looks like to a non-boolean parameter
+
+Not a result — the second half of §10bc's question, and the same caveat: the
+Windows side is documented COM behaviour, never measured here.
+
+`py_engine` / `js_engine` / `ruby_engine` marshalled a language `true` as
+`VT_BOOL` with `boolVal = 1`, and `mc_dispatch` coerced that to `1` for a
+numeric parameter and `"1"` for a string one. They now send **VARIANT_TRUE**,
+which is `-1`, and the substrate passes the number through — `VarI4FromBool`
+and `VarBstrFromBool` both render the value, and MFC's coercion passes no
+`VARIANT_ALPHABOOL`, so a string parameter should receive `"-1"` rather than
+`"True"`.
+
+A `VTS_BOOL` parameter is deliberately **not** part of this: `VARIANT_BOOL` is
+16-bit where MFC's `BOOL` is 32-bit, so that conversion cannot be a copy, and
+every shipping method with a `BOOL` parameter normalises for itself anyway
+(`Enabled != 0`, `bNewValue != 0`). `var_to_bool` keeps those at 0/1 so `-1`
+can never reach a `BOOL` member that is stored raw — `m_bMapping` and
+`m_bRemoveMapReverses` are written straight from the property setter.
+
+Run this on the Windows build, in a **Python** world (JScript and Ruby should
+agree; Perl has no native boolean at this boundary and Tcl sends everything as
+a string, so neither can be asked):
+
+```python
+world.SetVariable("bv", True)
+world.Note("string param: " + world.GetVariable("bv"))
+
+world.SetOption("paste_delay", 5)
+world.SetOption("paste_delay", True)
+world.Note("after boolean: %s" % world.GetOption("paste_delay"))
+world.SetOption("paste_delay", 1)
+world.Note("after plain 1: %s" % world.GetOption("paste_delay"))
+```
+
+- `string param: -1` → the string arm is right and this half closes. `1`
+  means revert `var_to_cstr`'s `VT_BOOL` arm and the three engine
+  marshallers; `True` means MFC does pass `VARIANT_ALPHABOOL` after all, which
+  nothing here predicted, and the arm should format the word instead.
+- `after boolean: 5` → the numeric arm is right: `-1` is outside every boolean
+  option's `0..1` range, so Windows refuses the call and leaves the option
+  alone. `after boolean: 1` means the number did not arrive as `-1` and the
+  numeric arm should go back to `boolVal ? 1 : 0`.
+- `after plain 1: 1` is the control. If that fails, the fixture is wrong and
+  neither of the two readings above means anything.
+
+**This is a user-visible behaviour change on macOS, and it is the one worth
+watching for.** A port-only Python/JS/Ruby plugin that says
+`world.SetOption (<a boolean option>, True)` used to succeed here and now gets
+`eOptionOutOfRange`. That is Windows parity — the same line has always failed
+silently on Windows — but from a mac user's seat it reads as a regression, so
+if the run above says the port is right, it is worth a release note rather
+than only a commit message. The port-side pin is
+`McDispatch.ALanguageBooleanReachesANumericParameterAsMinusOne`, and the
+engine-side one is the `bools` row of `--engines-selftest`, which asks the
+real interpreter for the boolean and keeps Lua as a live control (Lua does not
+travel `mc_dispatch`, and `my_checkstring` rejects a boolean outright, so it
+raises where the other three store `-1`).
+
 ## §11 — The in-app probe suite
 
 ```

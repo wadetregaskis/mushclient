@@ -84,7 +84,11 @@ void py_to_variant(PyObject* o, VARIANT& v)
   {
   VariantInit(&v);
   if (o == nullptr || o == Py_None)        { v.vt = VT_EMPTY; return; }
-  if (PyBool_Check(o))                     { v.vt = VT_BOOL; v.boolVal = (o == Py_True); return; }
+  // VARIANT_TRUE is -1, not 1.  A COM scripting host marshals a language
+  // boolean that way, and mc_dispatch passes the NUMBER through to any
+  // numeric or string parameter it lands in -- see the boolean note in
+  // platform/mc_dispatch.cpp.  A VTS_BOOL parameter is unaffected either way.
+  if (PyBool_Check(o))                     { v.vt = VT_BOOL; v.boolVal = (o == Py_True) ? -1 : 0; return; }
   if (PyLong_Check(o))
     {
     v.vt = VT_I4;  v.lVal = PyLong_AsLong(o);

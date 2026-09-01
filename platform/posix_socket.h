@@ -133,12 +133,21 @@ public:
             Close(); return FALSE;
         }
 
-        // Disable Nagle for TCP
-        if (nSocketType == SOCK_STREAM) {
-            int opt = 1;
-            ::setsockopt(m_hSocket, IPPROTO_TCP, TCP_NODELAY,
-                         &opt, sizeof(opt));
-        }
+        // NAGLE IS DELIBERATELY LEFT ON.  This used to set TCP_NODELAY on
+        // every stream socket, which read as an obvious kindness to an
+        // interactive client and was in fact the port's own invention: MFC's
+        // CAsyncSocket::Create does not touch it, and neither does
+        // pal/win_transport.cpp's connect(), whose comment says it reproduces
+        // "the exact call sequence the shipping Windows client used" -- it
+        // applies the keepalive ioctl and nothing else.  So the two adapters
+        // ran the same connection with different socket options: two commands
+        // typed inside one RTT reach the MUD as one segment on Windows and as
+        // two here, and a server that keys on packet boundaries (a prompt/GA
+        // heuristic that reads "one packet" rather than "one line") sees a
+        // different stream from the same bytes.  Parity is the bar, so the
+        // option is gone rather than duplicated onto Windows.  Pinned by
+        // PosixSocket.CreatedStreamSocketLeavesNagleAlone -- do not re-add it
+        // without changing win_transport.cpp in the same commit.
 
         // MFC binds unconditionally — port 0 with no address just asks the
         // kernel for an ephemeral port, which is what an outbound socket wants
@@ -213,8 +222,26 @@ public:
             addr.sin_addr.s_addr = inet_addr(lpszSocketAddress);
         else
             addr.sin_addr.s_addr = INADDR_ANY;
-        int opt = 1;
-        ::setsockopt(m_hSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        // SO_REUSEADDR for a SERVER socket only, and it is a port-only
+        // addition -- MFC sets it nowhere.  A requested port means a listener:
+        // world.ChatAcceptCalls (methods_chat.cpp:530) and world.UdpListen
+        // (methods_udp.cpp:92) are the only callers that name one; the world
+        // connection and an outgoing chat call both pass 0 and take an
+        // ephemeral port, which can never need it.  It used to be set on every
+        // bind, outbound sockets included, where it says nothing and hides
+        // nothing -- but it also meant the option had never been thought about.
+        //
+        // It stays for listeners because BSD's SO_REUSEADDR is not Winsock's:
+        // here it only permits rebinding a port still held by TIME_WAIT
+        // connections, so restarting chat listening on the configured port
+        // works after a peer disconnects.  It does NOT let a second socket
+        // steal a live listener the way the Windows option would, so keeping it
+        // costs none of the hijacking hazard that makes it the wrong default
+        // there.  Pinned by PosixSocket.ReuseAddrIsForListenersNotEveryBind.
+        if (nSocketPort != 0) {
+            int opt = 1;
+            ::setsockopt(m_hSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        }
         return (::bind(m_hSocket, (struct sockaddr*)&addr, sizeof(addr)) == 0)
                ? TRUE : FALSE;
     }

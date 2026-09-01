@@ -10,6 +10,7 @@
 #include "platform/windows_types.h"
 #include "platform/posix_socket.h"
 
+#include <netinet/tcp.h>   // TCP_NODELAY (the socket-option parity checks)
 #include <string>
 #include <sys/ioctl.h>     // FIONREAD (the backlog-drain fixture)
 #include <sys/resource.h>
@@ -87,6 +88,68 @@ TEST(PosixSocket, CreateBindsTheRequestedPortAndAddress)
     client.Connect("127.0.0.1", wanted);
     EXPECT_TRUE(poll_until([&] { return lis.accepts > 0; }));
     client.Close();
+    lis.Close();
+}
+
+// ── socket options: what MFC's Create does, and only that ────────────────
+//
+// The shim used to set TCP_NODELAY on every stream socket.  MFC's
+// CAsyncSocket::Create sets no such thing, and pal/win_transport.cpp's
+// connect() -- documented as reproducing the shipping client's exact call
+// sequence -- applies only the keepalive ioctl, so the two adapters ran the
+// same connection with different options and the same typing produced a
+// different packetisation on the wire.
+TEST(PosixSocket, CreatedStreamSocketLeavesNagleAlone)
+{
+    Recorder s;
+    ASSERT_TRUE(s.Create());               // SOCK_STREAM, ephemeral port
+
+    // Poisoned, so a getsockopt that returned without writing would be caught
+    // rather than read as "the option is off".
+    int nodelay = 0x5A5A;
+    socklen_t len = sizeof nodelay;
+    ASSERT_EQ(0, ::getsockopt(s.m_hSocket, IPPROTO_TCP, TCP_NODELAY,
+                              &nodelay, &len));
+    ASSERT_EQ((socklen_t) sizeof nodelay, len);
+    EXPECT_EQ(0, nodelay);                 // Nagle left on, exactly as MFC does
+
+    s.Close();
+}
+
+// SO_REUSEADDR is the port's own addition and stays that way -- but for the
+// SERVER sockets that need it, not for every bind.  A requested port is what
+// distinguishes them: world.ChatAcceptCalls and world.UdpListen name one, the
+// world connection and an outgoing chat call pass 0.
+TEST(PosixSocket, ReuseAddrIsForListenersNotEveryBind)
+{
+    Recorder outbound;
+    ASSERT_TRUE(outbound.Create());        // port 0: the connect-side shape
+    int reuse = 0x5A5A;
+    socklen_t len = sizeof reuse;
+    ASSERT_EQ(0, ::getsockopt(outbound.m_hSocket, SOL_SOCKET, SO_REUSEADDR,
+                              &reuse, &len));
+    EXPECT_EQ(0, reuse);
+    outbound.Close();
+
+    // The control: without it, deleting the setsockopt outright would pass the
+    // assertion above and silently break restarting a chat listener whose peers
+    // are still in TIME_WAIT.
+    UINT wanted = 0;
+    {
+        Listener probe;
+        ASSERT_TRUE(probe.open());
+        wanted = probe.port_;
+        probe.Close();
+    }
+    ASSERT_TRUE(wanted != 0);
+
+    Listener lis;
+    ASSERT_TRUE(lis.open(wanted));         // a named port: the listen-side shape
+    reuse = 0x5A5A;
+    len   = sizeof reuse;
+    ASSERT_EQ(0, ::getsockopt(lis.m_hSocket, SOL_SOCKET, SO_REUSEADDR,
+                              &reuse, &len));
+    EXPECT_NE(0, reuse);
     lis.Close();
 }
 

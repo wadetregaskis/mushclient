@@ -771,6 +771,48 @@ int RunMenuBarSelfTest()
             check(!logAns.setText,
                   "...and its caption is left alone rather than reset");
 
+
+            // ── the three View toggles answer their CANONICAL ids ───────────
+            // world.DoCommand("AlwaysOnTop") / ("FullScreenMode") /
+            // ("ViewStatusbar") post the canonical id through
+            // Frame.PostMessage -> hook_post_message -> wxEVT_MENU.  Two of the
+            // three were moved onto their canonical ids for exactly that reason
+            // (038dc88); Always On Top was left on wxID_HIGHEST + 430, so the
+            // command matched no arm, was skipped, and DoCommand still returned
+            // eOK.  Firing 32322 is the half that fails on the private id.
+            {
+                // The harness exits from wxApp::OnInit, so InitInstance never
+                // ran and the sqlite preferences database is not open: the
+                // db_write_int inside the arm is a no-op.  Assert that rather
+                // than trust it -- this is the one arm here that persists.
+                check(App.db == NULL,
+                      "the preferences database is closed, so the toggle cannot "
+                      "write the tester's real prefs");
+
+                const unsigned int savedOnTop = App.m_bAlwaysOnTop;
+                App.m_bAlwaysOnTop = 0;
+
+                const bool claimed1 = fireCmd(frame, 32322 /*ID_VIEW_ALWAYSONTOP*/);
+                const bool onAfter1 = App.m_bAlwaysOnTop != 0;
+                const UiAnswer uiOn = probeUi(frame, 32322);
+
+                const bool claimed2 = fireCmd(frame, 32322);
+                const bool onAfter2 = App.m_bAlwaysOnTop != 0;
+                const UiAnswer uiOff = probeUi(frame, 32322);
+
+                check(claimed1 && claimed2,
+                      "DoCommand(\"AlwaysOnTop\") is claimed by a handler");
+                // Both directions, so an arm that merely SET the flag fails.
+                check(onAfter1 && !onAfter2,
+                      "...and toggles the preference, then toggles it back");
+                check(uiOn.setChecked && uiOn.checked,
+                      "...with the menu tick following it on");
+                check(uiOff.setChecked && !uiOff.checked,
+                      "...and off again");
+
+                App.m_bAlwaysOnTop = savedOnTop;
+            }
+
             // A View item that deliberately stays live with nothing open --
             // proof the probe is reading a real answer and not just "false".
             const Item* statusBar = find_by_label(items, "Status Bar");

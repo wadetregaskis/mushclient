@@ -144,11 +144,18 @@ static const int ID_CONN_LOG_TOGGLE    = wxID_HIGHEST + 410;
 // ── Game menu IDs ─────────────────────────────────────────────────────────────
 static const int ID_MENU_GAME_LUA_EVAL = wxID_HIGHEST + 411;
 
-// ── View menu IDs (port-local; real wx implementations, not canonical) ────────
-// +420..422 are the Configure ▸ Import/Export items (above); the View toggles
-// must use a distinct range or wx can't tell the commands apart (the View branch
-// ran first, so Import/Export silently toggled View state and were unreachable).
-static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 430;
+// ── View menu IDs ────────────────────────────────────────────────────────────
+// A canonical command id, not a private wxID — the same reason its two siblings
+// ID_MENU_VIEW_FULLSCREEN / ID_MENU_VIEW_STATUSBAR carry theirs (below):
+// world.DoCommand("AlwaysOnTop") posts 32322 through Frame.PostMessage ->
+// hook_post_message -> wxEVT_MENU, and accelerators.cpp:39 publishes the name to
+// scripts.  On a private id that command matched no arm of the frame dispatcher,
+// so it returned eOK and did nothing while the menu item itself worked.
+// (resource.h:1427 ID_VIEW_ALWAYSONTOP.)  The IMPLEMENTATION stays port-local:
+// CMainFrame::OnViewAlwaysontop bottoms out in the inert SetWindowPos shim, so
+// the last-resort AfxDispatchCommand must not be given &Frame to reach it —
+// that would flip and persist the preference with no window pinned.
+static const int ID_MENU_VIEW_ALWAYSONTOP = 32322;
 
 // ── Display menu: the macOS-shaped clear ──────────────────────────────────────
 // Port-local, with no canonical counterpart: Windows has exactly one clear

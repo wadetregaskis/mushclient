@@ -693,6 +693,45 @@ int RunPalMiniWindowSelfTest()
                 "restore the background after the endcap probe");
     }
 
+    // ── PS_INSIDEFRAME keeps the whole pen inside the bounding rectangle ──
+    // Win32's PS_INSIDEFRAME shrinks the figure so the entire pen width fits
+    // within the rectangle; nothing is drawn outside it.  Real GDI does that in
+    // CreatePen, so the Windows adapter gets it free -- but the shim maps the
+    // style to an ordinary solid pen and wx strokes centred on the path, so a
+    // wide PS_INSIDEFRAME pen rendered exactly like PS_SOLID and overflowed by
+    // half its width on every side.  A 9-wide pen on a rect starting at x = 10
+    // therefore reached x = 6 instead of stopping at 10.
+    {
+        const long L = 10, T = 10, R = 40, B = 40;
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the PS_INSIDEFRAME probe");
+        mwCheck(doc->WindowCircleOp(W, 2, L, T, R, B,
+                                    kGreen, 6 /*PS_INSIDEFRAME*/, 9,
+                                    kBlue, 1 /*BS_NULL*/, 0, 0, 0, 0) == eOK,
+                "WindowCircleOp (rectangle, PS_INSIDEFRAME width 9) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 12, 25) == kGreen,
+                "the border is drawn INSIDE the rectangle");
+        mwCheck(doc->WindowGetPixel(W, 7, 25) == kBlue,
+                "...and no ink lands outside it");
+        mwCheck(doc->WindowGetPixel(W, 25, 7) == kBlue,
+                "...on the top edge either");
+
+        // Control, so "the code stopped drawing" cannot pass: the SAME figure
+        // with an ordinary solid pen really does overflow, which is what
+        // PS_INSIDEFRAME exists to prevent.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the PS_SOLID overflow control");
+        mwCheck(doc->WindowCircleOp(W, 2, L, T, R, B,
+                                    kGreen, 0 /*PS_SOLID*/, 9,
+                                    kBlue, 1 /*BS_NULL*/, 0, 0, 0, 0) == eOK,
+                "WindowCircleOp (rectangle, PS_SOLID width 9) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 7, 25) == kGreen,
+                "a centred wide pen DOES overflow the rectangle");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the PS_INSIDEFRAME probe");
+    }
+
     // ── read-modify-write is lossless on a HiDPI canvas ───────────────────
     // WindowFilter reads the region, edits the bytes and writes them back.
     // Both halves used to go through an UNSCALED 1x DIB, so on a Retina canvas

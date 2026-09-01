@@ -584,6 +584,34 @@ void WxSurface::drawEdge(SurfaceId id, Rect r, int edge, int flags) {
     s->dc->DrawEdge(&rc, edge, flags);           // shim's approximation, as today
 }
 
+// PS_INSIDEFRAME shrinks the figure so the WHOLE pen width lies inside the
+// bounding rectangle: nothing is drawn outside it.  Real GDI performs that
+// shrink inside CreatePen, so pal/gdi_surface.cpp gets it for free by handing
+// the style word to the real API -- but MapPenStyle (wx_gdi_compat.cpp) can
+// only give wx an ordinary solid pen, and wx strokes CENTRED on the path, so a
+// wide PS_INSIDEFRAME pen rendered identically to PS_SOLID and the figure grew
+// by width/2 on every side.  ValidatePenStyle accepts the style at any width,
+// and Lua publishes it as miniwin.pen_inside_frame, so this is reachable.
+//
+// The correction belongs in the ADAPTER, not in miniwindow.cpp: that path is
+// shared with the Windows adapter, where GDI already shrinks, so an
+// engine-side inset would shrink twice there.  Only ops with a bounding
+// rectangle are affected -- line/polyline/polygon have none, and PS_INSIDEFRAME
+// is a no-op for them on Windows too, so psFromPen is left carrying the style
+// word unchanged.
+static Rect insideFrameRect(const Rect& r, const PenSpec& pen) {
+    if (pen.style != PenStyle::InsideFrame || pen.width <= 1) return r;
+    if (r.w <= 0 || r.h <= 0) return r;
+    const int half = pen.width / 2;
+    Rect out { r.x + half, r.y + half, r.w - 2 * half, r.h - 2 * half };
+    // A rectangle narrower than the pen: GDI paints such a figure entirely in
+    // the pen colour, so collapse to a single row/column rather than insetting
+    // it out of existence.
+    if (out.w < 1) { out.w = 1; out.x = r.x + (r.w - 1) / 2; }
+    if (out.h < 1) { out.h = 1; out.y = r.y + (r.h - 1) / 2; }
+    return out;
+}
+
 void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
                       const PenSpec& pen, const BrushSpec& brSpec) {
     Surf* s = mutate(id);
@@ -598,7 +626,8 @@ void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
     }
     CPen*   oldPen = s->dc->SelectObject(&cpen);
     CBrush* oldBr  = s->dc->SelectObject(&cbr);
-    CRect rc(r.x, r.y, r.x + r.w, r.y + r.h);
+    const Rect fr = insideFrameRect(r, pen);
+    CRect rc(fr.x, fr.y, fr.x + fr.w, fr.y + fr.h);
     switch (kind) {
     case ShapeKind::Rect:      s->dc->Rectangle(rc); break;
     case ShapeKind::RoundRect: s->dc->RoundRect(rc, CPoint(a.x, a.y)); break;
@@ -675,7 +704,8 @@ void WxSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen) 
     CPen cpen;
     cpen.CreatePen(psFromPen(pen), pen.width, pen.colour);
     CPen* old = s->dc->SelectObject(&cpen);
-    s->dc->Arc(r.x, r.y, r.x + r.w, r.y + r.h, a.x, a.y, b.x, b.y);
+    const Rect fr = insideFrameRect(r, pen);   // PS_INSIDEFRAME, as in shape()
+    s->dc->Arc(fr.x, fr.y, fr.x + fr.w, fr.y + fr.h, a.x, a.y, b.x, b.y);
     s->dc->SelectObject(old);
 }
 

@@ -8225,6 +8225,37 @@ kind, so RoundRect/Chord/Pie/Ellipse have no reference to disagree with and
 were deliberately left alone; if this run confirms the shrink, the same
 question should be asked of those four before extending it.
 
+### §10ba — OWED: PS_INSIDEFRAME's exact geometry
+
+Another question, not a result. `PS_INSIDEFRAME` (`miniwin.pen_inside_frame`)
+was rendering exactly like `PS_SOLID` on macOS — the shim maps the style to an
+ordinary solid pen and wx strokes centred on the path, so a wide pen overflowed
+the bounding rectangle by half its width on every side. Real GDI performs the
+shrink inside `CreatePen`, so `pal/gdi_surface.cpp` gets it free. The wx
+adapter now insets the shape rectangle by `width / 2` before drawing
+(`insideFrameRect`, `platform/wx_surface.cpp`), and
+`--pal-miniwindow-selftest` pins the invariant that matters — no ink outside
+the rectangle, with a `PS_SOLID` control proving a centred pen really does
+overflow.
+
+What the macOS side **cannot** settle, and what a Windows run should measure
+with `WindowGetPixel` over a `WindowCircleOp` at pen widths 8 and 9:
+
+1. **Rounding for EVEN pen widths.** `width / 2` is exact for odd widths; for
+   an even one GDI has to put the extra half-pixel somewhere, and which side it
+   lands on is not derivable here.
+2. **Does the brush FILL move with the border?** The inset shrinks the whole
+   figure, so the fill's extent shifts too. That is an inference from "the
+   dimensions of the figure are shrunk", not a measurement.
+3. **Does RoundRect's corner ellipse shrink with the figure?** `a.x`/`a.y` (the
+   corner ellipse width/height) are passed through unshrunk here, which is a
+   guess.
+
+Also unmeasured, and deliberately so: `pal::CpuRaster::shape` ignores pen width
+entirely (documented S1 gap — a 1px border), so the headless reference can
+neither disagree with this nor be used to check it. At width 1
+`PS_INSIDEFRAME` is a no-op, so the two adapters do not currently conflict.
+
 ## §11 — The in-app probe suite
 
 ```

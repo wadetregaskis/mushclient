@@ -460,6 +460,117 @@ TEST(McDispatch, OmittedTrailingArgsTakeTheLuaDefaults)
     ::unlink(dbpath);
 }
 
+// ...and a default that is a STRING, not a number.
+//
+// kArgDefaults could only carry a `long`, so the three Lua opt* defaults that
+// are strings -- ArrayExport/ArrayExportKeys' Delimiter (slot 1) and
+// ArrayImport's (slot 2), all "," -- were silently absent, and the omitted
+// delimiter zero-filled to "".  That is not merely a different default: all
+// three methods reject a delimiter whose length is not 1, so the export
+// methods returned the NUMBER eBadDelimiter where Lua returns the exported
+// string, and the import stored nothing.  A plugin written against the
+// Lua-flavoured docs got an integer where it expected text, with no error.
+//
+// Every assertion below fails on the unfixed code -- the exports return VT_I4
+// and the import returns eBadDelimiter -- so "the padding did nothing" cannot
+// pass.
+TEST(McDispatch, OmittedStringArgsTakeTheLuaStringDefault)
+{
+    CMUSHclientDoc doc;
+
+    VARIANT r; VariantInit(&r);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayCreate", { vstr("a") }, r));
+    ASSERT_EQ((long) eOK, r.lVal);
+    MC_VariantClear(r);
+
+    // Two entries, so the JOINING delimiter is exercised and not just the
+    // key/value one: a one-entry array would leave the two roles degenerate.
+    VARIANT s1; VariantInit(&s1);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArraySet", { vstr("a"), vstr("k1"), vstr("v1") }, s1));
+    MC_VariantClear(s1);
+    VARIANT s2a; VariantInit(&s2a);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArraySet", { vstr("a"), vstr("k2"), vstr("v2") }, s2a));
+    MC_VariantClear(s2a);
+
+    // ArrayExport(name) -- Lua's my_optstring(L, 2, ",") default.
+    VARIANT e; VariantInit(&e);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a") }, e));
+    EXPECT_EQ((int) VT_BSTR, (int) e.vt);            // was VT_I4 eBadDelimiter
+    EXPECT_EQ(std::string("k1,v1,k2,v2"), bstr_of(e));
+    MC_VariantClear(e);
+
+    // ...and a SUPPLIED delimiter still wins over the default.
+    VARIANT e2; VariantInit(&e2);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a"), vstr("|") }, e2));
+    EXPECT_EQ(std::string("k1|v1|k2|v2"), bstr_of(e2));
+    MC_VariantClear(e2);
+
+    // ArrayExportKeys(name) -- same slot, same default.
+    VARIANT k; VariantInit(&k);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExportKeys", { vstr("a") }, k));
+    EXPECT_EQ((int) VT_BSTR, (int) k.vt);
+    EXPECT_EQ(std::string("k1,k2"), bstr_of(k));
+    MC_VariantClear(k);
+
+    // ArrayImport(name, values) -- the default is slot 2 here.
+    VARIANT c; VariantInit(&c);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayCreate", { vstr("b") }, c));
+    MC_VariantClear(c);
+    VARIANT i; VariantInit(&i);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayImport",
+        { vstr("b"), vstr("k,v,k2,v2") }, i));
+    EXPECT_EQ((long) eOK, i.lVal);                   // was eBadDelimiter
+    MC_VariantClear(i);
+    VARIANT g; VariantInit(&g);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayGet", { vstr("b"), vstr("k2") }, g));
+    EXPECT_EQ(std::string("v2"), bstr_of(g));
+    MC_VariantClear(g);
+
+    // An explicit nil takes the string default too -- the padding treats
+    // "omitted" and "nil" as one rule, and a string row must not escape it.
+    VARIANT n; VariantInit(&n);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a"), vnil() }, n));
+    EXPECT_EQ(std::string("k1,v1,k2,v2"), bstr_of(n));
+    MC_VariantClear(n);
+
+    // ...and with strict checking ON the delimiter is no longer demanded:
+    // slot_has_default reads the same table, so a string row must shorten
+    // required_args exactly as a numeric one does.
+    doc.m_bStrictScriptArguments = TRUE;
+    EXPECT_EQ(1, MC_DispatchRequiredArgs("ArrayExport"));
+    EXPECT_EQ(2, MC_DispatchRequiredArgs("ArrayImport"));
+    VARIANT s2; VariantInit(&s2);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a") }, s2));
+    EXPECT_EQ(std::string("k1,v1,k2,v2"), bstr_of(s2));
+    MC_VariantClear(s2);
+    doc.m_bStrictScriptArguments = FALSE;
+}
+
+// The borrowed string default must survive being handed out repeatedly, and
+// must not be freed with the call: `padded` holds a shallow VIEW of a static
+// literal, so a single var_clear of it would corrupt the table for every later
+// call.  Two hundred invocations in a row is the cheapest way to say so --
+// under a sanitizer or Guard Malloc a freed literal fails here, not somewhere
+// unrelated later.
+TEST(McDispatch, TheBorrowedStringDefaultIsNotConsumedByTheCall)
+{
+    CMUSHclientDoc doc;
+    VARIANT r; VariantInit(&r);
+    call(doc, "ArrayCreate", { vstr("a") }, r);
+    MC_VariantClear(r);
+    VARIANT s; VariantInit(&s);
+    call(doc, "ArraySet", { vstr("a"), vstr("k"), vstr("v") }, s);
+    MC_VariantClear(s);
+
+    for (int n = 0; n < 200; ++n)
+    {
+        VARIANT e; VariantInit(&e);
+        ASSERT_EQ(MC_DISP_OK, call(doc, "ArrayExport", { vstr("a") }, e));
+        ASSERT_EQ(std::string("k,v"), bstr_of(e));
+        MC_VariantClear(e);
+    }
+}
+
 
 // ── an EXPLICIT nil is an omitted argument, not a zero ─────────────────────
 //

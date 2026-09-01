@@ -399,9 +399,22 @@ void build_table()
 // fire and are gone; and MoveWorldWindow / GetWorldWindowPosition do not take
 // the Which parameter at all (they hand 1 to the X variant themselves), so the
 // window rows name MoveWorldWindowX / GetWorldWindowPositionX, which do.
-struct ArgDefault { const char* method; int slot; long value; };
+//
+// A default is a NUMBER (`value`) unless `str` is set, in which case the slot
+// is padded with a borrowed VT_BSTR instead.  Only three Lua opt* defaults are
+// non-empty strings -- the array delimiters, all "," -- and they need the
+// string arm because the zero-fill's "" is not merely a different default but
+// an INVALID one: ArrayExport/ArrayExportKeys/ArrayImport all reject a
+// delimiter whose length is not 1 (methods_arrays.cpp), so
+// world.ArrayExport("a") from Python/Perl/JS/Tcl/Ruby returned the NUMBER
+// eBadDelimiter where Lua returns the exported string.  (Every other string
+// opt* default in lua_methods.cpp is "", which the zero-fill already produces.)
+struct ArgDefault { const char* method; int slot; long value; const char* str = nullptr; };
 static const ArgDefault kArgDefaults[] = {
   { "addtriggerex",          9, DEFAULT_TRIGGER_SEQUENCE },
+  { "arrayexport",           1, 0, "," },               // Delimiter
+  { "arrayexportkeys",       1, 0, "," },               // Delimiter
+  { "arrayimport",           2, 0, "," },               // Delimiter
   { "blendpixel",            3, 1 },                    // Opacity
   { "bookmark",              1, 1 },
   { "chatacceptcalls",       0, DEFAULT_CHAT_PORT },
@@ -517,7 +530,7 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
   std::vector<VARIANT> padded;
   const int nSupplied = nargs;      // before the padding below rewrites it
 
-  // Skip the 34-entry kArgDefaults scan for every method that has no defaults
+  // Skip the 35-entry kArgDefaults scan for every method that has no defaults
   // (the common case) with one O(1) membership test.
   if (it->second.hasDefaults)
     {
@@ -546,7 +559,15 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
       if (unsupplied (v))
         for (const ArgDefault& d : kArgDefaults)
           if (d.slot == i && key == d.method)
-            { v.vt = VT_I4; v.lVal = d.value; break; }
+            {
+            // A string default is BORROWED, exactly like the caller's own
+            // VARIANTs above: `padded` holds shallow views that nothing
+            // var_clears, and the holders copy out of it before the call.
+            // (bstrVal is a plain char* here -- windows_types.h:39.)
+            if (d.str) { v.vt = VT_BSTR; v.bstrVal = const_cast<char*> (d.str); }
+            else       { v.vt = VT_I4;   v.lVal    = d.value; }
+            break;
+            }
       padded.push_back(v);
       }
     args  = padded.data();

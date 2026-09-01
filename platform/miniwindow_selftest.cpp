@@ -502,6 +502,53 @@ int RunPalMiniWindowSelfTest()
                     "...and strokes no edges over it");
         }
 
+        // ...and every ring stays INSIDE the rectangle it was given.  Win32
+        // RECTs are right/bottom-exclusive, so the outer ring occupies
+        // left..right-1 and ::DrawEdge never paints at right or bottom.  The
+        // shim used to pass rr+1 / b+1 as the far end of each stroke to
+        // compensate for GDI's endpoint-EXCLUSIVE LineTo, but this adapter's
+        // line primitive INCLUDES its endpoint (the deviation the WindowLine
+        // probe above pins), so each side ran a pixel too far: outside the rect
+        // on the outer ring, and over the outer ring's corners on the inner one.
+        // One PAIR of sides at a time, so no other stroke can cover for a
+        // mis-sized one: with BF_LEFT|BF_TOP the top strip's far end is the
+        // only thing that can paint (39,10), and nothing at all may paint
+        // (40,10).
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the DrawEdge extent probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x03) == eOK,
+                "WindowRectOp (DrawEdge, EDGE_RAISED, left+top) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 39, 10) != kBlue,
+                "the TOP side reaches x == right-1");
+        mwCheck(doc->WindowGetPixel(W, 40, 10) == kBlue,
+                "...and stops there: nothing is painted at x == right");
+        mwCheck(doc->WindowGetPixel(W, 10, 39) != kBlue,
+                "the LEFT side reaches y == bottom-1");
+        mwCheck(doc->WindowGetPixel(W, 10, 40) == kBlue,
+                "...and stops there: nothing is painted at y == bottom");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the DrawEdge far-side extent probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x0C) == eOK,
+                "WindowRectOp (DrawEdge, EDGE_RAISED, right+bottom) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 39, 39) != kBlue,
+                "the RIGHT and BOTTOM sides reach right-1/bottom-1");
+        mwCheck(doc->WindowGetPixel(W, 40, 39) == kBlue &&
+                doc->WindowGetPixel(W, 39, 40) == kBlue,
+                "...and neither runs past the rectangle");
+
+        // The inner ring is inset by one on every named side, so it must not
+        // reach the outer ring's right column -- the outer colour at the corner
+        // must be the same as halfway down the side.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the DrawEdge corner probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x0F) == eOK,
+                "WindowRectOp (DrawEdge, EDGE_RAISED, BF_RECT) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 39, 11) == doc->WindowGetPixel(W, 39, 25),
+                "the inner ring does not overwrite the outer ring's corners");
+        mwCheck(doc->WindowGetPixel(W, 11, 39) == doc->WindowGetPixel(W, 25, 39),
+                "...on the bottom edge either");
+
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the DrawEdge probe");
     }

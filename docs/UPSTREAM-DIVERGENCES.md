@@ -261,11 +261,32 @@ picture a fill-only call draws. `nFlags` is now tested as
 `COLOR_3DFACE` before the rings are stroked over it (the same picture Win32
 leaves, since the rings paint last either way).
 
+**Correction: both rings were a pixel too long on every side.** The commit
+that introduced the side-flag-honouring `ring` lambda compensated for GDI's
+endpoint-EXCLUSIVE `LineTo` by passing `rr + 1` / `b + 1` as the far end of
+each stroke -- but this adapter's line primitive INCLUDES its endpoint (the
+port's own measured deviation, `docs/PAL.md` and the `WindowLine` probe in
+`--pal-miniwindow-selftest`), so every stroke ran one pixel past the extent
+`::DrawEdge` uses. Win32 `RECT`s are right/bottom-exclusive and `::DrawEdge`
+strokes strictly inside, so the outer ring painted at `x == right` and
+`y == bottom`, one pixel OUTSIDE the caller's rectangle, and the inner ring
+(drawn second, inset by one) overwrote the outer ring's corner pixels --
+four light notches in the corners of a raised border, visible on the
+full-canvas `rect_draw_edge` in `plugins/Messages_Window.xml`. `CDC::Draw3dRect`
+twenty lines above does the same job with no `+1` and was already right.
+Each side is now a one-pixel `DrawRectangle` STRIP rather than a line, which
+states the extent outright: it stays correct whether or not the inclusive-line
+deviation is ever repaired, and has no zero-length-stroke edge case on a
+1px-wide rect.
+
 **Status:** port-side only (platform/wx_gdi_compat.cpp); no canonical
 source changed. Still needs a Windows run to confirm real `DrawEdge`
-truly no-ops on `nFlags == 0`, and to confirm the `BF_MIDDLE` fill colour
-and extent, before this can be called verified. Covered in-app by the
-`DrawEdge` block of `--pal-miniwindow-selftest`.
+truly no-ops on `nFlags == 0`, to confirm the `BF_MIDDLE` fill colour
+and extent, and to confirm the ring colours at the two mixed corners,
+before this can be called verified. Covered in-app by the
+`DrawEdge` block of `--pal-miniwindow-selftest`, which now also pins the
+ring extents (each side reaches `right-1`/`bottom-1` and nothing is painted
+at `right`/`bottom`) and the surviving outer-ring corners.
 
 ## 9 — The miniwindow hit test measures from left/top by size, and only for windows that were drawn
 

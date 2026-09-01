@@ -1264,16 +1264,34 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
     }
 
     // Stroke one ring, honouring the BF_ side bits.  tl paints top+left,
-    // br paints right+bottom -- the same split Draw3dRect uses.
+    // br paints right+bottom -- the same split Draw3dRect uses, in the same
+    // order, so a corner where the two meet keeps taking the br colour.
+    //
+    // Each side is a one-pixel STRIP, not a line: ::DrawEdge strokes strictly
+    // inside the rectangle (Win32 RECTs are right/bottom-exclusive, so the ring
+    // occupies left..right-1), and this used to pass rr+1 / b+1 as the far end
+    // of each stroke to compensate for GDI's endpoint-EXCLUSIVE LineTo.  This
+    // adapter's line primitive INCLUDES its endpoint -- the port's own measured
+    // deviation, pinned by the WindowLine probe in --pal-miniwindow-selftest --
+    // so every stroke ran a pixel too far: the outer ring painted at x == right
+    // and y == bottom, one pixel OUTSIDE the caller's rectangle, and the inner
+    // ring (drawn second, inset by one) overwrote the outer ring's corner
+    // pixels.  Draw3dRect twenty lines above does the same job with no +1 and
+    // was already right.  A strip states the extent outright, so it stays
+    // correct whether or not that line deviation is ever repaired, and has no
+    // zero-length-stroke edge case on a 1px-wide rect.
     auto ring = [&](const RECT& q, COLORREF tl, COLORREF br) {
         const int l = q.left, t = q.top, rr = q.right - 1, b = q.bottom - 1;
         if (rr < l || b < t) return;
-        p->dc.SetPen(wxPen(WxCol(tl)));
-        if (nFlags & BF_TOP)    p->dc.DrawLine(l, t, rr + 1, t);
-        if (nFlags & BF_LEFT)   p->dc.DrawLine(l, t, l, b + 1);
-        p->dc.SetPen(wxPen(WxCol(br)));
-        if (nFlags & BF_RIGHT)  p->dc.DrawLine(rr, t, rr, b + 1);
-        if (nFlags & BF_BOTTOM) p->dc.DrawLine(l, b, rr + 1, b);
+        auto strip = [&](int x, int y, int w, int h, COLORREF c) {
+            p->dc.SetPen(*wxTRANSPARENT_PEN);
+            p->dc.SetBrush(wxBrush(WxCol(c)));
+            p->dc.DrawRectangle(x, y, w, h);
+        };
+        if (nFlags & BF_TOP)    strip(l,  t, rr - l + 1, 1,          tl);
+        if (nFlags & BF_LEFT)   strip(l,  t, 1,          b - t + 1,  tl);
+        if (nFlags & BF_RIGHT)  strip(rr, t, 1,          b - t + 1,  br);
+        if (nFlags & BF_BOTTOM) strip(l,  b, rr - l + 1, 1,          br);
     };
 
     // Outer ring.

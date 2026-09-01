@@ -33,15 +33,18 @@ merges. Final state: `ctest` 78/78 (extended on), ASan suite 77/77.
 - **MudMaster file transfer stays ~25 KB/s**: the Poll drain loop cannot help a
   lockstep protocol; speeding it up (adaptive tick or a nudge-Poll after
   CHAT_FILE_BLOCK_REQUEST) is its own decision.
-- Windows' `OnTestEnd` also **clears the output selection**; the port keeps it.
-  Separate parity gap, deliberately not folded into the freeze fix.
-- `FireMacro`'s SEND_NOW arm still **bypasses unpause_on_send** (macros do not
-  travel the link path); adjacent gap, left for its own change.
+- ~~Windows' `OnTestEnd` also clears the output selection~~ — **closed later the
+  same day**: `FireScrollCommand`'s End arm now clears it (Start pinned as the
+  arm that must not).
+- ~~`FireMacro`'s SEND_NOW arm bypasses unpause_on_send~~ — **closed later the
+  same day**, mirroring `SendCommand`'s tail (sendvw.cpp:756 via SendMacro).
 - `WindowDrawImageAlpha`/`WindowGetImageAlpha` now **refuse 24-bit images with
   eImageNotInstalled on macOS as they always did on Windows** (gdi#1) — a
   user-visible change that is parity, flagged in WINDOWS-VALIDATION.md §10bb.
-- `dialogs/Splash.cpp` reads an uninitialised `DIBSECTION` field through
-  `CBitmap::GetObject` (spotted in passing; has its own follow-up task).
+- ~~`dialogs/Splash.cpp` reads an uninitialised `DIBSECTION` field through
+  `CBitmap::GetObject`~~ — **closed later the same day**: `GetObject` honours
+  the caller's declared buffer size (latent until the RESOURCE `LoadImage` form
+  is ever served — `CSplashWnd::Create` bails on its null today).
 
 ## What ASan added
 

@@ -261,11 +261,67 @@ picture a fill-only call draws. `nFlags` is now tested as
 `COLOR_3DFACE` before the rings are stroked over it (the same picture Win32
 leaves, since the rings paint last either way).
 
+**Correction: both rings were a pixel too long on every side.** The commit
+that introduced the side-flag-honouring `ring` lambda compensated for GDI's
+endpoint-EXCLUSIVE `LineTo` by passing `rr + 1` / `b + 1` as the far end of
+each stroke -- but this adapter's line primitive INCLUDES its endpoint (the
+port's own measured deviation, `docs/PAL.md` and the `WindowLine` probe in
+`--pal-miniwindow-selftest`), so every stroke ran one pixel past the extent
+`::DrawEdge` uses. Win32 `RECT`s are right/bottom-exclusive and `::DrawEdge`
+strokes strictly inside, so the outer ring painted at `x == right` and
+`y == bottom`, one pixel OUTSIDE the caller's rectangle, and the inner ring
+(drawn second, inset by one) overwrote the outer ring's corner pixels --
+four light notches in the corners of a raised border, visible on the
+full-canvas `rect_draw_edge` in `plugins/Messages_Window.xml`. `CDC::Draw3dRect`
+twenty lines above does the same job with no `+1` and was already right.
+Each side is now a one-pixel `DrawRectangle` STRIP rather than a line, which
+states the extent outright: it stays correct whether or not the inclusive-line
+deviation is ever repaired, and has no zero-length-stroke edge case on a
+1px-wide rect.
+
+**Correction: four `nFlags` bits were dropped in silence, and three are now
+honoured.** `miniwindow.cpp:377` gates only `(Colour2 & 0xFF) > 0x1F`, so
+`BF_DIAGONAL` (0x0010) and the whole high byte -- `BF_SOFT` 0x1000,
+`BF_FLAT` 0x4000, `BF_MONO` 0x8000 -- reach the shim, and
+`scripting/lua_methods.cpp` publishes all of them as `miniwin.*` constants
+(`rect_diagonal_end_top_left`, `rect_option_flat_borders`,
+`rect_option_monochrom_borders`, `rect_option_softer_buttons`). The shim read
+only the side bits, `BF_MIDDLE` and `BF_ADJUST`, so a caller got `eOK` and a
+silently different picture -- worst for `BF_DIAGONAL`, where Win32 draws a
+single diagonal vector and the side bits name its END point, and the shim
+instead read `BF_DIAGONAL_ENDTOPLEFT` as `BF_TOP|BF_LEFT` and drew two sides
+of a box.
+
+- `BF_DIAGONAL` now draws the vector, with the end point the side bits name
+  and `ENDBOTTOMRIGHT` for `BF_DIAGONAL` alone.
+- `BF_MONO` and `BF_FLAT` now replace the bevel with a FLAT border -- one
+  colour the whole way round each ring: `COLOR_WINDOWFRAME` over
+  `COLOR_WINDOW` for mono, `COLOR_3DSHADOW` over `COLOR_3DFACE` for flat.
+  `BF_MONO` wins when both are named.
+- **`BF_SOFT` is still dropped, deliberately.** Unlike the other two it does
+  not change the SHAPE, only which grey the bevel uses, so the port cannot
+  tell right from wrong without measuring Windows -- and choosing the shade
+  from this side would be inventing a measurement. Left as an honest gap
+  rather than a plausible guess.
+
+Two further things about the diagonal that only a Windows run can settle:
+Win32 SHADES it (both ring colours, one either side of the vector), which is
+not reproduced -- a two-pixel band necessarily leaves the rectangle on one
+side unless it is shortened, and which side carries which shade is not
+derivable here; and `BF_MIDDLE` combined with `BF_DIAGONAL` fills the whole
+rectangle here, where Win32 may fill only the triangle on one side of the
+vector.
+
 **Status:** port-side only (platform/wx_gdi_compat.cpp); no canonical
 source changed. Still needs a Windows run to confirm real `DrawEdge`
-truly no-ops on `nFlags == 0`, and to confirm the `BF_MIDDLE` fill colour
-and extent, before this can be called verified. Covered in-app by the
-`DrawEdge` block of `--pal-miniwindow-selftest`.
+truly no-ops on `nFlags == 0`, to confirm the `BF_MIDDLE` fill colour
+and extent, to confirm the ring colours at the two mixed corners, and to
+settle the four `BF_DIAGONAL`/`BF_FLAT`/`BF_MONO`/`BF_SOFT` questions above,
+before this can be called verified. Covered in-app by the
+`DrawEdge` block of `--pal-miniwindow-selftest`, which now also pins the
+ring extents (each side reaches `right-1`/`bottom-1` and nothing is painted
+at `right`/`bottom`), the surviving outer-ring corners, both diagonal end
+points, and the flat/mono colour tables.
 
 ## 9 — The miniwindow hit test measures from left/top by size, and only for windows that were drawn
 

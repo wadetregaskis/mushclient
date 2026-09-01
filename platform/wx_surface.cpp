@@ -17,6 +17,7 @@
 #include "stdafx.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -468,13 +469,41 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
         // plugin asked for.  Build the 8x8 tile ALREADY COLOURED instead, which
         // is cheap because it is only 64 pixels.
         //
-        // Transparent gaps (bg == -1) are still not expressible this way: a
-        // stipple has no mask here, so those fall back to painting the gap in
-        // the foreground colour rather than leaving the destination alone.
-        // Recorded in docs/WINDOWS-VALIDATION.md.
+        // The TRANSPARENT request arrives in spec.FG here, not spec.bg.  For a
+        // mono pattern BrushSpecFromWin32 puts BrushColour -- the colour
+        // upstream keys SetBkMode on -- in fg (SetTextColor) and PenColour in
+        // bg (SetBkColor); the hatch arm above is the other way round, which is
+        // why testing spec.bg is right THERE and was wrong here.  pal/isurface.h
+        // states the contract and pal/gdi_surface.cpp implements it as
+        // `SetBkMode (b.fg == (Colour) -1 ? TRANSPARENT : OPAQUE)`.
+        //
+        // Testing spec.bg broke it in two directions at once: a real
+        // BrushColour == -1 took the opaque branch and painted the 1-bits in
+        // PenColour, obliterating what the plugin meant to show through; and a
+        // PenColour of -1 -- which Windows treats as an ordinary opaque
+        // background -- collapsed the tile to one flat BrushColour where
+        // Windows draws a two-tone pattern.
+        //
+        // Transparent gaps are still not expressible as a stipple: it has no
+        // mask, so it cannot leave the destination alone.  The fallback is a
+        // flat tile in the resolved foreground.  A real fix needs a masked
+        // stipple, or the read-modify-write treatment fillRect's hatch arm
+        // already uses, extended to arbitrary shape coverage (ellipse,
+        // roundrect, chord, pie) -- that is where the work goes.  Recorded in
+        // docs/WINDOWS-VALIDATION.md 4c-sexdecies.
         {
-            const Colour fg = spec.fg;
-            const Colour bg = (spec.bg == (Colour)-1) ? spec.fg : spec.bg;
+            // CLR_INVALID in the slot that is NOT the transparency trigger is
+            // just a colour for GDI to resolve, and white is the assumption --
+            // its high-order type byte is undefined, so GDI either masks it to
+            // 0x00FFFFFF or fails the call and keeps the DC default.  The
+            // measurement is owed in docs/WINDOWS-VALIDATION.md; what matters
+            // here is that it is NOT the other caller colour, which is what the
+            // old substitution made it.
+            const bool transparent = (spec.fg == (Colour)-1);
+            const Colour fg = transparent ? (Colour) 0xFFFFFF : spec.fg;
+            const Colour bg = transparent ? fg
+                            : (spec.bg == (Colour)-1) ? (Colour) 0xFFFFFF
+                                                      : spec.bg;
 
             // Build the tile at PHYSICAL resolution.  An 8x8 logical stipple on
             // a 2x canvas is scaled up by wx and its alternating pixels average
@@ -584,6 +613,34 @@ void WxSurface::drawEdge(SurfaceId id, Rect r, int edge, int flags) {
     s->dc->DrawEdge(&rc, edge, flags);           // shim's approximation, as today
 }
 
+// PS_INSIDEFRAME shrinks the figure so the WHOLE pen width lies inside the
+// bounding rectangle: nothing is drawn outside it.  Real GDI performs that
+// shrink inside CreatePen, so pal/gdi_surface.cpp gets it for free by handing
+// the style word to the real API -- but MapPenStyle (wx_gdi_compat.cpp) can
+// only give wx an ordinary solid pen, and wx strokes CENTRED on the path, so a
+// wide PS_INSIDEFRAME pen rendered identically to PS_SOLID and the figure grew
+// by width/2 on every side.  ValidatePenStyle accepts the style at any width,
+// and Lua publishes it as miniwin.pen_inside_frame, so this is reachable.
+//
+// The correction belongs in the ADAPTER, not in miniwindow.cpp: that path is
+// shared with the Windows adapter, where GDI already shrinks, so an
+// engine-side inset would shrink twice there.  Only ops with a bounding
+// rectangle are affected -- line/polyline/polygon have none, and PS_INSIDEFRAME
+// is a no-op for them on Windows too, so psFromPen is left carrying the style
+// word unchanged.
+static Rect insideFrameRect(const Rect& r, const PenSpec& pen) {
+    if (pen.style != PenStyle::InsideFrame || pen.width <= 1) return r;
+    if (r.w <= 0 || r.h <= 0) return r;
+    const int half = pen.width / 2;
+    Rect out { r.x + half, r.y + half, r.w - 2 * half, r.h - 2 * half };
+    // A rectangle narrower than the pen: GDI paints such a figure entirely in
+    // the pen colour, so collapse to a single row/column rather than insetting
+    // it out of existence.
+    if (out.w < 1) { out.w = 1; out.x = r.x + (r.w - 1) / 2; }
+    if (out.h < 1) { out.h = 1; out.y = r.y + (r.h - 1) / 2; }
+    return out;
+}
+
 void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
                       const PenSpec& pen, const BrushSpec& brSpec) {
     Surf* s = mutate(id);
@@ -598,7 +655,8 @@ void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
     }
     CPen*   oldPen = s->dc->SelectObject(&cpen);
     CBrush* oldBr  = s->dc->SelectObject(&cbr);
-    CRect rc(r.x, r.y, r.x + r.w, r.y + r.h);
+    const Rect fr = insideFrameRect(r, pen);
+    CRect rc(fr.x, fr.y, fr.x + fr.w, fr.y + fr.h);
     switch (kind) {
     case ShapeKind::Rect:      s->dc->Rectangle(rc); break;
     case ShapeKind::RoundRect: s->dc->RoundRect(rc, CPoint(a.x, a.y)); break;
@@ -675,7 +733,8 @@ void WxSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen) 
     CPen cpen;
     cpen.CreatePen(psFromPen(pen), pen.width, pen.colour);
     CPen* old = s->dc->SelectObject(&cpen);
-    s->dc->Arc(r.x, r.y, r.x + r.w, r.y + r.h, a.x, a.y, b.x, b.y);
+    const Rect fr = insideFrameRect(r, pen);   // PS_INSIDEFRAME, as in shape()
+    s->dc->Arc(fr.x, fr.y, fr.x + fr.w, fr.y + fr.h, a.x, a.y, b.x, b.y);
     s->dc->SelectObject(old);
 }
 
@@ -971,10 +1030,19 @@ Size WxSurface::measureText(FontId fid, const char* utf8, size_t len) {
     return { sz.cx, sz.cy };
 }
 
+// How many times fontMetrics() has actually MEASURED, i.e. missed the cache.
+// Exposed only so --pal-miniwindow-selftest can pin the memoisation itself:
+// N WindowFontInfo calls on one font must produce exactly one pass.  A
+// wall-clock bound would be flaky under Guard Malloc / ASan; a count is not.
+static std::atomic<long> s_fontMetricsPasses { 0 };
+long WxSurfaceFontMetricsPassesForTesting() { return s_fontMetricsPasses.load(); }
+
 FontMetrics WxSurface::fontMetrics(FontId fid) {
     FontMetrics m;
     Font* f = font(fid);
     if (!f) return m;
+    if (f->metricsValid) return f->metrics;   // see Font::metrics in the header
+    ++s_fontMetricsPasses;
     CDC* dc = measureDc();
     CFont* old = dc->SelectObject(f->font);
     TEXTMETRIC tm;
@@ -1007,6 +1075,8 @@ FontMetrics WxSurface::fontMetrics(FontId fid) {
     else
         m.face = f->spec.face;
     dc->SelectObject(old);
+    f->metrics = m;
+    f->metricsValid = true;
     return m;
 }
 
@@ -1222,6 +1292,22 @@ int RunPalSurfaceSelfTest() {
                (unsigned)shBorder, (unsigned)shFill, (unsigned)shOut);
     stCheck(near(shBorder, kWhite) && shFill == kGreen && shOut == kBlack,
             "shape(Rect) strokes and fills (stroke +/-2/channel)");
+
+    // 9b. GDI's null-pen shrink: with NULL_PEN selected, ::Rectangle draws the
+    // figure one pixel narrower and shorter.  docs/PAL.md calls this normative
+    // and pal::CpuRaster implements it; this is the SAME probe as the golden at
+    // tests/test_pal_surface.cpp (ShapeRectStrokesAndFills), which is exactly
+    // the kind of adapter-invariant assertion this harness exists to carry --
+    // its absence here is what let the two adapters drift apart, with only the
+    // one nobody ships pinned.
+    ad.shape(sh, ShapeKind::Rect, { 0, 8, 3, 2 }, {}, {},
+             { PenStyle::Null }, { BrushStyle::Solid, kRed });
+    stCheck(ad.getPixel(sh, { 0, 8 }) == kRed && ad.getPixel(sh, { 1, 8 }) == kRed,
+            "a null-pen shape(Rect) fills (w-1) x (h-1)");
+    stCheck(ad.getPixel(sh, { 2, 8 }) == kBlack &&
+            ad.getPixel(sh, { 0, 9 }) == kBlack &&
+            ad.getPixel(sh, { 2, 9 }) == kBlack,
+            "...and omits the right column and bottom row (null-pen shrink)");
 
     // 10. floodFill border + surface modes (review claim: wxDC::FloodFill is a
     // no-op on wxOSX — this check is the empirical arbiter).

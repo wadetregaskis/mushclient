@@ -17,6 +17,14 @@
 //     endpoints, matches the CPU reference) rather than wxDC::GradientFillLinear.
 //   - line renders INCLUSIVE of the last pixel — the shim's already-shipped,
 //     documented deviation from the GDI-normative exclusive rule.
+//   - shape(Rect) with a NULL pen now performs GDI's one-pixel right/bottom
+//     shrink, which PAL.md calls normative and pal::CpuRaster has always done.
+//     It is implemented in CDC::Rectangle (wx_gdi_compat.cpp), not here, since
+//     that function exists to emulate ::Rectangle and the Windows adapter
+//     reaches the real one. The other traced figures (RoundRect/Chord/Pie/
+//     Ellipse) are NOT shrunk: CpuRaster::shape bails on every kind but Rect,
+//     so nothing pins them and applying an unmeasured shrink to four more
+//     figures would risk inventing a fresh divergence.
 //   - S2 gaps (no-ops / bails, to land with their S3 op families): pattern
 //     brushes; pen endcap/join; matrix blits; keyed+stretched blits; a
 //     buffer-source stretched blit; a stretched blit whose source rect was
@@ -107,6 +115,22 @@ private:
     struct Font {
         CFont*   font = nullptr;
         FontSpec spec;
+        // fontMetrics() is O(1) on Windows (GDI copies the font's cached
+        // TEXTMETRIC) and 95 Core Text layouts here, because the shim's
+        // CDC::GetTextMetrics measures every printable ASCII glyph to fill
+        // tmMaxCharWidth.  world.WindowFontInfo pays that for EVERY InfoType,
+        // not only code 7, so asking a font its height cost the whole sweep.
+        //
+        // Latching it on the Font entry is safe because the entry is immutable
+        // for its lifetime: createFont builds the CFont once and never touches
+        // it again, CMiniWindow::Font handles a redefinition by destroying the
+        // old entry and erasing it before creating a NEW id, and m_nextFont
+        // never recycles ids -- so there is no "same id, different font" state
+        // to go stale.  The metrics are display-independent once realized
+        // (createFont folds dpi() in at creation, and measureDc() is a fixed
+        // 1x1 memory DC), so this cache is exactly as stale as the CFont.
+        FontMetrics metrics;
+        bool        metricsValid = false;
     };
 
     Surf* surf(SurfaceId id);
@@ -134,6 +158,13 @@ private:
     std::uint32_t m_nextSurface = 1, m_nextFont = 1;
     CDC* m_measureDc = nullptr;
 };
+
+// How many times fontMetrics() has MEASURED rather than answered from the
+// per-Font cache.  Test hook only: --pal-miniwindow-selftest asserts that N
+// WindowFontInfo calls on one font produce exactly one pass, which is the only
+// honest way to pin the memoisation (a wall-clock bound would be flaky under
+// Guard Malloc / ASan).
+long WxSurfaceFontMetricsPassesForTesting();
 
 } // namespace pal
 

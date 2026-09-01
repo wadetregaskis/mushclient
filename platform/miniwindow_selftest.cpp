@@ -20,6 +20,7 @@
 #include "miniwindow.h"           // CMiniWindow, MouseMoveMiniWindow, MINIWINDOW_*
 #include "scripting/errors.h"
 #include "tests/fake_worldview.h" // the recording pal::IWorldView (header-only)
+#include "platform/wx_surface.h"  // WxSurfaceFontMetricsPassesForTesting
 
 #include <chrono>
 #include <cstdio>
@@ -123,9 +124,80 @@ int RunPalMiniWindowSelfTest()
         mwCheck(doc->WindowGetPixel(W, 24, 18) != kRed,
                 "...and NOT below the chord line, which a pie would fill");
 
+        // ...and the figure's EXTENT is the exclusive one, like every other
+        // shape op.  Chord traces its own outline, so unlike Ellipse (which
+        // gets it from wx's (x, y, w, h) form) it has to say so -- and it used
+        // to use the inclusive centre (x1+x2)/2 and radius (x2-x1)/2, putting
+        // its extremes on x2/y2, a pixel past GDI's last pixel and a pixel
+        // outside the rectangle the caller gave.  The right HALF of the ellipse
+        // (start at the bottom, end at the top, sweeping anticlockwise through
+        // 3 o'clock) puts arc extremes exactly on the right and bottom edges.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlack, 0) == eOK,
+                "clear before the chord extent probe");
+        mwCheck(doc->WindowCircleOp(W, 4, L, T, R, B,
+                                    kRed, 0, 1, kRed, 0 /*solid*/,
+                                    24, 100, 24, 4) == eOK,
+                "WindowCircleOp (chord, right half) succeeds");
+        mwCheck(doc->WindowGetPixel(W, R - 1, 24) == kRed,
+                "the chord reaches x2-1 on the midline");
+        mwCheck(doc->WindowGetPixel(W, R, 24) != kRed,
+                "...and NOT x2 itself (Win32's bounding rect is right-exclusive)");
+        mwCheck(doc->WindowGetPixel(W, 24, B - 1) == kRed,
+                "...reaches y2-1 at the bottom of the arc");
+        mwCheck(doc->WindowGetPixel(W, 24, B) != kRed,
+                "...and NOT y2 itself (bottom-exclusive too)");
+
         // Leave the canvas as we found it for the assertions that follow.
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the chord probe");
+    }
+
+    // ── CircleOp action 5 = Pie: the radials stop ON the ellipse ──────────
+    // Win32 treats Extra1..4 as DIRECTION points defining two rays from the
+    // ellipse centre; the wedge's sides run centre -> ellipse and the points
+    // themselves are never stroked to, which is why the API invites putting
+    // them well outside the rectangle.  The shim used to draw wx's elliptic-arc
+    // pie and then stroke two literal lines to the raw points, so each ray
+    // point outside the ellipse left a pen-coloured spike running across the
+    // miniwindow.  Rays straight down and straight right, both far outside, so
+    // the wedge is the bottom-right quadrant.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the pie probe");
+        mwCheck(doc->WindowCircleOp(W, 5, 4, 4, 44, 44,
+                                    kGreen, 0 /*PS_SOLID*/, 1,
+                                    kRed, 0 /*solid*/,
+                                    24, 100, 100, 24) == eOK,
+                "WindowCircleOp (pie, rays far outside the ellipse) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 32, 32) == kRed,
+                "the wedge itself is filled");
+        mwCheck(doc->WindowGetPixel(W, 50, 24) == kBlue,
+                "nothing is painted along the ray BEYOND the ellipse");
+        mwCheck(doc->WindowGetPixel(W, 24, 46) == kBlue,
+                "...nor along the other one");
+
+        // With a NULL brush wx's DrawEllipticArc strokes only the arc, so the
+        // radii came SOLELY from those two mis-aimed lines: the figure was an
+        // arc plus two spikes and no radii at all.  Windows strokes arc + two
+        // correct radii here.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the null-brush pie probe");
+        mwCheck(doc->WindowCircleOp(W, 5, 4, 4, 44, 44,
+                                    kGreen, 0 /*PS_SOLID*/, 1,
+                                    kRed, 1 /*BS_NULL*/,
+                                    24, 100, 100, 24) == eOK,
+                "WindowCircleOp (pie, null brush) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 35, 24) != kBlue,
+                "the horizontal radius IS stroked with no brush to close it");
+        mwCheck(doc->WindowGetPixel(W, 24, 35) != kBlue,
+                "...and the vertical one");
+        mwCheck(doc->WindowGetPixel(W, 50, 24) == kBlue,
+                "...and each stops at the ellipse, not at the caller's point");
+        mwCheck(doc->WindowGetPixel(W, 32, 32) == kBlue,
+                "...and a null brush fills nothing");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the pie probe");
     }
 
     // ── CircleOp brush style 8-12 = the built-in mono patterns ────────────
@@ -163,6 +235,63 @@ int RunPalMiniWindowSelfTest()
         // and its alternating pixels average away to one flat colour.
         mwCheck(sawRed > 0 && sawGreen > 0,
                 "a checkerboard pattern keeps BOTH colours (not averaged away)");
+        // ...and the TRANSPARENT request is keyed on BrushColour, not
+        // PenColour.  For a mono pattern the engine puts BrushColour in
+        // spec.fg (SetTextColor) and PenColour in spec.bg (SetBkColor) -- the
+        // reverse of the hatch arm -- and upstream keys SetBkMode on
+        // BrushColour.  The adapter tested spec.bg, which broke BOTH inputs
+        // that carry a -1, in opposite ways.  Probed here in both directions;
+        // neither is reachable from the headless suite, because pal::CpuRaster
+        // drops BrushSpec::monoPattern entirely.
+
+        // (i) PenColour == -1 is an ordinary opaque background on Windows, and
+        // must NOT collapse the tile: it used to substitute BrushColour for it
+        // and paint a single flat block where Windows draws two tones.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the -1 PenColour pattern probe");
+        mwCheck(doc->WindowCircleOp(W, 2, 4, 4, 40, 40,
+                                    -1 /*PenColour*/, 5 /*PS_NULL*/, 1,
+                                    kRed /*BrushColour*/, 8 /*mono "fine"*/,
+                                    0, 0, 0, 0) == eOK,
+                "WindowCircleOp (mono pattern, PenColour -1) succeeds");
+        {
+            int sawRed = 0, sawWhite = 0, sawBlue = 0;
+            for (long x = 10; x < 34; ++x)
+                for (long y = 10; y < 34; ++y) {
+                    const long c = doc->WindowGetPixel(W, x, y);
+                    if      (c == kRed)   sawRed++;
+                    else if (c == kWhite) sawWhite++;
+                    else if (c == kBlue)  sawBlue++;
+                }
+            mwCheck(sawRed > 0 && sawWhite > 0,
+                    "a -1 background resolves to a colour, keeping BOTH tones");
+            mwCheck(sawBlue == 0, "...and the pattern really did cover the area");
+        }
+
+        // (ii) BrushColour == -1 IS the transparent request.  A tiled brush has
+        // no mask, so the port cannot leave the destination alone -- the
+        // documented fallback is a flat tile in the resolved foreground.  What
+        // must NOT happen, and did, is the 1-bits being painted in PenColour:
+        // that obliterates exactly the content the plugin asked to show
+        // through.  (The eventual correct answer is that the underlying blue
+        // survives on the 1-bits; that needs the mask/composite work, so this
+        // assertion is deliberately the weaker fallback.)
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the transparent-gap pattern probe");
+        mwCheck(doc->WindowCircleOp(W, 2, 4, 4, 40, 40,
+                                    kRed /*PenColour*/, 5 /*PS_NULL*/, 1,
+                                    -1 /*BrushColour*/, 8 /*mono "fine"*/,
+                                    0, 0, 0, 0) == eOK,
+                "WindowCircleOp (mono pattern, BrushColour -1) succeeds");
+        {
+            int sawRed = 0;
+            for (long x = 10; x < 34; ++x)
+                for (long y = 10; y < 34; ++y)
+                    if (doc->WindowGetPixel(W, x, y) == kRed) sawRed++;
+            mwCheck(sawRed == 0,
+                    "a transparent request never paints PenColour into the gaps");
+        }
+
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the mono-pattern probe");
     }
@@ -229,6 +358,47 @@ int RunPalMiniWindowSelfTest()
         long edge = doc->WindowGetPixel(W, 30, 2);
         mwCheck(edge != kBlue && edge != kGreen,
                 "shape outline drawn (blend of pen over edge; wxOSX AA)");
+    }
+
+    // ── CircleOp rectangle with a NULL pen: GDI's null-pen shrink ─────────
+    // With NULL_PEN selected, ::Rectangle draws the figure one pixel narrower
+    // and shorter -- the right column and bottom row are omitted.  docs/PAL.md
+    // calls that normative and pal::CpuRaster implements it, pinned by
+    // tests/test_pal_surface.cpp -- but the shipping wx adapter filled the full
+    // w x h, so a headless golden and the app answered the same script
+    // differently.  Same probe here, so both adapters are pinned by one rule.
+    // A 3x2 rect makes the shrunk column and row a majority of the figure.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the null-pen shrink probe");
+        mwCheck(doc->WindowCircleOp(W, 2, 50, 30, 53, 32,
+                                    kWhite, 5 /*PS_NULL*/, 1,
+                                    kRed, 0 /*solid*/, 0, 0, 0, 0) == eOK,
+                "WindowCircleOp (rectangle, null pen) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 50, 30) == kRed &&
+                doc->WindowGetPixel(W, 51, 30) == kRed,
+                "a null-pen rectangle still fills (w-1) x (h-1)");
+        mwCheck(doc->WindowGetPixel(W, 52, 30) == kBlue,
+                "...but not its right column (GDI's null-pen shrink)");
+        mwCheck(doc->WindowGetPixel(W, 50, 31) == kBlue &&
+                doc->WindowGetPixel(W, 52, 31) == kBlue,
+                "...nor its bottom row");
+
+        // Control: the same figure with a real pen must still reach the last
+        // column and row, so the shrink is keyed on the pen being transparent
+        // and is not just "every rectangle got smaller".
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the stroked-rectangle control");
+        mwCheck(doc->WindowCircleOp(W, 2, 50, 30, 53, 32,
+                                    kWhite, 0 /*PS_SOLID*/, 1,
+                                    kRed, 0 /*solid*/, 0, 0, 0, 0) == eOK,
+                "WindowCircleOp (rectangle, solid pen) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 52, 30) != kBlue &&
+                doc->WindowGetPixel(W, 52, 31) != kBlue,
+                "a STROKED rectangle still reaches x2-1/y2-1");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the null-pen shrink probe");
     }
 
     // ── Gradient: horizontal red→blue (mode 1) ─────────────────────────────
@@ -359,6 +529,50 @@ int RunPalMiniWindowSelfTest()
             else
                 mwCheck(false, "WindowFontInfo(6)/(7) return numbers for it");
         }
+
+        // ── the metrics are MEASURED ONCE per font, not once per query ─────
+        // tmMaxCharWidth is filled by measuring all 95 printable ASCII glyphs,
+        // each a Core Text layout; GDI's GetTextMetrics is O(1) because it
+        // copies the font's cached TEXTMETRIC.  WindowFontInfo pays that sweep
+        // for EVERY InfoType, not only code 7, so asking a font its height cost
+        // 95 measurements -- and lua/mw.lua's popup helper issues seven such
+        // calls before drawing anything.  Nothing cached it.
+        //
+        // Perf cannot be pinned by a clock here (flaky under Guard Malloc and
+        // ASan), so pin the COUNT: repeated queries on one font must measure
+        // exactly once.
+        {
+            const long before = pal::WxSurfaceFontMetricsPassesForTesting();
+            for (int i = 0; i < 12; ++i) {
+                VARIANT v = doc->WindowFontInfo(W, "f1", 1);
+                g_mwSink += (v.vt == VT_I4) ? v.lVal : 0;
+            }
+            const long after = pal::WxSurfaceFontMetricsPassesForTesting();
+            mwCheck(after - before == 0,
+                    "12 more WindowFontInfo calls on a measured font measure 0 times");
+        }
+
+        // ...and the cache must be keyed on the FONT, not on the plugin's name
+        // for it.  Redefining an id destroys the old entry and creates a NEW
+        // one, so a name-keyed cache would hand back the previous face's
+        // metrics -- and pass every assertion above.  "fprop" was proportional;
+        // redefine it as a monospace and the pitch bit must flip back.
+        {
+            const long before = pal::WxSurfaceFontMetricsPassesForTesting();
+            mwCheck(doc->WindowFont(W, "fprop", "Courier New", 12,
+                                    FALSE, FALSE, FALSE, FALSE, 0, 0) == eOK,
+                    "WindowFont redefines an existing font id");
+            VARIANT ppf  = doc->WindowFontInfo(W, "fprop", 19);
+            VARIANT pavg = doc->WindowFontInfo(W, "fprop", 6);
+            VARIANT pmax = doc->WindowFontInfo(W, "fprop", 7);
+            mwCheck(ppf.vt == VT_I4 && (ppf.lVal & 1) == 0,
+                    "...and the redefined font reports its OWN pitch (fixed now)");
+            mwCheck(pavg.vt == VT_I4 && pmax.vt == VT_I4 &&
+                    pavg.lVal > 0 && pmax.lVal >= pavg.lVal,
+                    "...with its own metrics, not the previous face's");
+            mwCheck(pal::WxSurfaceFontMetricsPassesForTesting() - before == 1,
+                    "...measured exactly once for the new font");
+        }
     }
 
     // ── RectOp action 5 = DrawEdge: BF_ side flags are honoured ────────────
@@ -431,6 +645,120 @@ int RunPalMiniWindowSelfTest()
                     "...and strokes no edges over it");
         }
 
+        // ...and every ring stays INSIDE the rectangle it was given.  Win32
+        // RECTs are right/bottom-exclusive, so the outer ring occupies
+        // left..right-1 and ::DrawEdge never paints at right or bottom.  The
+        // shim used to pass rr+1 / b+1 as the far end of each stroke to
+        // compensate for GDI's endpoint-EXCLUSIVE LineTo, but this adapter's
+        // line primitive INCLUDES its endpoint (the deviation the WindowLine
+        // probe above pins), so each side ran a pixel too far: outside the rect
+        // on the outer ring, and over the outer ring's corners on the inner one.
+        // One PAIR of sides at a time, so no other stroke can cover for a
+        // mis-sized one: with BF_LEFT|BF_TOP the top strip's far end is the
+        // only thing that can paint (39,10), and nothing at all may paint
+        // (40,10).
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the DrawEdge extent probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x03) == eOK,
+                "WindowRectOp (DrawEdge, EDGE_RAISED, left+top) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 39, 10) != kBlue,
+                "the TOP side reaches x == right-1");
+        mwCheck(doc->WindowGetPixel(W, 40, 10) == kBlue,
+                "...and stops there: nothing is painted at x == right");
+        mwCheck(doc->WindowGetPixel(W, 10, 39) != kBlue,
+                "the LEFT side reaches y == bottom-1");
+        mwCheck(doc->WindowGetPixel(W, 10, 40) == kBlue,
+                "...and stops there: nothing is painted at y == bottom");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the DrawEdge far-side extent probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x0C) == eOK,
+                "WindowRectOp (DrawEdge, EDGE_RAISED, right+bottom) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 39, 39) != kBlue,
+                "the RIGHT and BOTTOM sides reach right-1/bottom-1");
+        mwCheck(doc->WindowGetPixel(W, 40, 39) == kBlue &&
+                doc->WindowGetPixel(W, 39, 40) == kBlue,
+                "...and neither runs past the rectangle");
+
+        // The inner ring is inset by one on every named side, so it must not
+        // reach the outer ring's right column -- the outer colour at the corner
+        // must be the same as halfway down the side.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the DrawEdge corner probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x0F) == eOK,
+                "WindowRectOp (DrawEdge, EDGE_RAISED, BF_RECT) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 39, 11) == doc->WindowGetPixel(W, 39, 25),
+                "the inner ring does not overwrite the outer ring's corners");
+        mwCheck(doc->WindowGetPixel(W, 11, 39) == doc->WindowGetPixel(W, 25, 39),
+                "...on the bottom edge either");
+
+        // BF_DIAGONAL (0x0010) replaces the box with a diagonal vector, and the
+        // side bits then name its END POINT.  It was dropped entirely, so
+        // BF_DIAGONAL_ENDTOPLEFT (0x13) was read as BF_TOP|BF_LEFT and drew two
+        // sides of a box -- a completely different picture, returned as eOK.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the BF_DIAGONAL probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x13) == eOK,
+                "WindowRectOp (DrawEdge, BF_DIAGONAL_ENDTOPLEFT) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 25, 25) != kBlue,
+                "BF_DIAGONAL draws a diagonal across the rectangle");
+        mwCheck(doc->WindowGetPixel(W, 25, 10) == kBlue,
+                "...INSTEAD of the box: the top side is not stroked");
+        mwCheck(doc->WindowGetPixel(W, 10, 25) == kBlue,
+                "...nor the left side");
+        mwCheck(doc->WindowGetPixel(W, 39, 25) == kBlue &&
+                doc->WindowGetPixel(W, 25, 39) == kBlue,
+                "...and neither of the unnamed sides either");
+        // The other end point puts the vector on the ANTI-diagonal, so a probe
+        // on one diagonal must miss the other -- an implementation that ignored
+        // the corner bits and always drew top-left to bottom-right would pass
+        // the block above and fail here.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the second BF_DIAGONAL probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x16) == eOK,
+                "WindowRectOp (DrawEdge, BF_DIAGONAL_ENDTOPRIGHT) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 15, 34) != kBlue &&
+                doc->WindowGetPixel(W, 34, 15) != kBlue,
+                "ENDTOPRIGHT runs bottom-left to top-right");
+        mwCheck(doc->WindowGetPixel(W, 15, 15) == kBlue &&
+                doc->WindowGetPixel(W, 34, 34) == kBlue,
+                "...and NOT along the other diagonal");
+
+        // BF_MONO (0x8000) and BF_FLAT (0x4000) replace the bevel with a FLAT
+        // border -- one colour the whole way round each ring.  Both were
+        // dropped, so a caller asking for either got the two-tone 3D box.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the BF_MONO probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x800F) == eOK,
+                "WindowRectOp (DrawEdge, BF_RECT|BF_MONO) succeeds");
+        {
+            const long o = doc->WindowGetPixel(W, 10, 25);
+            mwCheck(o == doc->WindowGetPixel(W, 39, 25) &&
+                    o == doc->WindowGetPixel(W, 25, 10) &&
+                    o == doc->WindowGetPixel(W, 25, 39),
+                    "BF_MONO's outer ring is ONE colour all round (no bevel)");
+            mwCheck(o == kBlack, "...COLOR_WINDOWFRAME, i.e. black");
+            mwCheck(doc->WindowGetPixel(W, 11, 25) == kWhite,
+                    "...over an inner ring of COLOR_WINDOW, i.e. white");
+        }
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the BF_FLAT probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x400F) == eOK,
+                "WindowRectOp (DrawEdge, BF_RECT|BF_FLAT) succeeds");
+        {
+            const long o = doc->WindowGetPixel(W, 10, 25);
+            mwCheck(o == doc->WindowGetPixel(W, 39, 25) &&
+                    o == doc->WindowGetPixel(W, 25, 10) &&
+                    o == doc->WindowGetPixel(W, 25, 39),
+                    "BF_FLAT's outer ring is ONE colour all round (no bevel)");
+            mwCheck(o == 0x808080L, "...COLOR_3DSHADOW");
+            mwCheck(doc->WindowGetPixel(W, 11, 25) == 0xC0C0C0L,
+                    "...over an inner ring of COLOR_3DFACE");
+            mwCheck(o != kBlack,
+                    "...and BF_FLAT is not BF_MONO (different colour tables)");
+        }
+
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the DrawEdge probe");
     }
@@ -465,6 +793,45 @@ int RunPalMiniWindowSelfTest()
 
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the endcap probe");
+    }
+
+    // ── PS_INSIDEFRAME keeps the whole pen inside the bounding rectangle ──
+    // Win32's PS_INSIDEFRAME shrinks the figure so the entire pen width fits
+    // within the rectangle; nothing is drawn outside it.  Real GDI does that in
+    // CreatePen, so the Windows adapter gets it free -- but the shim maps the
+    // style to an ordinary solid pen and wx strokes centred on the path, so a
+    // wide PS_INSIDEFRAME pen rendered exactly like PS_SOLID and overflowed by
+    // half its width on every side.  A 9-wide pen on a rect starting at x = 10
+    // therefore reached x = 6 instead of stopping at 10.
+    {
+        const long L = 10, T = 10, R = 40, B = 40;
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the PS_INSIDEFRAME probe");
+        mwCheck(doc->WindowCircleOp(W, 2, L, T, R, B,
+                                    kGreen, 6 /*PS_INSIDEFRAME*/, 9,
+                                    kBlue, 1 /*BS_NULL*/, 0, 0, 0, 0) == eOK,
+                "WindowCircleOp (rectangle, PS_INSIDEFRAME width 9) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 12, 25) == kGreen,
+                "the border is drawn INSIDE the rectangle");
+        mwCheck(doc->WindowGetPixel(W, 7, 25) == kBlue,
+                "...and no ink lands outside it");
+        mwCheck(doc->WindowGetPixel(W, 25, 7) == kBlue,
+                "...on the top edge either");
+
+        // Control, so "the code stopped drawing" cannot pass: the SAME figure
+        // with an ordinary solid pen really does overflow, which is what
+        // PS_INSIDEFRAME exists to prevent.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the PS_SOLID overflow control");
+        mwCheck(doc->WindowCircleOp(W, 2, L, T, R, B,
+                                    kGreen, 0 /*PS_SOLID*/, 9,
+                                    kBlue, 1 /*BS_NULL*/, 0, 0, 0, 0) == eOK,
+                "WindowCircleOp (rectangle, PS_SOLID width 9) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 7, 25) == kGreen,
+                "a centred wide pen DOES overflow the rectangle");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the PS_INSIDEFRAME probe");
     }
 
     // ── read-modify-write is lossless on a HiDPI canvas ───────────────────
@@ -536,6 +903,87 @@ int RunPalMiniWindowSelfTest()
 
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the BGRA32 readback probe");
+    }
+
+    // ── an image reports the DIB's depth and stride, not the wxBitmap's ────
+    // Every image is materialised as `new wxBitmap(img, 32)`, so
+    // wxBitmap::GetDepth() answers 32 for everything and there is no stride at
+    // all.  bmBitsPixel was therefore 32 for a 24-bit RGB PNG -- where Windows
+    // and the headless twin both say 24 -- and bmWidthBytes was a flat 0.  Two
+    // things followed: world.WindowImageInfo returned wrong numbers, and the
+    // `bmBitsPixel != 32` gate in DrawImageAlpha / GetImageAlpha could NEVER
+    // fire on this platform, so both silently accepted images Windows refuses.
+    //
+    // WindowWrite emits PNG_COLOR_TYPE_RGB, so the file it produces reloads as
+    // a 24bpp DIB -- a real fixture rather than a hand-built one.
+    {
+        char png[256];
+        snprintf(png, sizeof(png), "/tmp/mc_selftest_depth_%d.png", (int) getpid());
+        ::unlink(png);
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the image-depth probe");
+        mwCheck(doc->WindowCreate("depthsrc", 0, 0, 9, 5, 0, 0, kRed) == eOK,
+                "9x5 fixture window created");
+        mwCheck(doc->WindowWrite("depthsrc", png) == eOK,
+                "...written out as an RGB (no alpha) PNG");
+        mwCheck(doc->WindowLoadImage(W, "rgb24", png) == eOK,
+                "WindowLoadImage loads it back");
+
+        VARIANT vw = doc->WindowImageInfo(W, "rgb24", 2);   // bmWidth
+        VARIANT vs = doc->WindowImageInfo(W, "rgb24", 4);   // bmWidthBytes
+        VARIANT vd = doc->WindowImageInfo(W, "rgb24", 6);   // bmBitsPixel
+        mwCheck(vw.vt == VT_I4 && vw.lVal == 9,
+                "the loaded image is 9 pixels wide");
+        mwCheck(vd.vt == VT_I4 && vd.lVal == 24,
+                "...reports 24bpp, the DIB's depth, not the wxBitmap's 32");
+        // 9 x 3 bytes = 27, padded to a 4-byte boundary = 28.  Anchored to the
+        // width and depth asserted above rather than being a magic number, and
+        // it is the value tests/test_lua_surface.cpp already pins on the
+        // headless twin for the same image.
+        mwCheck(vs.vt == VT_I4 && vs.lVal == 28,
+                "...and a 4-byte-aligned scan line of 28 bytes (was always 0)");
+
+        // The two ops that gate on 32bpp must now refuse it, as Windows does.
+        mwCheck(doc->WindowDrawImageAlpha(W, "rgb24", 0, 0, 0, 0, 1.0, 0, 0)
+                    == eImageNotInstalled,
+                "WindowDrawImageAlpha refuses a 24bpp image (no alpha channel)");
+        mwCheck(doc->WindowGetImageAlpha(W, "rgb24", 0, 0, 0, 0, 0, 0)
+                    == eImageNotInstalled,
+                "...and so does WindowGetImageAlpha");
+        // Negative control: MergeImageAlpha has NO depth gate on either
+        // platform, so a fix that simply started refusing 24bpp everywhere
+        // fails here.
+        mwCheck(doc->WindowMergeImageAlpha(W, "rgb24", "rgb24",
+                                           0, 0, 9, 5, 1, 1.0, 0, 0, 9, 5) == eOK,
+                "...but WindowMergeImageAlpha, which has no gate, still accepts it");
+
+        // The other control: a 32bpp source must still be ACCEPTED, so the gate
+        // is really reading the depth and not refusing everything.
+        mwCheck(doc->WindowImageFromWindow(W, "cap32", W) == eOK,
+                "WindowImageFromWindow captures a 32bpp image");
+        {
+            VARIANT c = doc->WindowImageInfo(W, "cap32", 6);
+            mwCheck(c.vt == VT_I4 && c.lVal == 32, "...which reports 32bpp");
+        }
+        mwCheck(doc->WindowDrawImageAlpha(W, "cap32", 0, 0, 0, 0, 1.0, 0, 0) == eOK,
+                "...and DrawImageAlpha still accepts THAT");
+
+        // WindowCreateImage's 8x8 pattern is a 1-bpp DDB on Windows, where the
+        // wxBitmap behind it is 32 like everything else.
+        mwCheck(doc->WindowCreateImage(W, "mono1",
+                                       0x80, 0xC0, 0xE0, 0xF8,
+                                       0xFC, 0xFE, 0xFF, 0xF0) == eOK,
+                "WindowCreateImage makes an 8x8 mono pattern");
+        {
+            VARIANT m = doc->WindowImageInfo(W, "mono1", 6);
+            mwCheck(m.vt == VT_I4 && m.lVal == 1,
+                    "...which reports 1bpp, the bit count CreateBitmap was given");
+        }
+
+        doc->WindowDelete("depthsrc");
+        ::unlink(png);
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the image-depth probe");
     }
 
     // ── CreateImage (8x8 mono) + WindowDrawImage round-trip ────────────────
@@ -926,8 +1374,21 @@ int RunPalMiniWindowSelfTest()
                 "...and the bitmap is real (9 wide)");
         mwCheck(doc->SetBackgroundImage("", 0) == eOK,
                 "SetBackgroundImage('') accepts the clear");
+        // The zero-first contract, which this build did not keep: ten call sites
+        // in miniwindow.cpp declare `BITMAP bi;` uninitialised and read
+        // bi.bmBitsPixel without checking the return, so a bare `return FALSE`
+        // lets them branch on stack garbage.  POISON the struct first -- without
+        // that, the assertion below passes on the broken code, because the
+        // struct still holds the ZEROES it was initialised with.  Same shape as
+        // the headless twin's pin in tests/test_gdi_headless.cpp.
+        memset(&bmInfo, 0x7F, sizeof bmInfo);
         mwCheck(doc->m_BackgroundBitmap.GetBitmap(&bmInfo) == FALSE,
                 "...and the image is really GONE (it used to survive)");
+        mwCheck(bmInfo.bmWidth == 0 && bmInfo.bmHeight == 0 &&
+                bmInfo.bmWidthBytes == 0 && bmInfo.bmPlanes == 0 &&
+                bmInfo.bmBitsPixel == 0 && bmInfo.bmType == 0 &&
+                bmInfo.bmBits == NULL,
+                "...and GetBitmap zeroed the caller's BITMAP before failing");
         doc->WindowDelete("bgsrc");
         ::unlink(png);
     }

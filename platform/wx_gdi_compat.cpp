@@ -75,6 +75,7 @@ struct DIBSectionData {
     bool bottomUp = true; // biHeight > 0 → rows stored bottom-up in buffer
     int stride = 0;     // bytes per row, padded to 4-byte boundary
     int bytesPerPixel = 3; // 3 = 24-bit BGR, 4 = 32-bit BGRA (e.g. PNG w/ alpha)
+    int bitCount = 24;  // the DECLARED biBitCount — what GetObject must report
     std::vector<unsigned char> pixels; // raw BGR(A) pixel data
     wxBitmap* bmp = nullptr;  // wxBitmap for rendering (owned here)
 
@@ -140,6 +141,27 @@ static std::unordered_map<HDC,    HBITMAP>          g_hdcToSelectedDib;
 static std::unordered_map<HDC,    CDC*>              g_hdcToCDC;
 static std::atomic<uintptr_t> s_hdcCounter{1000};
 
+// Per-CBitmap record of the DECLARED bit count and scan-line stride.
+//
+// A wxBitmap can carry neither.  MaterializeDIBSection ends every image at
+// `new wxBitmap(img, 32)`, and every other construction site in this file asks
+// for 32 too, so wxBitmap::GetDepth() answers 32 for a 24-bit RGB PNG and for
+// the 1-bpp WindowCreateImage pattern alike -- and there is no stride on a
+// wxBitmap at all.  Windows reports both from GetObject on the underlying
+// DIB section or DDB, world.WindowImageInfo publishes them as InfoTypes 6 and
+// 4, and two miniwindow ops gate on `bi.bmBitsPixel != 32`.
+//
+// Keyed on the CBitmap pointer, exactly as platform/headless_surface.cpp keys
+// its own record, so platform/mfc_ui.h's layout stays untouched.  Every path
+// that (re)binds or releases a CBitmap must erase its entry, or a recycled heap
+// address inherits a stale depth -- that is the one real hazard here.
+struct BitmapInfoRec { int bpp = 32; int widthBytes = 0; };
+static std::unordered_map<const CBitmap*, BitmapInfoRec> g_bitmapInfo;
+
+// Windows pads a DIB section's scan line to a DWORD and a DDB's to a WORD.
+static inline int wx_dib_stride(int w, int bpp) { return ((w * bpp + 31) / 32) * 4; }
+static inline int wx_ddb_stride(int w, int bpp) { return ((w * bpp + 15) / 16) * 2; }
+
 // Helper: look up any DIBSection selected into the given HDC.
 static inline DIBSectionData* GetDIBForHDC(HDC hdc) {
     auto it = g_hdcToSelectedDib.find(hdc);
@@ -153,10 +175,14 @@ static inline DIBSectionData* GetDIBForHDC(HDC hdc) {
 // ALWAYS a plain wxBitmap* — the rest of the GDI shim (GetBitmap, SelectObject,
 // the destructors, …) can then treat m_impl uniformly with no special-casing.
 // Returns nullptr if hObject is not a DIBSection handle.
-static wxBitmap* MaterializeDIBSection(HGDIOBJ hObject) {
+// `info`, when given, receives the consumed DIB's declared bit count and
+// stride -- the two things the wxBitmap cannot carry.  Captured here because
+// this is the last moment the DIBSectionData exists.
+static wxBitmap* MaterializeDIBSection(HGDIOBJ hObject, BitmapInfoRec* info = nullptr) {
     auto it = g_dibSections.find(reinterpret_cast<HBITMAP>(hObject));
     if (it == g_dibSections.end()) return nullptr;
     DIBSectionData* dib = it->second;
+    if (info) { info->bpp = dib->bitCount; info->widthBytes = dib->stride; }
     dib->SyncPixelsToBitmap();   // raw pixel buffer → wxBitmap
     wxBitmap* out = (dib->bmp && dib->bmp->IsOk()) ? new wxBitmap(*dib->bmp)
                                                    : new wxBitmap(1, 1, 32);
@@ -189,6 +215,7 @@ HBITMAP CreateDIBSection(HDC /*hdc*/, const BITMAPINFO* pbmi, UINT /*iUsage*/,
     dib->bottomUp = bottomUp;
     dib->stride   = stride;
     dib->bytesPerPixel = bytesPerPixel;
+    dib->bitCount = bpp;          // what GetObject must report, not bytesPerPixel*8
     dib->pixels.assign(stride * (he > 0 ? he : 1), 0);
     dib->bmp      = new wxBitmap(w > 0 ? w : 1, he > 0 ? he : 1, 32);
 
@@ -602,12 +629,14 @@ int CFont::GetObject(int /*nCount*/, LOGFONT* lf) const {
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 CBitmap::~CBitmap() {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
 }
 
 bool CBitmap::CreateBitmap(int nWidth, int nHeight, UINT nPlanes,
                            UINT nBitCount, const void* lpBits)
 {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     int w = (nWidth  > 0) ? nWidth  : 1;
     int h = (nHeight > 0) ? nHeight : 1;
@@ -635,6 +664,13 @@ bool CBitmap::CreateBitmap(int nWidth, int nHeight, UINT nPlanes,
         // Empty bitmap (most common case — miniwindow canvas)
         m_impl = new wxBitmap(w, h, 32);
     }
+    // ::CreateBitmap makes a DDB, and GetObject on one reports the bit count
+    // the caller asked for -- 1 for the WindowCreateImage pattern above, where
+    // wxBitmap::GetDepth() would say 32 -- over a WORD-aligned scan line.
+    {
+        const int declared = (nBitCount > 0) ? (int) nBitCount : 32;
+        g_bitmapInfo[this] = { declared, wx_ddb_stride(w, declared) };
+    }
     return static_cast<wxBitmap*>(m_impl)->IsOk();
 }
 
@@ -650,6 +686,7 @@ double wx_canvas_scale()
 }
 
 bool CBitmap::CreateCanvasBitmap(int nWidth, int nHeight) {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     const int w = (nWidth  > 0) ? nWidth  : 1;
     const int h = (nHeight > 0) ? nHeight : 1;
@@ -665,6 +702,12 @@ bool CBitmap::CreateCanvasBitmap(int nWidth, int nHeight) {
         return false;
     }
     m_impl = bmp;
+    // 32 matches what CreateCompatibleBitmap gives on a 32-bit display, which
+    // is every display MUSHclient runs on now -- and what the headless twin
+    // records for a canvas.  The stride is over the LOGICAL width, since that
+    // is what bmWidth reports (the HiDPI backing store stays invisible above
+    // this shim).
+    g_bitmapInfo[this] = { 32, wx_dib_stride(w, 32) };
     return true;
 }
 
@@ -687,32 +730,62 @@ static inline int wx_logical_extent(int physical, double scale)
     return (s > 0) ? physical / s : physical;
 }
 
+// bmBitsPixel / bmWidthBytes come from the record laid down when the CBitmap
+// was created or attached — the two things a wxBitmap cannot carry (see
+// g_bitmapInfo above).  A CBitmap that was handed an already-built wxBitmap*
+// rather than a DIB handle has no record, and falls back to the wxBitmap's own
+// depth with a DIB-shaped stride.  `out->bmWidth` must already be filled.
+static void wx_fill_bitmap_depth(const CBitmap* self, BITMAP* out)
+{
+    const auto it = g_bitmapInfo.find(self);
+    if (it != g_bitmapInfo.end()) {
+        out->bmBitsPixel  = (WORD) it->second.bpp;
+        out->bmWidthBytes = it->second.widthBytes;
+        return;
+    }
+    const wxBitmap* bmp = static_cast<const wxBitmap*>(self->m_impl);
+    const int bpp = bmp ? bmp->GetDepth() : 32;
+    out->bmBitsPixel  = (WORD) bpp;
+    out->bmWidthBytes = wx_dib_stride((int) out->bmWidth, bpp);
+}
+
+// Both entry points ALWAYS zero the caller's struct before they can fail.  Ten
+// call sites in miniwindow.cpp declare `BITMAP bi;` uninitialised and read
+// bi.bmBitsPixel without checking the return, so a bare `return FALSE` lets
+// them branch on stack garbage -- and on this side the garbage is usually a
+// PREVIOUS successful call's values, which look entirely plausible.  The
+// headless twin (platform/headless_surface.cpp) has always zeroed first and is
+// pinned with a poisoned struct; this build returned before zeroing, so the two
+// disagreed on the failure path.
 BOOL CBitmap::GetBitmap(BITMAP* pBitmap) {
-    if (!pBitmap || !m_impl) return FALSE;
-    wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
+    if (!pBitmap) return FALSE;
     *pBitmap = {};
+    if (!m_impl) return FALSE;
+    wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
     const double sc = bmp->GetScaleFactor();
     pBitmap->bmWidth   = wx_logical_extent(bmp->GetWidth(),  sc);
     pBitmap->bmHeight  = wx_logical_extent(bmp->GetHeight(), sc);
-    pBitmap->bmBitsPixel = bmp->GetDepth();
     pBitmap->bmPlanes  = 1;
+    wx_fill_bitmap_depth(this, pBitmap);
     return TRUE;
 }
 
 int CBitmap::GetObject(int /*nCount*/, void* lpObject) const {
-    if (!lpObject || !m_impl) return 0;
-    wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
+    if (!lpObject) return 0;
     BITMAP* pbm = static_cast<BITMAP*>(lpObject);
     *pbm = {};
+    if (!m_impl) return 0;
+    wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
     const double sc = bmp->GetScaleFactor();
     pbm->bmWidth      = wx_logical_extent(bmp->GetWidth(),  sc);
     pbm->bmHeight     = wx_logical_extent(bmp->GetHeight(), sc);
-    pbm->bmBitsPixel  = bmp->GetDepth();
     pbm->bmPlanes     = 1;
+    wx_fill_bitmap_depth(this, pbm);
     return sizeof(BITMAP);
 }
 
 BOOL CBitmap::Attach(HGDIOBJ hObject) {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     m_hObject = hObject;
     // hObject is normally a wxBitmap*, but the PNG/BMP loaders hand us a
@@ -720,8 +793,15 @@ BOOL CBitmap::Attach(HGDIOBJ hObject) {
     // raw pixel buffer.  Materialize that into a standalone wxBitmap so m_impl is
     // always a plain wxBitmap* for the rest of the GDI shim (this is what makes
     // WindowDrawImage of a loaded PNG actually render instead of crashing).
-    if (wxBitmap* materialized = MaterializeDIBSection(hObject)) {
+    BitmapInfoRec info;
+    if (wxBitmap* materialized = MaterializeDIBSection(hObject, &info)) {
         m_impl = materialized;
+        // The DIB's DECLARED bit count and stride, captured before the handle
+        // was freed.  Without them GetBitmap answers 32 for every image -- the
+        // wxBitmap is always built at depth 32 -- so a 24-bit RGB PNG
+        // misreported its depth and the alpha ops' `bmBitsPixel != 32` gate
+        // could never fire.
+        g_bitmapInfo[this] = info;
         // Keep the ownership token NON-NULL.  The shared clear/replace guard
         // reads it through operator HGDIOBJ — methods_output.cpp:372
         // `if ((HBITMAP) m_BackgroundBitmap) m_BackgroundBitmap.DeleteObject()`
@@ -738,6 +818,7 @@ BOOL CBitmap::Attach(HGDIOBJ hObject) {
 }
 
 HGDIOBJ CBitmap::Detach() {
+    g_bitmapInfo.erase(this);
     HGDIOBJ h = m_hObject;
     m_hObject = nullptr;
     m_impl = nullptr;
@@ -745,6 +826,7 @@ HGDIOBJ CBitmap::Detach() {
 }
 
 bool CBitmap::DeleteObject() {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     m_hObject = nullptr;
     return true;
@@ -1249,10 +1331,26 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
 
     // No sides named AND no interior asked for = Win32 draws nothing.  BF_MIDDLE
     // on its own is a legitimate call (fill, no border), so it must not be
-    // caught by the side-flag test.
-    if ((nFlags & (BF_RECT | BF_MIDDLE)) == 0) return;
+    // caught by the side-flag test.  BF_DIAGONAL names a figure of its own and
+    // needs no side bit at all (it then behaves as ENDBOTTOMRIGHT).
+    if ((nFlags & (BF_RECT | BF_MIDDLE | BF_DIAGONAL)) == 0) return;
 
     RECT r = *lpRect;
+
+    // BF_MONO and BF_FLAT replace the BEVEL with a flat border: one colour the
+    // whole way round each ring, with no top-left/bottom-right split.  Both
+    // were dropped entirely, so a caller asking for a flat or monochrome
+    // border got the full two-tone 3D box.  BF_MONO's pair is
+    // COLOR_WINDOWFRAME over COLOR_WINDOW; BF_FLAT's is COLOR_3DSHADOW over
+    // COLOR_3DFACE.  BF_MONO wins when both are named.
+    //
+    // BF_SOFT is still dropped, deliberately: unlike these two it does not
+    // change the SHAPE, only which grey the bevel uses, and choosing that shade
+    // from this side would be inventing a measurement.  Recorded in
+    // docs/UPSTREAM-DIVERGENCES.md section 8.
+    const bool  flatEdge  = (nFlags & (BF_MONO | BF_FLAT)) != 0;
+    const COLORREF flatOuter = (nFlags & BF_MONO) ? 0x000000 : kShadow;
+    const COLORREF flatInner = (nFlags & BF_MONO) ? 0xFFFFFF : kFace;
 
     // BF_MIDDLE fills the interior with the button-face colour.  Win32 strokes
     // the rings over that fill, so filling the whole rect first leaves the same
@@ -1264,21 +1362,76 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
     }
 
     // Stroke one ring, honouring the BF_ side bits.  tl paints top+left,
-    // br paints right+bottom -- the same split Draw3dRect uses.
+    // br paints right+bottom -- the same split Draw3dRect uses, in the same
+    // order, so a corner where the two meet keeps taking the br colour.
+    //
+    // Each side is a one-pixel STRIP, not a line: ::DrawEdge strokes strictly
+    // inside the rectangle (Win32 RECTs are right/bottom-exclusive, so the ring
+    // occupies left..right-1), and this used to pass rr+1 / b+1 as the far end
+    // of each stroke to compensate for GDI's endpoint-EXCLUSIVE LineTo.  This
+    // adapter's line primitive INCLUDES its endpoint -- the port's own measured
+    // deviation, pinned by the WindowLine probe in --pal-miniwindow-selftest --
+    // so every stroke ran a pixel too far: the outer ring painted at x == right
+    // and y == bottom, one pixel OUTSIDE the caller's rectangle, and the inner
+    // ring (drawn second, inset by one) overwrote the outer ring's corner
+    // pixels.  Draw3dRect twenty lines above does the same job with no +1 and
+    // was already right.  A strip states the extent outright, so it stays
+    // correct whether or not that line deviation is ever repaired, and has no
+    // zero-length-stroke edge case on a 1px-wide rect.
     auto ring = [&](const RECT& q, COLORREF tl, COLORREF br) {
         const int l = q.left, t = q.top, rr = q.right - 1, b = q.bottom - 1;
         if (rr < l || b < t) return;
-        p->dc.SetPen(wxPen(WxCol(tl)));
-        if (nFlags & BF_TOP)    p->dc.DrawLine(l, t, rr + 1, t);
-        if (nFlags & BF_LEFT)   p->dc.DrawLine(l, t, l, b + 1);
-        p->dc.SetPen(wxPen(WxCol(br)));
-        if (nFlags & BF_RIGHT)  p->dc.DrawLine(rr, t, rr, b + 1);
-        if (nFlags & BF_BOTTOM) p->dc.DrawLine(l, b, rr + 1, b);
+        auto strip = [&](int x, int y, int w, int h, COLORREF c) {
+            p->dc.SetPen(*wxTRANSPARENT_PEN);
+            p->dc.SetBrush(wxBrush(WxCol(c)));
+            p->dc.DrawRectangle(x, y, w, h);
+        };
+        if (nFlags & BF_TOP)    strip(l,  t, rr - l + 1, 1,          tl);
+        if (nFlags & BF_LEFT)   strip(l,  t, 1,          b - t + 1,  tl);
+        if (nFlags & BF_RIGHT)  strip(rr, t, 1,          b - t + 1,  br);
+        if (nFlags & BF_BOTTOM) strip(l,  b, rr - l + 1, 1,          br);
     };
 
+    if (nFlags & BF_DIAGONAL) {
+        // BF_DIAGONAL replaces the box with a single diagonal vector bounded by
+        // the rectangle, and the BF_ side bits then name its END POINT rather
+        // than a side: BF_DIAGONAL_ENDTOPLEFT (0x13) &c.  BF_DIAGONAL with no
+        // corner named behaves as ENDBOTTOMRIGHT.  The flag was dropped
+        // entirely, so `WindowRectOp(win, 5, ..., EDGE_SUNKEN,
+        // BF_DIAGONAL_ENDTOPLEFT)` -- documented in miniwindow.cpp and exposed
+        // to Lua as miniwin.rect_diagonal_end_top_left -- saw BF_TOP|BF_LEFT and
+        // strokes two sides of a sunken box: a completely different picture,
+        // returned as eOK either way.
+        //
+        // Win32 additionally SHADES the diagonal, using both ring colours on
+        // either side of it.  That is not reproduced here: a two-pixel band
+        // necessarily leaves the rectangle on one side unless it is shortened,
+        // and which side carries which shade cannot be derived from this
+        // platform -- it needs a Windows read (docs/UPSTREAM-DIVERGENCES.md
+        // section 8).  One line in the outer ring's lit/shadowed colour is the
+        // honest approximation until then.
+        const int l = r.left, t = r.top, rr = r.right - 1, b = r.bottom - 1;
+        if (rr < l || b < t) return;
+        int sx, sy, ex, ey;
+        switch (nFlags & (BF_LEFT | BF_TOP | BF_RIGHT | BF_BOTTOM)) {
+        case BF_TOP | BF_LEFT:     sx = rr; sy = b; ex = l;  ey = t; break;
+        case BF_TOP | BF_RIGHT:    sx = l;  sy = b; ex = rr; ey = t; break;
+        case BF_BOTTOM | BF_LEFT:  sx = rr; sy = t; ex = l;  ey = b; break;
+        default:                   sx = l;  sy = t; ex = rr; ey = b; break;
+        }
+        const COLORREF diag = flatEdge ? flatOuter
+                            : (nEdge & BDR_SUNKENOUTER) ? kDkShadow : kLight;
+        p->dc.SetPen(wxPen(WxCol(diag)));
+        p->dc.DrawLine(sx, sy, ex, ey);   // inclusive here, and Win32's diagonal
+                                          // does reach the corner it names
+    } else {
     // Outer ring.
-    if (nEdge & BDR_RAISEDOUTER)      ring(r, kLight,    kDkShadow);
-    else if (nEdge & BDR_SUNKENOUTER) ring(r, kDkShadow, kLight);
+    if (nEdge & BDR_RAISEDOUTER)
+        ring(r, flatEdge ? flatOuter : kLight,
+                flatEdge ? flatOuter : kDkShadow);
+    else if (nEdge & BDR_SUNKENOUTER)
+        ring(r, flatEdge ? flatOuter : kDkShadow,
+                flatEdge ? flatOuter : kLight);
 
     // Inner ring, inset by one pixel on whichever sides the outer ring used.
     RECT ri = r;
@@ -1287,8 +1440,13 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
     if (nFlags & BF_RIGHT)  ri.right--;
     if (nFlags & BF_BOTTOM) ri.bottom--;
 
-    if (nEdge & BDR_RAISEDINNER)      ring(ri, kHilight, kShadow);
-    else if (nEdge & BDR_SUNKENINNER) ring(ri, kShadow,  kHilight);
+    if (nEdge & BDR_RAISEDINNER)
+        ring(ri, flatEdge ? flatInner : kHilight,
+                 flatEdge ? flatInner : kShadow);
+    else if (nEdge & BDR_SUNKENINNER)
+        ring(ri, flatEdge ? flatInner : kShadow,
+                 flatEdge ? flatInner : kHilight);
+    }
 
     // BF_ADJUST: report the client rect left inside the border.
     if (nFlags & BF_ADJUST) {
@@ -1305,6 +1463,24 @@ bool CDC::Rectangle(int x1, int y1, int x2, int y2) {
     CDCImpl* p = Impl(this);
     if (!p) return false;
     p->ApplyPen(); p->ApplyBrush();
+    // GDI's null-pen shrink: with NULL_PEN selected, ::Rectangle draws the
+    // figure one pixel narrower and shorter -- the right column and bottom row
+    // are omitted.  docs/PAL.md records that as normative and pal::CpuRaster
+    // implements it (`inset = stroked ? 1 : 0`), pinned by a golden in
+    // tests/test_pal_surface.cpp -- but the shipping wx adapter filled the full
+    // w x h, so the two ISurface adapters disagreed about the rule and only the
+    // one nobody ships was pinned.  wx does not do this for us: wxGCDC shrinks
+    // only under ShouldOffset(), which is false for a transparent pen.
+    //
+    // Ask the DC, not a cached style: a caller may have arrived through
+    // CPen::Attach or ExtCreatePen, and the DC's own pen is the single source
+    // of truth.  A 1px-wide or 1px-tall null-pen rect shrinks to nothing, which
+    // is what CpuRaster does too (its fill loop never runs when w == 1).
+    if (p->dc.GetPen().GetStyle() == wxPENSTYLE_TRANSPARENT) {
+        const int w = x2 - x1 - 1, h = y2 - y1 - 1;
+        if (w > 0 && h > 0) p->dc.DrawRectangle(x1, y1, w, h);
+        return true;
+    }
     p->dc.DrawRectangle(x1, y1, x2 - x1, y2 - y1);
     return true;
 }
@@ -1369,18 +1545,37 @@ bool CDC::RoundRect(const CRect& r, CPoint pt) {
     return RoundRect(r.left, r.top, r.right, r.bottom, pt.x, pt.y);
 }
 
+// Win32's shape bounding rectangle is right/bottom-EXCLUSIVE: the ellipse is
+// inscribed in x1..x2-1 / y1..y2-1, centred at x1 + (w-1)/2 with radius
+// (w-1)/2.  Rectangle and Ellipse get that for free from wx's (x, y, w, h)
+// form, and RoundRect above says it explicitly -- but an op that TRACES its own
+// outline has to, and Chord/Pie below did not.
+struct EllipseExtent { double cx, cy, rx, ry; };
+
+static inline EllipseExtent ExclusiveEllipse(int x1, int y1, int x2, int y2) {
+    const double xr = x2 - 1.0, yb = y2 - 1.0;
+    return { (x1 + xr) / 2.0, (y1 + yb) / 2.0, (xr - x1) / 2.0, (yb - y1) / 2.0 };
+}
+
 bool CDC::Chord(int x1, int y1, int x2, int y2,
                 int x3, int y3, int x4, int y4)
 {
     CDCImpl* p = Impl(this);
     if (!p) return false;
     p->ApplyPen(); p->ApplyBrush();
-    // wx DrawEllipticArc: start/end in degrees (anticlockwise from 3 o'clock)
-    int cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    int rx = (x2 - x1) / 2, ry = (y2 - y1) / 2;
+    // wx DrawEllipticArc: start/end in degrees (anticlockwise from 3 o'clock).
+    //
+    // The centre/radii used to come from the INCLUSIVE rectangle -- centre
+    // (x1+x2)/2, radius (x2-x1)/2 -- so the traced figure was one pixel wider
+    // and taller than an Ellipse over the identical rectangle and its extreme
+    // points landed on x == x2 / y == y2, coordinates GDI never touches.  This
+    // is the same off-by-one RoundRect above was corrected for; the commit that
+    // gave Chord its polygon fixed the wedge-vs-chord SHAPE and left the extent.
+    const EllipseExtent e = ExclusiveEllipse(x1, y1, x2, y2);
+    const double cx = e.cx, cy = e.cy, rx = e.rx, ry = e.ry;
     if (rx <= 0 || ry <= 0) return false;
-    double startDeg = atan2(-(double)(y3 - cy) / ry, (double)(x3 - cx) / rx) * 180.0 / M_PI;
-    double endDeg   = atan2(-(double)(y4 - cy) / ry, (double)(x4 - cx) / rx) * 180.0 / M_PI;
+    double startDeg = atan2(-((double) y3 - cy) / ry, ((double) x3 - cx) / rx) * 180.0 / M_PI;
+    double endDeg   = atan2(-((double) y4 - cy) / ry, ((double) x4 - cx) / rx) * 180.0 / M_PI;
 
     // A CHORD, not a pie.  Win32 bounds the region with the arc plus the
     // straight line joining its two endpoints; wxDC::DrawEllipticArc draws the
@@ -1413,16 +1608,37 @@ bool CDC::Pie(int x1, int y1, int x2, int y2,
     CDCImpl* p = Impl(this);
     if (!p) return false;
     p->ApplyPen(); p->ApplyBrush();
-    int cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    int rx = (x2 - x1) / 2, ry = (y2 - y1) / 2;
+    // (xS,yS)/(xE,yE) are DIRECTION points: they define two rays from the
+    // ellipse centre, and the wedge's sides run from the centre to where each
+    // ray CROSSES the ellipse.  The points themselves are never stroked to, and
+    // Win32 invites putting them well outside the rectangle.
+    //
+    // This used to draw wx's elliptic-arc pie and then stroke two LITERAL lines
+    // from the centre to the raw points, so any ray point outside the ellipse
+    // left a pen-coloured spike shooting out of the wedge, potentially right
+    // across the miniwindow -- and with a NULL brush there were no radii at
+    // all, because wx's DrawEllipticArc strokes only the arc then.
+    //
+    // Trace the wedge instead -- centre, then the arc, and let DrawPolygon
+    // close it: the two closing edges ARE the radii, terminating on the
+    // ellipse.  Same technique as Chord and RoundRect above, and the same
+    // reason the EXCLUSIVE extent has to be spelled out here now that the
+    // outline is traced rather than handed to wx as (x, y, w, h).
+    const EllipseExtent e = ExclusiveEllipse(x1, y1, x2, y2);
+    const double cx = e.cx, cy = e.cy, rx = e.rx, ry = e.ry;
     if (rx <= 0 || ry <= 0) return false;
-    double startDeg = atan2(-(double)(yS - cy) / ry, (double)(xS - cx) / rx) * 180.0 / M_PI;
-    double endDeg   = atan2(-(double)(yE - cy) / ry, (double)(xE - cx) / rx) * 180.0 / M_PI;
-    p->dc.DrawEllipticArc(x1, y1, x2 - x1, y2 - y1, startDeg, endDeg);
-    // connect arcs to center (pie wedge lines)
-    p->dc.SetBrush(*wxTRANSPARENT_BRUSH);
-    p->dc.DrawLine(cx, cy, xS, yS);
-    p->dc.DrawLine(cx, cy, xE, yE);
+    double startDeg = atan2(-((double) yS - cy) / ry, ((double) xS - cx) / rx) * 180.0 / M_PI;
+    double endDeg   = atan2(-((double) yE - cy) / ry, ((double) xE - cx) / rx) * 180.0 / M_PI;
+    if (endDeg <= startDeg) endDeg += 360.0;      // wx sweeps anticlockwise
+    const int SEG = 32;
+    std::vector<wxPoint> pts;
+    pts.reserve(SEG + 2);
+    pts.emplace_back(wxRound(cx), wxRound(cy));   // the wedge's apex
+    for (int i = 0; i <= SEG; ++i) {
+        const double a = wxDegToRad(startDeg + (endDeg - startDeg) * i / SEG);
+        pts.emplace_back(wxRound(cx + rx * cos(a)), wxRound(cy - ry * sin(a)));
+    }
+    p->dc.DrawPolygon((int) pts.size(), pts.data());
     return true;
 }
 

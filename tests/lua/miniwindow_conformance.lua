@@ -129,8 +129,62 @@ do
            "the chord fills the cap between its arc and its chord line")
   check   (WindowGetPixel (W, 24, 18) ~= RED,
            "...and NOT below the chord line, which a pie would fill")
+
+  -- ...and its EXTENT is the exclusive one, like the RoundRect probe above.
+  -- Chord traces its own outline, so unlike Ellipse it does not get the
+  -- exclusive rectangle for free.  The right HALF of the ellipse (start at the
+  -- bottom, end at the top, sweeping anticlockwise through 3 o'clock) puts arc
+  -- extremes exactly on the right and bottom edges.  NO platform split: the
+  -- expected pixels are identical on both sides, which is the point.
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLACK, 0), eOK,
+           "clear before the chord extent probe")
+  checkEq (WindowCircleOp (W, 4, 4, 4, 44, 44, RED, 0, 1, RED, 0, 24, 100, 24, 4), eOK,
+           "WindowCircleOp (chord, right half) succeeds")
+  checkEq (WindowGetPixel (W, 43, 24), RED,
+           "the chord reaches x2-1 on the midline")
+  check   (WindowGetPixel (W, 44, 24) ~= RED,
+           "...and NOT x2 itself (the bounding rect is right-exclusive)")
+  checkEq (WindowGetPixel (W, 24, 43), RED,
+           "...reaches y2-1 at the bottom of the arc")
+  check   (WindowGetPixel (W, 24, 44) ~= RED,
+           "...and NOT y2 itself (bottom-exclusive too)")
+
   checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
            "restore the background after the chord probe")
+end
+
+-- ── CircleOp action 5 = Pie: the radials stop ON the ellipse ───────────────
+-- Extra1..4 are DIRECTION points: they define two rays from the ellipse
+-- centre, the wedge's sides run centre -> ellipse, and the points themselves
+-- are never stroked to -- which is why the API invites putting them well
+-- outside the rectangle.  Rays straight down and straight right, both far
+-- outside, so the wedge is the bottom-right quadrant.
+do
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the pie probe")
+  checkEq (WindowCircleOp (W, 5, 4, 4, 44, 44, GREEN, 0, 1, RED, 0,
+                           24, 100, 100, 24), eOK,
+           "WindowCircleOp (pie, rays far outside the ellipse) succeeds")
+  checkEq (WindowGetPixel (W, 32, 32), RED, "the wedge itself is filled")
+  checkEq (WindowGetPixel (W, 50, 24), BLUE,
+           "nothing is painted along the ray BEYOND the ellipse")
+  checkEq (WindowGetPixel (W, 24, 46), BLUE, "...nor along the other one")
+
+  -- With a NULL brush Windows still strokes the two radii.
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the null-brush pie probe")
+  checkEq (WindowCircleOp (W, 5, 4, 4, 44, 44, GREEN, 0, 1, RED, 1,
+                           24, 100, 100, 24), eOK,
+           "WindowCircleOp (pie, null brush) succeeds")
+  check   (WindowGetPixel (W, 35, 24) ~= BLUE,
+           "the horizontal radius IS stroked with no brush to close it")
+  check   (WindowGetPixel (W, 24, 35) ~= BLUE, "...and the vertical one")
+  checkEq (WindowGetPixel (W, 50, 24), BLUE,
+           "...and each stops at the ellipse, not at the caller's point")
+  checkEq (WindowGetPixel (W, 32, 32), BLUE, "...and a null brush fills nothing")
+
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "restore the background after the pie probe")
 end
 
 -- ── CircleOp brush styles 8-12: the built-in mono patterns ─────────────────
@@ -265,8 +319,172 @@ do
            "WindowRectOp (DrawEdge, EDGE_ETCHED) succeeds")
   check   (WindowGetPixel (W, 25, 10) ~= WindowGetPixel (W, 25, 11),
            "EDGE_ETCHED's outer and inner rings differ (not a flat box)")
+
+  -- ::DrawEdge strokes strictly INSIDE the rectangle -- Win32 RECTs are
+  -- right/bottom-exclusive, so the outer ring occupies left..right-1 and
+  -- nothing is painted at right or bottom.  One PAIR of sides at a time, so no
+  -- other stroke can cover for a mis-sized one.  NO platform split: these
+  -- pixels are expected to be identical on both sides.
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the DrawEdge extent probe")
+  checkEq (WindowRectOp (W, 5, 10, 10, 40, 40, 0x05, 0x03), eOK,
+           "WindowRectOp (DrawEdge, EDGE_RAISED, left+top) succeeds")
+  check   (WindowGetPixel (W, 39, 10) ~= BLUE, "the TOP side reaches x == right-1")
+  checkEq (WindowGetPixel (W, 40, 10), BLUE,   "...and paints nothing at x == right")
+  check   (WindowGetPixel (W, 10, 39) ~= BLUE, "the LEFT side reaches y == bottom-1")
+  checkEq (WindowGetPixel (W, 10, 40), BLUE,   "...and paints nothing at y == bottom")
+
+  -- The inner ring is inset by one on every named side, so it must not reach
+  -- the outer ring's right column: the outer colour at the corner must equal
+  -- its colour halfway down the side.
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the DrawEdge corner probe")
+  checkEq (WindowRectOp (W, 5, 10, 10, 40, 40, 0x05, 0x0F), eOK,
+           "WindowRectOp (DrawEdge, EDGE_RAISED, BF_RECT) succeeds")
+  check   (WindowGetPixel (W, 39, 11) == WindowGetPixel (W, 39, 25),
+           "the inner ring does not overwrite the outer ring's corners")
+  check   (WindowGetPixel (W, 11, 39) == WindowGetPixel (W, 25, 39),
+           "...on the bottom edge either")
+
+  -- BF_DIAGONAL (0x0010) replaces the box with a diagonal vector, and the side
+  -- bits then name its END POINT.  Only the SHAPE is asserted -- Win32 shades
+  -- the vector with both ring colours and the port draws one line, which is
+  -- recorded as an open question in docs/UPSTREAM-DIVERGENCES.md section 8.
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the BF_DIAGONAL probe")
+  checkEq (WindowRectOp (W, 5, 10, 10, 40, 40, 0x05, 0x13), eOK,
+           "WindowRectOp (DrawEdge, BF_DIAGONAL_ENDTOPLEFT) succeeds")
+  check   (WindowGetPixel (W, 25, 25) ~= BLUE,
+           "BF_DIAGONAL draws a diagonal across the rectangle")
+  checkEq (WindowGetPixel (W, 25, 10), BLUE,
+           "...INSTEAD of the box: the top side is not stroked")
+  checkEq (WindowGetPixel (W, 10, 25), BLUE, "...nor the left side")
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the second BF_DIAGONAL probe")
+  checkEq (WindowRectOp (W, 5, 10, 10, 40, 40, 0x05, 0x16), eOK,
+           "WindowRectOp (DrawEdge, BF_DIAGONAL_ENDTOPRIGHT) succeeds")
+  check   (WindowGetPixel (W, 15, 34) ~= BLUE and WindowGetPixel (W, 34, 15) ~= BLUE,
+           "ENDTOPRIGHT runs bottom-left to top-right")
+  check   (WindowGetPixel (W, 15, 15) == BLUE and WindowGetPixel (W, 34, 34) == BLUE,
+           "...and NOT along the other diagonal")
+
+  -- BF_MONO (0x8000) and BF_FLAT (0x4000) draw a FLAT border: one colour the
+  -- whole way round each ring, no bevel.  Only that structure is asserted --
+  -- the port's exact colour tables (WINDOWFRAME/WINDOW and 3DSHADOW/3DFACE)
+  -- are its reading of Win32, not a measurement, so a colour mismatch here is
+  -- information rather than a port bug.  See docs/UPSTREAM-DIVERGENCES.md 8.
+  for _, f in ipairs { { 0x800F, "BF_MONO" }, { 0x400F, "BF_FLAT" } } do
+    checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+             "clear before the " .. f [2] .. " probe")
+    checkEq (WindowRectOp (W, 5, 10, 10, 40, 40, 0x05, f [1]), eOK,
+             "WindowRectOp (DrawEdge, BF_RECT|" .. f [2] .. ") succeeds")
+    local o = WindowGetPixel (W, 10, 25)
+    check (o == WindowGetPixel (W, 39, 25) and
+           o == WindowGetPixel (W, 25, 10) and
+           o == WindowGetPixel (W, 25, 39),
+           f [2] .. "'s outer ring is ONE colour all round (no bevel)")
+    check (WindowGetPixel (W, 11, 25) ~= o,
+           "...over a differently-coloured inner ring")
+  end
+
   checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
            "restore the background after the DrawEdge probe")
+end
+
+-- ── a NULL pen shrinks the figure by one on right/bottom ───────────────────
+-- GDI's documented null-pen shrink, which docs/PAL.md calls normative and
+-- pal::CpuRaster implements.  This probe IS the question docs/WINDOWS-
+-- VALIDATION.md section 10az asks: a failure here on Windows is the answer,
+-- not a port bug -- see that section for which files change if it fails.
+do
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the null-pen shrink probe")
+  checkEq (WindowCircleOp (W, 2, 50, 30, 53, 32, WHITE, 5, 1, RED, 0, 0, 0, 0, 0), eOK,
+           "WindowCircleOp (rectangle, null pen) succeeds")
+  check   (WindowGetPixel (W, 50, 30) == RED and WindowGetPixel (W, 51, 30) == RED,
+           "a null-pen rectangle still fills (w-1) x (h-1)")
+  checkEq (WindowGetPixel (W, 52, 30), BLUE,
+           "...but not its right column (GDI's null-pen shrink)")
+  check   (WindowGetPixel (W, 50, 31) == BLUE and WindowGetPixel (W, 52, 31) == BLUE,
+           "...nor its bottom row")
+
+  -- Control: a real pen must still reach the last column and row.
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the stroked-rectangle control")
+  checkEq (WindowCircleOp (W, 2, 50, 30, 53, 32, WHITE, 0, 1, RED, 0, 0, 0, 0, 0), eOK,
+           "WindowCircleOp (rectangle, solid pen) succeeds")
+  check   (WindowGetPixel (W, 52, 30) ~= BLUE and WindowGetPixel (W, 52, 31) ~= BLUE,
+           "a STROKED rectangle still reaches x2-1/y2-1")
+
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "restore the background after the null-pen shrink probe")
+end
+
+-- ── PS_INSIDEFRAME keeps the whole pen inside the rectangle ────────────────
+-- The invariant the style names; the exact band edges are NOT asserted,
+-- because GDI's rounding for even widths and whether the fill moves with the
+-- border are open questions (docs/WINDOWS-VALIDATION.md section 10ba).
+do
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the PS_INSIDEFRAME probe")
+  checkEq (WindowCircleOp (W, 2, 10, 10, 40, 40, GREEN, 6, 9, BLUE, 1, 0, 0, 0, 0), eOK,
+           "WindowCircleOp (rectangle, PS_INSIDEFRAME width 9) succeeds")
+  checkEq (WindowGetPixel (W, 12, 25), GREEN,
+           "the border is drawn INSIDE the rectangle")
+  checkEq (WindowGetPixel (W, 7, 25), BLUE, "...and no ink lands outside it")
+  checkEq (WindowGetPixel (W, 25, 7), BLUE, "...on the top edge either")
+
+  -- Control: the same figure with an ordinary pen really does overflow.
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the PS_SOLID overflow control")
+  checkEq (WindowCircleOp (W, 2, 10, 10, 40, 40, GREEN, 0, 9, BLUE, 1, 0, 0, 0, 0), eOK,
+           "WindowCircleOp (rectangle, PS_SOLID width 9) succeeds")
+  checkEq (WindowGetPixel (W, 7, 25), GREEN,
+           "a centred wide pen DOES overflow the rectangle")
+
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "restore the background after the PS_INSIDEFRAME probe")
+end
+
+-- ── mono pattern brushes: which colour slot means "transparent" ────────────
+-- For styles 8-12 the engine puts BrushColour in the mono FOREGROUND
+-- (SetTextColor) and PenColour in the background (SetBkColor), and upstream
+-- keys SetBkMode on BrushColour.  Only the structure is asserted, since what
+-- GDI renders for a CLR_INVALID colour slot is itself an open question
+-- (docs/WINDOWS-VALIDATION.md 4c-sexdecies).
+do
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the -1 PenColour pattern probe")
+  checkEq (WindowCircleOp (W, 2, 4, 4, 40, 40, -1, 5, 1, RED, 8, 0, 0, 0, 0), eOK,
+           "WindowCircleOp (mono pattern, PenColour -1) succeeds")
+  local sawBrush, sawOther, sawBg = 0, 0, 0
+  for x = 10, 33 do
+    for y = 10, 33 do
+      local c = WindowGetPixel (W, x, y)
+      if     c == RED  then sawBrush = sawBrush + 1
+      elseif c == BLUE then sawBg    = sawBg    + 1
+      else                  sawOther = sawOther + 1 end
+    end
+  end
+  check (sawBrush > 0 and sawOther > 0,
+         "a -1 background resolves to a colour, keeping BOTH tones")
+  checkEq (sawBg, 0, "...and the pattern really did cover the area")
+
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "clear before the transparent-gap pattern probe")
+  checkEq (WindowCircleOp (W, 2, 4, 4, 40, 40, RED, 5, 1, -1, 8, 0, 0, 0, 0), eOK,
+           "WindowCircleOp (mono pattern, BrushColour -1) succeeds")
+  local sawPen = 0
+  for x = 10, 33 do
+    for y = 10, 33 do
+      if WindowGetPixel (W, x, y) == RED then sawPen = sawPen + 1 end
+    end
+  end
+  checkEq (sawPen, 0,
+           "a transparent request never paints PenColour into the gaps")
+
+  checkEq (WindowRectOp (W, 2, 0, 0, 64, 48, BLUE, 0), eOK,
+           "restore the background after the mono-pattern probe")
 end
 
 -- ── read-modify-write is lossless ──────────────────────────────────────────

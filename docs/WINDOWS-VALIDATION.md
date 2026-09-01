@@ -907,12 +907,38 @@ styles **8-12** came out monochrome whatever colours the plugin asked for. The
    **physical** resolution (each pattern pixel replicated across the scale x
    scale block, with the bitmap's scale factor set so its logical size is still
    8x8), and the selftest asserts both colours survive.
-2. **Transparent gaps** (`bg == -1`) are not expressible as a stipple without a
-   mask, so they currently paint the gap in the foreground colour instead of
-   leaving the destination alone. Windows leaves it alone.
+2. **Transparent gaps** (`fg == -1`, i.e. `BrushColour == -1`) are not
+   expressible as a stipple without a mask, so they currently paint a flat tile
+   in the resolved foreground instead of leaving the destination alone. Windows
+   leaves it alone.
+
+   **Correction (this row named the wrong field, and the code tested it).** For
+   a mono pattern `BrushSpecFromWin32` puts `BrushColour` in `spec.fg`
+   (`SetTextColor`) and `PenColour` in `spec.bg` (`SetBkColor`) — the reverse of
+   the hatch arm — and upstream keys `SetBkMode` on **`BrushColour`**. So the
+   transparent trigger is `spec.fg`, as `pal/isurface.h` and
+   `pal/gdi_surface.cpp` both state. The wx adapter tested `spec.bg`, which
+   broke it in two directions at once: a real `BrushColour == -1` request took
+   the OPAQUE branch and painted the 1-bits in `PenColour`, obliterating what
+   the plugin meant to show through; and a `PenColour` of `-1` — which Windows
+   treats as an ordinary opaque background — collapsed the tile to one flat
+   `BrushColour` where Windows draws a two-tone pattern. Fixed; both directions
+   are pinned in `--pal-miniwindow-selftest`.
 
 Worth confirming on Windows what styles 8-12 actually look like with distinct
-pen and brush colours, so there is a reference to match.
+pen and brush colours, so there is a reference to match. Two specific reads are
+now owed, neither answerable from macOS:
+
+- **What does GDI render for `CLR_INVALID` in the slot that is NOT the
+  transparency trigger** — i.e. `SetBkColor (0xFFFFFFFF)` under
+  `BrushColour != -1`? The high-order type byte is undefined: GDI either masks
+  it to `0x00FFFFFF` (white) or fails the call and leaves the DC's default. The
+  port assumes white. Drive
+  `WindowCircleOp (w, 2, 4, 4, 40, 40, -1, 5, 1, ColourNameToRGB ("red"), 8)`
+  and read the two tile colours back with `WindowGetPixel`.
+- **And for `SetTextColor (0xFFFFFFFF)` under `BrushColour == -1`**, which is
+  what the 0-bits take in the genuinely-transparent case. Same call with the
+  two colours swapped.
 
 ### 4c-septendecies. HiDPI: BGR24 pixel READS are exact now (2026-08-03)
 
@@ -8180,6 +8206,114 @@ match and can afford to, because `world.GetClipboard`/`SetClipboard` let it save
 and restore. Against the app built before the fix it failed on exactly the `10`
 assertion and passed the other three — which is the end-to-end evidence the unit
 test cannot supply.
+
+### §10az — OWED: does GDI really shrink a NULL-pen Rectangle?
+
+Not a result — a question this side cannot answer, recorded so the next
+Windows run can settle it.
+
+`docs/PAL.md` records as a TAKEN decision that `shape` with a null pen draws
+the figure one pixel smaller on right/bottom ("GDI's documented null-pen
+shrink — normative, pinned by the golden tests"), and `pal::CpuRaster`
+implements it (`inset = stroked ? 1 : 0`) with a golden in
+`tests/test_pal_surface.cpp`. The **shipping** wx adapter did not: it filled
+the full w x h, so the two `ISurface` adapters disagreed about a rule the
+design doc calls normative and only the one nobody ships was pinned. The wx
+side has been changed to match, in `CDC::Rectangle`.
+
+The direction rests on PAL.md's recorded decision plus the fact that wxMSW
+compensates for exactly this quirk in `DoDrawRectangle` when the pen is
+transparent. **No macOS-side observation can confirm it.** Run this on the
+Windows build:
+
+```lua
+WindowCreate ("t", 0, 0, 64, 48, 0, 0, ColourNameToRGB ("blue"))
+WindowCircleOp ("t", 2, 50, 30, 53, 32,
+                ColourNameToRGB ("white"), 5 --[[PS_NULL]], 1,
+                ColourNameToRGB ("red"), 0, 0, 0, 0, 0)
+print (WindowGetPixel ("t", 51, 30), WindowGetPixel ("t", 52, 30),
+       WindowGetPixel ("t", 50, 31))
+```
+
+- `(52,30)` and `(50,31)` **blue** → GDI shrinks; PAL.md, CpuRaster and the
+  new wx behaviour are all right, and this row can be closed.
+- either of them **red** → GDI does NOT shrink, the wx adapter was right all
+  along, and the things to change are `pal/cpu_raster.cpp`,
+  `tests/test_pal_surface.cpp` (`ShapeRectStrokesAndFills`), `docs/PAL.md`
+  and the new `CDC::Rectangle` arm — in that case revert the arm rather than
+  keeping two wrong adapters agreeing.
+
+Worth reading `(51,30)` in the same breath: it must be red either way, so a
+run where it is blue means the fixture is wrong, not the platform.
+
+Only `ShapeKind::Rect` was changed. `CpuRaster::shape` bails on every other
+kind, so RoundRect/Chord/Pie/Ellipse have no reference to disagree with and
+were deliberately left alone; if this run confirms the shrink, the same
+question should be asked of those four before extending it.
+
+### §10ba — OWED: PS_INSIDEFRAME's exact geometry
+
+Another question, not a result. `PS_INSIDEFRAME` (`miniwin.pen_inside_frame`)
+was rendering exactly like `PS_SOLID` on macOS — the shim maps the style to an
+ordinary solid pen and wx strokes centred on the path, so a wide pen overflowed
+the bounding rectangle by half its width on every side. Real GDI performs the
+shrink inside `CreatePen`, so `pal/gdi_surface.cpp` gets it free. The wx
+adapter now insets the shape rectangle by `width / 2` before drawing
+(`insideFrameRect`, `platform/wx_surface.cpp`), and
+`--pal-miniwindow-selftest` pins the invariant that matters — no ink outside
+the rectangle, with a `PS_SOLID` control proving a centred pen really does
+overflow.
+
+What the macOS side **cannot** settle, and what a Windows run should measure
+with `WindowGetPixel` over a `WindowCircleOp` at pen widths 8 and 9:
+
+1. **Rounding for EVEN pen widths.** `width / 2` is exact for odd widths; for
+   an even one GDI has to put the extra half-pixel somewhere, and which side it
+   lands on is not derivable here.
+2. **Does the brush FILL move with the border?** The inset shrinks the whole
+   figure, so the fill's extent shifts too. That is an inference from "the
+   dimensions of the figure are shrunk", not a measurement.
+3. **Does RoundRect's corner ellipse shrink with the figure?** `a.x`/`a.y` (the
+   corner ellipse width/height) are passed through unshrunk here, which is a
+   guess.
+
+Also unmeasured, and deliberately so: `pal::CpuRaster::shape` ignores pen width
+entirely (documented S1 gap — a 1px border), so the headless reference can
+neither disagree with this nor be used to check it. At width 1
+`PS_INSIDEFRAME` is a no-op, so the two adapters do not currently conflict.
+
+### §10bb — OWED: the 1-bpp WindowCreateImage pattern's reported geometry
+
+`world.WindowImageInfo(win, id, 6)` used to answer 32 for every image on
+macOS, because the wx shim materialises everything as `new wxBitmap(img, 32)`
+and reported `wxBitmap::GetDepth()`; `InfoType` 4 answered a flat 0, because
+nothing ever computed a stride. Both now come from a per-`CBitmap` record of
+what the source DIB or `CreateBitmap` call actually declared.
+
+Two of the three answers are safe from this side: a 24-bit RGB PNG reports 24
+and a 4-byte-aligned stride, which is what the loaders themselves pass to
+`CreateDIBSection` (`png_load_shared.cpp`, `bmp_load_shared.cpp`) and what
+`platform/headless_surface.cpp` and `tests/test_gdi_headless.cpp` have always
+asserted. The third is an inference:
+
+- **`world.WindowCreateImage`'s 8x8 pattern.** It is
+  `CBitmap::CreateBitmap (8, 8, 1, 1, bits)` — a 1-bpp DDB on Windows — so
+  `GetObject` should report `bmBitsPixel == 1`. That follows from the argument,
+  but has never been measured. `--pal-miniwindow-selftest` asserts it.
+- **And that pattern's `bmWidthBytes`.** Windows pads a DDB scan line to a
+  WORD, not a DWORD, so 8 pixels at 1 bpp should be **2**, where the DIB rule
+  would give 4. The port implements the WORD rule for `CreateBitmap` and the
+  DWORD rule for DIB sections, but nothing pins the DDB half — deliberately,
+  since the number is unmeasured. Read `WindowImageInfo (win, id, 4)` for a
+  `WindowCreateImage` pattern on Windows and record it here.
+
+**Behaviour change worth knowing about while validating.** The depth fix makes
+`WindowDrawImageAlpha` and `WindowGetImageAlpha` refuse a 24-bit image with
+`eImageNotInstalled` (30056) on macOS, as they always have on Windows. That is
+parity by definition, but from a mac user's seat it is a regression: a plugin
+that today hands an RGB PNG to either op gets a drawn image and will now get
+nothing. `WindowMergeImageAlpha` has no such gate on either platform and is
+unaffected.
 
 ## §11 — The in-app probe suite
 

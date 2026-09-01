@@ -1547,30 +1547,29 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_doc->UpdateAllViews(nullptr);
         };
 
-        // Single action: run it immediately without a menu.
-        if (choices.size() == 1) {
-            fire(choices[0]);
-            return;
-        }
-
-        // Multiple alternatives — present a popup menu so the user can choose.
-        // We bind the handlers directly on the wxMenu object (wxMenu extends
-        // wxEvtHandler); when the menu goes out of scope the bindings are freed.
-        // Menu events are dispatched to the menu's own handler chain first, so
-        // the Bind() calls below will be reached before the window's handlers.
-        wxMenu linkMenu;
-        for (const std::string& ch : choices) {
-            wxMenuItem* item = linkMenu.Append(
-                wxID_ANY, DecodeRunBytes(ch, enc));
-            linkMenu.Bind(wxEVT_MENU, [fire, cmd = ch](wxCommandEvent&) {
-                fire(cmd);
-            }, item->GetId());
-        }
-        // PopupMenu() runs its own event loop and returns after the user
-        // picks an item or dismisses the menu.  The selected item's handler
-        // fires synchronously inside PopupMenu() before it returns.
-        m_output->PopupMenu(&linkMenu);
-        // linkMenu destructs here, automatically cleaning up all Bind() handlers.
+        // A click sends the FIRST alternative — the MXP default action — and
+        // never asks.  Windows:
+        //     StringToList (strActions, POPUP_DELIMITER, actionsList);
+        //     CString strAction = actionsList.GetHead ();
+        //         // just send first action (default action)
+        // (CMUSHView::OnLButtonDown, mushview.cpp:2166-2176).  The chooser is
+        // the RIGHT-click path there (IDR_MXP_MENU, mushview.cpp:3540-3607,
+        // which marks alternative 0 as the default item), and it is the
+        // right-click path here too — COutputPane::BuildContextMenu lists one
+        // "send this" item per alternative, labelled with the MUD's hints.
+        //
+        // This used to pop that chooser up on a plain LEFT click, so a
+        // <send "north|south">exit</send> sent nothing at all until a second
+        // click, and dismissing the menu sent nothing whatsoever.  Every
+        // MUD/plugin that relies on the default-action convention behaved
+        // differently here.
+        //
+        // The split above skips EMPTY segments, where Windows' StringToList
+        // (mxp/mxputils.cpp:358-384) keeps them — so for a degenerate
+        // "|north" Windows sends an empty line and this sends "north".  Kept
+        // deliberately: the divergence is one degenerate input wide and
+        // strictly the better answer of the two.
+        fire(choices[0]);
     };
 
     // The command bar is MULTI-LINE, matching Windows: CSendView::PreCreateWindow

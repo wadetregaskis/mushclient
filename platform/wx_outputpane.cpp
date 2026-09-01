@@ -3791,10 +3791,11 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
                     }, item->GetId());
             }
             // No "Send All (in order)" item.  It handed the WHOLE pipe-
-            // delimited string to m_fn_link_clicked, whose multi-alternative
-            // arm answers by popping up the same chooser again
-            // (wx_world_child.cpp:1526-1547), so it could never send anything,
-            // let alone all of them in order.  Windows offers no such thing
+            // delimited string to m_fn_link_clicked, which sends the FIRST
+            // alternative and only that (the MXP default action —
+            // wx_world_child.cpp's link handler, after mushview.cpp:2166-2176),
+            // so it never sent all of them in order and, before that handler
+            // was fixed, sent nothing at all.  Windows offers no such thing
             // either: IDR_MXP_MENU is exactly one item per alternative
             // (mushview.cpp:3565-3595), and the items above are that.
             wxMenuItem* itemCopy = menu.Append(wxID_ANY, "Copy Action");

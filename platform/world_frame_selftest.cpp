@@ -2763,6 +2763,79 @@ int RunWorldFrameSelfTest()
         }
     }
 
+    // ── a click on a multi-alternative link sends the DEFAULT action ────────
+    // Windows takes the head of the pipe-delimited list and sends it, with no
+    // menu whatsoever: "just send first action (default action)"
+    // (CMUSHView::OnLButtonDown, mushview.cpp:2166-2176).  The port popped up
+    // a chooser instead, so <send "north|south"> sent NOTHING until a second
+    // click -- and nothing at all if the menu was dismissed.
+    //
+    // These assertions could not exist before the fix: the old branch called
+    // PopupMenu, which spins its own event loop with nobody to dismiss it, so
+    // it would have wedged the harness rather than failed.  Hence the fix and
+    // the test land together.
+    {
+        pal::ITransport* savedWire  = doc->m_pTransport;
+        const int        savedPhase = doc->m_iConnectPhase;
+        RecordingTransport* wire = new RecordingTransport();
+        doc->m_pTransport    = wire;
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+
+        static int s_defaultActionModals = 0;
+        s_defaultActionModals = 0;
+        int (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
+        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+            ++s_defaultActionModals;
+            return IDNO;
+        };
+
+        check(pane->m_fn_link_clicked != nullptr,
+              "link default action: the pane's link handler is wired");
+
+        if (pane->m_fn_link_clicked) {
+            wire->sent.clear();
+            pane->m_fn_link_clicked("north|south", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+            check(wire->sent.find("north") != std::string::npos,
+                  "link default action: a pipe-delimited link sends its FIRST "
+                  "alternative (was: a popup chooser, and nothing sent)");
+            check(wire->sent.find("south") == std::string::npos,
+                  "link default action: ...and ONLY that one -- the rest are "
+                  "the right-click menu's business, as IDR_MXP_MENU is on "
+                  "Windows");
+
+            // Control: the single-alternative path still fires, so the check
+            // above is discriminating on WHICH alternative was chosen rather
+            // than on whether anything was sent at all.
+            wire->sent.clear();
+            pane->m_fn_link_clicked("south", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+            check(wire->sent.find("south") != std::string::npos,
+                  "link default action (control): a single-action link still "
+                  "sends that action");
+
+            // The splitter skips empty segments, so a degenerate leading pipe
+            // takes the first NON-empty alternative rather than sending a bare
+            // line.  Pinned because it is a deliberate (one input wide)
+            // departure from Windows' StringToList.
+            wire->sent.clear();
+            pane->m_fn_link_clicked("|north", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+            check(wire->sent.find("north") != std::string::npos,
+                  "link default action: a leading empty segment is skipped, "
+                  "not sent as a blank line");
+        }
+
+        check(s_defaultActionModals == 0,
+              "link default action: no modal was raised (if this fails the "
+              "checks above tested nothing)");
+        g_wxhook_message_box = savedMB;
+
+        doc->m_iConnectPhase = savedPhase;
+        doc->m_pTransport    = savedWire;   // the doc did not own this one
+        delete wire;
+    }
+
     // ── unpause_on_send reaches the link-click path ─────────────────────────
     // Windows unfreezes the output window before dispatching a send/prompt
     // link, gated on the world's unpause_on_send (default ON):

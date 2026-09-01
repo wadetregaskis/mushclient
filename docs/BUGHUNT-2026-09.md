@@ -37,20 +37,28 @@ merges. Final state: `ctest` 78/78 (extended on), ASan suite 77/77.
   same day**, and then WIDENED by an adversarial re-verify to the whole family:
   End (menu / keys / command id), Ctrl+Z, unfreezing Freeze Output, the pane's
   own Ctrl+End arm, and the unpause-on-send tail all clear now, with
-  `world.SetScroll(-1)` pinned as the arm that must not.  Still open from that
-  re-verify, deliberately: Windows also runs OnTestEnd on a resize while at
-  the buffer end (mushview.cpp:3196-3197) — not ported; and
-  ON_PLUGIN_SELECTION_CHANGED is fired NOWHERE on the port (its only sender
-  lives in CMUSHView), so every selection change here skips the plugin
-  callback — a port-wide gap deserving its own change.
+  `world.SetScroll(-1)` pinned as the arm that must not.  The two items that
+  re-verify left open are ALSO closed now: the resize-at-end OnTestEnd rider
+  (mushview.cpp:3196-3197) is ported — it also re-pins a FROZEN view's tail
+  through the reflow — and ON_PLUGIN_SELECTION_CHANGED is wired end-to-end:
+  the pane carries a deduplicating, recursion-guarded
+  NotifySelectionMaybeChanged mirroring CMUSHView::NotifySelectionChanged,
+  called from every mutation site including the new-output clear and the
+  trims (an adversarial re-verify refuted the first version's claim that
+  Windows stays silent there — its clear IS addedstuff -> OnTestEnd ->
+  SelectionChanged).  One Windows sender remains unported, recorded not
+  hidden: CSendView::CheckForSelectionChange (sendvw.cpp:2593) — selecting
+  text in the command bar clears the OUTPUT selection and notifies; CSendView
+  is stubbed here (the dead-view family), so neither half happens.
 - ~~`FireMacro`'s SEND_NOW arm bypasses unpause_on_send~~ — **closed later the
   same day**, then widened: keypad slots, Repeat Last Command and
   accelerator-Execute sends had the same gap; all six SendCommand riders now
-  share one `UnpauseOutputOnSend`.  Known narrow divergence, recorded not
-  hidden: Windows runs the tail after a SUCCESSFUL send, most port sites
-  before Execute (RepeatLastCommand, which already models the success gate,
-  runs it after) — observable only when Execute fails or a script re-pauses
-  mid-Execute.
+  share one `UnpauseOutputOnSend`.  The ordering divergence recorded here
+  (tail before Execute vs Windows' after-a-successful-send) is CLOSED: every
+  SendCommand rider now executes first and gates the tail — and the macro's
+  history add — on eOK, matching sendvw.cpp:727-756 exactly; the hyperlink
+  path keeps its click-time unpause, which is Windows' own placement
+  (mushview.cpp:2176-2181).
 - `WindowDrawImageAlpha`/`WindowGetImageAlpha` now **refuse 24-bit images with
   eImageNotInstalled on macOS as they always did on Windows** (gdi#1) — a
   user-visible change that is parity, flagged in WINDOWS-VALIDATION.md §10bb.

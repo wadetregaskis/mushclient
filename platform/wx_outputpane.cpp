@@ -2772,8 +2772,19 @@ void COutputPane::OnScrollWinUpdate(wxScrollWinEvent& evt)
 
 void COutputPane::OnSize(wxSizeEvent& evt)
 {
+    // Windows re-runs OnTestEnd when the view was at the buffer end going
+    // into the resize (CMUSHView::sizewindow, mushview.cpp:3196-3197): the
+    // jump keeps the tail visible through the reflow -- even for a FROZEN
+    // view sitting at the end, which UpdateScrollbars(false) below would
+    // otherwise let drift -- and OnTestEnd's clear takes the selection with
+    // it.  Sampled BEFORE the reflow, as Windows' m_bAtBufferEnd member is.
+    const bool wasAtEnd = IsAtBufferEnd();
     RebuildWrapCache();
     UpdateScrollbars(m_autoScroll);
+    if (wasAtEnd) {
+        ScrollToBufferEnd();
+        SetSelectionRange(0, 0, 0, 0);
+    }
     // Notify so the world frame refreshes the doc's GUI geometry (GetInfo
     // 280/281) — the pane resizes on layout changes that don't resize the frame
     // (e.g. the input bar taking its space at startup), which the frame's own

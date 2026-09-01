@@ -372,6 +372,42 @@ void TestSelectionChangedCallback()
     h.pane->m_fn_selection_changed = nullptr;
 }
 
+// ── resize at the buffer end runs OnTestEnd ──────────────────────────────────
+// CMUSHView::sizewindow (mushview.cpp:3196-3197): `if (m_bAtBufferEnd)
+// OnTestEnd();` -- the reflow re-pins the tail AND clears the selection.  The
+// control is the same resize away from the end, which must touch neither.
+void TestResizeAtEndClearsSelection()
+{
+    printf("resize at the buffer end runs OnTestEnd (mushview.cpp:3196):\n");
+    Harness h;
+    h.Feed(30);
+    opCheck(h.pane->IsAtBufferEnd(), "fixture: a fresh pane sits at the end");
+    h.pane->SetSelectionRange(2, 2, 1, 4);
+    opCheck(!h.pane->GetSelectionText().IsEmpty(), "fixture: a selection exists");
+
+    // SetSize moves the geometry synchronously but the size EVENT rides the
+    // loop this harness never starts, so the handler is driven directly --
+    // the same pattern SendMouse uses for the mouse handlers.
+    const wxSize sz = h.pane->GetSize();
+    auto resizeTo = [&](int w, int hh) {
+        h.pane->SetSize(w, hh);
+        wxSizeEvent se(wxSize(w, hh));
+        se.SetEventObject(h.pane);
+        h.pane->GetEventHandler()->ProcessEvent(se);
+    };
+    resizeTo(sz.x - 24, sz.y - 18);
+    opCheck(h.pane->GetSelectionText().IsEmpty(),
+            "resizing while at the end clears the selection (OnTestEnd)");
+    opCheck(h.pane->IsAtBufferEnd(), "...and the view is pinned back to the end");
+
+    h.pane->ScrollPage(-1);
+    opCheck(!h.pane->IsAtBufferEnd(), "fixture: scrolled up, off the end");
+    h.pane->SetSelectionRange(2, 2, 1, 4);
+    resizeTo(sz.x, sz.y);
+    opCheck(!h.pane->GetSelectionText().IsEmpty(),
+            "...and a resize away from the end KEEPS the selection");
+}
+
 // ── 1a. A click inside the selection leaves it alone ─────────────────────
 //
 // CMUSHView::OnLButtonDown builds the old selection region and returns early
@@ -4243,6 +4279,7 @@ int RunOutputPaneSelfTest()
     TestSelectionFreezesOutput();
 
     TestSelectionChangedCallback();
+    TestResizeAtEndClearsSelection();
     TestClickInsideSelectionKeepsIt();
     TestWantsSelectAll();
     TestDoubleClickAutoCopy();

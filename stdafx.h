@@ -474,6 +474,9 @@ void GetHostNameAndAddresses (CString & strHostName, CString & strAddresses);
 // for fixing up HTML text
 CString FixHTMLString (const CString strToFix);
 CString FixHTMLMultilineString (const CString strToFix);
+// XML attribute values: FixHTMLString plus " and tab/LF/CR as numeric entities
+// (the parser rejects a raw control character inside a quoted value).
+CString FixXMLAttributeString (const CString strToFix);
 
 
 // for tooltips

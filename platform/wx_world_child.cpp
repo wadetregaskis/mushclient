@@ -2790,6 +2790,14 @@ void CWorldChildFrame::MakeMultiLineTrigger()
         if (*p == '\n') iCount++;
 
     strText.Replace(ENDLINE, "\\n");
+    // Belt-and-braces: the DDX bridge now hands multi-line text back CRLF (the
+    // CEdit form the ENDLINE replace above is keyed on), but a raw lone LF or
+    // CR must NEVER reach trigger storage -- Save_XML_string would write it
+    // into the match attribute and the parser rejects a control character
+    // inside a quoted value, making the saved world file unopenable.  Escape
+    // any straggler the same way, whichever form the control returned.
+    strText.Replace("\r", "\\n");
+    strText.Replace("\n", "\\n");
     strText += "\\Z";
 
     t_regexp* regexp = NULL;

@@ -1107,6 +1107,85 @@ void TestDdxCharsetRoundTrip()
         }
     }
 
+    // ── multi-line fields: the CRLF seam (2026-09-01) ──────────────────────
+    // Windows' CEdit holds a member's CRLF bytes verbatim, so DDX there is
+    // byte-exact.  wxOSX EXPANDS each CRLF to TWO line breaks on the way in and
+    // can only ever hand back LF — so a CRLF member (the normal form: the world
+    // loader's AssembleContent makes every multi-line option CRLF) displayed
+    // double-spaced, and a change-nothing OK wrote the LF-only doubled form
+    // back, blank lines compounding once per dialog visit + save + reload.
+    // The hooks now translate at the seam: CRLF/CR -> LF into the control,
+    // LF -> CRLF back out, with the byte-fidelity memo compared against the
+    // load-arm-NORMALISED form so the change-nothing case stays byte-identical.
+    {
+        const int kIdMulti = 4713;
+        wxTextCtrl* multi = new wxTextCtrl(host, kIdMulti, wxEmptyString,
+                                           wxDefaultPosition, wxDefaultSize,
+                                           wxTE_MULTILINE);
+
+        // (a) The display half: ONE break shown per CRLF, not two.
+        g_wxhook_set_window_text((void*) multi, "a\r\nb");
+        check(multi->GetValue() == wxT("a\nb"),
+              "a CRLF member displays as ONE line break (was: doubled to two)");
+
+        // (b) Change-nothing OK: the member must come back byte-identical.
+        char* mlBack = g_wxhook_get_window_text((void*) multi);
+        check(mlBack && strcmp(mlBack, "a\r\nb") == 0,
+              "...and reads back as the very CRLF bytes (was: LF-only, doubled)");
+        free(mlBack);
+
+        // Through the real DDX arms, as a dialog runs them.
+        CWnd dlgWnd2;  dlgWnd2.m_hWnd = (HWND) host;
+        CDataExchange dx2;  dx2.m_pDlgWnd = &dlgWnd2;
+
+        const CString kNotes("line one\r\nline two");
+        CString member = kNotes;
+        dx2.m_bSaveAndValidate = FALSE;      // load: member -> control
+        DDX_Text(&dx2, kIdMulti, member);
+        check(multi->GetValue() == wxT("line one\nline two"),
+              "DDX load of a CRLF member shows two lines, not three");
+        dx2.m_bSaveAndValidate = TRUE;       // OK: control -> member
+        DDX_Text(&dx2, kIdMulti, member);
+        check(member == kNotes,
+              "DDX load -> change-nothing OK leaves a CRLF member BYTE-IDENTICAL "
+              "(was: an LF-only doubled string, blank lines compounding per visit)");
+
+        // (c) An EDITED field expands back to CRLF — pins the expansion, not
+        // just the memo (a save arm that always answered from the memo passes
+        // (b) but fails here).
+        multi->ChangeValue(wxT("x\ny"));
+        DDX_Text(&dx2, kIdMulti, member);
+        check(member == CString("x\r\ny"),
+              "an EDITED multi-line field saves LF back as CRLF (the CEdit form)");
+
+        // (d) Legacy-charset bytes WITH a CRLF: the memo guard must compare the
+        // normalised forms, or 672817c's byte fidelity dies for every
+        // multi-line legacy member and this comes back re-encoded.
+        const CString kLegacy("Caf\xE9\r\nmonde");    // é in Latin-1: invalid UTF-8
+        member = kLegacy;
+        dx2.m_bSaveAndValidate = FALSE;
+        DDX_Text(&dx2, kIdMulti, member);
+        dx2.m_bSaveAndValidate = TRUE;
+        DDX_Text(&dx2, kIdMulti, member);
+        check(member.GetLength() == kLegacy.GetLength() &&
+              memcmp((LPCTSTR) member, (LPCTSTR) kLegacy,
+                     kLegacy.GetLength()) == 0,
+              "a legacy-charset member with a CRLF round-trips byte-identical "
+              "(the memo guard normalises before comparing)");
+
+        // Single-line control stays untouched by all of it: the seam is gated
+        // on IsMultiLine(), so the plain fields above already prove the
+        // negative — but pin the boundary explicitly with a lone CR member,
+        // which a single-line control passes through as-is.
+        const int kIdSingle = 4714;
+        wxTextCtrl* single = new wxTextCtrl(host, kIdSingle);
+        g_wxhook_set_window_text((void*) single, "plain text");
+        char* slBack = g_wxhook_get_window_text((void*) single);
+        check(slBack && strcmp(slBack, "plain text") == 0,
+              "a single-line field is untouched by the CRLF seam (control)");
+        free(slBack);
+    }
+
     // And the list rows.
     wxListCtrl* lv = new wxListCtrl(host, wxID_ANY, wxDefaultPosition,
                                     wxDefaultSize, wxLC_REPORT);
@@ -1115,6 +1194,59 @@ void TestDdxCharsetRoundTrip()
     check(row == 0, "listctrl insert accepts the row");
     check(!lv->GetItemText(0).empty(),
           "a legacy-charset list row shows its text (was: blank row)");
+
+    host->Destroy();
+}
+
+// ── 11a. The Multi-Line Trigger conversion idiom is not a no-op (2026-09-01) ─
+// CWorldChildFrame::MakeMultiLineTrigger (the port twin of
+// CMUSHView::OnDisplayMultilinetrigger) converts the dialog's text with
+// strText.Replace(ENDLINE, "\\n") — keyed on CRLF, because that is what a
+// Windows CEdit hands DDX.  Before the CRLF seam fix, the bridge returned
+// LF-only text, the Replace matched NOTHING, and the trigger was stored with
+// raw LFs — which Save_XML_string wrote unescaped into the match attribute,
+// and the parser then refused the whole world file ("not terminated").  This
+// drives the exact seam the conversion depends on and asserts the replacement
+// COUNT, so "the Replace did nothing" fails.
+void TestMultiLineTriggerSeam()
+{
+    printf("Multi-Line Trigger conversion seam (ENDLINE is CRLF):\n");
+
+    wxFrame* host = new wxFrame(nullptr, wxID_ANY, wxT("mlt-host"));
+    wxTextCtrl* tc = new wxTextCtrl(host, wxID_ANY, wxEmptyString,
+                                    wxDefaultPosition, wxDefaultSize,
+                                    wxTE_MULTILINE);
+
+    // The dialog seeds CRLF (dlg.m_strTriggerText.Replace("\\n", "\r\n"))
+    // and DDX pushes it in; an untouched OK reads it straight back out.
+    g_wxhook_set_window_text((void*) tc, "line1\r\nline2");
+    char* raw = g_wxhook_get_window_text((void*) tc);
+    CString strText(raw ? raw : "");
+    free(raw);
+
+    // iLinesToMatch counts '\n' — one per break, as on Windows, not two.
+    int iCount = 1;
+    for (const char* q = strText; *q; q++)
+        if (*q == '\n') iCount++;
+    check(iCount == 2, "two selected lines count as 2 lines to match (was: 3)");
+
+    check(strText.Replace(ENDLINE, "\\n") == 1,
+          "Replace(ENDLINE, ...) replaces ONE break (was: matched nothing)");
+    check(strText.Find('\n') == -1 && strText.Find('\r') == -1,
+          "...and no raw LF/CR survives into the trigger's match text");
+    check(strText == CString("line1\\nline2"),
+          "...the stored pattern is the two-character escape Windows produces");
+
+    // The EDITED path must come back CRLF too — the memo answering the seeded
+    // bytes would make the untouched case exact while an edit regressed.
+    tc->ChangeValue(wxT("alpha\nbeta\ngamma"));
+    raw = g_wxhook_get_window_text((void*) tc);
+    CString strEdited(raw ? raw : "");
+    free(raw);
+    check(strEdited.Replace(ENDLINE, "\\n") == 2,
+          "an EDITED selection converts both breaks (the expansion, not the memo)");
+    check(strEdited == CString("alpha\\nbeta\\ngamma"),
+          "...into the canonical escaped pattern");
 
     host->Destroy();
 }
@@ -1172,9 +1304,11 @@ void TestEditOffsetsAreBytes()
     }
 
     // The line accessors carry the same numbers.  Three lines of "àà": each is
-    // 2 characters but 4 bytes, so the line starts diverge immediately.
-    // Characters: 0-1 àà, 2 \n, 3-4 àà, 5 \n, 6-7 àà   (last position 8)
-    // Bytes:      0-3 àà, 4 \n, 5-8 àà, 9 \n, 10-13 àà (length 14)
+    // 2 characters but 4 bytes — and for a MULTI-LINE control the byte space is
+    // the CRLF representation GetWindowText answers with (Windows' CEdit), so
+    // every break is TWO bytes where the control counts one character.
+    // Characters: 0-1 àà, 2 \n, 3-4 àà, 5 \n, 6-7 àà      (last position 8)
+    // CRLF bytes: 0-3 àà, 4-5 \r\n, 6-9 àà, 10-11 \r\n, 12-15 àà (length 16)
     {
         wxTextCtrl* tc = new wxTextCtrl(host, wxID_ANY, wxEmptyString,
                                         wxDefaultPosition, wxDefaultSize,
@@ -1185,16 +1319,33 @@ void TestEditOffsetsAreBytes()
         CEdit ed;
         ed.m_hWnd = (HWND) tc;
 
+        // The caller's own text, in the space it indexes: GetWindowText on a
+        // multi-line edit is CRLF, exactly as on Windows.
+        char* raw = g_wxhook_get_window_text((void*) tc);
+        CString crlfText(raw ? raw : "");
+        free(raw);
+        check(crlfText ==
+              CString("\xC3\xA0\xC3\xA0\r\n\xC3\xA0\xC3\xA0\r\n\xC3\xA0\xC3\xA0"),
+              "GetWindowText on a multi-line edit answers CRLF (the CEdit form)");
+
         check(ed.GetLineCount() == 3, "the line count is unaffected (the control)");
-        check(ed.GetWindowTextLength() == 14, "the total length is 14 bytes, not 8");
-        check(ed.LineIndex(1) == 5,  "LineIndex(1) is the line's BYTE start (5, not 3)");
-        check(ed.LineIndex(2) == 10, "LineIndex(2) likewise (10, not 6)");
-        check(ed.LineLength(5) == 4,
+        check(ed.GetWindowTextLength() == 16,
+              "the total length is 16 CRLF bytes, not 8 characters or 14 LF bytes");
+        check(ed.LineIndex(1) == 6,  "LineIndex(1) is the line's CRLF-BYTE start (6, not 3 or 5)");
+        check(ed.LineIndex(2) == 12, "LineIndex(2) likewise (12, not 6 or 10)");
+        check(ed.LineLength(6) == 4,
               "LineLength takes a byte offset and answers in bytes (4, not 2)");
-        // Byte 8 is the second à of line 1; read as a character it would be the
+        // Byte 8 is inside line 1's àà; read as a character it would be the
         // end of the text, i.e. line 2 — so this one crosses a line boundary.
         check(ed.LineFromChar(8) == 1,
               "LineFromChar reads its argument as a byte offset (line 1, not 2)");
+        // And a byte span crossing the break selects the same characters the
+        // CRLF CString says it does: bytes 2..8 are "à\r\nà" = chars 1..4.
+        ed.SetSel(2, 8);
+        long from = 0, to = 0;
+        tc->GetSelection(&from, &to);
+        check(from == 1 && to == 4,
+              "SetSel across a line break counts the break as TWO bytes, one char");
     }
 
     host->Destroy();
@@ -2499,6 +2650,7 @@ int RunGuiBridgeSelfTest()
     TestClipboardRoundTrip();
     TestFunctionListView();
     TestDdxCharsetRoundTrip();
+    TestMultiLineTriggerSeam();
     TestEditOffsetsAreBytes();
     TestScriptingPageBrowse();
     TestListBoxMutators();

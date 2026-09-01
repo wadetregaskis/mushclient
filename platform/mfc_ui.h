@@ -3307,13 +3307,18 @@ public:
     // The old no-op was fine while CMUSHclientDoc::DoSave was a headless inline
     // that called OnSaveDocument itself; the adopted doc.cpp::DoSave delegates to
     // THIS base, so it must do the write (else world.Save produces no file).
-    virtual BOOL DoSave(LPCTSTR lpszPathName, BOOL /*bReplace*/=TRUE) {
+    virtual BOOL DoSave(LPCTSTR lpszPathName, BOOL bReplace=TRUE) {
         CString strName(lpszPathName ? lpszPathName : "");
         if (strName.IsEmpty())
             return FALSE;                  // no dialog to prompt with headless
         if (!OnSaveDocument(strName))
             return FALSE;
-        SetPathName(strName);
+        // Real MFC: `if (bReplace) SetPathName(newName);` -- a bReplace==FALSE
+        // save is "Save Copy As" and must leave the document pointing at its
+        // original file.  Every current caller passes TRUE; the guard is here
+        // so a future FALSE caller gets MFC's behaviour, not a re-target.
+        if (bReplace)
+            SetPathName(strName);
         return TRUE;
     }
     // MFC's DoFileSave saves to the current path (Save As when there isn't one).

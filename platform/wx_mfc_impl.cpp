@@ -509,7 +509,25 @@ static void hook_set_window_text(void* h, const char* text)
     // getting it wrong leaves every edit field blank.  ChangeValue (not SetValue)
     // avoids firing a change event during the DDX load.
     if (wxTextCtrl* tc = wxDynamicCast(w, wxTextCtrl))
+    {
+        // Multi-line: Windows' CEdit buffer holds the member's CRLF bytes
+        // verbatim, but wxOSX EXPANDS each CRLF to TWO line breaks (measured —
+        // see notepad_convert_shared.cpp), so a CRLF member (the normal form:
+        // xml/xmlparse.cpp's AssembleContent makes every loaded multi-line
+        // option CRLF) displayed double-spaced, and DDX's save arm then wrote
+        // the LF-only doubled form back over it on OK — blank lines compounding
+        // once per dialog visit.  Collapse to the LF-only convention the
+        // control can hold; hook_get_window_text expands back, so members keep
+        // the representation Windows' CEdit gives them.  The memo above still
+        // remembers the ORIGINAL bytes, so a change-nothing OK stays
+        // byte-identical even for legacy-charset members.
+        if (tc->IsMultiLine())
+        {
+            s.Replace(wxT("\r\n"), wxT("\n"));
+            s.Replace(wxT("\r"), wxT("\n"));
+        }
         tc->ChangeValue(s);
+    }
     // Owner-draw combo (CBS_OWNERDRAWFIXED): a wxOwnerDrawnComboBox is neither a
     // wxComboBox nor a wxChoice, so without this arm its text falls through to
     // SetLabel, which a combo ignores.
@@ -5163,7 +5181,12 @@ static char* hook_get_window_text(void* hwnd)
     wxWindow* w = (wxWindow*) hwnd;
     if (!w) return nullptr;
     wxString s;
-    if (wxTextCtrl* t = wxDynamicCast(w, wxTextCtrl))      s = t->GetValue();
+    bool multiline = false;
+    if (wxTextCtrl* t = wxDynamicCast(w, wxTextCtrl))
+    {
+        s = t->GetValue();
+        multiline = t->IsMultiLine();
+    }
     // Owner-draw combo first: it is neither wxComboBox nor wxChoice, and
     // GetLabel() on one answers "" rather than the selected row's text.
     else if (wxOwnerDrawnComboBox* o = wxDynamicCast(w, wxOwnerDrawnComboBox))
@@ -5178,9 +5201,33 @@ static char* hook_get_window_text(void* hwnd)
     // matched no row) falls through to UTF-8, as before.
     auto& memo = ddx_source_bytes();
     const auto it = memo.find(w);
-    if (it != memo.end() &&
-        DecodeTextLenient(it->second.c_str(), it->second.size()) == s)
-        return strdup(it->second.c_str());
+    if (it != memo.end())
+    {
+        wxString loaded = DecodeTextLenient(it->second.c_str(), it->second.size());
+        if (multiline)
+        {
+            // Mirror the load arm's collapse EXACTLY, or the memo can never
+            // match a multi-line field again and every change-nothing OK
+            // re-encodes the member (the 672817c bug, reintroduced).
+            loaded.Replace(wxT("\r\n"), wxT("\n"));
+            loaded.Replace(wxT("\r"), wxT("\n"));
+        }
+        if (loaded == s)
+            return strdup(it->second.c_str());
+    }
+    if (multiline)
+    {
+        // Edited multi-line text: expand the control's LF-only value back to
+        // the CRLF representation Windows' CEdit hands DDX — otherwise a
+        // CRLF member came back LF-only and the ENDLINE-keyed canonical code
+        // (Replace(ENDLINE, ...), Save_XML_string's CRLF strip) stopped
+        // matching.  Byte-level, after the UTF-8 encode, so no wxString CR
+        // translation can interfere.
+        const wxScopedCharBuffer utf8 = s.utf8_str();
+        const std::string bytes = NotepadControlTextToBytes(
+            std::string(utf8.data(), utf8.length()), eLineEndingsCRLF);
+        return strdup(bytes.c_str());
+    }
     return strdup(s.utf8_str());
 }
 
@@ -5195,19 +5242,47 @@ static char* hook_get_window_text(void* hwnd)
 // non-ASCII character anywhere before the caret shifted every offset after it
 // and the edit landed in the wrong place.  Convert at the hook boundary, the
 // way commandSelection() already does for the command bar.
+// A second seam for MULTI-LINE controls: hook_get_window_text answers with the
+// CRLF representation Windows' CEdit holds (each break is TWO bytes), while the
+// control's own value is LF-only (each break is ONE character, one UTF-8 byte).
+// The canonical callers index the CRLF CString they got from GetWindowText, so
+// their byte offsets count each line break as 2; converting against the LF-only
+// utf8 alone would land one byte short per preceding break.  These two map
+// between the spaces; `utf8` is the control's LF-only UTF-8 value.
+static long crlf_byte_to_lf_byte(const char* utf8, size_t len, long crlfOffset) {
+    long lf = 0, crlf = 0;
+    for (size_t i = 0; i < len && crlf < crlfOffset; ++i) {
+        crlf += (utf8[i] == '\n') ? 2 : 1;   // an LF is a CRLF over there
+        ++lf;
+    }
+    return lf;
+}
+static long lf_byte_to_crlf_byte(const char* utf8, size_t len, long lfOffset) {
+    long crlf = 0;
+    for (long i = 0; i < lfOffset && (size_t) i < len; ++i)
+        crlf += (utf8[i] == '\n') ? 2 : 1;
+    return crlf;
+}
+
 static long edit_byte_to_char(wxTextCtrl* t, long byteOffset) {
     // Named local, NOT t->GetValue().utf8_str(): the buffer can be a
     // non-owning view into a string that dies at the semicolon.
     const wxString value = t->GetValue();
     const wxScopedCharBuffer utf8 = value.utf8_str();
+    if (byteOffset < 0) byteOffset = 0;
+    if (t->IsMultiLine())
+        byteOffset = crlf_byte_to_lf_byte(utf8.data(), utf8.length(), byteOffset);
     return (long) UTF8ByteToCharOffset(utf8.data(), utf8.length(),
-                                       (size_t) (byteOffset < 0 ? 0 : byteOffset));
+                                       (size_t) byteOffset);
 }
 static long edit_char_to_byte(wxTextCtrl* t, long charOffset) {
     const wxString value = t->GetValue();          // named local -- see above
     const wxScopedCharBuffer utf8 = value.utf8_str();
-    return (long) UTF8CharToByteOffset(utf8.data(), utf8.length(),
-                                       (size_t) (charOffset < 0 ? 0 : charOffset));
+    long lfByte = (long) UTF8CharToByteOffset(utf8.data(), utf8.length(),
+                                              (size_t) (charOffset < 0 ? 0 : charOffset));
+    if (t->IsMultiLine())
+        return lf_byte_to_crlf_byte(utf8.data(), utf8.length(), lfByte);
+    return lfByte;
 }
 
 static void hook_edit_get_sel(void* hwnd, int* s, int* e) {
@@ -5233,6 +5308,13 @@ static void hook_edit_replace_sel(void* hwnd, const char* text) {
     if (!t) return;
     long from = 0, to = 0; t->GetSelection(&from, &to);
     wxString s = wxString::FromUTF8(text ? text : "");
+    // CEdit::ReplaceSel legitimately takes CRLF text (canonical callers build
+    // it with ENDLINE); the control holds LF only, and wxOSX would EXPAND each
+    // CRLF to two breaks rather than collapse it.
+    if (t->IsMultiLine()) {
+        s.Replace(wxT("\r\n"), wxT("\n"));
+        s.Replace(wxT("\r"), wxT("\n"));
+    }
     if (from != to) t->Replace(from, to, s);   // replace the selection
     else            t->WriteText(s);            // or insert at the caret
 }

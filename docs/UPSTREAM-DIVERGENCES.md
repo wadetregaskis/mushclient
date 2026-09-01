@@ -895,3 +895,47 @@ a larger MXP payload (none is known to exist) would see it truncated here.
 **Verification:** `MXPFlood.UnterminatedElementCollectionIsBounded` feeds a
 600 KB unterminated element and asserts `m_strMXPstring` stays under 300 KB;
 without the cap it reaches the full flood size.
+
+## 22 — Control characters in XML attribute values: reader and writer are symmetric
+
+**Where:** reader — `xml/xmlparse.cpp`, `CXMLparser::Get_XML_Entity` (the
+disallowed-number check); writer — `xml/xml_save_world.cpp`,
+`Save_XML_string`, via the new `FixXMLAttributeString`
+(`utilities_shared.cpp`, declared in `stdafx.h`).
+
+**Was (upstream):** `Get_XML_Entity` accepted only `&#9;` among the control
+characters, rejecting `&#10;`/`&#13;` with *"Disallowed number in XML
+entity"*. The writer removed only the exact CRLF pair
+(`Replace (str, ENDLINE, " ")`) and `FixHTMLString` escaped only
+`< > & "` — so a member holding a lone LF, lone CR, or a TAB was written
+**raw** into the quoted attribute value, and `CXMLparser::GetValue` refuses a
+raw control character there (*"not terminated"* for CR/LF, the `< ' '` reject
+for tab). Upstream therefore already had the asymmetry for TAB: it could load
+`&#9;` but never re-emit it, and a tab that reached a trigger/alias/timer
+member (e.g. `world.AddTrigger` stores match text unfiltered) produced a world
+file its own loader rejects. The same script route with an embedded `\n`
+produced an unopenable file on both platforms.
+
+**Now:** the reader accepts `&#9;` / `&#10;` / `&#13;` (widened in `f96a15c`,
+recorded here retroactively — it had no entry), and the writer escapes a
+residual tab/LF/CR in an attribute value as the matching numeric entity. The
+ENDLINE collapse is kept, so a CRLF pair still becomes a space exactly as
+upstream writes it and the output for every existing loadable world file is
+byte-identical; only values that today produce a file the parser rejects
+change form. `FixHTMLString` itself is untouched (it is shared with
+`WriteToLog`, the log-file-name `%`-expansions and `world.FixupHTML`, and its
+exact output is pinned by `tests/test_utilities.cpp`).
+
+**Compatibility:** a file that actually contains `&#10;`/`&#13;` is refused by
+stock (un-widened) Windows MUSHclient at load time — but the same content was
+unloadable there before too (as a raw control character), so nothing that
+round-trips today stops doing so. It does make the reader widening
+load-bearing for round-tripping on this build: both halves travel together.
+
+**Verification:** `WorldLoad.NumericEntitySurvivesSaveAndReload` (load
+`&#10;`/`&#13;`, save, assert the entities are re-emitted and the file
+reloads byte-identically — fails without the writer half),
+`WorldLoad.AddTriggerEmbeddedControlCharsSurviveSaveAndReload` (the script
+route, LF and TAB), and `WorldLoad.RawLinefeedInAttributeValueIsRejected`
+(negative control: the parser still rejects the raw form, which is what makes
+the escape load-bearing).

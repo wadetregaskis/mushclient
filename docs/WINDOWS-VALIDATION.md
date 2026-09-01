@@ -8282,6 +8282,39 @@ entirely (documented S1 gap — a 1px border), so the headless reference can
 neither disagree with this nor be used to check it. At width 1
 `PS_INSIDEFRAME` is a no-op, so the two adapters do not currently conflict.
 
+### §10bb — OWED: the 1-bpp WindowCreateImage pattern's reported geometry
+
+`world.WindowImageInfo(win, id, 6)` used to answer 32 for every image on
+macOS, because the wx shim materialises everything as `new wxBitmap(img, 32)`
+and reported `wxBitmap::GetDepth()`; `InfoType` 4 answered a flat 0, because
+nothing ever computed a stride. Both now come from a per-`CBitmap` record of
+what the source DIB or `CreateBitmap` call actually declared.
+
+Two of the three answers are safe from this side: a 24-bit RGB PNG reports 24
+and a 4-byte-aligned stride, which is what the loaders themselves pass to
+`CreateDIBSection` (`png_load_shared.cpp`, `bmp_load_shared.cpp`) and what
+`platform/headless_surface.cpp` and `tests/test_gdi_headless.cpp` have always
+asserted. The third is an inference:
+
+- **`world.WindowCreateImage`'s 8x8 pattern.** It is
+  `CBitmap::CreateBitmap (8, 8, 1, 1, bits)` — a 1-bpp DDB on Windows — so
+  `GetObject` should report `bmBitsPixel == 1`. That follows from the argument,
+  but has never been measured. `--pal-miniwindow-selftest` asserts it.
+- **And that pattern's `bmWidthBytes`.** Windows pads a DDB scan line to a
+  WORD, not a DWORD, so 8 pixels at 1 bpp should be **2**, where the DIB rule
+  would give 4. The port implements the WORD rule for `CreateBitmap` and the
+  DWORD rule for DIB sections, but nothing pins the DDB half — deliberately,
+  since the number is unmeasured. Read `WindowImageInfo (win, id, 4)` for a
+  `WindowCreateImage` pattern on Windows and record it here.
+
+**Behaviour change worth knowing about while validating.** The depth fix makes
+`WindowDrawImageAlpha` and `WindowGetImageAlpha` refuse a 24-bit image with
+`eImageNotInstalled` (30056) on macOS, as they always have on Windows. That is
+parity by definition, but from a mac user's seat it is a regression: a plugin
+that today hands an RGB PNG to either op gets a drawn image and will now get
+nothing. `WindowMergeImageAlpha` has no such gate on either platform and is
+unaffected.
+
 ## §11 — The in-app probe suite
 
 ```

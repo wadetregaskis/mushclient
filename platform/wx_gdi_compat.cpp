@@ -75,6 +75,7 @@ struct DIBSectionData {
     bool bottomUp = true; // biHeight > 0 → rows stored bottom-up in buffer
     int stride = 0;     // bytes per row, padded to 4-byte boundary
     int bytesPerPixel = 3; // 3 = 24-bit BGR, 4 = 32-bit BGRA (e.g. PNG w/ alpha)
+    int bitCount = 24;  // the DECLARED biBitCount — what GetObject must report
     std::vector<unsigned char> pixels; // raw BGR(A) pixel data
     wxBitmap* bmp = nullptr;  // wxBitmap for rendering (owned here)
 
@@ -140,6 +141,27 @@ static std::unordered_map<HDC,    HBITMAP>          g_hdcToSelectedDib;
 static std::unordered_map<HDC,    CDC*>              g_hdcToCDC;
 static std::atomic<uintptr_t> s_hdcCounter{1000};
 
+// Per-CBitmap record of the DECLARED bit count and scan-line stride.
+//
+// A wxBitmap can carry neither.  MaterializeDIBSection ends every image at
+// `new wxBitmap(img, 32)`, and every other construction site in this file asks
+// for 32 too, so wxBitmap::GetDepth() answers 32 for a 24-bit RGB PNG and for
+// the 1-bpp WindowCreateImage pattern alike -- and there is no stride on a
+// wxBitmap at all.  Windows reports both from GetObject on the underlying
+// DIB section or DDB, world.WindowImageInfo publishes them as InfoTypes 6 and
+// 4, and two miniwindow ops gate on `bi.bmBitsPixel != 32`.
+//
+// Keyed on the CBitmap pointer, exactly as platform/headless_surface.cpp keys
+// its own record, so platform/mfc_ui.h's layout stays untouched.  Every path
+// that (re)binds or releases a CBitmap must erase its entry, or a recycled heap
+// address inherits a stale depth -- that is the one real hazard here.
+struct BitmapInfoRec { int bpp = 32; int widthBytes = 0; };
+static std::unordered_map<const CBitmap*, BitmapInfoRec> g_bitmapInfo;
+
+// Windows pads a DIB section's scan line to a DWORD and a DDB's to a WORD.
+static inline int wx_dib_stride(int w, int bpp) { return ((w * bpp + 31) / 32) * 4; }
+static inline int wx_ddb_stride(int w, int bpp) { return ((w * bpp + 15) / 16) * 2; }
+
 // Helper: look up any DIBSection selected into the given HDC.
 static inline DIBSectionData* GetDIBForHDC(HDC hdc) {
     auto it = g_hdcToSelectedDib.find(hdc);
@@ -153,10 +175,14 @@ static inline DIBSectionData* GetDIBForHDC(HDC hdc) {
 // ALWAYS a plain wxBitmap* — the rest of the GDI shim (GetBitmap, SelectObject,
 // the destructors, …) can then treat m_impl uniformly with no special-casing.
 // Returns nullptr if hObject is not a DIBSection handle.
-static wxBitmap* MaterializeDIBSection(HGDIOBJ hObject) {
+// `info`, when given, receives the consumed DIB's declared bit count and
+// stride -- the two things the wxBitmap cannot carry.  Captured here because
+// this is the last moment the DIBSectionData exists.
+static wxBitmap* MaterializeDIBSection(HGDIOBJ hObject, BitmapInfoRec* info = nullptr) {
     auto it = g_dibSections.find(reinterpret_cast<HBITMAP>(hObject));
     if (it == g_dibSections.end()) return nullptr;
     DIBSectionData* dib = it->second;
+    if (info) { info->bpp = dib->bitCount; info->widthBytes = dib->stride; }
     dib->SyncPixelsToBitmap();   // raw pixel buffer → wxBitmap
     wxBitmap* out = (dib->bmp && dib->bmp->IsOk()) ? new wxBitmap(*dib->bmp)
                                                    : new wxBitmap(1, 1, 32);
@@ -189,6 +215,7 @@ HBITMAP CreateDIBSection(HDC /*hdc*/, const BITMAPINFO* pbmi, UINT /*iUsage*/,
     dib->bottomUp = bottomUp;
     dib->stride   = stride;
     dib->bytesPerPixel = bytesPerPixel;
+    dib->bitCount = bpp;          // what GetObject must report, not bytesPerPixel*8
     dib->pixels.assign(stride * (he > 0 ? he : 1), 0);
     dib->bmp      = new wxBitmap(w > 0 ? w : 1, he > 0 ? he : 1, 32);
 
@@ -602,12 +629,14 @@ int CFont::GetObject(int /*nCount*/, LOGFONT* lf) const {
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 CBitmap::~CBitmap() {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
 }
 
 bool CBitmap::CreateBitmap(int nWidth, int nHeight, UINT nPlanes,
                            UINT nBitCount, const void* lpBits)
 {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     int w = (nWidth  > 0) ? nWidth  : 1;
     int h = (nHeight > 0) ? nHeight : 1;
@@ -635,6 +664,13 @@ bool CBitmap::CreateBitmap(int nWidth, int nHeight, UINT nPlanes,
         // Empty bitmap (most common case — miniwindow canvas)
         m_impl = new wxBitmap(w, h, 32);
     }
+    // ::CreateBitmap makes a DDB, and GetObject on one reports the bit count
+    // the caller asked for -- 1 for the WindowCreateImage pattern above, where
+    // wxBitmap::GetDepth() would say 32 -- over a WORD-aligned scan line.
+    {
+        const int declared = (nBitCount > 0) ? (int) nBitCount : 32;
+        g_bitmapInfo[this] = { declared, wx_ddb_stride(w, declared) };
+    }
     return static_cast<wxBitmap*>(m_impl)->IsOk();
 }
 
@@ -650,6 +686,7 @@ double wx_canvas_scale()
 }
 
 bool CBitmap::CreateCanvasBitmap(int nWidth, int nHeight) {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     const int w = (nWidth  > 0) ? nWidth  : 1;
     const int h = (nHeight > 0) ? nHeight : 1;
@@ -665,6 +702,12 @@ bool CBitmap::CreateCanvasBitmap(int nWidth, int nHeight) {
         return false;
     }
     m_impl = bmp;
+    // 32 matches what CreateCompatibleBitmap gives on a 32-bit display, which
+    // is every display MUSHclient runs on now -- and what the headless twin
+    // records for a canvas.  The stride is over the LOGICAL width, since that
+    // is what bmWidth reports (the HiDPI backing store stays invisible above
+    // this shim).
+    g_bitmapInfo[this] = { 32, wx_dib_stride(w, 32) };
     return true;
 }
 
@@ -687,6 +730,25 @@ static inline int wx_logical_extent(int physical, double scale)
     return (s > 0) ? physical / s : physical;
 }
 
+// bmBitsPixel / bmWidthBytes come from the record laid down when the CBitmap
+// was created or attached — the two things a wxBitmap cannot carry (see
+// g_bitmapInfo above).  A CBitmap that was handed an already-built wxBitmap*
+// rather than a DIB handle has no record, and falls back to the wxBitmap's own
+// depth with a DIB-shaped stride.  `out->bmWidth` must already be filled.
+static void wx_fill_bitmap_depth(const CBitmap* self, BITMAP* out)
+{
+    const auto it = g_bitmapInfo.find(self);
+    if (it != g_bitmapInfo.end()) {
+        out->bmBitsPixel  = (WORD) it->second.bpp;
+        out->bmWidthBytes = it->second.widthBytes;
+        return;
+    }
+    const wxBitmap* bmp = static_cast<const wxBitmap*>(self->m_impl);
+    const int bpp = bmp ? bmp->GetDepth() : 32;
+    out->bmBitsPixel  = (WORD) bpp;
+    out->bmWidthBytes = wx_dib_stride((int) out->bmWidth, bpp);
+}
+
 // Both entry points ALWAYS zero the caller's struct before they can fail.  Ten
 // call sites in miniwindow.cpp declare `BITMAP bi;` uninitialised and read
 // bi.bmBitsPixel without checking the return, so a bare `return FALSE` lets
@@ -703,8 +765,8 @@ BOOL CBitmap::GetBitmap(BITMAP* pBitmap) {
     const double sc = bmp->GetScaleFactor();
     pBitmap->bmWidth   = wx_logical_extent(bmp->GetWidth(),  sc);
     pBitmap->bmHeight  = wx_logical_extent(bmp->GetHeight(), sc);
-    pBitmap->bmBitsPixel = bmp->GetDepth();
     pBitmap->bmPlanes  = 1;
+    wx_fill_bitmap_depth(this, pBitmap);
     return TRUE;
 }
 
@@ -717,12 +779,13 @@ int CBitmap::GetObject(int /*nCount*/, void* lpObject) const {
     const double sc = bmp->GetScaleFactor();
     pbm->bmWidth      = wx_logical_extent(bmp->GetWidth(),  sc);
     pbm->bmHeight     = wx_logical_extent(bmp->GetHeight(), sc);
-    pbm->bmBitsPixel  = bmp->GetDepth();
     pbm->bmPlanes     = 1;
+    wx_fill_bitmap_depth(this, pbm);
     return sizeof(BITMAP);
 }
 
 BOOL CBitmap::Attach(HGDIOBJ hObject) {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     m_hObject = hObject;
     // hObject is normally a wxBitmap*, but the PNG/BMP loaders hand us a
@@ -730,8 +793,15 @@ BOOL CBitmap::Attach(HGDIOBJ hObject) {
     // raw pixel buffer.  Materialize that into a standalone wxBitmap so m_impl is
     // always a plain wxBitmap* for the rest of the GDI shim (this is what makes
     // WindowDrawImage of a loaded PNG actually render instead of crashing).
-    if (wxBitmap* materialized = MaterializeDIBSection(hObject)) {
+    BitmapInfoRec info;
+    if (wxBitmap* materialized = MaterializeDIBSection(hObject, &info)) {
         m_impl = materialized;
+        // The DIB's DECLARED bit count and stride, captured before the handle
+        // was freed.  Without them GetBitmap answers 32 for every image -- the
+        // wxBitmap is always built at depth 32 -- so a 24-bit RGB PNG
+        // misreported its depth and the alpha ops' `bmBitsPixel != 32` gate
+        // could never fire.
+        g_bitmapInfo[this] = info;
         // Keep the ownership token NON-NULL.  The shared clear/replace guard
         // reads it through operator HGDIOBJ — methods_output.cpp:372
         // `if ((HBITMAP) m_BackgroundBitmap) m_BackgroundBitmap.DeleteObject()`
@@ -748,6 +818,7 @@ BOOL CBitmap::Attach(HGDIOBJ hObject) {
 }
 
 HGDIOBJ CBitmap::Detach() {
+    g_bitmapInfo.erase(this);
     HGDIOBJ h = m_hObject;
     m_hObject = nullptr;
     m_impl = nullptr;
@@ -755,6 +826,7 @@ HGDIOBJ CBitmap::Detach() {
 }
 
 bool CBitmap::DeleteObject() {
+    g_bitmapInfo.erase(this);
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     m_hObject = nullptr;
     return true;

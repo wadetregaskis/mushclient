@@ -860,6 +860,87 @@ int RunPalMiniWindowSelfTest()
                 "restore the background after the BGRA32 readback probe");
     }
 
+    // ── an image reports the DIB's depth and stride, not the wxBitmap's ────
+    // Every image is materialised as `new wxBitmap(img, 32)`, so
+    // wxBitmap::GetDepth() answers 32 for everything and there is no stride at
+    // all.  bmBitsPixel was therefore 32 for a 24-bit RGB PNG -- where Windows
+    // and the headless twin both say 24 -- and bmWidthBytes was a flat 0.  Two
+    // things followed: world.WindowImageInfo returned wrong numbers, and the
+    // `bmBitsPixel != 32` gate in DrawImageAlpha / GetImageAlpha could NEVER
+    // fire on this platform, so both silently accepted images Windows refuses.
+    //
+    // WindowWrite emits PNG_COLOR_TYPE_RGB, so the file it produces reloads as
+    // a 24bpp DIB -- a real fixture rather than a hand-built one.
+    {
+        char png[256];
+        snprintf(png, sizeof(png), "/tmp/mc_selftest_depth_%d.png", (int) getpid());
+        ::unlink(png);
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the image-depth probe");
+        mwCheck(doc->WindowCreate("depthsrc", 0, 0, 9, 5, 0, 0, kRed) == eOK,
+                "9x5 fixture window created");
+        mwCheck(doc->WindowWrite("depthsrc", png) == eOK,
+                "...written out as an RGB (no alpha) PNG");
+        mwCheck(doc->WindowLoadImage(W, "rgb24", png) == eOK,
+                "WindowLoadImage loads it back");
+
+        VARIANT vw = doc->WindowImageInfo(W, "rgb24", 2);   // bmWidth
+        VARIANT vs = doc->WindowImageInfo(W, "rgb24", 4);   // bmWidthBytes
+        VARIANT vd = doc->WindowImageInfo(W, "rgb24", 6);   // bmBitsPixel
+        mwCheck(vw.vt == VT_I4 && vw.lVal == 9,
+                "the loaded image is 9 pixels wide");
+        mwCheck(vd.vt == VT_I4 && vd.lVal == 24,
+                "...reports 24bpp, the DIB's depth, not the wxBitmap's 32");
+        // 9 x 3 bytes = 27, padded to a 4-byte boundary = 28.  Anchored to the
+        // width and depth asserted above rather than being a magic number, and
+        // it is the value tests/test_lua_surface.cpp already pins on the
+        // headless twin for the same image.
+        mwCheck(vs.vt == VT_I4 && vs.lVal == 28,
+                "...and a 4-byte-aligned scan line of 28 bytes (was always 0)");
+
+        // The two ops that gate on 32bpp must now refuse it, as Windows does.
+        mwCheck(doc->WindowDrawImageAlpha(W, "rgb24", 0, 0, 0, 0, 1.0, 0, 0)
+                    == eImageNotInstalled,
+                "WindowDrawImageAlpha refuses a 24bpp image (no alpha channel)");
+        mwCheck(doc->WindowGetImageAlpha(W, "rgb24", 0, 0, 0, 0, 0, 0)
+                    == eImageNotInstalled,
+                "...and so does WindowGetImageAlpha");
+        // Negative control: MergeImageAlpha has NO depth gate on either
+        // platform, so a fix that simply started refusing 24bpp everywhere
+        // fails here.
+        mwCheck(doc->WindowMergeImageAlpha(W, "rgb24", "rgb24",
+                                           0, 0, 9, 5, 1, 1.0, 0, 0, 9, 5) == eOK,
+                "...but WindowMergeImageAlpha, which has no gate, still accepts it");
+
+        // The other control: a 32bpp source must still be ACCEPTED, so the gate
+        // is really reading the depth and not refusing everything.
+        mwCheck(doc->WindowImageFromWindow(W, "cap32", W) == eOK,
+                "WindowImageFromWindow captures a 32bpp image");
+        {
+            VARIANT c = doc->WindowImageInfo(W, "cap32", 6);
+            mwCheck(c.vt == VT_I4 && c.lVal == 32, "...which reports 32bpp");
+        }
+        mwCheck(doc->WindowDrawImageAlpha(W, "cap32", 0, 0, 0, 0, 1.0, 0, 0) == eOK,
+                "...and DrawImageAlpha still accepts THAT");
+
+        // WindowCreateImage's 8x8 pattern is a 1-bpp DDB on Windows, where the
+        // wxBitmap behind it is 32 like everything else.
+        mwCheck(doc->WindowCreateImage(W, "mono1",
+                                       0x80, 0xC0, 0xE0, 0xF8,
+                                       0xFC, 0xFE, 0xFF, 0xF0) == eOK,
+                "WindowCreateImage makes an 8x8 mono pattern");
+        {
+            VARIANT m = doc->WindowImageInfo(W, "mono1", 6);
+            mwCheck(m.vt == VT_I4 && m.lVal == 1,
+                    "...which reports 1bpp, the bit count CreateBitmap was given");
+        }
+
+        doc->WindowDelete("depthsrc");
+        ::unlink(png);
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the image-depth probe");
+    }
+
     // ── CreateImage (8x8 mono) + WindowDrawImage round-trip ────────────────
     // Row-distinct "leading 1s" pattern (0x80, 0xC0, 0xE0, 0xF8, 0xFC, 0xFE,
     // 0xFF, 0xF0 -- one bit count each, no two rows equal), so a scanline-

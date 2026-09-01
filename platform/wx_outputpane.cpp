@@ -3482,6 +3482,7 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
     // XToChar returns the absolute char column in the logical line,
     // correctly accounting for visual-row wrapping.
     std::string linkAtClick;
+    std::string linkHintAtClick;   // the MUD's labels for the alternatives
     int  linkTypeAtClick = 0;
     bool linkNoteAtClick = false;
     SRunEncoding linkEncAtClick;   // how to read linkAtClick's bytes
@@ -3493,6 +3494,7 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
             const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), col);
             if (run && run->isLink()) {
                 linkAtClick     = run->action();
+                linkHintAtClick = run->hint();
                 linkTypeAtClick = run->action_type();
                 linkNoteAtClick = LineAt(lineIdx).comment;
                 linkEncAtClick  = run->encoding();
@@ -3532,23 +3534,41 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
         } else {
             // MXP send-link or Lua Hyperlink() action.
             // Split pipe-delimited alternatives and show each as a menu item.
-            std::vector<std::string> choices;
-            {
+            // ONE splitter for the actions and the hints: the pairing below
+            // compares their COUNTS, so two splitters with different ideas
+            // about an empty segment would silently mislabel every item.
+            auto splitPipes = [](const std::string& s) {
+                std::vector<std::string> out;
                 size_t start = 0;
                 for (;;) {
-                    size_t sep = linkAtClick.find('|', start);
-                    std::string part = linkAtClick.substr(start,
+                    size_t sep = s.find('|', start);
+                    std::string part = s.substr(start,
                         (sep == std::string::npos) ? std::string::npos : sep - start);
-                    if (!part.empty()) choices.push_back(std::move(part));
+                    if (!part.empty()) out.push_back(std::move(part));
                     if (sep == std::string::npos) break;
                     start = sep + 1;
                 }
-            }
-            for (const std::string& ch : choices) {
-                // DecodeRunBytes, not FromUTF8: one legacy-charset byte in the
-                // action made this label "Send: " with nothing after it.
-                wxString label = wxString::Format(wxT("Send: %s"),
-                    DecodeRunBytes(ch, linkEncAtClick));
+                return out;
+            };
+            const std::vector<std::string> choices = splitPipes(linkAtClick);
+            const std::vector<std::string> hints   = splitPipes(linkHintAtClick);
+            // "more hints than actions? first one must be the tooltip text"
+            // (mushview.cpp:3556-3558) -- <send "n|s" hint="Exits|Go north|Go
+            // south"> gives the run's TOOLTIP first and then one label each.
+            const size_t hintBase = (hints.size() > choices.size()) ? 1 : 0;
+            for (size_t i = 0; i < choices.size(); ++i) {
+                const std::string& ch = choices[i];
+                // Windows labels each alternative with the MUD's HINT, falling
+                // back to the action itself when there is none (mushview.cpp:
+                // 3571-3581).  The action is still what gets sent; only the
+                // label changes.  DecodeRunBytes, not FromUTF8: one
+                // legacy-charset byte used to leave the label empty.
+                const size_t h = hintBase + i;
+                wxString label = DecodeRunBytes(
+                    (h < hints.size()) ? hints[h] : ch, linkEncAtClick);
+                // "ampersands won't come out right" (mushview.cpp:3583): a bare
+                // '&' is a mnemonic marker to wx exactly as it is to Win32.
+                label.Replace(wxT("&"), wxT("&&"));
                 wxMenuItem* item = menu.Append(wxID_ANY, label);
                 menu.Bind(wxEVT_MENU,
                     [this, cmd = ch, linkTypeAtClick, linkNoteAtClick,
@@ -3558,18 +3578,13 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
                                               linkNoteAtClick, linkEncAtClick);
                     }, item->GetId());
             }
-            if (choices.size() > 1) {
-                // Also offer "Send first" as a quick one-click action.
-                wxMenuItem* itemAll = menu.Append(wxID_ANY,
-                    wxT("Send All (in order)"));
-                menu.Bind(wxEVT_MENU,
-                    [this, linkAtClick, linkTypeAtClick, linkNoteAtClick,
-                     linkEncAtClick](wxCommandEvent&) {
-                        if (m_fn_link_clicked)
-                            m_fn_link_clicked(linkAtClick, linkTypeAtClick,
-                                              linkNoteAtClick, linkEncAtClick);
-                    }, itemAll->GetId());
-            }
+            // No "Send All (in order)" item.  It handed the WHOLE pipe-
+            // delimited string to m_fn_link_clicked, whose multi-alternative
+            // arm answers by popping up the same chooser again
+            // (wx_world_child.cpp:1526-1547), so it could never send anything,
+            // let alone all of them in order.  Windows offers no such thing
+            // either: IDR_MXP_MENU is exactly one item per alternative
+            // (mushview.cpp:3565-3595), and the items above are that.
             wxMenuItem* itemCopy = menu.Append(wxID_ANY, "Copy Action");
             menu.Bind(wxEVT_MENU,
                 [linkAtClick, linkEncAtClick](wxCommandEvent&) {

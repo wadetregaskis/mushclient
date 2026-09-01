@@ -2909,6 +2909,157 @@ struct CanonSpy {
     }
 };
 
+// ── 18d. the link cluster: what the items SAY and what they SEND ─────────
+//
+// Windows' IDR_MXP_MENU is exactly one item per alternative, labelled with the
+// MUD's HINT and falling back to the action when there is none, after dropping
+// an extra leading hint that belongs to the run's tooltip
+// (CMUSHView::OnContextMenu, mushview.cpp:3555-3595).  The port labelled every
+// item "Send: <action>" and never read the hints at all, so a MUD that supplied
+// "Go north" / "Go south" got "Send: n" / "Send: s".
+//
+// It also offered "Send All (in order)", which bound the WHOLE pipe-delimited
+// string: the receiver splits it, sees more than one alternative and pops up
+// the very chooser the item was picked from (wx_world_child.cpp:1526-1547), so
+// it never sent anything.  It is gone; these assertions pin that it is, and
+// that what each remaining item sends is its OWN action.
+void TestLinkContextMenuLabelsAndDispatch()
+{
+    printf("MXP link menu: hint labels, one item per alternative "
+           "(mushview.cpp:3555-3595)\n");
+
+    // A pane carrying one link run, and a recorder for what a picked item sends.
+    struct LinkFixture {
+        Harness h;
+        std::vector<std::string> sent;
+
+        LinkFixture(const char* action, const char* hint)
+        {
+            SOutputRun run;
+            run.text = "click here";        // ASCII: the column maths is plain
+            run.fg   = 0x00FFFFFFu;
+            run.setLink(action, hint, 0x0400 /*ACTION_SEND*/);
+            SOutputLine line;
+            line.push_back(run);
+            h.pane->AppendLine(std::move(line));
+            h.pane->m_fn_link_clicked =
+                [this](const std::string& a, int, bool, SRunEncoding) {
+                    sent.push_back(a);
+                };
+        }
+
+        void Build(wxMenu& menu)
+        {
+            // Inside the run, and inside the first row of the first line.
+            h.pane->BuildContextMenu(menu, h.pane->CharWidth() * 2 + 1,
+                                     h.pane->LineHeight() / 2);
+        }
+    };
+
+    // The labels of the items BEFORE the first separator: the link cluster.
+    auto clusterLabels = [](const wxMenu& menu) {
+        std::vector<std::string> out;
+        for (const auto& row : FlattenMenu(menu)) {
+            if (row.first == kSep) break;
+            out.push_back(row.second);
+        }
+        return out;
+    };
+    auto joined = [](const std::vector<std::string>& v) {
+        std::string s;
+        for (const auto& e : v) { if (!s.empty()) s += " | "; s += e; }
+        return s;
+    };
+
+    {
+        // One hint per alternative: each item is labelled with its own hint.
+        LinkFixture f("north|south|east", "Go north|Go south|Go east");
+        wxMenu menu;
+        f.Build(menu);
+
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = {
+            "Go north", "Go south", "Go east", "Copy Action" };
+        opCheck(got == want,
+                ("each alternative is labelled with the MUD's hint [got: "
+                 + joined(got) + "]").c_str());
+        opCheck(ItemNamed(menu, "Send All (in order)") == nullptr,
+                "...and there is no \"Send All\" item, which could never send");
+
+        // What the FIRST item sends: its own action, not the pipe string that
+        // "Send All" used to hand over (and that the receiver answers with a
+        // second chooser).
+        const wxMenuItem* first = ItemNamed(menu, "Go north");
+        opCheck(first != nullptr, "the first alternative is a real item");
+        if (first) {
+            wxCommandEvent pick(wxEVT_MENU, first->GetId());
+            menu.ProcessEvent(pick);
+        }
+        opCheck(f.sent.size() == 1 && f.sent[0] == "north",
+                ("picking the first alternative sends \"north\" [got: "
+                 + joined(f.sent) + "]").c_str());
+
+        // The control: a DIFFERENT item must send a different action, so the
+        // assertion above cannot be passing on a hardcoded first choice.
+        const wxMenuItem* second = ItemNamed(menu, "Go south");
+        if (second) {
+            wxCommandEvent pick(wxEVT_MENU, second->GetId());
+            menu.ProcessEvent(pick);
+        }
+        opCheck(f.sent.size() == 2 && f.sent[1] == "south",
+                "control: the second alternative sends its own action");
+    }
+    {
+        // More hints than actions: the FIRST hint is the run's tooltip and is
+        // dropped, so the labels still pair up (mushview.cpp:3556-3558).
+        LinkFixture f("n|s", "Exits|Go north|Go south");
+        wxMenu menu;
+        f.Build(menu);
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = { "Go north", "Go south", "Copy Action" };
+        opCheck(got == want,
+                ("an extra leading hint is the tooltip and is dropped [got: "
+                 + joined(got) + "]").c_str());
+    }
+    {
+        // No hints at all: fall back to the action, exactly as Windows does.
+        LinkFixture f("n|s", "");
+        wxMenu menu;
+        f.Build(menu);
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = { "n", "s", "Copy Action" };
+        opCheck(got == want,
+                ("with no hint the label falls back to the action [got: "
+                 + joined(got) + "]").c_str());
+    }
+    {
+        // A single alternative: one send item, and no menu is ever raised for a
+        // choice that does not exist.  This is also the control that makes the
+        // multi-alternative arms above provably the multi branch.
+        LinkFixture f("north", "Go north");
+        wxMenu menu;
+        f.Build(menu);
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = { "Go north", "Copy Action" };
+        opCheck(got == want,
+                ("a single-alternative link offers exactly one send item [got: "
+                 + joined(got) + "]").c_str());
+    }
+    {
+        // "ampersands won't come out right" (mushview.cpp:3583).  The label is
+        // read back with GetItemLabelText, which undoes the mnemonic escaping,
+        // so an unescaped '&' would show up here as a LOST character.
+        LinkFixture f("buy", "Buy A&W");
+        wxMenu menu;
+        f.Build(menu);
+        const std::vector<std::string> got = clusterLabels(menu);
+        const std::vector<std::string> want = { "Buy A&W", "Copy Action" };
+        opCheck(got == want,
+                ("an ampersand in a hint survives as text [got: "
+                 + joined(got) + "]").c_str());
+    }
+}
+
 void TestContextMenuShape()
 {
     printf("output-pane right-click menu: CG_IDR_POPUP_MUSHVIEW merged in\n");
@@ -3443,6 +3594,7 @@ int RunOutputPaneSelfTest()
     TestPendingRowUsesTheRunPipeline();
     TestMiddleClickIsInert();
     TestContextMenuShape();
+    TestLinkContextMenuLabelsAndDispatch();
     TestRightClickSelectsWord();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);

@@ -302,6 +302,47 @@ int RunPalMiniWindowSelfTest()
                 "shape outline drawn (blend of pen over edge; wxOSX AA)");
     }
 
+    // ── CircleOp rectangle with a NULL pen: GDI's null-pen shrink ─────────
+    // With NULL_PEN selected, ::Rectangle draws the figure one pixel narrower
+    // and shorter -- the right column and bottom row are omitted.  docs/PAL.md
+    // calls that normative and pal::CpuRaster implements it, pinned by
+    // tests/test_pal_surface.cpp -- but the shipping wx adapter filled the full
+    // w x h, so a headless golden and the app answered the same script
+    // differently.  Same probe here, so both adapters are pinned by one rule.
+    // A 3x2 rect makes the shrunk column and row a majority of the figure.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the null-pen shrink probe");
+        mwCheck(doc->WindowCircleOp(W, 2, 50, 30, 53, 32,
+                                    kWhite, 5 /*PS_NULL*/, 1,
+                                    kRed, 0 /*solid*/, 0, 0, 0, 0) == eOK,
+                "WindowCircleOp (rectangle, null pen) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 50, 30) == kRed &&
+                doc->WindowGetPixel(W, 51, 30) == kRed,
+                "a null-pen rectangle still fills (w-1) x (h-1)");
+        mwCheck(doc->WindowGetPixel(W, 52, 30) == kBlue,
+                "...but not its right column (GDI's null-pen shrink)");
+        mwCheck(doc->WindowGetPixel(W, 50, 31) == kBlue &&
+                doc->WindowGetPixel(W, 52, 31) == kBlue,
+                "...nor its bottom row");
+
+        // Control: the same figure with a real pen must still reach the last
+        // column and row, so the shrink is keyed on the pen being transparent
+        // and is not just "every rectangle got smaller".
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the stroked-rectangle control");
+        mwCheck(doc->WindowCircleOp(W, 2, 50, 30, 53, 32,
+                                    kWhite, 0 /*PS_SOLID*/, 1,
+                                    kRed, 0 /*solid*/, 0, 0, 0, 0) == eOK,
+                "WindowCircleOp (rectangle, solid pen) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 52, 30) != kBlue &&
+                doc->WindowGetPixel(W, 52, 31) != kBlue,
+                "a STROKED rectangle still reaches x2-1/y2-1");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the null-pen shrink probe");
+    }
+
     // ── Gradient: horizontal red→blue (mode 1) ─────────────────────────────
     mwCheck(doc->WindowGradient(W, 0, 44, 64, 48, kRed, kBlue, 1) == eOK,
             "WindowGradient (horizontal) succeeds");

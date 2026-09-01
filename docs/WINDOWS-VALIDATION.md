@@ -8181,6 +8181,50 @@ and restore. Against the app built before the fix it failed on exactly the `10`
 assertion and passed the other three — which is the end-to-end evidence the unit
 test cannot supply.
 
+### §10az — OWED: does GDI really shrink a NULL-pen Rectangle?
+
+Not a result — a question this side cannot answer, recorded so the next
+Windows run can settle it.
+
+`docs/PAL.md` records as a TAKEN decision that `shape` with a null pen draws
+the figure one pixel smaller on right/bottom ("GDI's documented null-pen
+shrink — normative, pinned by the golden tests"), and `pal::CpuRaster`
+implements it (`inset = stroked ? 1 : 0`) with a golden in
+`tests/test_pal_surface.cpp`. The **shipping** wx adapter did not: it filled
+the full w x h, so the two `ISurface` adapters disagreed about a rule the
+design doc calls normative and only the one nobody ships was pinned. The wx
+side has been changed to match, in `CDC::Rectangle`.
+
+The direction rests on PAL.md's recorded decision plus the fact that wxMSW
+compensates for exactly this quirk in `DoDrawRectangle` when the pen is
+transparent. **No macOS-side observation can confirm it.** Run this on the
+Windows build:
+
+```lua
+WindowCreate ("t", 0, 0, 64, 48, 0, 0, ColourNameToRGB ("blue"))
+WindowCircleOp ("t", 2, 50, 30, 53, 32,
+                ColourNameToRGB ("white"), 5 --[[PS_NULL]], 1,
+                ColourNameToRGB ("red"), 0, 0, 0, 0, 0)
+print (WindowGetPixel ("t", 51, 30), WindowGetPixel ("t", 52, 30),
+       WindowGetPixel ("t", 50, 31))
+```
+
+- `(52,30)` and `(50,31)` **blue** → GDI shrinks; PAL.md, CpuRaster and the
+  new wx behaviour are all right, and this row can be closed.
+- either of them **red** → GDI does NOT shrink, the wx adapter was right all
+  along, and the things to change are `pal/cpu_raster.cpp`,
+  `tests/test_pal_surface.cpp` (`ShapeRectStrokesAndFills`), `docs/PAL.md`
+  and the new `CDC::Rectangle` arm — in that case revert the arm rather than
+  keeping two wrong adapters agreeing.
+
+Worth reading `(51,30)` in the same breath: it must be red either way, so a
+run where it is blue means the fixture is wrong, not the platform.
+
+Only `ShapeKind::Rect` was changed. `CpuRaster::shape` bails on every other
+kind, so RoundRect/Chord/Pie/Ellipse have no reference to disagree with and
+were deliberately left alone; if this run confirms the shrink, the same
+question should be asked of those four before extending it.
+
 ## §11 — The in-app probe suite
 
 ```

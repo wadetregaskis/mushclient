@@ -17,6 +17,14 @@
 //     endpoints, matches the CPU reference) rather than wxDC::GradientFillLinear.
 //   - line renders INCLUSIVE of the last pixel — the shim's already-shipped,
 //     documented deviation from the GDI-normative exclusive rule.
+//   - shape(Rect) with a NULL pen now performs GDI's one-pixel right/bottom
+//     shrink, which PAL.md calls normative and pal::CpuRaster has always done.
+//     It is implemented in CDC::Rectangle (wx_gdi_compat.cpp), not here, since
+//     that function exists to emulate ::Rectangle and the Windows adapter
+//     reaches the real one. The other traced figures (RoundRect/Chord/Pie/
+//     Ellipse) are NOT shrunk: CpuRaster::shape bails on every kind but Rect,
+//     so nothing pins them and applying an unmeasured shrink to four more
+//     figures would risk inventing a fresh divergence.
 //   - S2 gaps (no-ops / bails, to land with their S3 op families): pattern
 //     brushes; pen endcap/join; matrix blits; keyed+stretched blits; a
 //     buffer-source stretched blit; a stretched blit whose source rect was

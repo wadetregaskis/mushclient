@@ -1223,6 +1223,22 @@ int RunPalSurfaceSelfTest() {
     stCheck(near(shBorder, kWhite) && shFill == kGreen && shOut == kBlack,
             "shape(Rect) strokes and fills (stroke +/-2/channel)");
 
+    // 9b. GDI's null-pen shrink: with NULL_PEN selected, ::Rectangle draws the
+    // figure one pixel narrower and shorter.  docs/PAL.md calls this normative
+    // and pal::CpuRaster implements it; this is the SAME probe as the golden at
+    // tests/test_pal_surface.cpp (ShapeRectStrokesAndFills), which is exactly
+    // the kind of adapter-invariant assertion this harness exists to carry --
+    // its absence here is what let the two adapters drift apart, with only the
+    // one nobody ships pinned.
+    ad.shape(sh, ShapeKind::Rect, { 0, 8, 3, 2 }, {}, {},
+             { PenStyle::Null }, { BrushStyle::Solid, kRed });
+    stCheck(ad.getPixel(sh, { 0, 8 }) == kRed && ad.getPixel(sh, { 1, 8 }) == kRed,
+            "a null-pen shape(Rect) fills (w-1) x (h-1)");
+    stCheck(ad.getPixel(sh, { 2, 8 }) == kBlack &&
+            ad.getPixel(sh, { 0, 9 }) == kBlack &&
+            ad.getPixel(sh, { 2, 9 }) == kBlack,
+            "...and omits the right column and bottom row (null-pen shrink)");
+
     // 10. floodFill border + surface modes (review claim: wxDC::FloodFill is a
     // no-op on wxOSX — this check is the empirical arbiter).
     SurfaceId ff = ad.createSurface({ 10, 10 }, kBlack);

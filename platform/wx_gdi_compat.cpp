@@ -1381,6 +1381,24 @@ bool CDC::Rectangle(int x1, int y1, int x2, int y2) {
     CDCImpl* p = Impl(this);
     if (!p) return false;
     p->ApplyPen(); p->ApplyBrush();
+    // GDI's null-pen shrink: with NULL_PEN selected, ::Rectangle draws the
+    // figure one pixel narrower and shorter -- the right column and bottom row
+    // are omitted.  docs/PAL.md records that as normative and pal::CpuRaster
+    // implements it (`inset = stroked ? 1 : 0`), pinned by a golden in
+    // tests/test_pal_surface.cpp -- but the shipping wx adapter filled the full
+    // w x h, so the two ISurface adapters disagreed about the rule and only the
+    // one nobody ships was pinned.  wx does not do this for us: wxGCDC shrinks
+    // only under ShouldOffset(), which is false for a transparent pen.
+    //
+    // Ask the DC, not a cached style: a caller may have arrived through
+    // CPen::Attach or ExtCreatePen, and the DC's own pen is the single source
+    // of truth.  A 1px-wide or 1px-tall null-pen rect shrinks to nothing, which
+    // is what CpuRaster does too (its fill loop never runs when w == 1).
+    if (p->dc.GetPen().GetStyle() == wxPENSTYLE_TRANSPARENT) {
+        const int w = x2 - x1 - 1, h = y2 - y1 - 1;
+        if (w > 0 && h > 0) p->dc.DrawRectangle(x1, y1, w, h);
+        return true;
+    }
     p->dc.DrawRectangle(x1, y1, x2 - x1, y2 - y1);
     return true;
 }

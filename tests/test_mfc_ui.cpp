@@ -3334,7 +3334,11 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
         s_fdOverwrite = ow;
         return strdup("/picked/dir/result.mcl");
     };
-    char initial[] = "/worlds/dir/start.mcl";
+    // _MAX_PATH, not sizeof("/worlds/dir/start.mcl"): the buffer is what DoModal
+    // writes the chosen path back into, and the constructor's nMaxFile default
+    // is _MAX_PATH -- the same bargain the canonical GetBuffer(_MAX_PATH)
+    // callers strike.
+    char initial[_MAX_PATH] = "/worlds/dir/start.mcl";
     CFileDialog dlg(FALSE, "mcl", nullptr, OFN_OVERWRITEPROMPT, "Worlds|*.mcl||");
     dlg.m_ofn.lpstrFile = initial;
     EXPECT_EQ((INT_PTR)IDOK, dlg.DoModal());
@@ -3350,6 +3354,47 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
     ASSERT_NE((POSITION)nullptr, pos);
     EXPECT_STREQ("/picked/dir/result.mcl", (LPCTSTR)dlg.GetNextPathName(pos));
     EXPECT_EQ((POSITION)nullptr, pos);
+    // The OPENFILENAME write-back: Windows' common dialog puts the chosen path
+    // in the caller's lpstrFile buffer, and three canonical File>Open handlers
+    // read it from there rather than calling GetPathName().  Asserting the
+    // buffer, not GetPathName(), is the whole point -- GetPathName() was right
+    // all along, which is why nothing caught this.
+    EXPECT_STREQ("/picked/dir/result.mcl", initial);
+    EXPECT_EQ((DWORD)_MAX_PATH, dlg.m_ofn.nMaxFile);   // supplied by the ctor
+
+    // A caller with its own smaller buffer must say so, exactly as on Windows;
+    // the write-back then truncates to nMaxFile-1 and stays NUL-terminated.
+    // The sentinel byte one past the end must survive.
+    char small[12];
+    memset(small, '#', sizeof small);
+    CFileDialog snug(FALSE, "mcl", nullptr, 0, "Worlds|*.mcl||");
+    snug.m_ofn.lpstrFile = small;
+    snug.m_ofn.nMaxFile  = 8;
+    EXPECT_EQ((INT_PTR)IDOK, snug.DoModal());
+    EXPECT_STREQ("/picked", small);              // 7 chars + NUL, not 22
+    EXPECT_EQ('#', small[8]);                    // nothing written past nMaxFile
+    EXPECT_STREQ("/picked/dir/result.mcl", (LPCTSTR)snug.GetPathName());
+
+    // A cancel must leave the caller's buffer exactly as it was -- the three
+    // canonical callers seed it with the name to reopen on.
+    {
+        HookGuard<decltype(g_wxhook_file_dialog)> nope(g_wxhook_file_dialog);
+        g_wxhook_file_dialog = [](bool, const char*, const char*, const char*,
+                                  const char*, bool, bool) -> char* {
+            return nullptr;
+        };
+        char keep[_MAX_PATH] = "/keep/me.mcl";
+        CFileDialog cancelled(TRUE, nullptr, nullptr, 0, nullptr);
+        cancelled.m_ofn.lpstrFile = keep;
+        EXPECT_EQ((INT_PTR)IDCANCEL, cancelled.DoModal());
+        EXPECT_STREQ("/keep/me.mcl", keep);
+    }
+
+    // A null lpstrFile is the common case (most callers only read GetPathName)
+    // and must not crash.
+    CFileDialog noBuf(FALSE, nullptr, nullptr, 0, nullptr);
+    EXPECT_EQ((INT_PTR)IDOK, noBuf.DoModal());
+    EXPECT_STREQ("/picked/dir/result.mcl", (LPCTSTR)noBuf.GetPathName());
 
     // lpstrInitialDir takes precedence; filename ctor arg is the hint
     CFileDialog dlg2(TRUE, nullptr, "hint.txt");

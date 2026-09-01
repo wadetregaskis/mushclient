@@ -5058,10 +5058,36 @@ public:
         m_ofn.lpstrDefExt = lpszDefExt;
         m_ofn.Flags       = dwFlags;
         m_ofn.lpstrFilter = lpszFilter;
+        // MFC's own constructor sets this (it points lpstrFile at an internal
+        // _MAX_PATH buffer), which is why the canonical callers that swap in
+        // their own `fileName.GetBuffer(_MAX_PATH)` never set it themselves and
+        // still get a correctly-bounded write-back.  A caller with a smaller
+        // buffer must set nMaxFile to match, exactly as on Windows.
+        m_ofn.nMaxFile    = _MAX_PATH;
         // lpszFileName and lpstrFile/lpstrTitle are usually set by callers
         // after construction via m_ofn.lpstrFile / m_ofn.lpstrTitle.
         if (lpszFileName && *lpszFileName)
             m_strResult = lpszFileName;  // pre-fill as hint
+    }
+
+    // Windows' GetOpenFileName writes the chosen path into the caller-supplied
+    // OPENFILENAME::lpstrFile buffer, and three canonical handlers read it back
+    // from there instead of calling GetPathName(): CMainFrame::DoFileOpen
+    // (mainfrm.cpp:1845), CActivityDoc::OnFileOpen (ActivityDoc.cpp:108) and
+    // CTextDocument::OnFileOpen (TextDocument.cpp:380).  DoModal used to fill
+    // only m_strResult/m_paths, so lpstrFile kept its pre-dialog contents -- for
+    // those three, a GetBuffer(_MAX_PATH) scratch full of NULs -- and the
+    // following OpenDocumentFile("") returned nullptr with nothing shown.  All
+    // three are unreachable today (the wx menu layer claims ID_FILE_OPEN first),
+    // which is what made this the D-15 shape: the signature was satisfied and
+    // the protocol was not.
+    void WriteBackChosenPath() {
+        if (!m_ofn.lpstrFile || m_ofn.nMaxFile == 0) return;
+        const char* src = (LPCTSTR) m_strResult;
+        size_t n = strlen(src);
+        if (n > (size_t) m_ofn.nMaxFile - 1) n = (size_t) m_ofn.nMaxFile - 1;
+        memcpy(m_ofn.lpstrFile, src, n);
+        m_ofn.lpstrFile[n] = '\0';
     }
 
     INT_PTR DoModal() override {
@@ -5134,6 +5160,7 @@ public:
                     m_strResult = path;
                     free(path);
                     m_paths.push_back(m_strResult);
+                    WriteBackChosenPath();
                     return IDOK;
                 }
                 // Multi-select result: NUL-separated full paths, the block
@@ -5143,6 +5170,13 @@ public:
                 free(path);
                 if (!m_paths.empty()) {
                     m_strResult = m_paths.front();
+                    // Deliberately NOT written back to lpstrFile: Windows packs
+                    // "dir\0name1\0name2\0\0" there under OFN_ALLOWMULTISELECT,
+                    // and all three multi-select call sites in the tree read the
+                    // answer with GetStartPosition/GetNextPathName instead (the
+                    // protocol fixed in 5d6345e).  Packing the port's block of
+                    // *full* paths would put a different shape in the caller's
+                    // buffer than Windows does, for a field nothing reads.
                     return IDOK;
                 }
                 // An OK with nothing selected cannot come out of wx, but a

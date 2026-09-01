@@ -2624,6 +2624,35 @@ int RunWorldFrameSelfTest()
         check(!input.empty(), "line info: a typed line is marked (input)");
         check(note != input,  "line info: ...and the two are not the same string");
 
+        // ── and NOT below the last line ──────────────────────────────────
+        // Windows works out whether the cursor is on a line at all before it
+        // composes anything: calculate_line_and_column hands back bOutside
+        // (mushview.cpp:1896-1904) and OnToolTipNeedText answers an empty
+        // string (:4255-4256).  COutputPane::PointToChar CLAMPS instead --
+        // which is right for every other caller, since a click below the text
+        // selects the last line on both platforms -- so the last line's
+        // information used to follow the cursor down the whole empty area
+        // under the text, and the lambda's own `pt.line >= GetCount()` guard
+        // could never fire because pt.line had already been clamped.
+        const long long rows = pane->TotalVisualRows();
+        check(rows > 0,
+              "line info (fixture): the buffer occupies some visual rows, so "
+              "\"one row past the end\" is a real place");
+        check(!tipForRow((int) rows - 1).empty(),
+              "line info (fixture): the LAST occupied row still answers, so "
+              "the assertion below is about being past the end and not about "
+              "the callback having gone silent");
+        check(tipForRow((int) rows).empty(),
+              "line info: the first row PAST the last line has no tooltip "
+              "(was: the last line's information, anywhere in the dead space)");
+        check(tipForRow((int) rows + 20).empty(),
+              "line info: ...and neither does one far below it");
+        check(pane->m_fn_get_tooltip
+                  ? pane->m_fn_get_tooltip(4, -pane->LineHeight() * 2).empty()
+                  : false,
+              "line info: nor does a y ABOVE the first line -- bOutside is "
+              "true at both ends");
+
         // The control: the option gates it.  Without this, a callback that
         // ignored m_bLineInformation would pass everything above.
         doc->m_bLineInformation = 0;
@@ -2719,6 +2748,36 @@ int RunWorldFrameSelfTest()
             check(sawLineInfo,
                   "link flyover (control): a line with no link still answers "
                   "with the line information");
+        }
+
+        // The "is the cursor on a line at all?" test gates the HINT branch as
+        // well as the line information -- Windows runs
+        // calculate_line_and_column once, before either.  With x over the
+        // link's own columns, hovering the dead space below the buffer used to
+        // answer with the LAST line's hint.
+        {
+            doc->ClearOutput();
+            doc->m_iMXP_defaultMode = eMXP_secure;
+            doc->m_iMXP_mode        = eMXP_secure;
+            const char* kLink = "<SEND href='look'>here</SEND>\n";
+            doc->DisplayMsg(kLink, (int) strlen(kLink), 0);
+            doc->UpdateAllViews(NULL);
+            const int       lh4   = pane->LineHeight();
+            const long long rows4 = pane->TotalVisualRows();
+            check(rows4 > 0 && pane->m_fn_get_tooltip != nullptr,
+                  "link flyover (fixture): the link line occupies a row and "
+                  "the callback is wired");
+            if (pane->m_fn_get_tooltip && rows4 > 0) {
+                check(pane->m_fn_get_tooltip(
+                          4, (int) ((rows4 - 1) * lh4) + lh4 / 2) == "look",
+                      "link flyover (fixture): the link's own row answers with "
+                      "its action, so the assertion below is about being past "
+                      "the end");
+                check(pane->m_fn_get_tooltip(
+                          4, (int) (rows4 * lh4) + lh4 / 2).empty(),
+                      "link flyover: the dead space below the buffer shows no "
+                      "hint either (was: the last line's, clamped onto it)");
+            }
         }
 
         doc->m_iMXP_mode = savedMxpMode;

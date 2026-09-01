@@ -2760,8 +2760,12 @@ void COutputPane::OnSize(wxSizeEvent& evt)
 
 // ── Selection helpers ─────────────────────────────────────────────────────────
 
-int COutputPane::YToLine(int clientY) const
+int COutputPane::YToLine(int clientY, bool* outside) const
 {
+    // Windows' bOutside starts TRUE and is cleared only when the raw row lands
+    // inside the buffer (CMUSHView::calculate_line_and_column,
+    // mushview.cpp:1896-1904), so an empty pane counts as outside.
+    if (outside) *outside = true;
     if (LineCountI() == 0) return 0;
 
     // Honor the text rectangle's vertical offset (text starts at its top).
@@ -2771,12 +2775,30 @@ int COutputPane::YToLine(int clientY) const
     const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
     int unitH;
     const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
-    const long long yPix = (long long) scrollY * unitH + clientY;
-    const int visRow = pal::clampToDeviceExtent(
-                           (m_lineH > 0) ? yPix / m_lineH : 0);
+    const long long yPix   = (long long) scrollY * unitH + clientY;
+    const long long rawRow = (m_lineH > 0) ? (yPix / m_lineH) : 0;
+    const int visRow = pal::clampToDeviceExtent(rawRow);
+    // The row the pixel really named, BEFORE the clamp above -- Windows keeps
+    // the same two facts apart: it clamps `line` and still reports that the
+    // clamp happened.  Every caller but the tooltip discards the flag, which
+    // is parity: a click below the buffer selects the last line there too.
+    // Asked of yPix rather than of rawRow or visRow, because C++ truncates
+    // toward zero (so -5/15 is 0, not -1) and clampToDeviceExtent floors at 0
+    // -- both would swallow "above the first line" entirely.
+    if (outside)
+        *outside = (yPix < 0) || (rawRow >= m_totalVisualRows);
     // Map visual row → logical line via the wrap cache.
     return std::max(0, std::min(LineCountI() - 1,
                                 const_cast<COutputPane*>(this)->VisualRowToLogical(visRow)));
+}
+
+// See the header.  Y only, exactly like Windows' bOutside: the column is
+// clamped on both platforms and never decides whether a point is on a line.
+bool COutputPane::YIsOutsideLines(int clientY) const
+{
+    bool outside = true;
+    YToLine(clientY, &outside);
+    return outside;
 }
 
 // The preamble's width in character cells for a line — 0 when the option is

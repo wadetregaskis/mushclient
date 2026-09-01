@@ -530,6 +530,16 @@ public:
     // that need to map pixel coordinates to text without owning a wxMouseEvent.
     SelPoint PointToChar(int clientX, int clientY, bool halfway = true) const;
 
+    // "Is this y even on a line?" — CMUSHView::calculate_line_and_column's
+    // bOutside (mushview.cpp:1896-1904), which is TRUE above the first line
+    // and below the last, and for an empty buffer.  PointToChar deliberately
+    // does not answer it: every Windows caller of calculate_line_and_column
+    // discards bOutside and takes the clamped line EXCEPT the tooltip, which
+    // answers with an empty tip instead (mushview.cpp:4255-4256).  Exposed so
+    // the frame's tooltip callback can ask the same question without
+    // re-deriving the pane's pixel arithmetic.
+    bool YIsOutsideLines(int clientY) const;
+
     // Number of lines currently in the buffer.
     int LineCount() const { return LineCountI(); }
 
@@ -1027,8 +1037,13 @@ private:
 
     // ── Selection helpers ────────────────────────────────────────────────────
 
-    // Convert client-coordinates y to a line index.
-    int YToLine(int clientY) const;
+    // Convert client-coordinates y to a line index.  The result is always
+    // CLAMPED into the buffer, which is what every Windows caller of
+    // calculate_line_and_column but one wants (a click below the text selects
+    // the last line).  `outside`, when supplied, is that function's bOutside:
+    // true when the pixel named a row outside the buffer and the clamp above
+    // therefore moved it.  See YIsOutsideLines.
+    int YToLine(int clientY, bool* outside = nullptr) const;
     // The y below which a drag counts as "past the bottom edge".  One
     // expression, because OnMotion and AutoScrollTick must not disagree about
     // where the edge is -- the hint bar moves it when the view is frozen.

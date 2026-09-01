@@ -1383,6 +1383,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                   SRunEncoding{ m_doc->m_bUTF_8 != 0,
                                                 (int) m_doc->m_font_charset });
 
+        // 1a. Is the cursor on a line at all?  Windows decides this ONCE, past
+        // the miniwindow arm and before either the hint or the line
+        // information: calculate_line_and_column hands back bOutside
+        // (mushview.cpp:1896-1904) and OnToolTipNeedText answers an empty tip
+        // (`pTTT->szText [0] = 0`, :4255-4256).  PointToChar CLAMPS instead --
+        // rightly, since every other Windows caller discards bOutside and wants
+        // the last line -- so the guard further down (pt.line >= GetCount())
+        // could never fire, and the last line's information, or even its MXP
+        // hint when x happened to fall over a link's columns, followed the
+        // cursor all the way down the empty area below the text.
+        if (m_output->YIsOutsideLines(y))
+            return {};
+
         // 2. Check MXP hint text on the output line under the cursor.
         // Use PointToChar for wrap-aware hit-testing: it returns the absolute
         // character column within the logical line, which we then walk to find

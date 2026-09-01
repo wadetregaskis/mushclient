@@ -271,6 +271,8 @@ const Dialect kDialects[] = {
   "function params(a, b, c, d)\n"
   "  world.SetVariable('p', string.format('%d|%d|%s|%s', a, b, c, d)) end\n"
   "function tbl(s, t) world.SetVariable('t', t.key or '?') end\n"
+  "function rsize(n, s) world.SetVariable('rsize', tostring(#s)) end\n"
+  "function rtblsize(s, t) world.SetVariable('rtbl', tostring(#t.key)) end\n"
   "n = 0\n"
   "function bump() n = n + 1 world.SetVariable('n', tostring(n)) end\n"
   "shared = 'from A'\n"
@@ -370,6 +372,8 @@ const Dialect kDialects[] = {
   "def params(a, b, c, d):\n"
   "    world.SetVariable('p', '%d|%d|%s|%s' % (int(a), int(b), c, d))\n"
   "def tbl(s, t):\n    world.SetVariable('t', t.get('key', '?'))\n"
+  "def rsize(n, s):\n    world.SetVariable('rsize', str(len(s.encode('utf-8', 'surrogateescape'))))\n"
+  "def rtblsize(s, t):\n    world.SetVariable('rtbl', str(len(t['key'].encode('utf-8', 'surrogateescape'))))\n"
   "n = 0\n"
   "def bump():\n"
   "    global n\n    n = n + 1\n    world.SetVariable('n', str(n))\n"
@@ -464,6 +468,8 @@ const Dialect kDialects[] = {
   "sub rbigneg { return -(2**64); }\n"
   "sub params { $world->SetVariable('p', sprintf('%d|%d|%s|%s', @_)); }\n"
   "sub tbl { my ($s, $t) = @_; $world->SetVariable('t', $t->{key} || '?'); }\n"
+  "sub rsize { $world->SetVariable('rsize', length($_[1])); }\n"
+  "sub rtblsize { my ($s, $t) = @_; $world->SetVariable('rtbl', length($t->{key})); }\n"
   "our $n = 0;\n"
   "sub bump { $n = $n + 1; $world->SetVariable('n', \"$n\"); }\n"
   "our $shared = 'from A';\n"
@@ -543,6 +549,8 @@ const Dialect kDialects[] = {
   "function params(a, b, c, d) {\n"
   "  world.SetVariable('p', [Math.round(a), Math.round(b), c, d].join('|')); }\n"
   "function tbl(s, t) { world.SetVariable('t', t.key || '?'); }\n"
+  "function rsize(n, s) { world.SetVariable('rsize', String(s.length)); }\n"
+  "function rtblsize(s, t) { world.SetVariable('rtbl', String(t.key.length)); }\n"
   "var n = 0;\n"
   "function bump() { n = n + 1; world.SetVariable('n', String(n)); }\n"
   "var shared = 'from A';\n"
@@ -640,6 +648,8 @@ const Dialect kDialects[] = {
   "proc tbl {s t} {\n"
   "  if {[dict exists $t key]} { world SetVariable t [dict get $t key] } \\\n"
   "  else { world SetVariable t ? } }\n"
+  "proc rsize {n s} { world SetVariable rsize [string length $s] }\n"
+  "proc rtblsize {s t} { world SetVariable rtbl [string length [dict get $t key]] }\n"
   "set n 0\n"
   "proc bump {} { global n; incr n; world SetVariable n $n }\n"
   "set shared {from A}\n"
@@ -719,6 +729,8 @@ const Dialect kDialects[] = {
   "  world.SetVariable('p', '%d|%d|%s|%s' % [a.to_i, b.to_i, c, d])\n"
   "end\n"
   "def tbl(s, t); world.SetVariable('t', t['key'] || '?'); end\n"
+  "def rsize(n, s); world.SetVariable('rsize', s.bytesize.to_s); end\n"
+  "def rtblsize(s, t); world.SetVariable('rtbl', t['key'].bytesize.to_s); end\n"
   "@n = 0\n"
   "def bump; @n = (@n || 0) + 1; world.SetVariable('n', @n.to_s); end\n"
   "@shared = 'from A'\n"
@@ -1081,6 +1093,37 @@ void battery_parameters(Engine& e, const Dialect& d)
     e.callRich("tbl", &err, {}, { "line" }, &t);
     check(!err && e.var("t") == "value", L,
           "the optional table (named wildcards) arrives as a mapping");
+
+    // MUD packets are not the only NUL carriers: OnPluginTelnetSubnegotiation's
+    // payload arrives through THIS overload's sparams (ZMP and MSDP separate
+    // fields with 0x00 -- the Windows arm's own comment says "this crazy code
+    // is to get 0x00 bytes into telnet subnegotiations"), and the table's
+    // values ride the same marshalling.  Tcl and Ruby handed both to the
+    // script NUL-terminated, so everything after the first 0x00 silently
+    // vanished -- in those two languages only; the other four, and both
+    // languages' own SIMPLE overloads, were already length-explicit.  The byte
+    // count is computed INSIDE the script, because reading the bytes back out
+    // through a world variable would itself truncate at the NUL (the port-wide
+    // BSTR rule) and hide exactly the difference under test.
+    e.seed("rsize", "handler never ran");
+    e.callRich("rsize", &err, { 1 }, { std::string("a\0z", 3) });
+    check(e.var("rsize") == "3", L,
+          "a rich-callback string argument with a NUL byte arrives at full length");
+
+    std::map<std::string, std::string> tn{ { "key", std::string("x\0y", 3) } };
+    e.seed("rtbl", "handler never ran");
+    e.callRich("rtblsize", &err, {}, { "line" }, &tn);
+    if (strcmp(d.key, "lua") == 0)
+        // The control differs BY SPECIFICATION on this one: ExecuteLua's table
+        // push is shared, Windows-identical code (lua_scripting.cpp uses
+        // lua_pushstring, i.e. strlen), so Lua truncates a table value at a
+        // NUL on both platforms.  Pinning that protects the shared TU --
+        // "fixing" it here would be an upstream divergence.
+        check(e.var("rtbl") == "1", L,
+              "a table value with a NUL truncates in Lua (shared, Windows-identical code)");
+    else
+        check(e.var("rtbl") == "3", L,
+              "a table value with a NUL byte arrives at full length");
 }
 
 // 3a-quater. VT_DATE.

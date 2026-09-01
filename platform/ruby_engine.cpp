@@ -478,21 +478,28 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   // allocation later in the loop could collect an earlier arg → use-after-collect.
   VALUE av = rb_ary_new ();
   for (double d : nparams)         rb_ary_push (av, DBL2NUM (d));
-  for (const string & s : sparams) rb_ary_push (av, rb_str_new_cstr (s.c_str ()));
+  // Length-explicit (rb_str_new_cstr is strlen): sparams carries the raw
+  // telnet subnegotiation payload (OnPluginTelnetSubnegotiation), which holds
+  // NUL bytes -- ZMP and MSDP separate their fields with them.  Same rule the
+  // simple overload below already follows; wildcards and the table ride the
+  // same marshalling, so they follow it too.
+  for (const string & s : sparams)
+    rb_ary_push (av, rb_str_new (s.data (), (long) s.size ()));
   if (regexp)                                   // wildcards as an Array [whole, $1, ...]
     {
     vector<string> wildcards;
     regexp->GetCallbackWildcards (bLowercaseWildcards, wildcards);
     VALUE wc = rb_ary_new ();
     for (size_t i = 0; i < wildcards.size (); i++)
-      { const string & w = wildcards [i]; rb_ary_push (wc, rb_str_new_cstr (w.c_str ())); }
+      { const string & w = wildcards [i]; rb_ary_push (wc, rb_str_new (w.data (), (long) w.size ())); }
     rb_ary_push (av, wc);
     }
   if (table)                                    // as a Hash
     {
     VALUE h = rb_hash_new ();
     for (const auto & kv : *table)
-      rb_hash_aset (h, rb_str_new_cstr (kv.first.c_str ()), rb_str_new_cstr (kv.second.c_str ()));
+      rb_hash_aset (h, rb_str_new (kv.first.data (), (long) kv.first.size ()),
+                       rb_str_new (kv.second.data (), (long) kv.second.size ()));
     rb_ary_push (av, h);
     }
 

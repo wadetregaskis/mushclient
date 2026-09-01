@@ -334,7 +334,13 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
     else
       av.push_back (Tcl_NewDoubleObj (d));
     }
-  for (const string & s : sparams)  av.push_back (Tcl_NewStringObj (s.c_str (), -1));
+  // Length-explicit (-1 means strlen): sparams carries the raw telnet
+  // subnegotiation payload (OnPluginTelnetSubnegotiation), which holds NUL
+  // bytes -- ZMP and MSDP separate their fields with them.  Same rule the
+  // simple overload below already follows; wildcards and the table ride the
+  // same marshalling, so they follow it too.
+  for (const string & s : sparams)
+    av.push_back (Tcl_NewStringObj (s.data (), (int) s.size ()));
   if (regexp)                                   // wildcards as a Tcl list {whole $1 ...}
     {
     vector<string> wildcards;
@@ -342,15 +348,15 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
     Tcl_Obj* wc = Tcl_NewListObj (0, nullptr);
     for (size_t i = 0; i < wildcards.size (); i++)
       { const string & w = wildcards [i];
-        Tcl_ListObjAppendElement (interp, wc, Tcl_NewStringObj (w.c_str (), -1)); }
+        Tcl_ListObjAppendElement (interp, wc, Tcl_NewStringObj (w.data (), (int) w.size ())); }
     av.push_back (wc);
     }
   if (table)                                    // as a Tcl dict (flat key value ...)
     {
     Tcl_Obj* d = Tcl_NewListObj (0, nullptr);
     for (const auto & kv : *table)
-      { Tcl_ListObjAppendElement (interp, d, Tcl_NewStringObj (kv.first.c_str (), -1));
-        Tcl_ListObjAppendElement (interp, d, Tcl_NewStringObj (kv.second.c_str (), -1)); }
+      { Tcl_ListObjAppendElement (interp, d, Tcl_NewStringObj (kv.first.data (), (int) kv.first.size ()));
+        Tcl_ListObjAppendElement (interp, d, Tcl_NewStringObj (kv.second.data (), (int) kv.second.size ())); }
     av.push_back (d);
     }
 

@@ -4170,7 +4170,14 @@ void CWorldChildFrame::FireScrollCommand(EScrollCommand which)
     case eScrollStart:    m_output->ScrollToTop();      break;
     case eScrollPageUp:   m_output->ScrollPage(-1);     break;
     case eScrollPageDown: m_output->ScrollPage(+1);     break;
-    case eScrollEnd:      m_output->ScrollToBufferEnd();break;
+    case eScrollEnd:
+        // OnTestEnd alone also CLEARS the selection (mushview.cpp:1649-1652,
+        // after its ScrollToPosition); Start/PageUp/PageDown/LineUp/LineDown
+        // leave it alone.  Same order as Windows: scroll, then clear.
+        // SetSelectionRange(0,0,0,0) is the pane's canonical clear arm.
+        m_output->ScrollToBufferEnd();
+        m_output->SetSelectionRange(0, 0, 0, 0);
+        break;
     case eScrollLineUp:   m_output->ScrollLine(-1);     break;
     case eScrollLineDown: m_output->ScrollLine(+1);     break;
     }

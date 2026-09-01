@@ -1264,6 +1264,41 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── End clears the selection; Start keeps it ─────────────────────────────
+    // CMUSHView::OnTestEnd zeroes the selection after its scroll
+    // (mushview.cpp:1649-1652); OnTestStart and the other four scroll commands
+    // do not.  The port routes menu item, keystroke and command id through
+    // FireScrollCommand, so pinning the two arms here pins all three routes.
+    // Start is the control: without it, "End cleared" cannot be told apart
+    // from "every scroll command clears".
+    {
+        auto* childFrame = dynamic_cast<CWorldChildFrame*>(child);
+        check(childFrame != NULL, "fixture: the scroll-selection block has a frame");
+        if (childFrame) {
+            for (int i = 1; i <= 40; ++i) {
+                char buf[32];
+                snprintf(buf, sizeof buf, "sel line %d\n", i);
+                doc->DisplayMsg(buf, (int) strlen(buf), 0);
+            }
+            doc->UpdateAllViews(NULL);
+
+            pane->SetSelectionRange(3, 3, 1, 4);
+            check(!pane->GetSelectionText().IsEmpty(),
+                  "fixture: a real selection exists");
+
+            childFrame->FireScrollCommand(CWorldChildFrame::eScrollStart);
+            check(!pane->GetSelectionText().IsEmpty(),
+                  "Start keeps the selection (OnTestStart does not clear)");
+
+            childFrame->FireScrollCommand(CWorldChildFrame::eScrollEnd);
+            check(pane->GetSelectionText().IsEmpty(),
+                  "End clears the selection (OnTestEnd, mushview.cpp:1649)");
+
+            pane->ClearOutput();
+            doc->ClearOutput();
+        }
+    }
+
     // ── Clear Screen erases nothing and scrolls the last line to the top ─────
     // The fourth clear, and the odd one out: no line is freed, so the only
     // observable effects are the scroll position and the blank region opened

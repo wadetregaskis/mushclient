@@ -1293,6 +1293,9 @@ int RunWorldFrameSelfTest()
             childFrame->FireScrollCommand(CWorldChildFrame::eScrollEnd);
             check(pane->GetSelectionText().IsEmpty(),
                   "End clears the selection (OnTestEnd, mushview.cpp:1649)");
+            check(pane->IsAtBufferEnd(),
+                  "...and the view really is at the end, so the clear did not "
+                  "replace the scroll");
 
             pane->ClearOutput();
             doc->ClearOutput();
@@ -3051,9 +3054,22 @@ int RunWorldFrameSelfTest()
         check(pane->m_fn_link_clicked != nullptr,
               "unpause on link: the pane's link handler is wired");
 
-        // ON: the click both sends AND thaws.
+        // ON: the click both sends AND thaws -- and clears the selection,
+        // because Windows' unpause tail is addedstuff() -> OnTestEnd
+        // (mushview.cpp:1815 -> 1649-1652), not just the freeze bit.
         doc->m_bUnpauseOnSend = 1;
+        // A COMPLETED line to select: the block's own hover line is written
+        // without its newline (length 15 stops short of it), so it is still
+        // the pending line and the pane has nothing committed.
+        {
+            const char* sel = "select me\n";
+            doc->DisplayMsg(sel, (int) strlen(sel), 0);
+            doc->UpdateAllViews(NULL);
+        }
         pane->SetPaused(true);
+        pane->SetSelectionRange(1, 1, 1, 4);
+        check(!pane->GetSelectionText().IsEmpty(),
+              "unpause on link (fixture): a selection exists to be cleared");
         check(pane->IsPaused(),
               "unpause on link (fixture): the pane really is frozen first, so "
               "the assertion below is not vacuous");
@@ -3067,10 +3083,14 @@ int RunWorldFrameSelfTest()
         check(!pane->IsPaused(),
               "unpause on link: with unpause_on_send ON a send-link click "
               "thaws the output window (was: frozen, reply invisible)");
+        check(pane->GetSelectionText().IsEmpty(),
+              "unpause on link: ...and the thaw clears the selection, as "
+              "Windows' addedstuff -> OnTestEnd tail does");
 
         // OFF: the control.  Without it an unconditional thaw would pass.
         doc->m_bUnpauseOnSend = 0;
         pane->SetPaused(true);
+        pane->SetSelectionRange(1, 1, 1, 4);
         check(pane->IsPaused(),
               "unpause on link (fixture): frozen again for the control");
         wire->sent.clear();
@@ -3083,6 +3103,10 @@ int RunWorldFrameSelfTest()
         check(pane->IsPaused(),
               "unpause on link (control): ...and leaves the pane frozen, so "
               "the option really is what decides");
+        check(!pane->GetSelectionText().IsEmpty(),
+              "unpause on link (control): ...and the selection survives, so "
+              "the clear rides the option too");
+        pane->SetSelectionRange(0, 0, 0, 0);
 
         check(s_unpauseModals == 0,
               "unpause on link: no modal was raised (if this fails the checks "
@@ -3773,9 +3797,13 @@ int RunWorldFrameSelfTest()
         // (a) Ctrl+End in the command bar.
         pane->ScrollPage(-1);
         check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        pane->SetSelectionRange(1, 1, 1, 3);
         sendToBar(WXK_END);
         check(pane->IsAtBufferEnd(),
               "jump latch: Ctrl+End moved the view to the end");
+        check(pane->GetSelectionText().IsEmpty(),
+              "jump latch: ...and cleared the selection (OnTestEnd, "
+              "mushview.cpp:1649-1652)");
         check(pane->IsPaused(),
               "jump latch: ...and left it frozen (was: Ctrl+End always "
               "resumed, so the next burst scrolled the text away)");
@@ -3784,18 +3812,28 @@ int RunWorldFrameSelfTest()
         doc->m_bCtrlZGoesToEndOfBuffer = 1;
         pane->ScrollPage(-1);
         check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        pane->SetSelectionRange(1, 1, 1, 3);
         sendToBar('Z');
         check(pane->IsAtBufferEnd(),
               "jump latch: Ctrl+Z moved the view to the end");
         check(pane->IsPaused(), "jump latch: ...and left it frozen");
+        check(pane->GetSelectionText().IsEmpty(),
+              "jump latch: ...and Ctrl+Z cleared the selection (it rides "
+              "OnTestEnd, sendvw.cpp:2175-2184)");
 
         // (c) world.SetScroll(-1).
         pane->ScrollPage(-1);
         check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        pane->SetSelectionRange(1, 1, 1, 3);
         child->setScroll(-1);
         check(pane->IsAtBufferEnd(),
               "jump latch: SetScroll(-1) moved the view to the end");
         check(pane->IsPaused(), "jump latch: ...and left it frozen");
+        check(!pane->GetSelectionText().IsEmpty(),
+              "jump latch: ...and SetScroll(-1) KEEPS the selection -- "
+              "methods_output.cpp:620-635 never reaches OnTestEnd, so the "
+              "clear must not ride the pane call");
+        pane->SetSelectionRange(0, 0, 0, 0);
 
         // The control: with the option OFF -- its default -- all three resume,
         // so the assertions above are about the latch and not about the three

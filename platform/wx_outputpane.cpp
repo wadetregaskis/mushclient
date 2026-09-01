@@ -4117,7 +4117,9 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         // so does NOT unfreeze a view whose world says keep_pause_at_bottom.
         // This called ScrollToBottom, the explicit-unfreeze API, so Ctrl+End
         // always resumed output and the next burst scrolled the text away.
+        // OnTestEnd also clears the selection (mushview.cpp:1649-1652).
         ScrollToBufferEnd();
+        SetSelectionRange(0, 0, 0, 0);
         return;
     }
     if (evt.RawControlDown() &&

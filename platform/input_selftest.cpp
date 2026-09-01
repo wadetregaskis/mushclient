@@ -1047,11 +1047,20 @@ int RunInputSelfTest()
             COutputPane* pane = child->OutputPane();
             const unsigned short savedUnpause = doc->m_bUnpauseOnSend;
             doc->m_macros[MAC_F7] = "f7_unpause";
+            doc->m_bDoNotAddMacrosToCommandHistory = 0;
 
             doc->m_bUnpauseOnSend = 1;
             pane->SetPaused(true);
             chk(pane->IsPaused(), "fixture: the pane really paused");
             child->FireMacro(MAC_F7);
+            // The history entry is added AFTER Execute, so it doubles as the
+            // proof the macro was actually sent -- without it, a FireMacro
+            // that early-returned after the thaw would leave every assertion
+            // here green.
+            bool sentOn = false;
+            for (const std::string& c : child->commandList(0))
+                if (c == "f7_unpause") sentOn = true;
+            chk(sentOn, "fixture: the macro really executed (history entry)");
             chk(!pane->IsPaused(),
                 "F7: a SEND_NOW macro unpauses when unpause_on_send is on");
 
@@ -1060,6 +1069,73 @@ int RunInputSelfTest()
             child->FireMacro(MAC_F7);
             chk(pane->IsPaused(),
                 "...and leaves the pause alone when the option is off");
+
+            // Placement inside the switch: a REPLACE_COMMAND macro does not
+            // ride SendCommand on Windows (SendMacro's arm goes to SetCommand,
+            // sendvw.cpp:790), so it must not thaw even with the option on.
+            doc->m_bUnpauseOnSend = 1;
+            doc->m_macro_type[MAC_F7] = REPLACE_COMMAND;
+            child->FireMacro(MAC_F7);
+            chk(pane->IsPaused(),
+                "...and a REPLACE_COMMAND macro never thaws (the gate lives "
+                "inside the SEND_NOW arm, as SendMacro routes it)");
+            doc->m_macro_type[MAC_F7] = SEND_NOW;
+
+            // The sibling paths that ride SendCommand on Windows.  A live
+            // transport so Execute returns eOK -- RepeatLastCommand's thaw
+            // sits behind the success gate, exactly as Windows' :756 tail
+            // sits behind the Execute return at sendvw.cpp:727-730.
+            {
+                pal::ITransport* savedWire  = doc->m_pTransport;
+                const int        savedPhase = doc->m_iConnectPhase;
+                RecordingTransport wire;
+                doc->m_pTransport    = &wire;
+                doc->m_iConnectPhase = eConnectConnectedToMud;
+                doc->m_bUnpauseOnSend = 1;
+
+                // Echo OFF, so the send produces NO new output: the drain's
+                // own clear-selection-on-new-output (outputpane parity) then
+                // cannot fire, and only the helper's clear -- the tail's
+                // addedstuff -> OnTestEnd half -- can empty the selection.
+                // With echo on, the echoed command masks a helper that forgot
+                // the clear (measured: the mutation survived).
+                const unsigned short savedEcho = doc->m_display_my_input;
+                doc->m_display_my_input = 0;
+                doc->DisplayMsg("select target\n", 14, 0);
+                doc->UpdateAllViews(nullptr);
+                pane->SetPaused(true);
+                // The LAST line is the one just displayed; line 1 may be an
+                // earlier block's blank line, and a collapsed selection is
+                // refused.
+                const int selLine = pane->LineCount();
+                pane->SetSelectionRange(selLine, selLine, 1, 4);
+                chk(!pane->GetSelectionText().IsEmpty(),
+                    "fixture: a selection exists before the repeat-send");
+                child->RepeatLastCommand();       // last entry: f7_unpause
+                chk(!pane->IsPaused(),
+                    "Repeat Last Command thaws too (sendvw.cpp:1761 rides "
+                    "SendCommand and its :756 tail)");
+                chk(pane->GetSelectionText().IsEmpty(),
+                    "...and the tail clears the selection with NOTHING echoed "
+                    "to mask it (addedstuff -> OnTestEnd)");
+                doc->m_display_my_input = savedEcho;
+
+                const unsigned short savedKpEn = doc->m_keypad_enable;
+                const CString savedKp0 = doc->m_keypad[0];
+                doc->m_keypad_enable = 1;
+                doc->m_keypad[0] = "kp_unpause";
+                pane->SetPaused(true);
+                child->FireKeypad(0);
+                chk(!pane->IsPaused(),
+                    "...and a keypad slot thaws (sendvw.cpp:1074 rides "
+                    "SendCommand too)");
+                doc->m_keypad[0]     = savedKp0;
+                doc->m_keypad_enable = savedKpEn;
+
+                doc->m_pTransport    = savedWire;
+                doc->m_iConnectPhase = savedPhase;
+            }
+
             pane->SetPaused(false);
             doc->m_bUnpauseOnSend = savedUnpause;
         }

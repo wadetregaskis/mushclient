@@ -361,6 +361,12 @@ public:
     // is empty or out of range, so a key-driven caller can fall through.
     bool FireMacro(int idx);
 
+    // CSendView::SendCommand's tail (sendvw.cpp:756-760): thaw a paused pane
+    // when unpause_on_send says so, and clear the selection the way the
+    // tail's addedstuff -> OnTestEnd does.  Called by every path that rides
+    // SendCommand on Windows; see the definition for the site list.
+    void UnpauseOutputOnSend();
+
     // ── the view-level commands, by COMMAND ID ─────────────────────────
     // Every one of these has a canonical ON_COMMAND on CMUSHView or CSendView
     // and no other route on the port: the key that does the same thing was

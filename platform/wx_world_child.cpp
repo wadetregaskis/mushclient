@@ -1568,8 +1568,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             // upstream) read this option here before; a click on a send-link in
             // frozen scrollback sent the command and then left the reply
             // off-screen.
-            if (m_doc->m_bUnpauseOnSend && m_output && m_output->IsPaused())
-                m_output->SetPaused(false);
+            UnpauseOutputOnSend();
 
             switch (m_doc->HyperlinkClicked(CString(cmd.c_str()),
                                             actionType, bCommentLine))
@@ -2703,8 +2702,11 @@ void CWorldChildFrame::RepeatLastCommand()
         // arm is a bare `return` that leaves SendCommand before its history
         // tail (sendvw.cpp:670-671), so a command the world would not take does
         // not join the up-arrow list.
-        if (autoSay == eAutoSaySent && !m_doc->m_bOmitFromCommandHistory)
-            addToCommandHistory(strForHistory);
+        if (autoSay == eAutoSaySent) {
+            if (!m_doc->m_bOmitFromCommandHistory)
+                addToCommandHistory(strForHistory);
+            UnpauseOutputOnSend();               // SendCommand's tail (:756)
+        }
         m_doc->UpdateAllViews(nullptr);
         return;
     }
@@ -2721,6 +2723,7 @@ void CWorldChildFrame::RepeatLastCommand()
     if (!m_doc->m_bOmitFromCommandHistory)
         addToCommandHistory(strForHistory);
 
+    UnpauseOutputOnSend();                       // SendCommand's tail (:756)
     m_doc->UpdateAllViews(nullptr);
 }
 
@@ -3072,8 +3075,14 @@ void CWorldChildFrame::GotoBookmark()
 // ── Freeze Output: toggle the output pane's autoscroll pause ────────────────
 void CWorldChildFrame::FreezeOutput()
 {
-    if (m_output)
-        m_output->SetPaused(!m_output->IsPaused());
+    if (!m_output) return;
+    const bool nowPaused = !m_output->IsPaused();
+    m_output->SetPaused(nowPaused);
+    // Unfreezing runs OnTestEnd on Windows (OnDisplayFreezeoutput,
+    // mushview.cpp:3231-3237): the jump is SetPaused(false)'s ScrollToBottom,
+    // and OnTestEnd also clears the selection (mushview.cpp:1649-1652).
+    if (!nowPaused)
+        m_output->SetSelectionRange(0, 0, 0, 0);
 }
 
 // ── Go To Line: prompt for a line number and go to it ───────────────────────
@@ -3757,6 +3766,9 @@ void CWorldChildFrame::FireAcceleratorCommand(WORD nID)
         // path as CSendView::SendCommand") but was not actually doing, so an
         // accelerator whose text used the script prefix or contained the command
         // stack character behaved differently from typing the same text.
+        UnpauseOutputOnSend();   // sendvw.cpp:756 via OnAcceleratorCommand's
+                                 // SendCommand at :2301; the SendTo arm below
+                                 // does not ride SendCommand and must not thaw
         m_doc->m_iExecutionDepth = 0;
         m_doc->Execute(sCommand.c_str());
     } else {
@@ -3877,7 +3889,7 @@ bool CWorldChildFrame::AltArrowRecall(bool bUp)
 
 // ── FireMacro ──────────────────────────────────────────────────────────────
 // Dispatch macro slot `idx`, the port's stand-in for CSendView::SendMacro
-// (sendvw.cpp:743-793).  Returns false when the slot is unusable, which lets a
+// (sendvw.cpp:764-814).  Returns false when the slot is unusable, which lets a
 // key-driven caller fall through to typing the key normally.
 //
 // This lives here rather than inside OnInputKeyDown because it has TWO kinds of
@@ -3924,13 +3936,11 @@ bool CWorldChildFrame::FireMacro(int idx)
         CString cmd = mac;
         if (m_doc->m_bTranslateBackslashSequences)
             cmd = ::FixupEscapeSequences(cmd);
-        // Unpause output on send: Windows' SEND_NOW macros ride SendCommand,
-        // whose tail runs this same gate (sendvw.cpp:756 via SendMacro's
-        // SendCommand call at :796) -- going straight to Execute() skipped it,
-        // so a macro fired into frozen scrollback left the reply off-screen.
-        // Same two lines and same placement as sendCommand's own arm.
-        if (m_doc->m_bUnpauseOnSend && m_output && m_output->IsPaused())
-            m_output->SetPaused(false);
+        // Windows' SEND_NOW macros ride SendCommand (SendMacro's call at
+        // sendvw.cpp:797), so they get its unpause tail -- going straight to
+        // Execute() skipped it, and a macro fired into frozen scrollback left
+        // the reply off-screen.
+        UnpauseOutputOnSend();
         m_doc->m_iCurrentActionSource = eUserMacro;
         m_doc->m_iExecutionDepth = 0;
         m_doc->Execute(cmd);
@@ -4036,6 +4046,9 @@ bool CWorldChildFrame::FireKeypad(int idx)
     m_doc->m_bEnableAutoSay = FALSE;
     if (m_doc->m_bTranslateBackslashSequences)   // sendvw.cpp:707-709
         kp = ::FixupEscapeSequences(kp);
+    UnpauseOutputOnSend();                        // sendvw.cpp:756, the tail
+                                                  // of the SendCommand this
+                                                  // path rides at :1074
     m_doc->m_iCurrentActionSource = eUserKeypad;  // GetInfo(239) == 3
     m_doc->m_iExecutionDepth = 0;                 // sendvw.cpp:702
     m_doc->Execute(kp);                           // not EvaluateCommand
@@ -4161,9 +4174,12 @@ bool CWorldChildFrame::FireNamedMacroCommand(int id)
 //
 // Every one of them CANCELS the output-buffer fade first.  That is the whole
 // point of the cancel -- you scrolled back to read something, so it returns to
-// full intensity for one fade's worth of time -- and Windows does it in the
-// same commands (CSendView::OnTestPageup / OnTestPagedown / OnTestEnd,
-// sendvw.cpp:564-580).
+// full intensity for one fade's worth of time.  Windows writes the cancel in
+// only two of the six (CSendView::OnTestEnd at sendvw.cpp:569 and
+// OnTestPagedown at :577; PageUp/Start/LineUp/LineDown are bare delegations);
+// cancelling on all six here is a deliberate simplification -- scrolling back
+// UP is at least as much "reading" as down -- and is largely masked anyway,
+// because the view repaints reset the fade clock upstream.
 //
 // Note which pane call each one makes.  Start / Page Up / Page Down / Line Up
 // / Line Down / End all reach CMUSHView::ScrollToPosition upstream, so each
@@ -4188,6 +4204,31 @@ void CWorldChildFrame::FireScrollCommand(EScrollCommand which)
     case eScrollLineUp:   m_output->ScrollLine(-1);     break;
     case eScrollLineDown: m_output->ScrollLine(+1);     break;
     }
+}
+
+// ── UnpauseOutputOnSend ────────────────────────────────────────────────────
+// The tail of CSendView::SendCommand (sendvw.cpp:756-760): every send that
+// rides SendCommand on Windows -- typing (:365), a keypad slot (:1074),
+// Repeat Last Command (:1761), an accelerator set to Execute (:2301), a
+// SEND_NOW macro (SendMacro, :797) -- thaws a paused view when
+// unpause_on_send says so.  The tail is not just the thaw: its addedstuff()
+// runs OnTestEnd once unfrozen (mushview.cpp:1815), which also CLEARS the
+// selection (mushview.cpp:1649-1652).  The hyperlink path reads the same
+// option one layer up (mushview.cpp:2177) and ends in the same OnTestEnd.
+// ONE body for all of those, so the sites cannot drift again.
+//
+// Most port sites run this BEFORE Execute, where Windows' tail runs after a
+// successful send; the port's typed path established that placement and the
+// difference is only observable when Execute fails or a script re-pauses
+// mid-Execute -- recorded in docs/BUGHUNT-2026-09.md rather than silently
+// re-ordered here.  RepeatLastCommand, which already models SendCommand's
+// success gate, runs it after Execute exactly as Windows does.
+void CWorldChildFrame::UnpauseOutputOnSend()
+{
+    if (!m_doc || !m_output) return;
+    if (!m_doc->m_bUnpauseOnSend || !m_output->IsPaused()) return;
+    m_output->SetPaused(false);
+    m_output->SetSelectionRange(0, 0, 0, 0);
 }
 
 // ── the view-level commands, by COMMAND ID ─────────────────────
@@ -4591,9 +4632,11 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Without this it fell through to the text control's native undo.
     if (evt.RawControlDown() && code == 'Z' &&
         m_doc && m_doc->m_bCtrlZGoesToEndOfBuffer && m_output) {
-        // CSendView::OnEditCtrlZ calls OnTestEnd (sendvw.cpp:2217-2225), so
-        // this is the same jump Ctrl+End makes and obeys the same latch.
-        m_output->ScrollToBufferEnd();
+        // CSendView::OnEditCtrlZ (sendvw.cpp:2175-2184) calls its OnTestEnd
+        // (:565-571), which cancels the fade and lands in CMUSHView::OnTestEnd
+        // -- the same jump, latch, and selection clear as Ctrl+End.  Ride the
+        // same body so the two routes cannot drift.
+        FireScrollCommand(eScrollEnd);
         return;
     }
 
@@ -5404,8 +5447,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     m_doc->m_bOmitFromCommandHistory = false;    // sendvw.cpp:625
 
     // Unpause output on send (unpause_on_send world option, default on).
-    if (m_doc->m_bUnpauseOnSend && m_output && m_output->IsPaused())
-        m_output->SetPaused(false);
+    UnpauseOutputOnSend();
 
     // EvaluateCommand processes aliases, speed-walks, and scripting callbacks
     // before sending the text to the MUD — the same path Windows uses for

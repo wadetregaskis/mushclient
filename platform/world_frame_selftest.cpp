@@ -2636,6 +2636,97 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── the flyover for a link says what the click will do ──────────────────
+    // CMUSHView::OnToolTipNeedText (mushview.cpp:4283-4322) seeds strText with
+    // the HEAD of the pipe-delimited ACTION list -- "hint defaults to the
+    // default action" -- and only then overrides it with the head of the HINT
+    // list, and the line information shows only if BOTH left it empty.  The
+    // port returned the hint verbatim (pipes and all) and dropped straight to
+    // the line information when there was no hint attribute, which upstream
+    // never does for an actionable link.
+    {
+        const unsigned short savedMxp     = doc->m_bMXP;
+        const int            savedUseMxp  = doc->m_iUseMXP;
+        const int            savedMxpMode = doc->m_iMXP_mode;
+        // The atomic-element table lives on the App and is normally built by
+        // InitInstance, which a selftest exits before ever reaching -- without
+        // it every tag is an "Unknown MXP element" and the styles carry no
+        // action at all (which is exactly how this block first read).
+        App.MXP_LoadElements();
+        doc->m_bMXP      = true;
+        doc->m_iUseMXP   = eUseMXP;
+        doc->m_iMXP_mode = eMXP_secure;    // persistent secure: all tags allowed
+
+        // Feed one MXP line and read the flyover over its first character.
+        // Every row is probed and the first non-empty answer taken, because
+        // ClearOutput re-seeds a line of its own and the link is not always
+        // row 0.
+        auto tipForMxp = [&](const char* mxp) -> std::string {
+            doc->ClearOutput();
+            doc->m_iMXP_defaultMode = eMXP_secure;
+            doc->m_iMXP_mode        = eMXP_secure;
+            doc->DisplayMsg(mxp, (int) strlen(mxp), 0);
+            doc->UpdateAllViews(NULL);
+            const int lh3 = pane->LineHeight();
+            for (int row = 0; row < pane->LineCount(); ++row) {
+                const wxString t = pane->m_fn_get_tooltip
+                    ? pane->m_fn_get_tooltip(4, row * lh3 + lh3 / 2) : wxString();
+                const std::string s(t.utf8_str());
+                if (!s.empty() && s.compare(0, 5, "Line ") != 0)
+                    return s;
+            }
+            return std::string();
+        };
+
+        check(tipForMxp("<SEND href='look'>here</SEND>\n") == "look",
+              "link flyover: a hint-less send-link shows the command the click "
+              "will send (was: the \"Line N, <date>\" line information)");
+
+        check(tipForMxp("<SEND href='n|s' hint='Pick an exit|Go north|Go south'>"
+                        "exit</SEND>\n") == "Pick an exit",
+              "link flyover: a multi-hint link shows only the HEAD of the hint "
+              "list (was: the raw pipe-delimited string)");
+
+        check(tipForMxp("<SEND href='north|south'>exit</SEND>\n") == "north",
+              "link flyover: a hint-less multi-action link shows the DEFAULT "
+              "action, the one a click sends");
+
+        // ACTION_HYPERLINK takes the raw action, unsplit -- upstream pipe-
+        // splits only the SEND/PROMPT arm.  The pipe in the URL is what makes
+        // this discriminating: a shared splitter would answer "http://a".
+        check(tipForMxp("<A href='http://a|b'>link</A>\n") == "http://a|b",
+              "link flyover: a hyperlink shows its whole URL -- the hyperlink "
+              "arm does NOT pipe-split");
+
+        // The control that keeps the assertions above from passing on a
+        // callback that simply echoes something: an ordinary line still gets
+        // the line information, and a hinted send-link still prefers its hint.
+        check(tipForMxp("<SEND href='look' hint='peek'>here</SEND>\n") == "peek",
+              "link flyover (control): a hint still wins over the action");
+
+        {
+            doc->ClearOutput();
+            doc->DisplayMsg("an ordinary line\n", 17, 0);
+            doc->UpdateAllViews(NULL);
+            const int lh3 = pane->LineHeight();
+            bool sawLineInfo = false;
+            for (int row = 0; row < pane->LineCount(); ++row) {
+                const wxString t = pane->m_fn_get_tooltip
+                    ? pane->m_fn_get_tooltip(4, row * lh3 + lh3 / 2) : wxString();
+                const std::string s(t.utf8_str());
+                if (s.compare(0, 5, "Line ") == 0) sawLineInfo = true;
+            }
+            check(sawLineInfo,
+                  "link flyover (control): a line with no link still answers "
+                  "with the line information");
+        }
+
+        doc->m_iMXP_mode = savedMxpMode;
+        doc->m_iUseMXP   = savedUseMxp;
+        doc->m_bMXP      = savedMxp;
+        doc->ClearOutput();
+    }
+
     // ── an MXP link/hint must survive a legacy-charset byte ────────────────
     // The action and hint bytes of an MXP link are the world's bytes in the
     // world's charset, like the run text beside them -- but every DISPLAY use

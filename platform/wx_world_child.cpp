@@ -1396,6 +1396,25 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // every run after the first non-ASCII one, so the hint returned was the
         // wrong run's (or none).  The hyperlink walk in wx_outputpane.cpp
         // already measures with RunCharLen; this was the odd one out.
+        // The first NON-EMPTY pipe-delimited field -- the same rule the
+        // link-click handler uses to pick the default action, so the flyover
+        // names exactly what a click would send.  Windows takes the literal
+        // head (StringToList + GetHead, mxp/mxputils.cpp:358-384), which is the
+        // same string for every input but a degenerate leading '|'; there the
+        // click and the flyover agreeing matters more than matching a case
+        // upstream answers with an empty command.
+        auto firstField = [](const std::string& s) -> std::string {
+            size_t start = 0;
+            for (;;) {
+                size_t sep = s.find('|', start);
+                std::string part = s.substr(start,
+                    (sep == std::string::npos) ? std::string::npos : sep - start);
+                if (!part.empty()) return part;
+                if (sep == std::string::npos) return std::string();
+                start = sep + 1;
+            }
+        };
+
         int c = 0;
         for (const auto& run : *line) {
             int runLen = RunCharLen(run);
@@ -1411,10 +1430,36 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 if (action.empty() ||
                     action.find("&text;") != std::string::npos)
                     break;  // not an actionable link: line information instead
+
+                // What upstream actually puts in the flyover
+                // (CMUSHView::OnToolTipNeedText, mushview.cpp:4283-4322):
+                //   ACTION_SEND / ACTION_PROMPT -- the head of the HINT list if
+                //     there are any hints, else the head of the ACTION list.
+                //     Its own comment is "hint defaults to the default action":
+                //     with no hint attribute the flyover names the command the
+                //     click will send.
+                //   ACTION_HYPERLINK -- the hint if there is one, else the raw
+                //     action (the URL).  No pipe splitting on this arm.
+                //   anything else -- nothing, so the line information shows.
+                // This returned run.hint() verbatim, pipes and all, and fell
+                // straight through to the line information whenever the hint
+                // was absent.  The comment here claimed that matched upstream's
+                // `if (strText.IsEmpty ())`, but it does not: strText was
+                // already seeded with the default action by then, so it was NOT
+                // empty and the line info never showed.  A plain
+                // <send>look</send> therefore read "Line 1234, Sunday, ..."
+                // here and "look" on Windows, and a multi-hint link showed the
+                // whole raw "Pick an exit|Go north|Go south".
                 const std::string hint = run.hint();
-                if (!hint.empty())
-                    return DecodeRunBytes(hint, run.encoding());
-                break;      // empty hint: fall through to the line information,
+                const int type = run.action_type();
+                std::string tip;
+                if (type == ACTION_HYPERLINK)
+                    tip = hint.empty() ? action : hint;
+                else if (type == ACTION_SEND || type == ACTION_PROMPT)
+                    tip = firstField(hint.empty() ? action : hint);
+                if (!tip.empty())
+                    return DecodeRunBytes(tip, run.encoding());
+                break;      // nothing to say: the line information instead,
             }               // exactly as `if (strText.IsEmpty ())` does upstream
             c += runLen;
         }

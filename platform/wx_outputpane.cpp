@@ -374,6 +374,16 @@ const SOutputRun* COutputPane::RunAtCharColumn(const SOutputLine& line, int col,
 // Kept as a file-scope constant so OnPaint and OnLeftDown stay in sync.
 static constexpr int kHintBarH = 22;
 
+// ── Drag auto-scroll repeat ───────────────────────────────────────────────────
+// Windows repeats as fast as MFC's idle loop spins, i.e. paint-bound, so ANY
+// fixed rate here is the port's own invention -- stated rather than guessed at.
+// 50 ms is 20 lines a second, which is the usual macOS drag-autoscroll feel and
+// slow enough to stay controllable at the edge of a 5,000-line scrollback.  No
+// distance-proportional acceleration: that would be a second invention with no
+// Windows referent.
+static constexpr int kAutoScrollMs     = 50;
+static constexpr int kAutoScrollTimerId = 4711;
+
 // ── Event table ───────────────────────────────────────────────────────────────
 wxBEGIN_EVENT_TABLE(COutputPane, wxScrolledWindow)
     EVT_PAINT(                      COutputPane::OnPaint)
@@ -388,6 +398,7 @@ wxBEGIN_EVENT_TABLE(COutputPane, wxScrolledWindow)
     EVT_RIGHT_UP(                   COutputPane::OnRightUp)
     EVT_MOTION(                     COutputPane::OnMotion)
     EVT_LEAVE_WINDOW(               COutputPane::OnLeaveWindow)
+    EVT_MOUSE_CAPTURE_LOST(         COutputPane::OnCaptureLost)
     EVT_MOUSEWHEEL(                 COutputPane::OnMouseWheel)
     EVT_KEY_DOWN(                   COutputPane::OnKeyDown)
     EVT_MENU(ID_COPY,               COutputPane::OnMenuCopy)
@@ -448,6 +459,14 @@ COutputPane::COutputPane(wxWindow* parent, int maxLines)
     {
         Bind(evtType, &COutputPane::OnScrollWinUpdate, this);
     }
+
+    // The drag auto-scroll repeat (see AutoScrollTick).  A member wxTimer stops
+    // itself when the pane is destroyed, so there is no window in which it can
+    // outlive what it scrolls.
+    m_autoScrollTimer.SetOwner(this, kAutoScrollTimerId);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        if (!AutoScrollTick()) m_autoScrollTimer.Stop();
+    }, kAutoScrollTimerId);
 }
 
 // ── Font variant cache ────────────────────────────────────────────────────────
@@ -2992,6 +3011,7 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
 
     if (m_dragging) {
         m_dragging  = false;
+        m_autoScrollTimer.Stop();      // the drag is over; nothing left to chase
         m_selFocus  = MouseToSelPoint(evt);
         if (HasCapture()) ReleaseMouse();
         Refresh(false);
@@ -3110,6 +3130,7 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                 // sit INSIDE the callback guard, so it only held when a frame
                 // had wired m_fn_word_double_clicked.
                 m_dragging = false;
+                m_autoScrollTimer.Stop();
                 if (HasCapture()) ReleaseMouse();
 
                 // "Double-click Sends Word" / "…Pastes Word".  Dispatch the word
@@ -3238,6 +3259,91 @@ static wxCursor MiniWindowCursor(int id)
     }
 }
 
+// ── ScrollByRows ─────────────────────────────────────────────────────────────
+// One visual row per unit, up or down.
+//
+// This exists because the drag auto-scroll called wxWindow::ScrollLines, and on
+// this toolkit that is the BASE CLASS body -- `virtual bool ScrollLines(int)
+// { return false; }` (wx/window.h:1423).  wxScrolledWindow does not override
+// it; only two ribbon classes in the whole library do.  So the pane's
+// drag-past-the-edge scroll has never moved anything at all, in either
+// direction: the call compiled, ran, returned false and was discarded.  Scroll()
+// is what every other scrolling site in this class already uses.
+//
+// Deliberately does NOT re-evaluate the freeze from the new position
+// (RefreshAutoScrollFromPosition).  A drag scroll is not a user scroll: the
+// freeze during a drag is decided by FreezeIfSelection, which both callers run,
+// and re-deciding it from the position here THAWS a just-frozen selection
+// whenever the viewport is already against the end -- which is exactly the
+// state a drag near the bottom of a short buffer is in.
+void COutputPane::ScrollByRows(int rows)
+{
+    if (rows == 0) return;
+    int unitH = 0;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH <= 0) return;
+    // Ask for the row pitch rather than assuming the scroll rate is still
+    // m_lineH: AdoptMeasuredMetrics can change it after construction.
+    const int units = std::max(1, pal::pixelsToScrollUnits(m_lineH, unitH));
+    int scrollX = 0, scrollY = 0;
+    GetViewStart(&scrollX, &scrollY);
+    Scroll(scrollX, std::max(0, scrollY + rows * units));   // Scroll clamps the far end
+}
+
+int COutputPane::DragBottomEdge() const
+{
+    int clientH;
+    GetClientSize(nullptr, &clientH);
+    // When the hint bar is visible it is painted over the last rows, so treat
+    // its upper edge as the boundary and the drag does not fight the hint bar's
+    // own click region.
+    return (!m_autoScroll && LineCountI() != 0) ? clientH - kHintBarH - 10
+                                                : clientH - 10;
+}
+
+// ── AutoScrollTick ───────────────────────────────────────────────────────────
+// See the header.  One repeat of CMUSHView::mouse_still_down
+// (mushview.cpp:2550-2634): scroll a line, drag the selection out to the
+// remembered pointer position, and ask to be called again.
+bool COutputPane::AutoScrollTick()
+{
+    // Windows' gate is `GetCapture () != this` (mushview.cpp:2556).  m_dragging
+    // is the port's twin: set only by the mouse-down that captures, cleared by
+    // the release, by the double-click's early drag end, and by OnCaptureLost.
+    if (!m_dragging) return false;
+
+    const int bottomEdge = DragBottomEdge();
+    if (m_lastDragY > bottomEdge)
+        ScrollByRows(1);
+    else if (m_lastDragY < 10)
+        ScrollByRows(-1);
+    else
+        return false;      // back inside the text: mushview.cpp:2604's
+                           // `else return 0; // don't want any more idle calls`
+
+    // Re-extend to the SAME pointer position, which now names a different line
+    // because the view moved under it.  Deliberately NOT Windows'
+    // `m_last_mouse_position.y += m_FontHeight` walk (mushview.cpp:2601): that
+    // exists because calculate_line_and_column is handed a PRE-scroll device
+    // point, where PointToChar already folds GetViewStart into its answer, so
+    // bumping the stored y here would double-count and run the selection ahead
+    // of the scroll.
+    m_selFocus = PointToChar(m_lastDragX, m_lastDragY);
+    FreezeIfSelection();
+    Refresh(false);
+    return true;
+}
+
+// Capture taken away from under a drag -- a modal, a system gesture, or another
+// window grabbing it.  wx requires this handler once CaptureMouse has been
+// called, and it is what stops an auto-scroll repeat that would otherwise have
+// no release to end it.
+void COutputPane::OnCaptureLost(wxMouseCaptureLostEvent&)
+{
+    m_dragging = false;
+    m_autoScrollTimer.Stop();
+}
+
 void COutputPane::OnMotion(wxMouseEvent& evt)
 {
     int mwCursor = -999;
@@ -3268,18 +3374,24 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         // MUD the difference is a whole drag's worth of scrolling.
         FreezeIfSelection();
 
-        // Auto-scroll when dragging past the top or bottom edges.
-        // When the hint bar is visible, treat its upper edge as the bottom
-        // boundary so the drag doesn't fight with the hint-bar click region.
-        int clientW, clientH;
-        GetClientSize(&clientW, &clientH);
-        int bottomEdge = (!m_autoScroll && !LineCountI() == 0)
-                       ? clientH - kHintBarH - 10
-                       : clientH - 10;
+        // Auto-scroll when dragging past the top or bottom edges.  Windows
+        // does exactly this one scroll per move too (CMUSHView::OnMouseMove,
+        // mushview.cpp:2510-2517); what it ALSO has, and what the timer below
+        // supplies, is the repeat while the pointer sits still past the edge.
+        m_lastDragX = evt.GetX();
+        m_lastDragY = evt.GetY();
+        const int bottomEdge = DragBottomEdge();
         if (evt.GetY() > bottomEdge)
-            ScrollLines(1);
+            ScrollByRows(1);
         else if (evt.GetY() < 10)
-            ScrollLines(-1);
+            ScrollByRows(-1);
+
+        if (evt.GetY() > bottomEdge || evt.GetY() < 10) {
+            if (!m_autoScrollTimer.IsRunning())
+                m_autoScrollTimer.Start(kAutoScrollMs);
+        } else {
+            m_autoScrollTimer.Stop();   // back inside: mouse_still_down's
+        }                               // `else return 0` (mushview.cpp:2604)
     } else {
         // Update cursor.  Priority order:
         //   1. Hint bar area → pointing hand (clicking snaps to bottom).

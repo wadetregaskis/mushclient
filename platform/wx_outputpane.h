@@ -638,6 +638,20 @@ public:
     // Public so CWorldChildFrame::setOutputSelection can do the same.
     void FreezeIfSelection();
 
+    // ── One repeat of the drag auto-scroll ────────────────────────────────
+    // The port of CMUSHView::mouse_still_down (mushview.cpp:2550-2634), which
+    // MFC calls from the idle loop for as long as it returns non-zero: while
+    // the button is held past an edge of the text area, scroll one line and
+    // re-extend the selection to the remembered pointer position.  Returns
+    // whether it wants to be called again, and the timer stops itself when it
+    // says no -- including the `else return 0` arm for a pointer that has come
+    // back inside, which is what ends the repeat.
+    //
+    // Public, and driven by the timer rather than hidden inside its lambda, so
+    // a loop-free selftest can run the repeat itself: this pane's harness exits
+    // from wxApp::OnInit, where wxYield corrupts the heap (CLAUDE.md, 8f12c1c).
+    bool AutoScrollTick();
+
     // Whether to auto-copy text selection to the clipboard on mouse release.
     // Corresponds to world option copy_selection_to_clipboard.
     void SetCopySelectionToClipboard(bool v) { m_copySelToClip = v; }
@@ -969,6 +983,12 @@ private:
     void OnRightDown(wxMouseEvent& evt);
     void OnRightDClick(wxMouseEvent& evt);
     void OnLeaveWindow(wxMouseEvent& evt);
+    // Losing the capture ends the drag, exactly as a release does.  wx REQUIRES
+    // this handler once CaptureMouse is called (it asserts otherwise), and with
+    // an auto-scroll repeat running it is load-bearing: a capture snatched away
+    // by a modal or a system gesture would otherwise leave the timer scrolling
+    // for ever.
+    void OnCaptureLost(wxMouseCaptureLostEvent& evt);
     void OnRightUp(wxMouseEvent& evt);
     void OnMotion(wxMouseEvent& evt);
     void OnMouseWheel(wxMouseEvent& evt);
@@ -986,6 +1006,14 @@ private:
 
     // Convert client-coordinates y to a line index.
     int YToLine(int clientY) const;
+    // The y below which a drag counts as "past the bottom edge".  One
+    // expression, because OnMotion and AutoScrollTick must not disagree about
+    // where the edge is -- the hint bar moves it when the view is frozen.
+    int DragBottomEdge() const;
+    // Scroll the viewport by whole visual rows.  NOT wxWindow::ScrollLines,
+    // which the drag auto-scroll used to call and which is a permanent no-op
+    // here -- see the implementation.
+    void ScrollByRows(int rows);
 
     // Convert a line index + client-coordinates (x, y) to a character column.
     // clientY is required to resolve which visual row within a wrapped line was
@@ -1196,6 +1224,16 @@ private:
 
     bool        m_dragging   = false;
     int         m_dragStartY = 0;
+    // Where the pointer was at the last drag motion, so the auto-scroll repeat
+    // below has a position to work from while the hand is still.  Windows
+    // remembers the same thing in CMUSHView::m_last_mouse_position
+    // (mushview.cpp:2504).
+    int         m_lastDragX  = 0;
+    int         m_lastDragY  = 0;
+    // The repeat itself.  Windows gets it for free from MFC's idle loop
+    // (CMUSHclientApp::OnIdle -> CMUSHView::mouse_still_down, MUSHclient.cpp:
+    // 1148); wx has no equivalent, so a timer drives AutoScrollTick.
+    wxTimer     m_autoScrollTimer;
 
     // Stored at mouse-down time when the cursor is over a link run.
     // Fired as a link click on mouse-up only if no drag occurred.

@@ -3554,6 +3554,167 @@ void TestCopyJoinsSoftWrappedLines()
     }
 }
 
+// ── Drag auto-scroll repeats while the pointer sits still ────────────────
+//
+// Windows keeps scrolling AND extending the selection for as long as the button
+// is held past the edge of the text area: CMUSHclientApp::OnIdle calls
+// CMUSHView::mouse_still_down (MUSHclient.cpp:1148), which scrolls one line per
+// idle pass and re-extends from the remembered pointer position
+// (mushview.cpp:2550-2634).  The port scrolled exactly once per EVT_MOTION and
+// had no repeat at all, so holding the hand still below the pane stopped the
+// scroll -- and the selection -- dead, and selecting 200 lines meant jiggling
+// the mouse the whole way.
+//
+// The repeat is driven here by calling AutoScrollTick directly rather than by
+// waiting for the wxTimer: this harness exits from wxApp::OnInit, so there is
+// no event loop to deliver a timer event, and wxYield is a heap-corruption
+// hazard here (CLAUDE.md, 8f12c1c).  The tick IS the behaviour; the timer is
+// the binding.
+void TestDragAutoScrollRepeats()
+{
+    printf("drag auto-scroll: the repeat past the edge "
+           "(mushview.cpp:2550-2634)\n");
+
+    // Park well above the bottom so there is somewhere to scroll TO -- at the
+    // buffer end ScrollLines(1) is a no-op and every assertion below would be
+    // vacuous.
+    auto parked = [](Harness& h) {
+        h.Feed(400);
+        h.pane->ScrollToBottom();
+        h.pane->Scroll(0, 5);
+    };
+    auto selEndLine = [](Harness& h) {
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        return h.pane->GetSelectionInfo(sl, sc, el, ec) ? el : -1;
+    };
+    // GetScrollPositionY answers in PIXELS; the assertions below are about
+    // ROWS, so they divide rather than comparing raw positions.
+    auto rowPos = [](Harness& h) {
+        const int lh = h.pane->LineHeight();
+        return lh > 0 ? (int)(h.pane->GetScrollPositionY() / lh) : -1;
+    };
+    // Every arm below must leave the pane with no drag, no capture and no armed
+    // timer.  wxFrame::Destroy only QUEUES the deletion and this harness runs no
+    // event loop, so a pane left mid-drag outlives its own test -- and then
+    // meets the one wxYield in this file (PumpDeferred), which processes the
+    // queued deletion and any pending timer event together.  A window destroyed
+    // while it still holds the mouse capture is the crash that follows, in a
+    // later, unrelated test.
+    auto endDrag = [](Harness& h, int x, int y) {
+        SendMouse(h.pane, wxEVT_LEFT_UP, x, y);
+        if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+    };
+
+    {
+        Harness h;
+        parked(h);
+        int clientH = 0;
+        h.pane->GetClientSize(nullptr, &clientH);
+        const int lh = h.pane->LineHeight();
+
+        const int start = rowPos(h);
+        opCheck(start > 0 && clientH > 4 * lh,
+                "fixture: parked above the end, with room to scroll");
+
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 10, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, 20, clientH + 50, /*leftDown*/ true);
+
+        // The motion's OWN scroll, asserted separately: without this a broken
+        // tick could hide behind the one scroll the motion already does.
+        opCheckEq(rowPos(h) - start, 1,
+                  "one motion past the edge scrolls exactly one line");
+        const int afterMotion = rowPos(h);
+        const long selAfterMotion = selEndLine(h);
+        opCheck(selAfterMotion > 0, "...and the drag really selected something");
+
+        // Now the mouse does NOTHING.  Three repeats, three lines, and three
+        // more lines of selection: the exact delta, not merely "it changed".
+        for (int i = 1; i <= 3; ++i) {
+            const bool again = h.pane->AutoScrollTick();
+            opCheck(again, "the tick asks to be called again while past the edge");
+            opCheckEq(rowPos(h) - afterMotion, i,
+                      "...and each repeat scrolls exactly one more line");
+            // i + 1, not i: OnMotion extends the selection to the pointer
+            // BEFORE it scrolls, so the first repeat also catches up the line
+            // the motion's own scroll had already moved past.  Windows has the
+            // same shape -- extend_selection runs before doLinedown in
+            // OnMouseMove, and mouse_still_down re-extends afterwards.
+            opCheckEq((int)(selEndLine(h) - selAfterMotion), i + 1,
+                      "...and drags the selection out with it");
+        }
+
+        // The stop: after the release the tick must do nothing at all.  This is
+        // the runaway-timer guard -- a repeat that outlives its drag scrolls
+        // the pane for ever.
+        endDrag(h, 20, clientH + 50);
+        const int atRelease = rowPos(h);
+        opCheck(!h.pane->AutoScrollTick(),
+                "after the release the tick refuses");
+        opCheckEq(rowPos(h) - atRelease, 0, "...and moves nothing");
+    }
+    {
+        // The pointer back INSIDE the text: Windows' `else return 0; // don't
+        // want any more idle calls` (mushview.cpp:2604).  Without this arm the
+        // repeat would never stop until the button came up.
+        Harness h;
+        parked(h);
+        int clientH = 0;
+        h.pane->GetClientSize(nullptr, &clientH);
+        const int lh = h.pane->LineHeight();
+
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 10, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, 20, clientH / 2, /*leftDown*/ true);
+        const int inside = rowPos(h);
+        opCheck(!h.pane->AutoScrollTick(),
+                "a tick with the pointer inside the text refuses");
+        opCheckEq(rowPos(h) - inside, 0, "...and moves nothing");
+        endDrag(h, 20, clientH / 2);
+    }
+    {
+        // Upwards, which is the other half of the same handler: y < 10 scrolls
+        // BACK, so a fixture parked at the top could not tell the two apart.
+        Harness h;
+        parked(h);
+        h.pane->Scroll(0, 40);
+        const int lh = h.pane->LineHeight();
+        const int start = rowPos(h);
+
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 10, 5 * lh);
+        SendMouse(h.pane, wxEVT_MOTION, 20, 2, /*leftDown*/ true);
+        opCheckEq(rowPos(h) - start, -1,
+                  "one motion past the TOP edge scrolls one line back");
+        const int afterMotion = rowPos(h);
+        opCheck(h.pane->AutoScrollTick(), "...and the repeat runs upwards too");
+        opCheckEq(rowPos(h) - afterMotion, -1,
+                  "...one line per repeat, the other way");
+        endDrag(h, 20, 2);
+    }
+    {
+        // Capture loss ends the drag exactly as a release does -- the second
+        // half of the runaway-timer guard, since a capture snatched away by a
+        // modal never produces a LEFT_UP.
+        Harness h;
+        parked(h);
+        int clientH = 0;
+        h.pane->GetClientSize(nullptr, &clientH);
+        const int lh = h.pane->LineHeight();
+
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 10, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, 20, clientH + 50, /*leftDown*/ true);
+        opCheck(h.pane->AutoScrollTick(), "control: the repeat is running");
+
+        wxMouseCaptureLostEvent lost(h.pane->GetId());
+        lost.SetEventObject(h.pane);
+        h.pane->ProcessWindowEvent(lost);
+
+        const int atLoss = rowPos(h);
+        opCheck(!h.pane->AutoScrollTick(),
+                "losing the capture stops the repeat");
+        opCheckEq(rowPos(h) - atLoss, 0, "...and it moves nothing afterwards");
+        endDrag(h, 20, clientH + 50);
+    }
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -3576,6 +3737,7 @@ int RunOutputPaneSelfTest()
     TestPlainScrollsObeyAutoPause();
     TestTextRectangleOffsetForm();
     TestLeaveWindowCancelsMouseOver();
+    TestDragAutoScrollRepeats();
     TestFindNext();
     TestCopyJoinsSoftWrappedLines();
     TestReleaseDoesNotMaterialiseUnlessAsked();

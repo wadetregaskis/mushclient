@@ -37,6 +37,7 @@
 #include <wx/wx.h>
 #include <wx/treebook.h>   // the tree sheet's book control (wxBookCtrlBase)
 #include <wx/notebook.h>   // the flat sheet's
+#include <wx/listctrl.h>   // wxListCtrl / wxListEvent (NM_RDBLCLK synthesis)
 
 // ── MUSHclient headers ────────────────────────────────────────────────────
 #include "stdafx.h"
@@ -400,6 +401,77 @@ void TestCloseBoxRunsOnCancel()
     chk(rc == IDCANCEL, "and DoModal still returns IDCANCEL");
     chk(probe.m_strSaved == "say hello",
         "OnCancel read the live edit text (CImmediateDlg's save-for-next-time)");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// A right-click on a bridged list dispatches NM_RDBLCLK.
+//
+// bind_list_notifications synthesised LVN_COLUMNCLICK, NM_DBLCLK and
+// LVN_ITEMCHANGED but never NM_RDBLCLK, so CPluginsDlg's right-double-click
+// state-file editor (its ON_NOTIFY(NM_RDBLCLK, IDC_PLUGINS_LIST, ...) is the
+// only consumer in the app) was dead code on the port -- and there is no
+// other UI path to a plugin's state file from the Plugins dialog.  wx has no
+// right-DOUBLE-click list event, so a single right-click is the stand-in.
+// ══════════════════════════════════════════════════════════════════════════
+
+class CRClickProbe : public CDialog
+{
+public:
+    CRClickProbe() : CDialog(IDD_PLUGINS) {}
+
+    int  m_rclickItem = -2;   // pre-poisoned: "nothing dispatched" must FAIL
+    UINT m_rclickCode = 0;
+
+    BOOL OnInitDialog() override
+    {
+        CDialog::OnInitDialog();
+        wxDialog* dlg = static_cast<wxDialog*>(m_hWnd);
+        wxTheApp->CallAfter([dlg]() {
+            wxListCtrl* lv = wxDynamicCast(dlg->FindWindow(IDC_PLUGINS_LIST),
+                                           wxListCtrl);
+            chk(lv != nullptr, "IDD_PLUGINS' list was built as a wxListCtrl");
+            if (lv)
+            {
+                lv->InsertColumn(0, wxT("Name"));
+                lv->InsertItem(0, wxT("row0"));
+                lv->InsertItem(1, wxT("row1"));
+                // The same synthesis shape the existing selftests use for list
+                // events: the event a real right-click on row 1 produces.
+                wxListEvent e(wxEVT_LIST_ITEM_RIGHT_CLICK, IDC_PLUGINS_LIST);
+                e.SetEventObject(lv);
+                e.m_itemIndex = 1;
+                lv->GetEventHandler()->ProcessEvent(e);
+            }
+            dlg->EndModal(IDCANCEL);
+        });
+        return TRUE;
+    }
+
+    afx_msg void OnRClick(NMHDR* pNMHDR, LRESULT* pResult)
+    {
+        m_rclickCode = pNMHDR->code;
+        m_rclickItem = (int) ((NMITEMACTIVATE*) pNMHDR)->iItem;
+        *pResult = 0;
+    }
+    DECLARE_MESSAGE_MAP()
+};
+
+BEGIN_MESSAGE_MAP(CRClickProbe, CDialog)
+    // The exact map entry CPluginsDlg::OnRdblclkPluginsList uses.
+    ON_NOTIFY(NM_RDBLCLK, IDC_PLUGINS_LIST, OnRClick)
+END_MESSAGE_MAP()
+
+void TestListRightClickDispatchesRdblclk()
+{
+    printf("Right-click on a bridged list dispatches NM_RDBLCLK:\n");
+
+    CRClickProbe probe;
+    probe.DoModal();
+
+    chk(probe.m_rclickCode == (UINT) NM_RDBLCLK,
+        "the ON_NOTIFY(NM_RDBLCLK) handler ran (CPluginsDlg's state-file editor)");
+    chk(probe.m_rclickItem == 1,
+        "...and was handed the clicked row's index");
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -802,6 +874,7 @@ int RunDialogBridgeSelfTest()
 
     TestCommandRouting();
     TestCloseBoxRunsOnCancel();
+    TestListRightClickDispatchesRdblclk();
     TestDeferredListReload();
     TestTreeSheetLifecycle();
     TestFlatSheetLifecycle();

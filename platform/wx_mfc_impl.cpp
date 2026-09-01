@@ -4629,6 +4629,24 @@ static void bind_list_notifications(wxWindow* win, CCmdTarget* target)
         if (!AfxDispatchNotify(target, (UINT) NM_DBLCLK, (UINT) e.GetId(), &nm.hdr, &res))
             e.Skip();
     });
+    // Right-click → NM_RDBLCLK.  wx has no "right double-click" list event
+    // (only wxEVT_LIST_ITEM_RIGHT_CLICK, a single right-click), so a single
+    // right-click is the closest achievable stand-in for Windows' gesture.
+    // One consumer exists: CPluginsDlg::OnRdblclkPluginsList, which opens the
+    // selected plugin's saved state file (worldID-pluginID-state.xml) in the
+    // notepad or external editor -- there is no other UI path to that file.
+    // Every other dialog with a list has no NM_RDBLCLK handler, so the
+    // dispatch declines and the event Skip()s on, same as the three
+    // notification codes above.
+    win->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK, [target](wxListEvent& e) {
+        NMITEMACTIVATE nm{};
+        nm.hdr.idFrom = (UINT) e.GetId();
+        nm.hdr.code   = (UINT) NM_RDBLCLK;
+        nm.iItem      = e.GetIndex();
+        LRESULT res = 0;
+        if (!AfxDispatchNotify(target, (UINT) NM_RDBLCLK, (UINT) e.GetId(), &nm.hdr, &res))
+            e.Skip();
+    });
     // Item selection change → LVN_ITEMCHANGED.  Without this, e.g. the canonical
     // CColourPickerDlg never updates its RGB sliders/preview when you pick a
     // colour from the list (OnItemchangedColourlist never fires), and entity

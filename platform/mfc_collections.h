@@ -213,8 +213,14 @@ public:
     // ── Find ──────────────────────────────────────────────────────────────
     // Linear, exactly as MFC's CPtrList::Find is.
 
-    POSITION Find(TYPE val, POSITION start = nullptr) const {
-        for (Node* n = start ? reinterpret_cast<Node*>(start) : head_; n; n = n->next)
+    // MFC searches strictly AFTER startAfter (NULL = from the head), so the
+    // canonical find-next loop -- for (POSITION p = l.Find(x); p; p = l.Find(x, p))
+    // -- visits each occurrence once and terminates.  Starting AT the position
+    // returns it forever.  CStringList::Find and CList::Find (mfc_ui.h) already
+    // spell it this way; this was the one member of the family that did not.
+    POSITION Find(TYPE val, POSITION startAfter = nullptr) const {
+        Node* n = startAfter ? reinterpret_cast<Node*>(startAfter)->next : head_;
+        for (; n; n = n->next)
             if (n->val == val) return (POSITION)n;
         return nullptr;
     }

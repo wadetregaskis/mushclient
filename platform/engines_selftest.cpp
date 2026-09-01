@@ -649,6 +649,7 @@ const Dialect kDialects[] = {
   "  if {[dict exists $t key]} { world SetVariable t [dict get $t key] } \\\n"
   "  else { world SetVariable t ? } }\n"
   "proc rsize {n s} { world SetVariable rsize [string length $s] }\n"
+  "proc exename {s} { world SetVariable exe [info nameofexecutable] }\n"
   "proc rtblsize {s t} { world SetVariable rtbl [string length [dict get $t key]] }\n"
   "set n 0\n"
   "proc bump {} { global n; incr n; world SetVariable n $n }\n"
@@ -1721,6 +1722,25 @@ void battery_explicit_nil(const Dialect& d, const bool strict)
     }
 }
 
+// 6a-bis. Tcl platform bootstrap: [info nameofexecutable].
+//     Tcl_FindExecutable(NULL) does only the encoding half of what its old
+//     comment claimed -- TclpFindExecutable returns immediately on a NULL
+//     argv0 -- so [info nameofexecutable] answered "" in every Tcl world and
+//     plugin, and [file dirname] of that is ".": a plugin locating resources
+//     beside the app silently read from the process CWD instead.  Tcl-specific
+//     bootstrap, so the other five languages have no equivalent to control
+//     against; run_language gates the call.
+void battery_tcl_platform(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    e.seed("exe", "handler never ran");
+    e.callRtn("exename", "");
+    const std::string exe = e.var("exe");
+    check(exe.find("MUSHclient") != std::string::npos, L,
+          "[info nameofexecutable] names the real binary, not the empty string");
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -1791,6 +1811,8 @@ bool run_language(const Dialect& d)
     battery_toworld   (e, d);
     battery_worldapi  (d);
     battery_state     (e, d);
+    if (strcmp(d.key, "tcl") == 0)        // Tcl-specific platform bootstrap
+        battery_tcl_platform(e, d);
     battery_trace     (d);
     battery_error_routing(d);
     battery_stale_proxy  (d);

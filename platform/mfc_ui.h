@@ -3879,11 +3879,42 @@ inline void DDV_MinMaxFloat(CDataExchange* pDX, float value, float minVal, float
         McDdvFailRange(pDX, s, "a number");   // AFX_IDP_PARSE_REAL_RANGE
     }
 }
-// DDX_MinMaxString, DDV_MinMaxString, DDV_MaxChars: real implementations live in
-// DDV_validation.cpp (compiled in mushapp).  Provide stubs only when that file
-// is NOT compiled (i.e. the portable mushcore build).
-// DDV_MaxChars: called internally but not defined in DDV_validation.cpp — always stub.
-inline void DDV_MaxChars(CDataExchange*, CString&, int) {}
+// DDX_MinMaxString, DDV_MinMaxString: real implementations live in
+// DDV_validation.cpp (compiled in every full build).  Provide stubs only when
+// that file is NOT compiled (i.e. the portable mushcore build).
+//
+// DDV_MaxChars is NOT theirs to define: on Windows MFC itself supplies it
+// (dlgdata.cpp) -- the save direction refuses a too-long value ("Please enter
+// no more than N characters.") and Fail()s, and the load direction sends
+// EM_LIMITTEXT to the last-prepared edit so typing past the limit is
+// impossible.  The port used to stub it empty (the old comment here blamed
+// DDV_validation.cpp for not defining it, misstating the parity reference),
+// which silently disabled every maximum-length validation: the 7 direct call
+// sites AND the max half of every DDV_MinMaxString/DDV_MinMaxCBString
+// (DDV_validation.cpp delegates its max check here).
+inline void DDV_MaxChars(CDataExchange* pDX, CString& value, int nChars) {
+    if (!pDX) return;
+    if (pDX->m_bSaveAndValidate) {
+        if (value.GetLength() > nChars) {
+            // TMessageBox + a literal, NOT AfxFormatString1: the port's
+            // AfxFormatString1 discards the format string and returns just
+            // the argument (a transcription of MFC's body would pop a box
+            // whose entire text is the number).
+            CString s;
+            s.Format("Please enter no more than %d characters.", nChars);
+            TMessageBox(s, MB_ICONEXCLAMATION);
+            pDX->Fail();
+        }
+    } else if (pDX->m_idLastControl && pDX->m_bEditLastControl &&
+               pDX->m_pDlgWnd && g_wxhook_edit_set_max_length) {
+        // The EM_LIMITTEXT half.  Known partial: the hook only reaches a
+        // wxTextCtrl, so combo-hosted DDV_MinMaxCBString sites get no typing
+        // limit where MFC sends CB_LIMITTEXT -- the save-side veto above
+        // still refuses them.
+        if (CWnd* w = pDX->m_pDlgWnd->GetDlgItem(pDX->m_idLastControl))
+            g_wxhook_edit_set_max_length((void*) w->m_hWnd, nChars);
+    }
+}
 
 // The following four are DEFINED in DDV_validation.cpp (in the mushapp full build).
 // Always declare them so callers can see the signature.

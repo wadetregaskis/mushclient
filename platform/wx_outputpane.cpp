@@ -497,6 +497,12 @@ static SOutputLine DetectURLs(SOutputLine line)
     if (!hasHttp) return line;
 
     SOutputLine result;
+    // The line-level flags live on SOutputLine itself, so a freshly
+    // constructed result drops every one of them -- bookmark, comment,
+    // userInput, arrived and hardReturn -- for any line carrying "http".
+    // Under the PULL model this function is on the fetch path, so that is the
+    // line the pane actually shows.
+    result.copyFlagsFrom(line);
     result.reserve(line.size() * 2);
 
     for (SOutputRun run : line) {
@@ -4075,7 +4081,15 @@ wxString COutputPane::SelectedText() const
         endCol   = std::max(startCol, std::min((int)lineText.size(), endCol));
 
         result += lineText.substr(startCol, endCol - startCol);
-        if (i < hi) result += "\n";   // newline between lines, not after the last
+        // A break only where the LINE ended, never where the engine wrapped
+        // it: CMUSHView::GetSelection writes ENDLINE only `if
+        // (pLine->hard_return)` (mushview.cpp:4069-4085), so a soft-wrapped
+        // paragraph reaches the clipboard -- and Send to MUD -- as the one
+        // command the user sees, not as one per screen row.  ("\n" rather than
+        // ENDLINE's "\r\n" stays a separate, deliberate macOS choice.)  Copy
+        // as HTML keeps its unconditional break: OnEditCopyashtml writes one
+        // after EVERY line (mushview.cpp:5861/5873/5881).
+        if (i < hi && LineAt(i).hardReturn) result += "\n";
     }
     return result;
 }

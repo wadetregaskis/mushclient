@@ -3342,6 +3342,67 @@ void TestRightClickSelectsWord()
 }
 
 
+// ── Copy respects the engine's soft wrap (mushview.cpp:4069-4085) ─────────
+//
+// The port's "logical lines" ARE the engine's CLines, and the engine splits a
+// long line at the wrap column into several of them (doc_shared.cpp:2975,
+// StartNewLine (false, flags)).  CMUSHView::GetSelection writes ENDLINE only
+// after a line whose hard_return is set, so on Windows a wrapped paragraph
+// arrives on the clipboard -- and at Send to MUD -- as ONE run.  SelectedText
+// used to put a newline between every pair of selected lines, so a 200-char
+// paragraph copied as three lines and "Send to MUD" sent three commands.
+//
+// Both polarities are asserted here: an "always join" is as wrong as the
+// "always break" this replaces, and neither passes both arms.
+void TestCopyJoinsSoftWrappedLines()
+{
+    printf("Copy breaks only where the LINE ended (mushview.cpp:4069-4085)\n");
+
+    auto wrapped = [](const char* text, bool hardReturn) {
+        SOutputLine l = MakeLine(text);
+        l.hardReturn = hardReturn;
+        return l;
+    };
+
+    {
+        // The engine wrapped "alphabravo" into two CLines; "charlie" is a line
+        // of its own.
+        Harness h;
+        h.pane->AppendLine(wrapped("alpha",   false));
+        h.pane->AppendLine(wrapped("bravo",   true));
+        h.pane->AppendLine(wrapped("charlie", true));
+        h.pane->SelectAll();
+        const wxString got = h.pane->GetSelectionText();
+        opCheck(got == wxT("alphabravo\ncharlie"),
+                "a soft wrap copies as one run, a real line end as a break");
+        if (got != wxT("alphabravo\ncharlie"))
+            printf("    (got \"%s\")\n", (const char*) got.utf8_str());
+    }
+    {
+        // The control: the SAME three lines with every hard_return set must
+        // still copy with a break at each one, so "join everything" fails.
+        Harness h;
+        h.pane->AppendLine(wrapped("alpha",   true));
+        h.pane->AppendLine(wrapped("bravo",   true));
+        h.pane->AppendLine(wrapped("charlie", true));
+        h.pane->SelectAll();
+        opCheck(h.pane->GetSelectionText() == wxT("alpha\nbravo\ncharlie"),
+                "control: three hard-ended lines still copy as three lines");
+    }
+    {
+        // A partial selection: the last selected line never gets a trailing
+        // separator on either platform, and the interior join still follows the
+        // flag rather than the selection's shape.
+        Harness h;
+        h.pane->AppendLine(wrapped("alpha",   false));
+        h.pane->AppendLine(wrapped("bravo",   true));
+        h.pane->AppendLine(wrapped("charlie", true));
+        h.pane->SetSelectionRange(1, 2, 3, 4);   // 1-based: line 1 col 3 -> line 2 col 4
+        opCheck(h.pane->GetSelectionText() == wxT("phabra"),
+                "a partial selection joins across the wrap and ends bare");
+    }
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -3365,6 +3426,7 @@ int RunOutputPaneSelfTest()
     TestTextRectangleOffsetForm();
     TestLeaveWindowCancelsMouseOver();
     TestFindNext();
+    TestCopyJoinsSoftWrappedLines();
     TestReleaseDoesNotMaterialiseUnlessAsked();
     TestSearchHighlightOffsets();
     TestMeasuredMetrics();

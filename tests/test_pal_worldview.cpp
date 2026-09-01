@@ -922,6 +922,44 @@ TEST(PalWorldView, RebuiltLinesCarryTheBookmarkFlag)
     EXPECT_FALSE(lines[2].bookmark);
 }
 
+// BuildLineFromCLine carries CLine::hard_return onto the SOutputLine, because
+// nothing downstream can reconstruct it: the view sees the engine's already-
+// split CLines and cannot tell a soft wrap from a real newline.  Copy needs the
+// distinction -- CMUSHView::GetSelection writes ENDLINE only after a line whose
+// hard_return is set (mushview.cpp:4069-4085) -- so a wrapped paragraph reaches
+// the clipboard as one run rather than one per screen row.
+//
+// BOTH polarities are asserted: a test that only pinned the false ones would
+// pass on a field that is never set at all, and one that only pinned the true
+// ones would pass on the default.
+TEST(PalWorldView, WrappedLinesCarryTheSoftReturnFlag)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;   // drive the engine's output through the typed seam
+    doc.m_nWrapColumn = 20;
+
+    // 51 characters at a wrap column of 20: three CLines, the first two of them
+    // continuations.  No spaces, so the wrap lands mid-"word" and the split is
+    // purely the column's doing.
+    feed(doc, "aaaaaaaaaaaaaaaaaaaaBBBBBBBBBBBBBBBBBBBBccccccccccc\nlast\n");
+
+    auto lines = committed(view);
+    ASSERT_EQ(4u, (unsigned)lines.size());
+    EXPECT_FALSE(lines[0].hardReturn);      // wrapped at column 20
+    EXPECT_FALSE(lines[1].hardReturn);      // ...and again at 40
+    EXPECT_TRUE (lines[2].hardReturn);      // the tail, ended by the real newline
+    EXPECT_TRUE (lines[3].hardReturn);      // a short line is never a wrap
+
+    // ...and the same through the PULL path, which is the wiring the product
+    // actually uses (COutputPane::LineAt -> m_fn_fetch_line -> BuildOutputLine).
+    for (long i = 0; i < 4; ++i) {
+        SOutputLine pulled;
+        ASSERT_TRUE(doc.BuildOutputLine(i, pulled));
+        EXPECT_EQ(lines[(size_t)i].hardReturn, pulled.hardReturn);
+    }
+}
+
 // doc_display_shared.cpp UpdateAllViews (~68-77): a committed line flagged
 // HORIZ_RULE is emitted as a single sentinel SOutputRun (horiz_rule=true, no
 // text) rather than as styled text.  world.NoteHr sets the flag, commits the

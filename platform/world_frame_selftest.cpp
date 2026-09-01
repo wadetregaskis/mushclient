@@ -2763,6 +2763,82 @@ int RunWorldFrameSelfTest()
         }
     }
 
+    // ── unpause_on_send reaches the link-click path ─────────────────────────
+    // Windows unfreezes the output window before dispatching a send/prompt
+    // link, gated on the world's unpause_on_send (default ON):
+    // CMUSHView::OnLButtonDown, mushview.cpp:2176-2181, repeated at the tail
+    // of OnMXPMenu (:5550-5555) for the right-click route.  The port read the
+    // option only on the typed-command path, so a click on a send-link in
+    // frozen scrollback sent the command and left the reply off-screen.
+    {
+        pal::ITransport* savedWire  = doc->m_pTransport;
+        const int        savedPhase = doc->m_iConnectPhase;
+        const unsigned short savedUnpause = doc->m_bUnpauseOnSend;
+        RecordingTransport* wire = new RecordingTransport();
+        doc->m_pTransport    = wire;
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+
+        static int s_unpauseModals = 0;
+        s_unpauseModals = 0;
+        int (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
+        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+            ++s_unpauseModals;
+            return IDNO;
+        };
+
+        doc->ClearOutput();
+        doc->DisplayMsg("a line to hover over\n", 15, 0);
+        doc->UpdateAllViews(NULL);
+
+        check(pane->m_fn_link_clicked != nullptr,
+              "unpause on link: the pane's link handler is wired");
+
+        // ON: the click both sends AND thaws.
+        doc->m_bUnpauseOnSend = 1;
+        pane->SetPaused(true);
+        check(pane->IsPaused(),
+              "unpause on link (fixture): the pane really is frozen first, so "
+              "the assertion below is not vacuous");
+        wire->sent.clear();
+        if (pane->m_fn_link_clicked)
+            pane->m_fn_link_clicked("look", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+        check(wire->sent.find("look") != std::string::npos,
+              "unpause on link: the click still SENDS the action (if this "
+              "fails the thaw assertion below proves nothing)");
+        check(!pane->IsPaused(),
+              "unpause on link: with unpause_on_send ON a send-link click "
+              "thaws the output window (was: frozen, reply invisible)");
+
+        // OFF: the control.  Without it an unconditional thaw would pass.
+        doc->m_bUnpauseOnSend = 0;
+        pane->SetPaused(true);
+        check(pane->IsPaused(),
+              "unpause on link (fixture): frozen again for the control");
+        wire->sent.clear();
+        if (pane->m_fn_link_clicked)
+            pane->m_fn_link_clicked("look", ACTION_SEND, false,
+                                    SRunEncoding{ true, 0 });
+        check(wire->sent.find("look") != std::string::npos,
+              "unpause on link (control): the click sends with the option off "
+              "too");
+        check(pane->IsPaused(),
+              "unpause on link (control): ...and leaves the pane frozen, so "
+              "the option really is what decides");
+
+        check(s_unpauseModals == 0,
+              "unpause on link: no modal was raised (if this fails the checks "
+              "above tested nothing)");
+        g_wxhook_message_box = savedMB;
+
+        doc->m_bUnpauseOnSend = savedUnpause;
+        pane->SetPaused(false);
+        doc->m_iConnectPhase = savedPhase;
+        doc->m_pTransport    = savedWire;   // the doc did not own this one
+        delete wire;
+        doc->ClearOutput();
+    }
+
     // ── the output-buffer fade ──────────────────────────────────────────────
     // Windows dims old text in CMUSHView::OnDraw (mushview.cpp:1096-1121): a
     // line is full intensity for fade_output_buffer_after_seconds, then ramps

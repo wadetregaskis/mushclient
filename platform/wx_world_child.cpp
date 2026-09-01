@@ -1499,6 +1499,20 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // and then does the parts that are this frontend's own business —
         // exactly what mushview.cpp does with the same return value.
         auto fire = [this, actionType, bCommentLine, enc](const std::string& cmd) {
+            // "unpause the output window if wanted" — CMUSHView::OnLButtonDown
+            // (mushview.cpp:2176-2181) runs this BEFORE HyperlinkClicked, so it
+            // fires even on the not-connected arm, and OnMXPMenu repeats it at
+            // its tail (mushview.cpp:5550-5555) for the right-click route.
+            // Windows does not undo it afterwards: the link arm returns before
+            // SetCapture, so OnLButtonUp's auto-freeze never runs for a click
+            // that fired a link.  Only the typed-command path
+            // (CWorldChildFrame::sendCommand, and CSendView::SendCommand
+            // upstream) read this option here before; a click on a send-link in
+            // frozen scrollback sent the command and then left the reply
+            // off-screen.
+            if (m_doc->m_bUnpauseOnSend && m_output && m_output->IsPaused())
+                m_output->SetPaused(false);
+
             switch (m_doc->HyperlinkClicked(CString(cmd.c_str()),
                                             actionType, bCommentLine))
             {

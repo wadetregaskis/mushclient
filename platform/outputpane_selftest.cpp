@@ -369,6 +369,32 @@ void TestSelectionChangedCallback()
     opCheck(s_fires == 5,
             "...and the next real change still notifies (guard released)");
     s_paneForRecursion = nullptr;
+
+    // The new-output clear notifies: on Windows it is addedstuff() ->
+    // OnTestEnd -> SelectionChanged (mushview.cpp:1815 -> 1655), under the
+    // not-frozen gate -- which the frozen arm below is the control for.
+    h.pane->m_fn_selection_changed = []() { ++s_fires; };
+    h.pane->SetSelectionRange(2, 2, 1, 4);
+    int base = s_fires;
+    h.Feed(2);
+    opCheck(s_fires == base + 1,
+            "new output's selection clear notifies (addedstuff -> OnTestEnd)");
+    h.pane->SetPaused(true);
+    h.pane->SetSelectionRange(2, 2, 1, 4);
+    base = s_fires;
+    h.Feed(2);
+    opCheck(s_fires == base,
+            "...and a FROZEN pane keeps its selection silently (the gate)");
+    h.pane->SetPaused(false);
+
+    // A trim that takes the selection notifies (did_jump,
+    // mushview.cpp:2889-2900).
+    h.pane->SetSelectionRange(2, 2, 1, 4);
+    base = s_fires;
+    h.pane->ClearOutput();              // the selection goes with the buffer
+    opCheck(s_fires == base + 1,
+            "a clear that takes the selection notifies (the addedstuff route)");
+
     h.pane->m_fn_selection_changed = nullptr;
 }
 

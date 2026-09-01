@@ -810,6 +810,7 @@ void COutputPane::SetMaxLines(int n)
     if (trimmed) {
         m_selAnchor = SelPoint{};
         m_selFocus  = SelPoint{};
+        NotifySelectionMaybeChanged();   // the trim's clear notifies (did_jump)
         RebuildWrapCache();
         UpdateScrollbars(m_autoScroll);
         Refresh(false);
@@ -850,6 +851,7 @@ void COutputPane::DeleteTailLines(long count)
     // Clear any selection that may have referenced deleted lines.
     m_selAnchor = SelPoint{};
     m_selFocus  = SelPoint{};
+    NotifySelectionMaybeChanged();       // the trim's clear notifies (did_jump)
     RebuildWrapCache();
     UpdateScrollbars(m_autoScroll);
     Refresh(false);
@@ -1532,6 +1534,7 @@ long COutputPane::DropFrontLines(long n, bool bAccumulateTrimmedRows)
         }
     }
     if (dropped > 0) {
+        NotifySelectionMaybeChanged();   // did_jump, mushview.cpp:2889-2900
         m_trimmedCount += (int) dropped;
         ++m_bufferGen;
         // Every cached line is keyed by INDEX, and they have all just shifted.
@@ -1599,6 +1602,7 @@ void COutputPane::ClearOutput()
     m_pendingLine.pending = false;
     m_selAnchor          = SelPoint{};
     m_selFocus           = SelPoint{};
+    NotifySelectionMaybeChanged();       // ClearOutput's clear notifies too
     m_maxLineChars       = 80;
     m_trimmedCount       = 0;
     m_trimmedRowsRemoved = 0;
@@ -2966,10 +2970,12 @@ void COutputPane::ClearSelectionOnNewOutput()
     if (!m_selAnchor.valid() && !m_selFocus.valid()) return;   // nothing to drop
     m_selAnchor = SelPoint{};
     m_selFocus  = SelPoint{};
-    // Deliberately no NotifySelectionMaybeChanged here: Windows' new-output
-    // clear does not run SelectionChanged either, so the plugin callback for
-    // this transition fires from whichever notify site runs NEXT -- the same
-    // late catch-up its m_old_sel* dedup produces.
+    // Windows' new-output clear is addedstuff() -> `if (!m_freeze)
+    // OnTestEnd()` (mushview.cpp:1815) -> SelectionChanged (:1655), under
+    // this same not-frozen gate -- so the notify belongs here too.  It runs
+    // mid-drain there as well; a plugin that emits output from the callback
+    // has the identical re-entrancy exposure on both platforms.
+    NotifySelectionMaybeChanged();
 }
 
 // ── NotifySelectionMaybeChanged ──────────────────────────────────────────────
@@ -2981,11 +2987,20 @@ void COutputPane::ClearSelectionOnNewOutput()
 void COutputPane::NotifySelectionMaybeChanged()
 {
     if (m_inSelectionNotify) return;
-    if (m_selAnchor == m_notifiedSelAnchor && m_selFocus == m_notifiedSelFocus)
+    // Compare the ORDERED pair, as Windows' m_selstart/m_selend always are:
+    // re-selecting the same span from the other direction is not a change.
+    SelPoint lo = m_selAnchor, hi = m_selFocus;
+    if (hi < lo) std::swap(lo, hi);
+    if (lo == m_notifiedSelAnchor && hi == m_notifiedSelFocus)
         return;                            // not really changed
-    m_notifiedSelAnchor = m_selAnchor;
-    m_notifiedSelFocus  = m_selFocus;
+    m_notifiedSelAnchor = lo;
+    m_notifiedSelFocus  = hi;
     if (!m_fn_selection_changed) return;
+    // The guard is a member where Windows' is a function-local static: if a
+    // plugin callback ever destroys this pane synchronously, the reset below
+    // writes freed memory.  wx defers window destruction to idle, so this is
+    // theoretical today -- noted rather than defended with a static, which
+    // would wrongly couple two panes' guards.
     m_inSelectionNotify = true;
     m_fn_selection_changed();
     m_inSelectionNotify = false;
@@ -3101,6 +3116,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             m_lastDClickLine = -1;   // consume so a 4th click starts fresh
             Refresh(false);
             FreezeIfSelection();     // a selection was just made
+            NotifySelectionMaybeChanged();
             evt.Skip();
             return;
         }
@@ -3294,8 +3310,11 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                 Refresh(false);
 
                 // Windows freezes here, BEFORE the word is dispatched
-                // (mushview.cpp:4837, ahead of OutputWordDoubleClicked).
+                // (mushview.cpp:4837, ahead of OutputWordDoubleClicked) --
+                // and notifies in the same order (:4790), so a plugin sees
+                // the selection change before any send it triggers.
                 FreezeIfSelection();
+                NotifySelectionMaybeChanged();
 
                 // End the drag before anything else.  Two reasons, and both
                 // matter: (a) the handler below can open a modal (the
@@ -3341,7 +3360,6 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
         }
     }
 
-    NotifySelectionMaybeChanged();     // CMUSHView::OnLButtonDblClk, :4790
     evt.Skip();
 }
 
@@ -4608,7 +4626,7 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
 
     m_selAnchor = SelPoint{foundIdx, matchStart};
     m_selFocus  = SelPoint{foundIdx, matchEnd};
-    NotifySelectionMaybeChanged();           // did_jump, :2900
+    NotifySelectionMaybeChanged();           // CSendView::DoFind, sendvw.cpp:1437
 
     // CSendView::DoFind's last act on the view is
     // `m_topview->EnsureSelectionVisible ()` (sendvw.cpp:1475) — the SAME

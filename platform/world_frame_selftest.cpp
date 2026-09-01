@@ -1247,8 +1247,18 @@ int RunWorldFrameSelfTest()
         check(pane->FirstVisibleLine() == target,
               "the pane reports the line it was scrolled to as the first visible");
 
+        // The head-trim's selection clamp notifies (did_jump,
+        // mushview.cpp:2889-2900): select a line that is about to be freed.
+        static int s_trimFires; s_trimFires = 0;
+        pane->m_fn_selection_changed = []() { ++s_trimFires; };
+        pane->SetSelectionRange(1, 1, 1, 4);
+        const int trimBase = s_trimFires;
+
         const long freed = childFrame ? childFrame->ClearScrollback() : -1;
         wxYield();
+        check(s_trimFires == trimBase + 1,
+              "clearing scrollback above a selection notifies (did_jump)");
+        pane->m_fn_selection_changed = nullptr;
         check(freed == target, "Alt-Cmd-K frees exactly what was above the viewport");
         check(pane->LineCount() == paneN - target,
               "...and the pane keeps everything from the viewport down");

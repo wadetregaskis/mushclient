@@ -4926,6 +4926,109 @@ TEST(Wnd, SetWindowPlacementMovesTheWindow) {
     g_wxhook_move_window = saved;
 }
 
+// Every CWnd geometry-mapping overload was a no-op for anything that is not a
+// CView -- CView carries its own real copies, which is why the gap survived in
+// the classes that actually hit it (CDialog, CButton, CEdit, every control).
+// 5cfd0e5 fixed GetClientRect's pointer forms; the CRect& spelling, which is
+// what the standard MFC idiom `CRect r; wnd.GetClientRect(r);` binds -- it is
+// the sole candidate, an unadorned name cannot bind a CRect* -- still zeroed
+// the rect, and ClientToScreen/ScreenToClient were untouched on every overload.
+//
+// The structs are pre-poisoned, so "the call did nothing" cannot pass.
+static int s_c2sDx, s_c2sDy;
+
+TEST(Wnd, GeometryMappingOverloadsAllAgree) {
+    HookGuard<decltype(g_wxhook_get_client_rect)> g1(g_wxhook_get_client_rect);
+    HookGuard<decltype(g_wxhook_get_window_rect)> g2(g_wxhook_get_window_rect);
+    HookGuard<decltype(g_wxhook_client_to_screen)> g3(g_wxhook_client_to_screen);
+    HookGuard<decltype(g_wxhook_screen_to_client)> g4(g_wxhook_screen_to_client);
+
+    g_wxhook_get_client_rect = [](const void*, RECT* r) {
+        r->left = 0; r->top = 0; r->right = 300; r->bottom = 200;
+    };
+    g_wxhook_get_window_rect = [](const void*, RECT* r) {
+        r->left = 7; r->top = 9; r->right = 307; r->bottom = 209;
+    };
+    // A translation, so client and screen coordinates genuinely differ -- an
+    // identity mapping would make every assertion below vacuous.
+    s_c2sDx = 100; s_c2sDy = 40;
+    g_wxhook_client_to_screen = [](const void*, int* x, int* y) {
+        *x += s_c2sDx; *y += s_c2sDy;
+    };
+    g_wxhook_screen_to_client = [](const void*, int* x, int* y) {
+        *x -= s_c2sDx; *y -= s_c2sDy;
+    };
+
+    CWnd w;
+    w.m_hWnd = (HWND)(void*)1;
+
+    // GetClientRect: by-name and address-of must give the same real answer.
+    CRect byName(-1, -1, -1, -1);
+    CRect byAddr(-2, -2, -2, -2);
+    w.GetClientRect(byName);
+    w.GetClientRect(&byAddr);
+    EXPECT_EQ(0L,   (long)byName.left);
+    EXPECT_EQ(300L, (long)byName.right);
+    EXPECT_EQ(200L, (long)byName.bottom);
+    EXPECT_EQ((long)byAddr.left,   (long)byName.left);
+    EXPECT_EQ((long)byAddr.right,  (long)byName.right);
+    EXPECT_EQ((long)byAddr.bottom, (long)byName.bottom);
+
+    // GetWindowRect gained the same reference spelling.
+    CRect win(-1, -1, -1, -1);
+    w.GetWindowRect(win);
+    EXPECT_EQ(7L,   (long)win.left);
+    EXPECT_EQ(307L, (long)win.right);
+
+    // ClientToScreen maps BOTH corners of a rect, by name and by address.
+    CRect rName(10, 20, 110, 220);
+    CRect rAddr(10, 20, 110, 220);
+    w.ClientToScreen(rName);
+    w.ClientToScreen(&rAddr);
+    EXPECT_EQ(110L, (long)rName.left);     // 10 + 100
+    EXPECT_EQ(60L,  (long)rName.top);      // 20 + 40
+    EXPECT_EQ(210L, (long)rName.right);    // 110 + 100
+    EXPECT_EQ(260L, (long)rName.bottom);   // 220 + 40
+    EXPECT_EQ((long)rAddr.left,   (long)rName.left);
+    EXPECT_EQ((long)rAddr.bottom, (long)rName.bottom);
+
+    // ...and ScreenToClient undoes it, so the round trip returns the original.
+    w.ScreenToClient(rName);
+    EXPECT_EQ(10L,  (long)rName.left);
+    EXPECT_EQ(220L, (long)rName.bottom);
+
+    // The point overloads: CPoint (which is NOT a POINT here) and POINT.
+    CPoint cp(10, 20);
+    w.ClientToScreen(&cp);
+    EXPECT_EQ(110, cp.x);
+    EXPECT_EQ(60,  cp.y);
+    w.ScreenToClient(&cp);
+    EXPECT_EQ(10, cp.x);
+    EXPECT_EQ(20, cp.y);
+
+    POINT pt = { 10, 20 };
+    w.ClientToScreen(&pt);
+    EXPECT_EQ(110L, (long)pt.x);
+    EXPECT_EQ(60L,  (long)pt.y);
+    w.ScreenToClient(&pt);
+    EXPECT_EQ(10L, (long)pt.x);
+    EXPECT_EQ(20L, (long)pt.y);
+
+    RECT raw = { 10, 20, 110, 220 };
+    w.ClientToScreen(&raw);
+    EXPECT_EQ(110L, (long)raw.left);
+    EXPECT_EQ(260L, (long)raw.bottom);
+
+    // A null pointer and a hookless CWnd are both refusals, not crashes.
+    w.ClientToScreen((POINT*)nullptr);
+    w.ScreenToClient((CRect*)nullptr);
+    g_wxhook_client_to_screen = nullptr;
+    CPoint untouched(3, 4);
+    w.ClientToScreen(&untouched);
+    EXPECT_EQ(3, untouched.x);
+    EXPECT_EQ(4, untouched.y);
+}
+
 TEST(Wnd, InertStubSurface) {
     CWnd w;
     EXPECT_EQ((void*)nullptr, w.GetSafeHwnd());

@@ -20,6 +20,7 @@
 #include <wx/image.h>      // wxImage / wxInitAllImageHandlers (BMP / ICO art)
 #include <wx/listctrl.h>   // wxListCtrl (SysListView32 — entity managers)
 #include <wx/slider.h>     // wxSlider (msctls_trackbar32 — ColourPickerDlg RGB)
+#include <wx/valtext.h>     // wxTextValidator (ES_NUMBER digit filtering)
 #include <algorithm>       // std::min
 
 #include <cstdio>
@@ -143,8 +144,9 @@ enum {
     BS_DEFPUSHBUTTON = 1, BS_CHECKBOX = 2, BS_AUTOCHECKBOX = 3,
     BS_RADIOBUTTON = 4, BS_3STATE = 5, BS_AUTO3STATE = 6, BS_GROUPBOX = 7,
     BS_AUTORADIOBUTTON = 9,
-    ES_CENTER = 1, ES_RIGHT = 2, ES_MULTILINE = 4, ES_PASSWORD = 0x20,
-    ES_AUTOHSCROLL = 0x80, ES_READONLY = 0x800,
+    ES_CENTER = 1, ES_RIGHT = 2, ES_MULTILINE = 4, ES_UPPERCASE = 8,
+    ES_PASSWORD = 0x20, ES_AUTOHSCROLL = 0x80, ES_READONLY = 0x800,
+    ES_NUMBER = 0x2000,
     SS_TYPEMASK = 0x1F, SS_CENTER = 1, SS_RIGHT = 2, SS_ICON = 3, SS_BITMAP = 14,
     CBS_SIMPLE = 1, CBS_DROPDOWN = 2, CBS_DROPDOWNLIST = 3,
     CBS_SORT = 0x100,
@@ -266,6 +268,37 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         w = new wxTextCtrl(parent, id, U(c.text), pos, size, st);
         if (st & wxTE_MULTILINE)   // keep typed/pasted Lua from being mangled
             wxOSXDisableSmartSubstitutions(static_cast<wxTextCtrl*>(w));
+        // ES_NUMBER: the Win32 control rejects every non-digit KEYSTROKE
+        // (including the minus sign), so e.g. Recall's line count -- which has
+        // no DDV to catch it at OK time -- can never even hold "-100" on
+        // Windows.  wxFILTER_DIGITS is the same rule at the same layer.  Like
+        // ES_NUMBER, it filters typing, not programmatic SetValue/DDX loads.
+        if (c.style & ES_NUMBER)
+            w->SetValidator(wxTextValidator(wxFILTER_DIGITS));
+        // ES_UPPERCASE folds text to upper case (the Global Prefs locale
+        // field is the one user).  Win32's edit folds EVERYTHING going in --
+        // typing, paste and WM_SETTEXT alike -- where wxTextEntry::ForceUpper
+        // on wxOSX is a native field formatter that only sees USER edits
+        // (measured: a programmatic SetValue("en") stayed lower case), so a
+        // DDX load would show the stored value unfolded.  Fold on the text
+        // event instead: SetValue raises it synchronously and typing raises
+        // it per edit, so both routes match Windows.  ChangeValue re-raises
+        // nothing, so the handler cannot recurse.
+        if (c.style & ES_UPPERCASE)
+        {
+            wxTextCtrl* tc = static_cast<wxTextCtrl*>(w);
+            tc->Bind(wxEVT_TEXT, [tc](wxCommandEvent& e) {
+                const wxString s  = tc->GetValue();
+                const wxString up = s.Upper();
+                if (up != s)
+                {
+                    const long ip = tc->GetInsertionPoint();
+                    tc->ChangeValue(up);
+                    tc->SetInsertionPoint(ip);
+                }
+                e.Skip();   // EN_CHANGE dispatch still reaches the dialog
+            });
+        }
     }
     else if (cls == "ComboBox")
     {

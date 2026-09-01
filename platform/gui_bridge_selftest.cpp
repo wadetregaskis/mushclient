@@ -23,6 +23,7 @@
 #include <wx/listbox.h>
 #include <wx/listctrl.h>                // wxListCtrl (SysListView32 view mode)
 #include <wx/odcombo.h>                 // wxOwnerDrawnComboBox (owner-draw combos)
+#include <wx/valtext.h>                 // wxTextValidator (ES_NUMBER digit filter)
 #include <memory>
 #include <cstdio>
 #include <string>
@@ -401,6 +402,69 @@ void TestSortedListStyles()
                   "...and items stay in insertion order");
         }
         dlg->Destroy();
+    }
+}
+
+// ── 2c. ES_NUMBER / ES_UPPERCASE reach the bridged edit controls ──────────
+// ES_NUMBER makes non-digit keystrokes (the minus sign included) untypeable on
+// Windows, which is the only guard on fields with no DDV -- Recall's line
+// count would otherwise hand a negative straight to RecallText.  ES_UPPERCASE
+// folds typed text to upper case (the Global Prefs locale field).
+void TestEditStyleValidators()
+{
+    printf("Dialog bridge (ES_NUMBER / ES_UPPERCASE):\n");
+
+    // ES_NUMBER: Recall's line count carries it; the search-text edit in the
+    // SAME template does not -- the non-degenerate pair.
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(IDD_RECALL);
+        check(t != nullptr, "IDD_RECALL is in the recovered resources");
+        if (t)
+        {
+            wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+            wxTextCtrl* num = wxDynamicCast(dlg->FindWindow(IDC_LINE_COUNT), wxTextCtrl);
+            wxTextCtrl* txt = wxDynamicCast(dlg->FindWindow(IDC_EDIT1), wxTextCtrl);
+            check(num && txt, "both Recall edits were built");
+            if (num && txt)
+            {
+                wxTextValidator* v =
+                    wxDynamicCast(num->GetValidator(), wxTextValidator);
+                check(v != nullptr, "ES_NUMBER attaches a wxTextValidator");
+                if (v)
+                {
+                    check(v->HasFlag(wxFILTER_DIGITS),
+                          "...with the digits-only filter");
+                    check(v->IsValid(wxT("100")).empty(),
+                          "digits pass the filter");
+                    check(!v->IsValid(wxT("-100")).empty(),
+                          "a minus sign is rejected (ES_NUMBER blocks it on Windows)");
+                }
+                check(txt->GetValidator() == nullptr ||
+                      wxDynamicCast(txt->GetValidator(), wxTextValidator) == nullptr,
+                      "an edit WITHOUT ES_NUMBER gets no digit filter");
+            }
+            dlg->Destroy();
+        }
+    }
+
+    // ES_UPPERCASE: the Global Prefs locale field.  ForceUpper converts on the
+    // text event SetValue raises synchronously, so no loop is needed.
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(IDD_GLOBAL_PREFSP2);
+        check(t != nullptr, "IDD_GLOBAL_PREFSP2 is in the recovered resources");
+        if (t)
+        {
+            wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+            wxTextCtrl* loc = wxDynamicCast(dlg->FindWindow(IDC_LOCALE), wxTextCtrl);
+            check(loc != nullptr, "the locale edit was built");
+            if (loc)
+            {
+                loc->SetValue(wxT("en"));
+                check(loc->GetValue() == wxT("EN"),
+                      "ES_UPPERCASE folds entered text to upper case");
+            }
+            dlg->Destroy();
+        }
     }
 }
 
@@ -2598,6 +2662,7 @@ int RunGuiBridgeSelfTest()
     TestGeometry();
     TestListBoxStyles();
     TestSortedListStyles();
+    TestEditStyleValidators();
     TestNewWorldDefaults();
     TestProgressDialog();
     TestMessageBoxDecode();

@@ -7860,7 +7860,29 @@ inline HLOCAL  LocalFree(HLOCAL p)  { free(p); return nullptr; }
 // FormatMessage already defined earlier in this file.
 
 // ── Afx helpers ───────────────────────────────────────────────────────────
-inline void AfxFormatString1(CString& out, UINT, LPCTSTR s) { out = s ? s : ""; }
+// AfxFormatString1 loads a string-table entry and substitutes %1 with s.  The
+// port has no string table at all (CString::LoadString returns empty and the
+// recovered resources carry no STRINGTABLE), so the generic answer can only be
+// the substitution argument on its own.
+//
+// That is fine for a caption but not for a sentence: DDV_MinMaxString
+// (DDV_validation.cpp:51) builds its "too short" prompt this way, so a field
+// below its minimum length put up a modal box whose entire text was a bare
+// number -- "24" in the Plugin Wizard's plugin-ID page, "2" for the Global
+// Preferences locale.  The veto was right; the explanation was gibberish.
+//
+// So the one id that has to carry a sentence is spelled out here, exactly as
+// McDdvFailRange (above) already hardcodes MFC's numeric-range wording for the
+// same reason.  Every other id keeps the passthrough.  IDS_MIN_STRING_SIZE is
+// written as its literal value (resource.h:1442) rather than #included:
+// mfc_ui.h is pulled in through compat.h long before resource.h is available.
+inline void AfxFormatString1(CString& out, UINT nIDS, LPCTSTR s)
+{
+    if (nIDS == 32337 /* IDS_MIN_STRING_SIZE */)
+        out.Format("Please enter at least %s characters.", s ? s : "");
+    else
+        out = s ? s : "";
+}
 inline void AfxFormatString2(CString& out, UINT, LPCTSTR s1, LPCTSTR s2) { out = ""; }
 inline void AfxOleLockApp()   {}
 inline void AfxOleUnlockApp() {}

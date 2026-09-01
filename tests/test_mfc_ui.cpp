@@ -34,6 +34,8 @@
 #include "dialogs/InsertUnicodeDlg.h"  // CInsertUnicodeDlg — no wx dependency at
                                         // all, so tests/CMakeLists.txt compiles
                                         // the real .cpp into this test binary too
+#include "platform/wx_mfc_hooks.h"     // g_wxhook_message_box — captures the text
+                                        // DDV_MinMaxString actually puts up
 
 #include <algorithm>
 #include <chrono>     // CStringList walk-complexity pin
@@ -2836,6 +2838,14 @@ TEST(Utils, AfxStringHelpers) {
     EXPECT_STREQ("sub", (LPCTSTR)out);
     AfxFormatString1(out, 0, nullptr);
     EXPECT_STREQ("", (LPCTSTR)out);
+    // IDS_MIN_STRING_SIZE (resource.h:1442) is the one id that has to carry a
+    // sentence: DDV_MinMaxString builds its "too short" prompt through it, and
+    // the passthrough made that modal read as a bare number.  The passthrough
+    // stays for every other id -- the two assertions above are the control.
+    AfxFormatString1(out, 32337, "24");
+    EXPECT_STREQ("Please enter at least 24 characters.", (LPCTSTR)out);
+    AfxFormatString1(out, 32337, nullptr);
+    EXPECT_STREQ("Please enter at least  characters.", (LPCTSTR)out);
 
     CString sub;
     EXPECT_TRUE(AfxExtractSubString(sub, "a\nbb\nccc", 1));
@@ -3968,6 +3978,55 @@ TEST(StubSweep, DialogAndDdxRemainder) {
     DDX_LBIndex(&dx, 1, idx);
     DDX_LBString(&dx, 1, s);
     EXPECT_STREQ("keep", (LPCTSTR)s);
+}
+
+// The end-to-end half of the AfxFormatString1 fix: DDV_MinMaxString
+// (DDV_validation.cpp, the real MFC-shared source) builds MFC's "too short"
+// prompt through AfxFormatString1(IDS_MIN_STRING_SIZE), so with the shim's
+// blanket passthrough a field below its minimum length put up a modal box whose
+// entire text was a bare number.  Live callers: the Plugin Wizard's plugin-ID
+// page (24, 24) and the Global Preferences locale (2, 3).
+//
+// This asserts the STRING the box was asked to show, not merely that a box
+// appeared -- the passthrough shows one too.
+TEST(Ddv, MinMaxStringExplainsTheMinimumLength) {
+    static CString s_text;
+    static int     s_boxes;
+    s_text = "";
+    s_boxes = 0;
+    int (*const saved)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char* t, const char*, unsigned) -> int {
+        s_text = t ? t : ""; ++s_boxes; return IDOK;
+    };
+
+    CDataExchange dx;
+    dx.m_bSaveAndValidate = TRUE;
+
+    // Too short, minimum > 1 -> the AfxFormatString1(IDS_MIN_STRING_SIZE) arm.
+    bool failed = false;
+    CString id = "not-24-chars";
+    try { DDV_MinMaxString(&dx, id, 24, 24); }
+    catch (const CDdxValidationFail&) { failed = true; }
+    EXPECT_TRUE(failed);                       // the veto itself was never broken
+    EXPECT_EQ(1, s_boxes);
+    EXPECT_STREQ("Please enter at least 24 characters.", (LPCTSTR)s_text);
+
+    // The minimum == 1 arm has its own literal message and must stay untouched.
+    CString blank = "";
+    failed = false;
+    try { DDV_MinMaxString(&dx, blank, 1, 10); }
+    catch (const CDdxValidationFail&) { failed = true; }
+    EXPECT_TRUE(failed);
+    EXPECT_EQ(2, s_boxes);
+    EXPECT_STREQ("This field may not be blank", (LPCTSTR)s_text);
+
+    // A long-enough value shows nothing at all -- the control that proves the
+    // two assertions above are not just reading a box that always appears.
+    CString ok = "123456789012345678901234";
+    DDV_MinMaxString(&dx, ok, 24, 24);
+    EXPECT_EQ(2, s_boxes);
+
+    g_wxhook_message_box = saved;
 }
 
 TEST(StubSweep, ControlClassRemainder) {

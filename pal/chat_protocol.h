@@ -32,7 +32,13 @@
 // NOT modelled here: everything that needs a socket.  Framing of the message
 // stream after the handshake (the \xFF terminator and the fixed-length file
 // blocks), the message dispatch, file transfer, and the listen socket's accept
-// path all stay in chatsock.cpp / chatlistensock.cpp and remain untested.
+// path all stay in chatsock.cpp / chatlistensock.cpp.  Two of those have since
+// been driven for real: tests/test_chat_sockets.cpp runs the accept path and the
+// handshake end to end over loopback, and the MudMaster terminator search now
+// calls chatFindChar below, so it too agrees with MFC about an embedded NUL.
+// The rest -- the file-block framing, the dispatch and file transfer -- is still
+// untested, so do not read this file's existence as "the chat protocol is
+// covered".
 
 #pragma once
 

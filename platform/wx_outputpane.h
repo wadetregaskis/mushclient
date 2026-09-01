@@ -646,6 +646,14 @@ public:
     // Public so CWorldChildFrame::setOutputSelection can do the same.
     void FreezeIfSelection();
 
+    // Windows' `if (!m_freeze) OnTestEnd ();` (CMUSHView::addedstuff,
+    // mushview.cpp:1815), whose tail zeroes the selection (:1649-1653): output
+    // arriving at a view that is NOT frozen drops whatever was selected.
+    // Called from every AppendLine that reaches the buffer, completed line or
+    // prompt row -- addedstuff fires for both upstream (doc.cpp:1962 and
+    // doc_shared.cpp:3679).
+    void ClearSelectionOnNewOutput();
+
     // ── One repeat of the drag auto-scroll ────────────────────────────────
     // The port of CMUSHView::mouse_still_down (mushview.cpp:2550-2634), which
     // MFC calls from the idle loop for as long as it returns non-zero: while

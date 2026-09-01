@@ -257,6 +257,47 @@ void TestSelectionFreezesOutput()
         SendMouse(h.pane, wxEVT_LEFT_UP, cw * 5, lh / 2);
         opCheck(!h.pane->IsPaused(),
                 "with auto-freeze off a selection does NOT freeze");
+
+        // ...and because it did not freeze, the next line of output DROPS it:
+        // `if (!m_freeze) OnTestEnd ();` (CMUSHView::addedstuff,
+        // mushview.cpp:1815) and OnTestEnd's tail zeroes the four selection
+        // members (:1649-1653).  The port kept the selection indefinitely, so a
+        // later Copy -- or a script reading world.GetSelectionStartLine --
+        // returned text the user had chosen minutes before.
+        opCheck(!h.pane->GetSelectionText().IsEmpty(),
+                "fixture: there really is a selection to lose");
+        h.pane->AppendLine(MakeLine("more output arrives"));
+        opCheck(h.pane->GetSelectionText().IsEmpty(),
+                "new output at an UNfrozen view clears the selection");
+
+        // The prompt row is output too: addedstuff fires for the in-progress
+        // line as well (doc_shared.cpp:3679), not only for completed ones.
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, cw * 5, lh / 2, true);
+        SendMouse(h.pane, wxEVT_LEFT_UP, cw * 5, lh / 2);
+        opCheck(!h.pane->GetSelectionText().IsEmpty(), "fixture: selected again");
+        h.pane->AppendLine(MakeLine("HP:100 > ", /*pending*/ true));
+        opCheck(h.pane->GetSelectionText().IsEmpty(),
+                "...and so does a prompt-row update");
+    }
+    {
+        // The control, and the one that stops "always clear" passing: with
+        // auto_pause ON (the default) the selection FROZE the view, and a
+        // frozen view keeps it -- that is where Windows' `if (!m_freeze)` guard
+        // ends.  Same drag, same append, opposite answer.
+        Harness h;
+        h.Feed(10);
+        const int cw = h.pane->CharWidth();
+        const int lh = h.pane->LineHeight();
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION, cw * 5, lh / 2, true);
+        SendMouse(h.pane, wxEVT_LEFT_UP, cw * 5, lh / 2);
+        const wxString held = h.pane->GetSelectionText();
+        opCheck(h.pane->IsPaused() && !held.IsEmpty(),
+                "control fixture: frozen, with a selection");
+        h.pane->AppendLine(MakeLine("more output arrives"));
+        opCheck(h.pane->GetSelectionText() == held,
+                "control: a FROZEN view keeps its selection across new output");
     }
 
     {

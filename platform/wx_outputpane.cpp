@@ -670,6 +670,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
     // never added to m_lines; they simply replace m_pendingLine.
     if (line.pending) {
         m_pendingLine = std::move(line);
+        ClearSelectionOnNewOutput();
         if (m_batchDepth == 0) {
             UpdateScrollbars(m_autoScroll);
             Refresh(false);
@@ -734,6 +735,11 @@ void COutputPane::AppendLine(SOutputLine&& line)
     // Notify the logging hook (if any) immediately after the line is accepted.
     // Done before the batch-depth check so every line is logged even in batches.
     if (m_fn_on_line_appended) m_fn_on_line_appended(loggedLine);
+
+    // Before the batch check, not inside it: a batched drain must drop the
+    // selection exactly as an unbatched one does, and Windows' addedstuff runs
+    // per line either way.
+    ClearSelectionOnNewOutput();
 
     if (m_batchDepth == 0) {
         UpdateScrollbars(m_autoScroll);
@@ -2886,6 +2892,25 @@ bool COutputPane::GetNormalizedSel(SelPoint& start, SelPoint& end) const
 // text scrolls out from under the cursor before the user reaches Cmd-C, and
 // once the scrollback trim kicks in the selection indices slide onto different
 // text, so the wrong line is copied.
+// ── ClearSelectionOnNewOutput ────────────────────────────────────────────────
+// See the header.  m_autoScroll is the port's m_freeze twin, so the guard is
+// the same `!m_freeze` Windows uses.
+//
+// In a default world this is a no-op, and deliberately so: making a selection
+// FREEZES the view (auto_pause), so m_autoScroll is already false by the time
+// the next line lands.  What it changes is the auto_pause-OFF world and the
+// script that calls world.SetSelection while output flows -- there the port
+// kept the selection indefinitely, sliding it down with every head trim, so a
+// later Copy, or world.GetSelectionStartLine, read text chosen minutes ago
+// where Windows had long since dropped it.
+void COutputPane::ClearSelectionOnNewOutput()
+{
+    if (!m_autoScroll) return;             // frozen: Windows keeps the selection
+    if (!m_selAnchor.valid() && !m_selFocus.valid()) return;   // nothing to drop
+    m_selAnchor = SelPoint{};
+    m_selFocus  = SelPoint{};
+}
+
 void COutputPane::FreezeIfSelection()
 {
     if (!m_allowAutoFreeze) return;

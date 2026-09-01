@@ -5029,6 +5029,84 @@ TEST(Wnd, GeometryMappingOverloadsAllAgree) {
     EXPECT_EQ(4, untouched.y);
 }
 
+// The Complete Word popup is anchored at the caret by a three-step chain --
+// CEdit::PosFromChar -> CWnd::ClientToScreen -> CWnd::SetWindowPos -- and every
+// step used to discard its input.  ClientToScreen is pinned by the test above;
+// these are the other two.
+static int s_pfcChar, s_swpX, s_swpY, s_swpCx, s_swpCy, s_swpCalls;
+static bool s_swpMove, s_swpSize;
+
+TEST(Edit, PosFromCharAsksTheControlAndFallsBackToTheOrigin) {
+    HookGuard<decltype(g_wxhook_edit_pos_from_char)> g(g_wxhook_edit_pos_from_char);
+
+    // No hook (headless / mushcore): the historical (0,0), unchanged.
+    g_wxhook_edit_pos_from_char = nullptr;
+    CEdit bare;
+    CPoint none = bare.PosFromChar(17);
+    EXPECT_EQ(0, none.x);
+    EXPECT_EQ(0, none.y);
+
+    s_pfcChar = -1;
+    g_wxhook_edit_pos_from_char = [](const void*, int nChar, int* x, int* y) {
+        s_pfcChar = nChar; *x = 64; *y = 26;
+    };
+    CEdit e;
+    CPoint pt = e.PosFromChar(17);
+    EXPECT_EQ(17, s_pfcChar);        // the index really travels
+    EXPECT_EQ(64, pt.x);
+    EXPECT_EQ(26, pt.y);
+
+    // A hook that answers nothing leaves the caller's (0,0) alone rather than
+    // writing junk -- PositionToCoords can decline.
+    g_wxhook_edit_pos_from_char = [](const void*, int, int*, int*) {};
+    CPoint silent = e.PosFromChar(3);
+    EXPECT_EQ(0, silent.x);
+    EXPECT_EQ(0, silent.y);
+}
+
+TEST(Wnd, SetWindowPosHonoursTheMoveAndSizeFlagsSeparately) {
+    HookGuard<decltype(g_wxhook_set_window_pos)> g(g_wxhook_set_window_pos);
+    s_swpCalls = 0;
+    g_wxhook_set_window_pos = [](void*, int x, int y, int cx, int cy,
+                                 bool bMove, bool bSize) {
+        s_swpX = x; s_swpY = y; s_swpCx = cx; s_swpCy = cy;
+        s_swpMove = bMove; s_swpSize = bSize; ++s_swpCalls;
+    };
+
+    CWnd w;
+
+    // The Complete Word popup's own call: move, keep the size.
+    w.SetWindowPos(nullptr, 120, 340, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    EXPECT_EQ(1, s_swpCalls);
+    EXPECT_EQ(120, s_swpX);
+    EXPECT_EQ(340, s_swpY);
+    EXPECT_TRUE(s_swpMove);
+    EXPECT_FALSE(s_swpSize);
+
+    // Resize in place (mainfrm's info-bar rich edit).
+    w.SetWindowPos(nullptr, 0, 0, 3000, 20, SWP_NOMOVE | SWP_NOZORDER);
+    EXPECT_EQ(2, s_swpCalls);
+    EXPECT_FALSE(s_swpMove);
+    EXPECT_TRUE(s_swpSize);
+    EXPECT_EQ(3000, s_swpCx);
+    EXPECT_EQ(20, s_swpCy);
+
+    // Both at once.
+    w.SetWindowPos(nullptr, 5, 6, 7, 8, 0);
+    EXPECT_EQ(3, s_swpCalls);
+    EXPECT_TRUE(s_swpMove);
+    EXPECT_TRUE(s_swpSize);
+
+    // The always-on-top spelling -- SetWindowPos(&wndTopMost, 0,0,0,0,
+    // SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE) at mainfrm.cpp:1529 and
+    // MUSHclient.cpp:768 -- asks only for a Z-order change, and its coordinates
+    // are dummies.  Acting on them would slam every world window to the origin,
+    // so this MUST NOT reach the hook at all.
+    w.SetWindowPos(&CWnd::wndTopMost, 0, 0, 0, 0,
+                   SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    EXPECT_EQ(3, s_swpCalls);
+}
+
 TEST(Wnd, InertStubSurface) {
     CWnd w;
     EXPECT_EQ((void*)nullptr, w.GetSafeHwnd());

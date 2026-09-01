@@ -5272,6 +5272,46 @@ static int hook_edit_line_info(void* hwnd, int op, int arg) {
 // are the `max_length` and `read_only` options of utils.inputbox / utils.editbox:
 // with the shim methods empty, a script asking for a 20-character reply got an
 // unlimited field, and one asking for a display-only box got an editable one.
+// EM_POSFROMCHAR: where in the control's client area a given character sits.
+// `nChar` is a BYTE offset, the same seam ops 1-4 above use, so it is converted
+// before wx sees it.
+//
+// wxTextCtrl::PositionToCoords is the right API and is asked first, but it is
+// NOT implemented on wxOSX: measured 2026-08-31 against wx 3.3.2, it answers
+// wxDefaultPosition for a valid position whether the control is shown or
+// hidden.  So there is a fallback that measures the text with the control's own
+// font -- column offset = the width of the line's prefix, row offset = the line
+// number times the character height.
+//
+// What the fallback does NOT model, all of which PositionToCoords would have
+// carried: the control's internal inset, its horizontal/vertical scroll offset,
+// and soft-wrapped rows (it counts logical lines).  It is therefore an
+// approximation, and it is used for exactly one thing -- anchoring the Complete
+// Word popup near the caret, which FunctionMenu then nudges by (+10, +10)
+// anyway.  Anything needing an exact caret rectangle should ask AppKit's layout
+// manager instead of extending this.
+static void hook_edit_pos_from_char(const void* hwnd, int nChar, int* x, int* y) {
+    auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl);
+    if (!t || !x || !y) return;
+    const long pos = nChar <= 0 ? 0 : edit_byte_to_char(t, nChar);
+
+    const wxPoint p = t->PositionToCoords(pos);
+    if (p != wxDefaultPosition) { *x = p.x; *y = p.y; return; }
+
+    long col = 0, line = 0;
+    if (!t->PositionToXY(pos, &col, &line)) return;
+    const int lineH = t->GetCharHeight();
+    if (lineH <= 0) return;
+    int w = 0, h = 0;
+    if (col > 0) {
+        // Named local: GetLineText's result is needed past the call.
+        const wxString text = t->GetLineText(line);
+        t->GetTextExtent(text.Left((size_t) col), &w, &h);
+    }
+    *x = w;
+    *y = (int) (line * lineH);
+}
+
 static void hook_edit_set_max_length(void* hwnd, int chars) {
     if (auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl))
         t->SetMaxLength(chars < 0 ? 0 : (unsigned long) chars);   // 0 = no limit
@@ -6108,6 +6148,22 @@ static void hook_get_placement_rect(const void* h, RECT* r)
         r->left = r->top = r->right = r->bottom = 0;
     }
 }
+// CWnd::SetWindowPos.  Deliberately not expressed as a GetWindowRect + MoveWindow
+// pair: GetWindowRect always answers in SCREEN coordinates, while the x/y this
+// call takes are screen coordinates for a top-level window and parent-client
+// coordinates for a child, so filling in the half the caller suppressed has to
+// happen on this side.  wxSIZE_USE_EXISTING is exactly that: -1 means "keep what
+// the window already has", in the window's own space.
+static void hook_set_window_pos(void* hwnd, int x, int y, int cx, int cy,
+                                bool bMove, bool bSize)
+{
+    wxWindow* w = (wxWindow*) hwnd;
+    if (!w || (!bMove && !bSize)) return;
+    w->SetSize(bMove ? x  : -1, bMove ? y  : -1,
+               bSize ? cx : -1, bSize ? cy : -1,
+               wxSIZE_USE_EXISTING);
+}
+
 static void hook_client_to_screen(const void* hwnd, int* x, int* y)
 {
     wxWindow* w = (wxWindow*) hwnd;
@@ -6221,6 +6277,7 @@ void wx_mfc_install_hooks()
     g_wxhook_get_client_rect  = hook_get_client_rect;
     g_wxhook_set_window_text  = hook_set_window_text;
     g_wxhook_move_window      = hook_move_window;
+    g_wxhook_set_window_pos   = hook_set_window_pos;
     g_wxhook_destroy_window   = hook_destroy_window;
     g_wxhook_set_focus        = hook_set_focus;
     g_wxhook_send_message     = hook_send_message;
@@ -6273,6 +6330,7 @@ void wx_mfc_install_hooks()
     g_wxhook_edit_set_sel         = hook_edit_set_sel;
     g_wxhook_edit_replace_sel     = hook_edit_replace_sel;
     g_wxhook_edit_line_info       = hook_edit_line_info;
+    g_wxhook_edit_pos_from_char   = hook_edit_pos_from_char;
     g_wxhook_edit_set_max_length  = hook_edit_set_max_length;
     g_wxhook_edit_set_readonly    = hook_edit_set_readonly;
     g_wxhook_set_font             = hook_set_font;

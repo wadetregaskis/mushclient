@@ -4134,7 +4134,18 @@ public:
     int   LineFromChar(int n = -1) const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 3, n) : 0; }
     BOOL  LineScroll(int, int = 0) { return FALSE; }
     int   GetFirstVisibleLine() const { return 0; }
-    CPoint PosFromChar(UINT) const { return CPoint(); }  // char index → client coords
+    // EM_POSFROMCHAR: where in the control's client area the given character
+    // sits.  FunctionMenu (scripting/functionlist.cpp:663) anchors the Complete
+    // Word popup on it, so a permanent (0,0) put the popup at the bridge's
+    // default placement instead of beside the word being completed.  The index
+    // is a byte offset, the same seam GetSel and edit_line_info's ops 1-4 use.
+    CPoint PosFromChar(UINT nChar) const {
+        CPoint pt;                       // (0,0) — the no-hook / headless answer
+        if (g_wxhook_edit_pos_from_char)
+            g_wxhook_edit_pos_from_char((const void*) m_hWnd, (int) nChar,
+                                        &pt.x, &pt.y);
+        return pt;
+    }
     // Handle-based access (used in chatsock.cpp)
     HLOCAL GetHandle() const { return nullptr; }
     void   SetHandle(HLOCAL) {}

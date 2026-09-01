@@ -314,7 +314,8 @@ public:
                                  r->right - r->left, r->bottom - r->top,
                                  repaint != FALSE);
     }
-    void SetWindowPos(const CWnd*, int, int, int, int, UINT) {}
+    // Defined out-of-line after mfc_ui.h — the SWP_* flags live there.
+    void SetWindowPos(const CWnd*, int x, int y, int cx, int cy, UINT nFlags);
     void BringWindowToTop() {}
     void SetRedraw(BOOL = TRUE) {}
     void RedrawWindow(const RECT* = nullptr, CRgn* = nullptr, UINT = 0) {
@@ -551,6 +552,23 @@ inline void CWnd::SetFont(CFont* pFont, BOOL) {
     if (g_wxhook_set_font && pFont && pFont->m_impl)
         g_wxhook_set_font(m_hWnd, pFont->m_impl);
 }
+// Win32 SetWindowPos.  CCompleteWordDlg::OnInitDialog positions the Complete
+// Word popup at the caret with the position-only form (SWP_NOSIZE), and a no-op
+// here was the last of the three steps that threw that anchor away.
+//
+// The Z-order window and the activation flags are dropped: wx has no equivalent,
+// and always-on-top -- the only thing in the tree that asks for one -- has its
+// own path (apply_always_on_top).  Those callers pass SWP_NOMOVE|SWP_NOSIZE with
+// dummy (0,0,0,0) coordinates, so they must stay a no-op here; applying what
+// they pass would slam every frame to the origin.
+inline void CWnd::SetWindowPos(const CWnd*, int x, int y, int cx, int cy, UINT nFlags) {
+    const bool bMove = (nFlags & SWP_NOMOVE) == 0;
+    const bool bSize = (nFlags & SWP_NOSIZE) == 0;
+    if (!bMove && !bSize) return;              // Z-order / activation only
+    if (g_wxhook_set_window_pos)
+        g_wxhook_set_window_pos(m_hWnd, x, y, cx, cy, bMove, bSize);
+}
+
 inline void CWnd::ScreenToClient(CPoint* p) const {
     if (!g_wxhook_screen_to_client || !p) return;
     int x = p->x, y = p->y;

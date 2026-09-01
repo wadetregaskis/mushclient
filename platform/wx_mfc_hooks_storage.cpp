@@ -21,6 +21,8 @@ void (*g_wxhook_update_window)(void*)                            = nullptr;
 void (*g_wxhook_get_client_rect)(const void*, RECT*)             = nullptr;
 void (*g_wxhook_set_window_text)(void*, const char*)             = nullptr;
 void (*g_wxhook_move_window)(void*, int, int, int, int, bool)    = nullptr;
+void (*g_wxhook_set_window_pos)(void*, int, int, int, int,
+                                bool, bool)                     = nullptr;
 void (*g_wxhook_destroy_window)(void*)                           = nullptr;
 void (*g_wxhook_set_focus)(void*)                                = nullptr;
 long (*g_wxhook_send_message)(void*, unsigned, uintptr_t, intptr_t) = nullptr;
@@ -72,6 +74,8 @@ void          (*g_wxhook_edit_replace_sel)(void*, const char*)  = nullptr;
 int           (*g_wxhook_edit_line_info)(void*, int, int)       = nullptr;
 void          (*g_wxhook_edit_set_max_length)(void*, int)       = nullptr;
 void          (*g_wxhook_edit_set_readonly)(void*, bool)        = nullptr;
+void          (*g_wxhook_edit_pos_from_char)(const void*, int,
+                                             int*, int*)        = nullptr;
 void          (*g_wxhook_set_font)(void*, void*)                = nullptr;
 void          (*g_wxhook_set_cursor)(void*, int)                = nullptr;
 void          (*g_wxhook_set_main_background)(unsigned long)    = nullptr;

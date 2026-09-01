@@ -237,27 +237,28 @@ bool command_exists (Tcl_Interp* interp, const char* name)
 void CScriptEngine::OpenTcl ()
   {
   // Tcl's platform initialisation, which sets the system encoding (utf-8 here
-  // rather than the built-in iso8859-1 default) and populates
-  // [info nameofexecutable].  Every embedding is supposed to call it once
-  // before the first Tcl_CreateInterp; this one never did.
-  static bool s_foundExecutable = false;
-  if (!s_foundExecutable)
+  // rather than the built-in iso8859-1 default) and -- given a real argv0 --
+  // populates [info nameofexecutable].  Every embedding is supposed to call it
+  // once before the first Tcl_CreateInterp.  Passing NULL did only the
+  // encoding half: TclpFindExecutable returns immediately on a NULL argv0, so
+  // [info nameofexecutable] answered "" in every Tcl world and plugin -- and
+  // [file dirname] of "" is ".", silently pointing a script that locates
+  // resources beside the app at the process CWD instead.  The executable path
+  // is the same one that locates the bundled script library
+  // (Contents/Resources/tcl8.6, so init.tcl is found with no system Tcl), so
+  // one lookup now serves both.  Done once, before any interp is created,
+  // working in the dev build and the packaged .app alike.  If the bundled
+  // library isn't present, TCL_LIBRARY stays unset → Tcl falls back to its
+  // built-in path.
+  static bool s_platformInited = false;
+  if (!s_platformInited)
     {
-    s_foundExecutable = true;
-    Tcl_FindExecutable (NULL);
-    }
-
-  // Point the statically-linked Tcl at the bundled script library
-  // (Contents/Resources/tcl8.6) so it finds init.tcl etc. with no system Tcl.
-  // Done once, before any interp is created, derived from the executable path so
-  // it works in both the dev and packaged .app.  If the bundled library isn't
-  // present, leave TCL_LIBRARY unset → Tcl falls back to its built-in path.
-  static bool s_tclLibSet = false;
-  if (!s_tclLibSet)
-    {
-    s_tclLibSet = true;
+    s_platformInited = true;
     char exe[PATH_MAX]; uint32_t sz = sizeof (exe); char real[PATH_MAX];
-    if (_NSGetExecutablePath (exe, &sz) == 0 && realpath (exe, real))
+    const bool haveExe =
+        _NSGetExecutablePath (exe, &sz) == 0 && realpath (exe, real) != NULL;
+    Tcl_FindExecutable (haveExe ? real : NULL);   // copies the name; `real` need not outlive this
+    if (haveExe)
       {
       std::string p (real);                       // .../Contents/MacOS/MUSHclient
       size_t slash = p.find_last_of ('/');
@@ -334,7 +335,13 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
     else
       av.push_back (Tcl_NewDoubleObj (d));
     }
-  for (const string & s : sparams)  av.push_back (Tcl_NewStringObj (s.c_str (), -1));
+  // Length-explicit (-1 means strlen): sparams carries the raw telnet
+  // subnegotiation payload (OnPluginTelnetSubnegotiation), which holds NUL
+  // bytes -- ZMP and MSDP separate their fields with them.  Same rule the
+  // simple overload below already follows; wildcards and the table ride the
+  // same marshalling, so they follow it too.
+  for (const string & s : sparams)
+    av.push_back (Tcl_NewStringObj (s.data (), (int) s.size ()));
   if (regexp)                                   // wildcards as a Tcl list {whole $1 ...}
     {
     vector<string> wildcards;
@@ -342,15 +349,15 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
     Tcl_Obj* wc = Tcl_NewListObj (0, nullptr);
     for (size_t i = 0; i < wildcards.size (); i++)
       { const string & w = wildcards [i];
-        Tcl_ListObjAppendElement (interp, wc, Tcl_NewStringObj (w.c_str (), -1)); }
+        Tcl_ListObjAppendElement (interp, wc, Tcl_NewStringObj (w.data (), (int) w.size ())); }
     av.push_back (wc);
     }
   if (table)                                    // as a Tcl dict (flat key value ...)
     {
     Tcl_Obj* d = Tcl_NewListObj (0, nullptr);
     for (const auto & kv : *table)
-      { Tcl_ListObjAppendElement (interp, d, Tcl_NewStringObj (kv.first.c_str (), -1));
-        Tcl_ListObjAppendElement (interp, d, Tcl_NewStringObj (kv.second.c_str (), -1)); }
+      { Tcl_ListObjAppendElement (interp, d, Tcl_NewStringObj (kv.first.data (), (int) kv.first.size ()));
+        Tcl_ListObjAppendElement (interp, d, Tcl_NewStringObj (kv.second.data (), (int) kv.second.size ())); }
     av.push_back (d);
     }
 

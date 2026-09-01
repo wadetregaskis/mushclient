@@ -9,8 +9,14 @@
 //
 // One CPython interpreter is shared process-wide (Py_Initialize once); each world
 // or plugin (each CScriptEngine) gets its own module-namespace dict so globals
-// don't collide.  All scripting runs on the UI thread, so the GIL is simply held
-// throughout — no per-call GIL juggling.
+// don't collide.  All HOST-initiated scripting runs on the UI thread, but the
+// GIL is NOT parked there between callbacks: ensure_init releases it
+// (PyEval_SaveThread) and every entry point takes it for the call's duration
+// (the PyGIL guard below).  "Runs on the UI thread" is a statement about the
+// port's threads, not the script's -- holding the GIL across the idle wx event
+// loop froze every thread a script created (threading.Timer, a worker doing
+// socket.recv), except while some other Python callback happened to be
+// executing: plugins "worked while typing and stopped when idle".
 //
 // Built only when CMake finds Python3 (MUSHCLIENT_PYTHON_SCRIPTING) in the full
 // (mushapp) build; scriptengine.cpp provides link stubs otherwise.
@@ -79,10 +85,22 @@ void py_to_variant(PyObject* o, VARIANT& v)
   VariantInit(&v);
   if (o == nullptr || o == Py_None)        { v.vt = VT_EMPTY; return; }
   if (PyBool_Check(o))                     { v.vt = VT_BOOL; v.boolVal = (o == Py_True); return; }
-  if (PyLong_Check(o))                     { v.vt = VT_I4;   v.lVal = PyLong_AsLong(o);
-                                             if (v.lVal == -1 && PyErr_Occurred())
-                                               { PyErr_Clear(); v.vt = VT_R8; v.dblVal = PyLong_AsDouble(o); }
-                                             return; }
+  if (PyLong_Check(o))
+    {
+    v.vt = VT_I4;  v.lVal = PyLong_AsLong(o);
+    if (v.lVal != -1 || !PyErr_Occurred()) return;
+    PyErr_Clear();
+    v.vt = VT_R8;  v.dblVal = PyLong_AsDouble(o);
+    // An int beyond double range (~1.8e308) makes PyLong_AsDouble itself RAISE
+    // OverflowError and answer -1.0 -- unchecked, the method received -1.0 and
+    // the pending exception leaked into whatever Python ran next (the same
+    // leaked-exception failure mode the Unicode comment below describes
+    // fixing).  Marshal the digits instead: fall through to the str(o)
+    // fallback at the bottom, which is exact for an integer and is what every
+    // other unconvertible value already gets.
+    if (v.dblVal != -1.0 || !PyErr_Occurred()) return;
+    PyErr_Clear();
+    }
   if (PyFloat_Check(o))                    { v.vt = VT_R8;   v.dblVal = PyFloat_AsDouble(o); return; }
   if (PyUnicode_Check(o))
     {
@@ -294,6 +312,7 @@ int World_setattro(PyObject* self, PyObject* nameobj, PyObject* value)
   }
 
 bool g_inited = false;
+PyThreadState* g_mainThreadState = nullptr;   // saved by ensure_init's release
 
 void ensure_init()
   {
@@ -346,7 +365,28 @@ void ensure_init()
   MethodType.tp_dealloc   = Method_dealloc;
   MethodType.tp_str       = Method_str;
   PyType_Ready(&MethodType);
+
+  // Release the GIL that Py_Initialize left held.  From here on, every
+  // host->interpreter entry point takes it for the call's duration (PyGIL
+  // below), and between callbacks it is free -- which is the only thing that
+  // lets a thread a SCRIPT created run while the app sits in the wx event
+  // loop.  (There is no Py_Finalize anywhere in this file, so the saved state
+  // is never restored for teardown; the process just exits.)
+  g_mainThreadState = PyEval_SaveThread ();
   }
+
+// Hold the GIL for the duration of one host->interpreter entry point, on
+// every exit path.  PyGILState_Ensure nests correctly (it detects that the
+// calling thread already holds a live thread state), so an entry point
+// re-entered from inside a callback composes fine.  Everything that only ever
+// runs INSIDE one of these -- Method_call, World_getattro/setattro,
+// py_to_variant, report_error -- needs no guard of its own.
+struct PyGIL
+  {
+  PyGILState_STATE s;
+  PyGIL () : s (PyGILState_Ensure ()) {}
+  ~PyGIL () { PyGILState_Release (s); }
+  };
 
 // Resolve a (possibly dotted) procedure name in the namespace; new ref or null.
 PyObject* resolve(PyObject* ns, const char* dotted)
@@ -379,6 +419,31 @@ PyObject* resolve(PyObject* ns, const char* dotted)
   return obj;
   }
 
+// Encode a Python str to bytes for error reporting: surrogateescape, NOT the
+// strict codec.  Everything that entered the script through this engine's own
+// decoders -- trigger lines, wildcards, table values, the simple-callback
+// argument, any string a world method returned -- can hold the lone surrogates
+// U+DC80..U+DCFF that escape produces, and PyUnicode_AsUTF8 refuses those.  So
+// a handler that raised with the matched line in its message (a Latin-1 MUD is
+// enough) came back NULL here and the user was shown an EMPTY description --
+// on exactly the lines that most need diagnosing.  Mirrors the
+// result-direction fix in the simple ExecutePython overload below, and
+// length-explicit for the same reason.  Clearing the encode error is safe: the
+// caller holds the exception being formatted in PyErr_Fetch'd locals, so the
+// indicator being cleared is only this helper's own failure.
+bool py_str_to_cstring (PyObject* o, CString& out)
+  {
+  PyObject* enc = PyUnicode_AsEncodedString (o, "utf-8", "surrogateescape");
+  if (!enc) { PyErr_Clear (); return false; }
+  char*      p = nullptr;
+  Py_ssize_t n = 0;
+  const bool ok = (PyBytes_AsStringAndSize (enc, &p, &n) == 0 && p);
+  if (ok) out = CString (p, (int) n);
+  else    PyErr_Clear ();
+  Py_DECREF (enc);
+  return ok;
+  }
+
 // Format the pending Python exception and surface it like LuaError does.
 void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
   {
@@ -397,13 +462,13 @@ void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
       {
       PyObject* sep = PyUnicode_FromString("");
       PyObject* joined = PyUnicode_Join(sep, fmt);
-      if (joined) { const char* s = PyUnicode_AsUTF8(joined); if (s) msg = s; Py_DECREF(joined); }
+      if (joined) { py_str_to_cstring (joined, msg); Py_DECREF (joined); }
       Py_DECREF(sep); Py_DECREF(fmt);
       }
     }
   Py_XDECREF(tbmod);
   if (msg.IsEmpty() && value)
-    { PyObject* str = PyObject_Str(value); if (str) { const char* s = PyUnicode_AsUTF8(str); if (s) msg = s; Py_DECREF(str); } }
+    { PyObject* str = PyObject_Str(value); if (str) { py_str_to_cstring (str, msg); Py_DECREF (str); } }
 
   Py_XDECREF(type); Py_XDECREF(value); Py_XDECREF(tb);
   PyErr_Clear();
@@ -432,11 +497,24 @@ void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
 void CScriptEngine::OpenPython ()
   {
   ensure_init ();
+  PyGIL gil;
   CPythonEngine* e = new CPythonEngine ();
   e->doc = m_pDoc;
   e->ns  = PyDict_New ();
   PyObject* builtins = PyImport_ImportModule ("builtins");
   if (builtins) { PyDict_SetItemString (e->ns, "__builtins__", builtins); Py_DECREF (builtins); }
+  // Every real module namespace carries __name__, and PyRun_String does not
+  // add one to a bare dict.  Without it there is no NameError -- LOAD_NAME
+  // falls back to the builtins module, whose own __name__ is "builtins"
+  // (measured: exec("x = __name__", {}) yields "builtins") -- which is
+  // quietly worse: `if __name__ == "__main__":` guards never fire,
+  // logging.getLogger(__name__) logs under "builtins", and script-defined
+  // classes get __module__ = "builtins", breaking pickle and
+  // typing.get_type_hints.  "__main__" is what running the script directly
+  // would set, so the __main__ guard fires the way the author expects for
+  // what is, functionally, this script's entry point.
+  PyObject* modname = PyUnicode_FromString ("__main__");
+  if (modname) { PyDict_SetItemString (e->ns, "__name__", modname); Py_DECREF (modname); }
   e->world = make_world (m_pDoc);
   if (e->world) PyDict_SetItemString (e->ns, "world", e->world);
   m_pyEngine = e;
@@ -445,6 +523,7 @@ void CScriptEngine::OpenPython ()
 void CScriptEngine::ClosePython ()
   {
   if (!m_pyEngine) return;
+  PyGIL gil;
   Py_XDECREF (m_pyEngine->world);
   Py_XDECREF (m_pyEngine->ns);
   delete m_pyEngine;
@@ -454,6 +533,7 @@ void CScriptEngine::ClosePython ()
 bool CScriptEngine::ParsePython (const CString & strCode, const CString & strWhat)
   {
   if (!m_pyEngine) return true;
+  PyGIL gil;
   PyObject* r = PyRun_String ((LPCTSTR) strCode, Py_file_input, m_pyEngine->ns, m_pyEngine->ns);
   if (!r) { report_error (m_pDoc, strWhat, ""); return true; }
   Py_DECREF (r);
@@ -463,6 +543,7 @@ bool CScriptEngine::ParsePython (const CString & strCode, const CString & strWha
 DISPID CScriptEngine::GetPythonDispid (const CString & strName)
   {
   if (!m_pyEngine || strName.IsEmpty ()) return DISPID_UNKNOWN;
+  PyGIL gil;
   PyObject* fn = resolve (m_pyEngine->ns, (LPCTSTR) strName);
   bool ok = fn && PyCallable_Check (fn);
   Py_XDECREF (fn);
@@ -480,6 +561,7 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   {
   if (!m_pyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
+  PyGIL gil;
 
   PyObject* fn = resolve (m_pyEngine->ns, szProcedure);
   if (!fn || !PyCallable_Check (fn))
@@ -552,10 +634,33 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   if (result)
     {
     *result = true;
-    if (PyBool_Check (res))      *result = (res == Py_True);
-    else if (PyLong_Check (res)) *result = (PyObject_IsTrue (res) == 1);  // never raises (PyLong_AsLong can overflow + leave an exception set)
-    else if (res == Py_None)     *result = true;   // no explicit return → keep going
-    else                         *result = PyObject_IsTrue (res) ? true : false;
+    if (PyBool_Check (res))
+      *result = (res == Py_True);
+    else if (res == Py_None)
+      *result = true;                  // no explicit return → keep going
+    else
+      {
+      // Covers PyLong too: ordinary int truthiness never raises, but an int
+      // SUBCLASS overriding __bool__ theoretically could, so PyLong is not
+      // special-cased out of the -1 check.
+      const int t = PyObject_IsTrue (res);
+      if (t < 0)
+        {
+        // The truthiness coercion ITSELF raised (a numpy/pandas-style
+        // ambiguous __bool__, or a pathological __len__).  -1 is truthy in C,
+        // so this used to read as "keep going, no error" -- with the
+        // exception left PENDING on the one interpreter every world and
+        // plugin share (see the header comment), to be picked up by whatever
+        // unrelated Python callback ran next and misattributed to it.
+        // Report it against THIS handler instead, exactly as a raising call
+        // is handled a few lines above.
+        Py_DECREF (res);
+        dispid = DISPID_UNKNOWN;
+        report_error (m_pDoc, szType, szProcedure);
+        return true;
+        }
+      *result = (t != 0);
+      }
     }
 
   // Whether the handler answered at all, which `result` cannot express -- its
@@ -579,6 +684,7 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   {
   if (!m_pyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
+  PyGIL gil;
 
   PyObject* fn = resolve (m_pyEngine->ns, szProcedure);
   if (!fn || !PyCallable_Check (fn))

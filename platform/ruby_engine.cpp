@@ -478,21 +478,28 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   // allocation later in the loop could collect an earlier arg → use-after-collect.
   VALUE av = rb_ary_new ();
   for (double d : nparams)         rb_ary_push (av, DBL2NUM (d));
-  for (const string & s : sparams) rb_ary_push (av, rb_str_new_cstr (s.c_str ()));
+  // Length-explicit (rb_str_new_cstr is strlen): sparams carries the raw
+  // telnet subnegotiation payload (OnPluginTelnetSubnegotiation), which holds
+  // NUL bytes -- ZMP and MSDP separate their fields with them.  Same rule the
+  // simple overload below already follows; wildcards and the table ride the
+  // same marshalling, so they follow it too.
+  for (const string & s : sparams)
+    rb_ary_push (av, rb_str_new (s.data (), (long) s.size ()));
   if (regexp)                                   // wildcards as an Array [whole, $1, ...]
     {
     vector<string> wildcards;
     regexp->GetCallbackWildcards (bLowercaseWildcards, wildcards);
     VALUE wc = rb_ary_new ();
     for (size_t i = 0; i < wildcards.size (); i++)
-      { const string & w = wildcards [i]; rb_ary_push (wc, rb_str_new_cstr (w.c_str ())); }
+      { const string & w = wildcards [i]; rb_ary_push (wc, rb_str_new (w.data (), (long) w.size ())); }
     rb_ary_push (av, wc);
     }
   if (table)                                    // as a Hash
     {
     VALUE h = rb_hash_new ();
     for (const auto & kv : *table)
-      rb_hash_aset (h, rb_str_new_cstr (kv.first.c_str ()), rb_str_new_cstr (kv.second.c_str ()));
+      rb_hash_aset (h, rb_str_new (kv.first.data (), (long) kv.first.size ()),
+                       rb_str_new (kv.second.data (), (long) kv.second.size ()));
     rb_ary_push (av, h);
     }
 
@@ -524,8 +531,16 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
     // 0 -- the form MUSHclient's own documentation tells people to use.
     // Returning nil still means "no explicit return", i.e. keep going.
     if      (r == Qnil)             *result = true;
-    else if (RB_TYPE_P (r, T_FIXNUM) || RB_TYPE_P (r, T_BIGNUM))
-                                    *result = (rb_num2ll (r) != 0);
+    // FIXNUM and BIGNUM split, never combined through rb_num2ll: that RAISES
+    // RangeError for an Integer outside long long range, and rb_protect has
+    // already returned -- a tagless raise here is rb_bug -> abort, killing the
+    // whole client on a handler whose last expression is e.g. `1 << 64` (the
+    // same hazard ruby_error_message and ruby_to_s above are guarded against).
+    // A T_BIGNUM can never be zero -- CRuby normalises anything in Fixnum range
+    // to T_FIXNUM, so |Bignum| >= 2^62 -- which makes `true` exact, and both
+    // arms allocation-free and raise-free (FIX2LONG is a tag-bit shift).
+    else if (RB_TYPE_P (r, T_FIXNUM)) *result = (FIX2LONG (r) != 0);
+    else if (RB_TYPE_P (r, T_BIGNUM)) *result = true;
     else if (RB_TYPE_P (r, T_FLOAT))*result = (rb_num2dbl (r) != 0.0);
     else                            *result = RTEST (r);
     }

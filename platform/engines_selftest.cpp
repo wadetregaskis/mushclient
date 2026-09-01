@@ -44,6 +44,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>          // atof -- the thread battery reads a stamped delta
+#include <unistd.h>         // usleep -- an idle window with NO Python running
 #include <list>
 #include <map>
 #include <string>
@@ -189,6 +191,7 @@ struct Engine {
 //     rzero()     returns numeric 0
 //     rone()      returns numeric 1
 //     rnil()      returns the language's nil/None/undef
+//     rbig() / rbigneg()  return an integer beyond +/-2^64
 //     params(a,b,c,d)  writes "a|b|c|d" (ints) into world variable "p"
 //     tbl(s, t)   writes t["key"] into world variable "t"
 //     bump()      increments a global and writes it into "n"
@@ -259,15 +262,20 @@ const Dialect kDialects[] = {
   "function size(s) return tostring(#s) end\n"
   "function boom(s) error('deliberate') end\n"
   "function boomnul(s) error('nul\\0here') end\n"
+  "function boomlatin(s) error('bad: ' .. s) end\n"
   "function rnothing() end\n"
   "function rtrue() return true end\n"
   "function rfalse() return false end\n"
   "function rzero() return 0 end\n"
   "function rone() return 1 end\n"
   "function rnil() return nil end\n"
+  "function rbig() return 2^64 end\n"
+  "function rbigneg() return -(2^64) end\n"
   "function params(a, b, c, d)\n"
   "  world.SetVariable('p', string.format('%d|%d|%s|%s', a, b, c, d)) end\n"
   "function tbl(s, t) world.SetVariable('t', t.key or '?') end\n"
+  "function rsize(n, s) world.SetVariable('rsize', tostring(#s)) end\n"
+  "function rtblsize(s, t) world.SetVariable('rtbl', tostring(#t.key)) end\n"
   "n = 0\n"
   "function bump() n = n + 1 world.SetVariable('n', tostring(n)) end\n"
   "shared = 'from A'\n"
@@ -347,12 +355,18 @@ const Dialect kDialects[] = {
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
+  // Module level and deliberately FIRST: the module body itself reads
+  // __name__, the way logging.getLogger(__name__) does, so the battery below
+  // pins what the namespace really carried at load.
+  "MOD_NAME = __name__\n"
+  "def modname():\n    world.SetVariable('mn', MOD_NAME)\n"
   "def keep(s):\n    pass\n"
   "def change(s):\n    return 'replaced'\n"
   "def wrap(s):\n    return '<' + s + '>'\n"
   "def size(s):\n    return str(len(s.encode('utf-8', 'surrogateescape')))\n"
   "def boom(s):\n    raise RuntimeError('deliberate')\n"
   "def boomnul(s):\n    raise RuntimeError('nul\\0here')\n"
+  "def boomlatin(s):\n    raise RuntimeError('bad: ' + s)\n"
   // *a: called via both the rich overload (zero args) and the simple one
   // (one string arg, R2-07-F6's DispatchEmbedded coverage) -- unlike Lua,
   // Python raises on an unexpected positional argument.
@@ -362,9 +376,20 @@ const Dialect kDialects[] = {
   "def rzero():\n    return 0\n"
   "def rone():\n    return 1\n"
   "def rnil():\n    return None\n"
+  "def rbig():\n    return 1 << 64\n"
+  "def rbigneg():\n    return -(1 << 64)\n"
+  "class Ambiguous:\n    def __bool__(self):\n        raise ValueError('ambiguous truth')\n"
+  "def badbool():\n    return Ambiguous()\n"
+  "def hugeint():\n    world.SetVariable('huge', 10**400)\n    world.SetVariable('hugeafter', 'clean')\n"
+  "import threading, time\n"
+  "def spawnthread():\n    global fired_at, spawn_t0\n    fired_at = None\n    spawn_t0 = time.monotonic()\n    threading.Thread(target=_bg, daemon=True).start()\n"
+  "def _bg():\n    global fired_at\n    time.sleep(0.05)\n    fired_at = time.monotonic()\n"
+  "def threadreport():\n    d = -1.0 if fired_at is None else (fired_at - spawn_t0)\n    world.SetVariable('th', '%.3f' % d)\n"
   "def params(a, b, c, d):\n"
   "    world.SetVariable('p', '%d|%d|%s|%s' % (int(a), int(b), c, d))\n"
   "def tbl(s, t):\n    world.SetVariable('t', t.get('key', '?'))\n"
+  "def rsize(n, s):\n    world.SetVariable('rsize', str(len(s.encode('utf-8', 'surrogateescape'))))\n"
+  "def rtblsize(s, t):\n    world.SetVariable('rtbl', str(len(t['key'].encode('utf-8', 'surrogateescape'))))\n"
   "n = 0\n"
   "def bump():\n"
   "    global n\n    n = n + 1\n    world.SetVariable('n', str(n))\n"
@@ -449,14 +474,19 @@ const Dialect kDialects[] = {
   "sub size { return length($_[0]); }\n"
   "sub boom { die 'deliberate'; }\n"
   "sub boomnul { die \"nul\\0here\"; }\n"
+  "sub boomlatin { die 'bad: ' . $_[0]; }\n"
   "sub rnothing { return; }\n"
   "sub rtrue { return 1; }\n"
   "sub rfalse { return 0; }\n"
   "sub rzero { return 0; }\n"
   "sub rone { return 1; }\n"
   "sub rnil { return undef; }\n"
+  "sub rbig { return 2**64; }\n"
+  "sub rbigneg { return -(2**64); }\n"
   "sub params { $world->SetVariable('p', sprintf('%d|%d|%s|%s', @_)); }\n"
   "sub tbl { my ($s, $t) = @_; $world->SetVariable('t', $t->{key} || '?'); }\n"
+  "sub rsize { $world->SetVariable('rsize', length($_[1])); }\n"
+  "sub rtblsize { my ($s, $t) = @_; $world->SetVariable('rtbl', length($t->{key})); }\n"
   "our $n = 0;\n"
   "sub bump { $n = $n + 1; $world->SetVariable('n', \"$n\"); }\n"
   "our $shared = 'from A';\n"
@@ -525,15 +555,20 @@ const Dialect kDialects[] = {
   "function size(s) { return String(s.length); }\n"
   "function boom(s) { throw new Error('deliberate'); }\n"
   "function boomnul(s) { throw new Error('nul\\0here'); }\n"
+  "function boomlatin(s) { throw new Error('bad: ' + s); }\n"
   "function rnothing() { }\n"
   "function rtrue() { return true; }\n"
   "function rfalse() { return false; }\n"
   "function rzero() { return 0; }\n"
   "function rone() { return 1; }\n"
   "function rnil() { return null; }\n"
+  "function rbig() { return Math.pow(2, 64); }\n"
+  "function rbigneg() { return -Math.pow(2, 64); }\n"
   "function params(a, b, c, d) {\n"
   "  world.SetVariable('p', [Math.round(a), Math.round(b), c, d].join('|')); }\n"
   "function tbl(s, t) { world.SetVariable('t', t.key || '?'); }\n"
+  "function rsize(n, s) { world.SetVariable('rsize', String(s.length)); }\n"
+  "function rtblsize(s, t) { world.SetVariable('rtbl', String(t.key.length)); }\n"
   "var n = 0;\n"
   "function bump() { n = n + 1; world.SetVariable('n', String(n)); }\n"
   "var shared = 'from A';\n"
@@ -616,6 +651,7 @@ const Dialect kDialects[] = {
   "proc size {s} { return [string length $s] }\n"
   "proc boom {s} { error deliberate }\n"
   "proc boomnul {s} { error nul\\0here }\n"
+  "proc boomlatin {s} { error \"bad: $s\" }\n"
   // args: called via both overloads (see the Python rnothing comment above);
   // Tcl also errors on an unexpected positional argument.
   "proc rnothing {args} { }\n"
@@ -624,11 +660,16 @@ const Dialect kDialects[] = {
   "proc rzero {} { return 0 }\n"
   "proc rone {} { return 1 }\n"
   "proc rnil {} { return {} }\n"
+  "proc rbig {} { return [expr {1 << 64}] }\n"
+  "proc rbigneg {} { return [expr {-(1 << 64)}] }\n"
   "proc params {a b c d} {\n"
   "  world SetVariable p [format \"%d|%d|%s|%s\" [expr {int($a)}] [expr {int($b)}] $c $d] }\n"
   "proc tbl {s t} {\n"
   "  if {[dict exists $t key]} { world SetVariable t [dict get $t key] } \\\n"
   "  else { world SetVariable t ? } }\n"
+  "proc rsize {n s} { world SetVariable rsize [string length $s] }\n"
+  "proc exename {s} { world SetVariable exe [info nameofexecutable] }\n"
+  "proc rtblsize {s t} { world SetVariable rtbl [string length [dict get $t key]] }\n"
   "set n 0\n"
   "proc bump {} { global n; incr n; world SetVariable n $n }\n"
   "set shared {from A}\n"
@@ -694,6 +735,7 @@ const Dialect kDialects[] = {
   "def size(s); s.bytesize.to_s; end\n"
   "def boom(s); raise 'deliberate'; end\n"
   "def boomnul(s); raise \"nul\\0here\"; end\n"
+  "def boomlatin(s); raise 'bad: ' + s; end\n"
   // (*a): called via both overloads (see the Python rnothing comment above);
   // Ruby also errors on an unexpected positional argument.
   "def rnothing(*a); nil; end\n"
@@ -702,10 +744,14 @@ const Dialect kDialects[] = {
   "def rzero; 0; end\n"
   "def rone; 1; end\n"
   "def rnil; nil; end\n"
+  "def rbig; 1 << 64; end\n"
+  "def rbigneg; -(1 << 64); end\n"
   "def params(a, b, c, d)\n"
   "  world.SetVariable('p', '%d|%d|%s|%s' % [a.to_i, b.to_i, c, d])\n"
   "end\n"
   "def tbl(s, t); world.SetVariable('t', t['key'] || '?'); end\n"
+  "def rsize(n, s); world.SetVariable('rsize', s.bytesize.to_s); end\n"
+  "def rtblsize(s, t); world.SetVariable('rtbl', t['key'].bytesize.to_s); end\n"
   "@n = 0\n"
   "def bump; @n = (@n || 0) + 1; world.SetVariable('n', @n.to_s); end\n"
   "@shared = 'from A'\n"
@@ -968,6 +1014,39 @@ void battery_keepgoing(Engine& e, const Dialect& d)
     check(e.callRich("rfalse")   == false, L, "returning false stops processing");
     check(e.callRich("rone")     == true,  L, "returning 1 keeps processing");
 
+    // A handler whose last expression is an Integer beyond 64 bits must still
+    // answer "keep going", not kill the process.  Ruby's arm read the result
+    // with rb_num2ll, which RAISES RangeError past long long range -- with no
+    // Ruby tag live (rb_protect had already returned), that raise is
+    // rb_bug -> abort: the whole client died on `1 << 64` as a handler's
+    // implicit return.  Every language expresses the value somehow (as a
+    // double where that is all it has); it is nonzero either way, so the one
+    // right answer is true -- and for Ruby, merely REACHING the next assertion
+    // is the crash guard.
+    check(e.callRich("rbig")    == true, L,
+          "returning an integer beyond 64 bits keeps processing, not a crash");
+    check(e.callRich("rbigneg") == true, L,
+          "...and so does a negative one");
+
+    // CPython-only: a handler whose RETURN VALUE's truthiness itself raises
+    // (a numpy-style ambiguous __bool__).  PyObject_IsTrue answers -1 with an
+    // exception set; -1 is truthy in C, so the old arm read the failure as
+    // "keep going, no error" and left the exception PENDING on the one
+    // interpreter every world and plugin share -- the next unrelated Python
+    // callback then died with the stale exception and was disabled in this
+    // handler's stead.  The other five languages have no truthiness protocol
+    // that can raise, so there is nothing to control against.
+    if (strcmp(d.key, "python") == 0) {
+        bool errAmb = false;
+        e.callRich("badbool", &errAmb);
+        check(errAmb, L,
+              "a return value whose truthiness itself raises is a script error");
+        bool errNext = false;
+        const bool keepNext = e.callRich("rtrue", &errNext);
+        check(!errNext && keepNext, L,
+              "...and the callback that runs next is not poisoned by it");
+    }
+
     // The rule that surprises people, and the one Windows also implements: a
     // handler returning numeric 0 STOPS, even in languages where 0 is truthy.
     // Lua reads the value with tonumber for exactly this reason.
@@ -1054,6 +1133,37 @@ void battery_parameters(Engine& e, const Dialect& d)
     e.callRich("tbl", &err, {}, { "line" }, &t);
     check(!err && e.var("t") == "value", L,
           "the optional table (named wildcards) arrives as a mapping");
+
+    // MUD packets are not the only NUL carriers: OnPluginTelnetSubnegotiation's
+    // payload arrives through THIS overload's sparams (ZMP and MSDP separate
+    // fields with 0x00 -- the Windows arm's own comment says "this crazy code
+    // is to get 0x00 bytes into telnet subnegotiations"), and the table's
+    // values ride the same marshalling.  Tcl and Ruby handed both to the
+    // script NUL-terminated, so everything after the first 0x00 silently
+    // vanished -- in those two languages only; the other four, and both
+    // languages' own SIMPLE overloads, were already length-explicit.  The byte
+    // count is computed INSIDE the script, because reading the bytes back out
+    // through a world variable would itself truncate at the NUL (the port-wide
+    // BSTR rule) and hide exactly the difference under test.
+    e.seed("rsize", "handler never ran");
+    e.callRich("rsize", &err, { 1 }, { std::string("a\0z", 3) });
+    check(e.var("rsize") == "3", L,
+          "a rich-callback string argument with a NUL byte arrives at full length");
+
+    std::map<std::string, std::string> tn{ { "key", std::string("x\0y", 3) } };
+    e.seed("rtbl", "handler never ran");
+    e.callRich("rtblsize", &err, {}, { "line" }, &tn);
+    if (strcmp(d.key, "lua") == 0)
+        // The control differs BY SPECIFICATION on this one: ExecuteLua's table
+        // push is shared, Windows-identical code (lua_scripting.cpp uses
+        // lua_pushstring, i.e. strlen), so Lua truncates a table value at a
+        // NUL on both platforms.  Pinning that protects the shared TU --
+        // "fixing" it here would be an upstream divergence.
+        check(e.var("rtbl") == "1", L,
+              "a table value with a NUL truncates in Lua (shared, Windows-identical code)");
+    else
+        check(e.var("rtbl") == "3", L,
+              "a table value with a NUL byte arrives at full length");
 }
 
 // 3a-quater. VT_DATE.
@@ -1287,6 +1397,22 @@ void battery_errors(Engine& e, const Dialect& d)
     bool errnul = false;
     e.callRtn("boomnul", "untouched", &errnul);
     check(errnul, L, "a raise with a NUL in its message is reported, not a crash");
+
+    // An error whose MESSAGE embeds non-UTF-8 MUD text must still be reported
+    // with its bytes intact.  Python decodes every incoming string with
+    // surrogateescape, so a handler that concatenates the matched line into
+    // its own exception raises a message holding lone surrogates -- and
+    // report_error read it back with PyUnicode_AsUTF8, the STRICT codec,
+    // which refuses those: the user was shown an EMPTY description, only on
+    // exactly the lines that most need diagnosing.  Lua is the control (its
+    // strings are bytes and never travel a codec), and saw() reads raw line
+    // bytes, so the 0xE9 needle matches only if the bytes really landed.
+    CString latin1; latin1 = "caf\xE9";
+    bool errl = false;
+    e.callRtn("boomlatin", latin1, &errl);
+    check(errl, L, "an error carrying non-UTF-8 text is reported as an error");
+    check(e.saw("caf\xE9"), L,
+          "...and its text reaches the output window with its bytes intact");
 }
 
 // 5. State: globals persist between calls, and engines do not see each other's.
@@ -1651,6 +1777,105 @@ void battery_explicit_nil(const Dialect& d, const bool strict)
     }
 }
 
+// 6a-bis. Tcl platform bootstrap: [info nameofexecutable].
+//     Tcl_FindExecutable(NULL) does only the encoding half of what its old
+//     comment claimed -- TclpFindExecutable returns immediately on a NULL
+//     argv0 -- so [info nameofexecutable] answered "" in every Tcl world and
+//     plugin, and [file dirname] of that is ".": a plugin locating resources
+//     beside the app silently read from the process CWD instead.  Tcl-specific
+//     bootstrap, so the other five languages have no equivalent to control
+//     against; run_language gates the call.
+void battery_tcl_platform(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    e.seed("exe", "handler never ran");
+    e.callRtn("exename", "");
+    const std::string exe = e.var("exe");
+    check(exe.find("MUSHclient") != std::string::npos, L,
+          "[info nameofexecutable] names the real binary, not the empty string");
+}
+
+// 6a-ter. The Python module namespace.  PyRun_String executes the script body
+//     in a bare dict which CPython does NOT seed with __name__.  There is no
+//     NameError, which is what makes it treacherous: LOAD_NAME falls back to
+//     the builtins module, whose own __name__ is "builtins" (measured:
+//     exec("x = __name__", {}) yields "builtins") -- so every
+//     `if __name__ == "__main__":` guard silently never fired,
+//     logging.getLogger(__name__) logged under "builtins", and script-defined
+//     classes got __module__ = "builtins".  The dialect source reads __name__
+//     at module level (MOD_NAME, its first line, the getLogger shape); this
+//     battery pins the VALUE, and "builtins" is exactly what a regression
+//     answers.  CPython-specific, so run_language gates the call.
+void battery_py_namespace(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    e.seed("mn", "handler never ran");
+    e.callRich("modname");
+    check(e.var("mn") == "__main__", L,
+          "the module namespace carries __name__, and it is \"__main__\"");
+}
+
+// 6a-quater. A Python int beyond double range crossing to the world API.
+//     py_to_variant falls back to PyLong_AsDouble for an int that overflows
+//     long, but never checked THAT call's error: past ~1.8e308 it raises
+//     OverflowError and answers -1.0, so the world method received -1 and the
+//     pending exception leaked into whatever Python ran next -- CPython turns
+//     "returned a result with an exception set" into a SystemError against
+//     the innocent call.  Now the digits cross as a string (exact for an
+//     integer) and nothing leaks.  CPython-specific; run_language gates it.
+void battery_py_overflow(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    e.seed("huge", "handler never ran");
+    e.seed("hugeafter", "handler never ran");
+    bool err = false;
+    e.callRich("hugeint", &err);
+    std::string expected = "1";
+    expected.append(400, '0');
+    check(!err && e.var("huge") == expected, L,
+          "an int beyond double range arrives as its exact digits, not -1");
+    check(e.var("hugeafter") == "clean", L,
+          "...and the world call right after is not poisoned by a leaked OverflowError");
+}
+
+// 6a-quinquies. A thread the SCRIPT creates must run while the app is idle.
+//     ensure_init used to leave the GIL held by the UI thread for the process
+//     lifetime, and CPython's "drop the GIL for a waiting thread" check lives
+//     in the bytecode eval loop -- so between callbacks, with the app parked
+//     in the wx event loop running no bytecode, a plugin's threading.Timer or
+//     worker thread was frozen: "works while I'm typing, stops when I'm
+//     idle".  The worker here stamps time.monotonic() ITSELF when it finally
+//     runs, which makes the race harmless: whether the report reads None
+//     (never ran) or a late stamp, a starved thread cannot produce a small
+//     delta -- only a thread scheduled during the idle usleep window can.
+//     CPython-specific; run_language gates the call.
+void battery_py_threads(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    bool err = false;
+    e.callRich("spawnthread", &err);
+    check(!err, L, "a handler can start a threading.Thread");
+
+    // One second in which NO Python bytecode runs.  The worker sleeps 50 ms
+    // and then needs the GIL for one assignment: released between callbacks,
+    // it stamps ~0.05 s into the window; parked on the idle UI thread, it
+    // blocks until the threadreport call below is already executing and
+    // stamps >= ~1 s (or None if the read wins the race).  0.5 s splits the
+    // two regimes with a 10x margin on each side.
+    usleep(1000 * 1000);
+
+    e.seed("th", "handler never ran");
+    e.callRich("threadreport", &err);
+    const std::string th = e.var("th");
+    const double delta = atof(th.c_str());
+    check(!err && delta >= 0.0 && delta < 0.5, L,
+          "a script-created thread runs while the app is idle (GIL released between callbacks)");
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -1721,6 +1946,13 @@ bool run_language(const Dialect& d)
     battery_toworld   (e, d);
     battery_worldapi  (d);
     battery_state     (e, d);
+    if (strcmp(d.key, "tcl") == 0)        // Tcl-specific platform bootstrap
+        battery_tcl_platform(e, d);
+    if (strcmp(d.key, "python") == 0) {   // CPython-specific behaviours
+        battery_py_namespace(e, d);
+        battery_py_overflow (e, d);
+        battery_py_threads  (e, d);
+    }
     battery_trace     (d);
     battery_error_routing(d);
     battery_stale_proxy  (d);

@@ -57,6 +57,40 @@ inline int HeadlessMessageBoxAnswer(unsigned int nType)
     }
 }
 
+// ── the default-icon fill Windows' UMessageBox applies ───────────────────────
+// Reproduces Utilities.cpp's #ifdef _WIN32 UMessageBox (the real body, linked
+// into mushgui via platform/mushapp_stubs.cpp's UMessageBox forwarder on every
+// other platform): when the caller passed no MB_ICON* bit, OK / OKCANCEL /
+// YESNO / YESNOCANCEL get MB_ICONEXCLAMATION -- AfxMessageBox's own default,
+// which ::UMessageBox reproduces by hand.  ABORTRETRYIGNORE and RETRYCANCEL
+// are left alone; Windows' own comment there calls them "rarely used" and
+// says the caller should specify the icon.
+//
+// Shared for the same reason HeadlessMessageBoxAnswer is: the two UMessageBox
+// definitions (platform/windows_stubs.cpp for headless test builds,
+// platform/mushapp_stubs.cpp for mushgui) are in adapter sets that never
+// co-link, so they cannot share a function, only a decision.  Both used to
+// forward nType untouched, so every icon-less prompt -- roughly 60 of the
+// tree's ~103 UMessageBox/TMessageBox call sites -- lost its severity cue.
+//
+// nType & 0xF0 is MB_ICONMASK, nType & 0x0F is MB_TYPEMASK, and 0x30 is
+// MB_ICONEXCLAMATION (== MB_ICONWARNING) -- all standard MFC/Win32 constants
+// this header cannot name (it must not include the shim; see the file
+// comment), so callers static_assert them the same way HeadlessMessageBoxAnswer's
+// callers already do for the ID* values.
+inline unsigned int ApplyDefaultMessageBoxIcon(unsigned int nType)
+{
+    if ((nType & 0xF0) == 0) {          // no MB_ICON* bit set
+        switch (nType & 0x0F) {         // button-set nibble, an enumeration
+            case 0: case 1: case 3: case 4:   // OK / OKCANCEL / YESNOCANCEL / YESNO
+                nType |= 0x30;                 // MB_ICONEXCLAMATION
+                break;
+            default: break;              // ABORTRETRYIGNORE / RETRYCANCEL: no default
+        }
+    }
+    return nType;
+}
+
 #if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
 #include <cstdio>
 

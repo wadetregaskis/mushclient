@@ -427,15 +427,25 @@ BOOL CMDIFrameWnd::LoadFrame(UINT id, DWORD style, CWnd* pParent, void* /*pConte
 // Route through g_wxhook_message_box when it is set (mushgui at runtime);
 // fall back to stderr for headless builds.
 // The literals in HeadlessMessageBoxAnswer (platform/wx_mfc_hooks.h, which
-// cannot see the shim) must be the real ID* values.
+// cannot see the shim) must be the real ID* values; same for
+// ApplyDefaultMessageBoxIcon and the MB_* values (Utilities.cpp's Windows
+// UMessageBox default-icon fill, reproduced here -- see that helper's comment).
 static_assert (IDOK == 1 && IDCANCEL == 2 && IDABORT == 3 && IDNO == 7,
                "ID* constants moved: fix HeadlessMessageBoxAnswer");
+static_assert (MB_OK == 0 && MB_OKCANCEL == 1 && MB_YESNOCANCEL == 3 &&
+               MB_YESNO == 4 && MB_ICONEXCLAMATION == 0x30,
+               "MB_* constants moved: fix ApplyDefaultMessageBoxIcon");
 
-int UMessageBox(const char* sText, UINT nType, const char* caption) {
+// The dispatch, with no icon fill -- what AfxMessageBox routes to (see
+// mfc_exceptions.h for why AfxMessageBox must NOT go through UMessageBox).
+int UMessageBoxRaw(const char* sText, UINT nType, const char* caption) {
     if (g_wxhook_message_box)
         return g_wxhook_message_box(sText ? sText : "", caption ? caption : "MUSHclient", nType);
     fprintf(stderr, "MUSHclient [%s]: %s\n", caption ? caption : "MUSHclient", sText ? sText : "");
     return HeadlessMessageBoxAnswer(nType);
+}
+int UMessageBox(const char* sText, UINT nType, const char* caption) {
+    return UMessageBoxRaw(sText, ApplyDefaultMessageBoxIcon(nType), caption);
 }
 int TMessageBox(const char* sText, UINT nType) {
     return UMessageBox(sText, nType, "MUSHclient");

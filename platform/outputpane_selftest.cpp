@@ -283,6 +283,93 @@ void TestSelectionFreezesOutput()
     }
 }
 
+// ── 1a. A click inside the selection leaves it alone ─────────────────────
+//
+// CMUSHView::OnLButtonDown builds the old selection region and returns early
+// when the click is inside it -- taking no capture and starting no new
+// selection: `if (oldrgn.PtInRegion (point)) { oldrgn.DeleteObject (); return; }`
+// (mushview.cpp:2248-2253).  The port reset anchor = focus = click point
+// unconditionally, so clicking anywhere in a highlighted paragraph -- to bring
+// the window forward, or on the way to Edit > Copy -- destroyed the selection
+// and left Copy with nothing to copy.
+void TestClickInsideSelectionKeepsIt()
+{
+    printf("a click inside the selection keeps it (mushview.cpp:2248-2253)\n");
+
+    Harness h;
+    h.pane->AppendLine(MakeLine("alpha bravo charlie delta echo"));
+    h.pane->AppendLine(MakeLine("foxtrot golf hotel india juliet"));
+
+    const int cw = h.pane->CharWidth();
+    const int lh = h.pane->LineHeight();
+    auto dragOut = [&]() {
+        // Columns 6..19 of the first line: "bravo charlie".
+        h.pane->SetSelectionRange(0, 0, 0, 0);
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 6, lh / 2);
+        SendMouse(h.pane, wxEVT_MOTION,    cw * 19, lh / 2, /*leftDown*/ true);
+        SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 19, lh / 2);
+        if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+        return h.pane->GetSelectionText();
+    };
+
+    const wxString made = dragOut();
+    opCheck(made == wxT("bravo charlie"),
+            "fixture: a drag really selected \"bravo charlie\"");
+
+    // The click under test: down and up in the middle of that region.
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 12, lh / 2);
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 12, lh / 2);
+    if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+    opCheck(h.pane->GetSelectionText() == made,
+            "a click INSIDE the selection leaves it exactly as it was");
+
+    // The control, and it is what stops "suppress OnLeftDown entirely" passing:
+    // a click OUTSIDE the region must still collapse the selection, as it
+    // always did.
+    dragOut();
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 3, lh + lh / 2);   // the second line
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 3, lh + lh / 2);
+    if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+    opCheck(h.pane->GetSelectionText().IsEmpty(),
+            "control: a click OUTSIDE it still collapses the selection");
+
+    // ...and a drag that STARTS outside still makes a new selection, so the
+    // guard has not cost the pane its ordinary behaviour.
+    dragOut();
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 0,  lh + lh / 2);
+    SendMouse(h.pane, wxEVT_MOTION,    cw * 7,  lh + lh / 2, /*leftDown*/ true);
+    SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 7,  lh + lh / 2);
+    if (h.pane->HasCapture()) h.pane->ReleaseMouse();
+    opCheck(h.pane->GetSelectionText() == wxT("foxtrot"),
+            "control: a drag starting outside it selects afresh");
+
+    // A click on a LINK inside the selection is a link click, not a region
+    // click: Windows tests the hyperlink first and fires it on the way down,
+    // before it ever builds the region (mushview.cpp:2158-2225).
+    {
+        Harness h2;
+        SOutputRun plain;  plain.text = "go ";        plain.fg = 0x00FFFFFFu;
+        SOutputRun link;   link.text  = "north here"; link.fg  = 0x00FFFFFFu;
+        link.setLink("north", "", 0x0400 /*ACTION_SEND*/);
+        SOutputLine line;  line.push_back(plain);  line.push_back(link);
+        h2.pane->AppendLine(std::move(line));
+
+        int fired = 0;
+        h2.pane->m_fn_link_clicked =
+            [&](const std::string&, int, bool, SRunEncoding) { ++fired; };
+
+        const int cw2 = h2.pane->CharWidth();
+        const int lh2 = h2.pane->LineHeight();
+        h2.pane->SelectAll();                       // the link is inside it
+        opCheck(!h2.pane->GetSelectionText().IsEmpty(), "fixture: all selected");
+        SendMouse(h2.pane, wxEVT_LEFT_DOWN, cw2 * 5, lh2 / 2);
+        SendMouse(h2.pane, wxEVT_LEFT_UP,   cw2 * 5, lh2 / 2);
+        if (h2.pane->HasCapture()) h2.pane->ReleaseMouse();
+        opCheckEq(fired, 1,
+                  "a link inside the selection still fires when clicked");
+    }
+}
+
 // ── 1b. WantsSelectAll: the pane's stand-in for "this view has focus" ───────
 // BUG-3 (2026-08-12 GUI-drive run): Edit ▸ Select All did nothing at all with
 // the output pane clicked into, because nothing ever gives the pane real wx
@@ -1426,6 +1513,15 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
     auto releases = [&](int n) {
         const auto t0 = std::chrono::steady_clock::now();
         for (int i = 0; i < n; ++i) {
+            // Start each cycle with nothing selected.  A LEFT_DOWN inside an
+            // existing selection now leaves it alone and takes no capture
+            // (mushview.cpp:2248-2253), and the SelectAll below means every
+            // cycle after the first would otherwise be clicking inside the
+            // whole buffer -- no drag, no release work, nothing measured.  What
+            // is being timed is unchanged: the SelectAll still happens before
+            // the release, so the release still ends a drag over the whole
+            // buffer.
+            h.pane->SetSelectionRange(0, 0, 0, 0);
             SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
             SendMouse(h.pane, wxEVT_MOTION, cw * 5, lh / 2, /*leftDown*/ true);
             h.pane->SelectAll();
@@ -3981,6 +4077,7 @@ int RunOutputPaneSelfTest()
     const ClipboardGuard clipAll;
 
     TestSelectionFreezesOutput();
+    TestClickInsideSelectionKeepsIt();
     TestWantsSelectAll();
     TestDoubleClickAutoCopy();
     TestClearOutputDropsPendingLine();

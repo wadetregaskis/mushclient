@@ -3042,6 +3042,31 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
         }
     }
 
+    // A click INSIDE the existing selection leaves it alone and takes no
+    // capture: `if (oldrgn.PtInRegion (point)) { ...; return; }`
+    // (CMUSHView::OnLButtonDown, mushview.cpp:2248-2253).  The port reset the
+    // anchor to the click point unconditionally, so clicking anywhere in a
+    // highlighted paragraph -- to bring the window forward, or on the way to
+    // Edit > Copy -- collapsed the selection and left Copy with nothing.
+    //
+    // Placed here for two reasons, both taken from the order upstream uses.
+    // AFTER the link stash and skipped when a link was hit, because Windows
+    // tests the hyperlink FIRST and fires it on the way down (:2158-2225),
+    // returning before it ever builds the region.  And after the shift-click
+    // branch above, because that one extends the selection wherever the click
+    // lands -- Windows' `nFlags & MK_SHIFT` arm is likewise reached only past
+    // the region test.
+    if (m_linkAtDown.empty()) {
+        SelPoint s, e;
+        if (GetNormalizedSel(s, e)) {
+            const SelPoint click = MouseToSelPoint(evt);
+            if (s <= click && click < e) {
+                evt.Skip();
+                return;
+            }
+        }
+    }
+
     // Begin a new selection.  Anchor = focus = click position (empty selection).
     m_selAnchor = MouseToSelPoint(evt);
     m_selFocus  = m_selAnchor;

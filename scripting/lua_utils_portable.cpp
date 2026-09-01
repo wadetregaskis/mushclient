@@ -63,20 +63,28 @@ lua_State * MakeLuaState (void)
 // ── GetNestedFunction ─────────────────────────────────────────────────────────
 // Navigate a dot-separated name like "string.gsub" through Lua tables, leaving
 // the function (if found) on the stack.  Returns true on success.
+//
+// Kept identical to the real body (Utilities.cpp, linked into mushgui) on
+// purpose -- that is the whole point of a portable twin.  Two things used to
+// drift: no guard for a null/empty name (Windows treats that as "not found"
+// without raising an error -- resolving "" walks zero name components and
+// leaves the globals table itself on the stack, which otherwise produces a
+// spurious "Cannot find the function '' - item '' is table" message box, seen
+// when opening a world whose unset handlers default to empty strings), and a
+// hand-rolled split with no whitespace trimming where the real body uses
+// StringToVector(..., true) -- so a script/plugin entry point saved with
+// leading or trailing whitespace (e.g. "OnTick ") resolved on Windows and in
+// mushgui but not in any headless test executable.
 
 bool GetNestedFunction (lua_State * L, const char * sName, const bool bRaiseError)
 {
-    // Split "a.b.c" into ["a","b","c"]
+    // An empty (or null) name is never a function -- treat it as "not found"
+    // without raising an error.
+    if (sName == NULL || *sName == '\0')
+        return false;
+
     vector<string> v;
-    {
-        string s(sName), part;
-        size_t pos;
-        while ((pos = s.find('.')) != string::npos) {
-            v.push_back(s.substr(0, pos));
-            s.erase(0, pos + 1);
-        }
-        v.push_back(s);
-    }
+    StringToVector (sName, v, ".", true);
 
     lua_pushvalue(L, LUA_GLOBALSINDEX);
 
@@ -95,12 +103,17 @@ bool GetNestedFunction (lua_State * L, const char * sName, const bool bRaiseErro
 
     bool bResult = lua_isfunction(L, -1);
 
+    // handle case of something like: print.blah
+    //  -- loop above will exit and print is a function, but we wanted print.blah
     if (!bResult || (bResult && iter != v.end())) {
         if (bResult) sItem = sPrev;
         if (bRaiseError)
-            fprintf(stderr, "Cannot find the function '%s' - item '%s' is %s\n",
-                    sName, sItem.c_str(),
-                    lua_typename(L, lua_type(L, -1)));
+            ::UMessageBox (TFormat ("Cannot find the function '%s' - item '%s' is %s",
+                            sName,
+                            sItem.c_str (),
+                            lua_typename(L, lua_type(L, -1))
+                              ),
+                              MB_ICONEXCLAMATION);
         return false;
     }
     return true;

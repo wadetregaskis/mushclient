@@ -1215,10 +1215,14 @@ bool bPaletteValid = false;
 
     if (!trigger_item->sound_to_play.IsEmpty () && trigger_item->sound_to_play != NOSOUNDLIT)
       if (m_enable_trigger_sounds)
+        // IsWorldViewActive is exactly this pair of pointer tests on Windows
+        // (doc.h:1213); on the port it is the flag the wx frame maintains,
+        // because the two CView pointers are never set there.  Without the
+        // substitution "only if inactive" was vacuously true off Windows and
+        // the sound played while you were looking at the window.
+        // doc_shared.cpp:3915 (StartNewLine) already makes the same swap.
         if (!trigger_item->bSoundIfInactive ||   // don't care?
-            (trigger_item->bSoundIfInactive && 
-             m_pActiveCommandView == NULL &&
-             m_pActiveOutputView == NULL))
+            !IsWorldViewActive ())
         PlaySoundFile (trigger_item->sound_to_play);
 
       /*

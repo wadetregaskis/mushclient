@@ -2179,3 +2179,99 @@ TEST(TriggerScript, SetTriggerOptionScriptResolvesRejectsAndClearsTheCallback)
     EXPECT_EQ(5L, t->nMatched);
     EXPECT_STREQ("AAB", script_log(doc).c_str());    // no further call
 }
+
+// ── "play the sound only if the window is inactive" ─────────────────────────
+//
+// ProcessPreviousLine used to answer "is this world's window active?" with the
+// raw `m_pActiveCommandView == NULL && m_pActiveOutputView == NULL` pair.  On
+// Windows those two are maintained by CMUSHView/CSendView::OnActivateView; the
+// port never constructs either view, so the test was permanently true there and
+// bSoundIfInactive suppressed nothing, ever.  IsWorldViewActive() is the one
+// predicate both frontends maintain (doc.h:1213-1223) and is literally that
+// pointer pair on Windows, so the substitution is bit-identical there.
+//
+// Observed through g_wxhook_play_sound, the seam CMainFrame::PlaySoundFile
+// hands the filename to (mainfrm.cpp:1445; the headless twin at
+// platform/doc_headless_stubs.cpp:153).  Port-only because SetWorldViewActive
+// is port-only (doc.h) -- on Windows the flag IS the two view pointers, and
+// the only honest way to set them is to construct the views.
+#ifndef _WIN32
+namespace {
+
+// The last filename g_wxhook_play_sound was handed, and how many times.
+std::string s_soundPlayed;
+int         s_soundCount;
+
+void reset_sound_probe()
+{
+    s_soundPlayed = "<none>";
+    s_soundCount  = 0;
+}
+
+// Feed one matching line with the window in the given activation state and
+// report whether the sound reached the backend.
+bool sound_fires_when_active(bool bActive, BOOL bSoundIfInactive)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    CTrigger* t = add_trigger(doc, "you are hungry");
+    t->sound_to_play     = "ding.wav";
+    t->bSoundIfInactive  = bSoundIfInactive;
+
+    doc.SetWorldViewActive(bActive);
+    reset_sound_probe();
+    feed_line(doc, "you are hungry");
+    EXPECT_EQ(1L, t->nMatched);        // the trigger itself always matches
+    return s_soundCount > 0;
+}
+
+} // namespace
+
+TEST(TriggerSound, SoundIfInactiveIsSuppressedWhileTheWindowIsActive)
+{
+    HookGuard<decltype(g_wxhook_play_sound)> soundGuard(g_wxhook_play_sound);
+    g_wxhook_play_sound = [](const char* path, bool) -> bool {
+        s_soundPlayed = path ? path : "";
+        ++s_soundCount;
+        return true;
+    };
+
+    // The discriminating direction: with the flag set and the world's window
+    // in front, nothing is played.  This is the half that FAILS on the raw
+    // pointer test, because both pointers are NULL on the port forever.
+    EXPECT_FALSE(sound_fires_when_active(true,  TRUE));
+
+    // ... and the guard must not over-suppress: in the background it plays.
+    EXPECT_TRUE(sound_fires_when_active(false, TRUE));
+    EXPECT_STREQ("ding.wav", s_soundPlayed.c_str());
+
+    // Control, so "the family is vacuously silent" cannot pass: without the
+    // flag the sound plays in BOTH states.
+    EXPECT_TRUE(sound_fires_when_active(true,  FALSE));
+    EXPECT_TRUE(sound_fires_when_active(false, FALSE));
+}
+
+TEST(TriggerSound, TheTriggerSoundMasterSwitchStillWins)
+{
+    // m_enable_trigger_sounds is the outer guard; the activation test must not
+    // have become a way around it.  (Mutating the fix to "always play" leaves
+    // this green, which is why the test above carries the discrimination.)
+    HookGuard<decltype(g_wxhook_play_sound)> soundGuard(g_wxhook_play_sound);
+    g_wxhook_play_sound = [](const char* path, bool) -> bool {
+        s_soundPlayed = path ? path : "";
+        ++s_soundCount;
+        return true;
+    };
+
+    CMUSHclientDoc doc; make_doc(doc);
+    CTrigger* t = add_trigger(doc, "you are hungry");
+    t->sound_to_play    = "ding.wav";
+    t->bSoundIfInactive = TRUE;
+    doc.m_enable_trigger_sounds = FALSE;
+    doc.SetWorldViewActive(false);      // background: would otherwise play
+
+    reset_sound_probe();
+    feed_line(doc, "you are hungry");
+    EXPECT_EQ(1L, t->nMatched);
+    EXPECT_EQ(0, s_soundCount);
+}
+#endif  // !_WIN32

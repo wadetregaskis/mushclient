@@ -3801,6 +3801,26 @@ is the real property sheet and the real common dialogs.
   integer between 0 and 10000." and refuses.  Confirm 100001 is still refused
   and that the neighbouring *delay per lines* field (1..100000) is unchanged.
 
+### Frame-routing wave — shared source (2026-09-01)
+
+Port-side command-routing work whose engine half is compiled by MSVC.  Each is
+a textual change to a line Windows executes; each is meant to leave Windows
+behaviour bit-identical, and each is unrunnable here because the class that
+would prove it (`CMUSHView` / `CSendView`) is never constructed on the port.
+
+- **The trigger sound's "only if inactive" test now goes through
+  `IsWorldViewActive()`** (`ProcessPreviousLine.cpp:1218`).  The raw
+  `m_pActiveCommandView == NULL && m_pActiveOutputView == NULL` pair was
+  vacuously true off Windows, so the option suppressed nothing there; on
+  Windows `IsWorldViewActive()` is *defined* as that pair (`doc.h:1214`), so
+  the new expression is its De Morgan equal.  **To check:** a trigger with a
+  sound file and *Only if inactive* ticked, on a world whose window is
+  frontmost — no sound; click another world (or another app) and make the same
+  line arrive — the sound plays.  Also confirm a trigger with the box
+  **un**ticked still sounds in both states, and that Game ▸ *enable trigger
+  sounds* off still silences both.  Nothing else reads those two pointers on
+  this path, so the only way to see a regression is the sound itself.
+
 ---
 
 ## 10. Round two — results of the second empirical pass (2026-08-20)

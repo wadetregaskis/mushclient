@@ -505,6 +505,28 @@ static void RebuildFontVariants(const wxFont& base,
 // wxLaunchDefaultBrowser().  Only runs with no existing action and no
 // horiz_rule flag are scanned (MXP links are already labelled).
 
+// ── IsUsableLink ─────────────────────────────────────────────────────────────
+// Whether a run's link may be ACTED on -- clicked, hand-cursored, offered in
+// the context menu, or described in a tooltip.
+//
+// Windows gates all four on the same pair of tests: the action is not empty,
+// and it does not contain the literal "&text;" (mushview.cpp:2158-2160 the
+// click, :2848-2850 the cursor, :3538-3541 the menu, :4280-4282 the tooltip;
+// the cursor one even carries the comment "we know what &text; is").  "&text;"
+// is the MXP entity standing for a tag's own enclosed text, and it survives
+// into the action only when the substitution never happened -- the enclosed
+// text ran past MAX_TEXT (mxp/mxpClose.cpp:18) -- so what is left is not a
+// command anyone meant to send.  The port had no such check: such a run looked
+// live, and clicking it sent the literal "say &text;" to the MUD.
+//
+// Deliberately NOT folded into SOutputRun::isLink(), which DetectURLs also uses
+// to decide which runs it may scan for bare URLs -- a different question.
+static bool IsUsableLink(const SOutputRun* run)
+{
+    return run && run->isLink() && !run->action().empty() &&
+           run->action().find("&text;") == std::string::npos;
+}
+
 static SOutputLine DetectURLs(SOutputLine line)
 {
     // Quick scan: skip the whole line if it has no "http" substring at all.
@@ -3011,7 +3033,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY(),
                                    false /*containment: which cell holds it*/);
             const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), clickCol);
-            if (run && run->isLink()) {
+            if (IsUsableLink(run)) {
                 m_linkAtDown     = run->action();
                 m_linkTypeAtDown = run->action_type();
                 m_linkNoteAtDown = LineAt(lineIdx).comment;
@@ -3316,6 +3338,16 @@ void COutputPane::ScrollByRows(int rows)
     Scroll(scrollX, std::max(0, scrollY + rows * units));   // Scroll clamps the far end
 }
 
+bool COutputPane::PointIsOverUsableLink(int clientX, int clientY) const
+{
+    SelPoint pt = PointToChar(clientX, clientY,
+                              false /*containment: hover, not caret*/);
+    if (!pt.valid() || pt.line < 0 || pt.line >= LineCountI()) return false;
+    // pt.col is the absolute char column in the logical line (already
+    // wrap-aware via XToChar in PointToChar).
+    return IsUsableLink(RunAtCharColumn(LineAt(pt.line), pt.col));
+}
+
 int COutputPane::DragBottomEdge() const
 {
     int clientH;
@@ -3433,17 +3465,9 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         } else if (mwCursor != -999) {
             SetCursor(MiniWindowCursor(mwCursor));
         } else {
-            SelPoint pt = PointToChar(evt.GetX(), evt.GetY(),
-                                      false /*containment: hover, not caret*/);
-            bool overLink = false;
-            if (pt.valid() && pt.line < LineCountI()) {
-                // pt.col is the absolute char column in the logical line
-                // (already wrap-aware via XToChar in MouseToSelPoint).
-                const SOutputRun* run = RunAtCharColumn(LineAt(pt.line), pt.col);
-                overLink = run && run->isLink();
-            }
-            SetCursor(overLink ? wxCursor(wxCURSOR_HAND)
-                               : wxCursor(wxCURSOR_IBEAM));
+            SetCursor(PointIsOverUsableLink(evt.GetX(), evt.GetY())
+                          ? wxCursor(wxCURSOR_HAND)
+                          : wxCursor(wxCURSOR_IBEAM));
         }
     }
     evt.Skip();
@@ -3630,7 +3654,7 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
             int col = XToChar(lineIdx, x, y,
                               false /*containment*/);
             const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), col);
-            if (run && run->isLink()) {
+            if (IsUsableLink(run)) {
                 linkAtClick     = run->action();
                 linkHintAtClick = run->hint();
                 linkTypeAtClick = run->action_type();

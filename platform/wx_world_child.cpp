@@ -1400,6 +1400,17 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         for (const auto& run : *line) {
             int runLen = RunCharLen(run);
             if (pt.col >= c && pt.col < c + runLen) {
+                // Windows shows the hint only for a link it would also let you
+                // CLICK: the action must be non-empty and must not still carry
+                // the literal "&text;" (CMUSHView::OnToolTipNeedText,
+                // mushview.cpp:4280-4282 -- the same guard as the click, the
+                // cursor and the MXP menu).  An unsubstituted placeholder means
+                // the substitution never happened, so the hint describes a
+                // command that cannot be sent.
+                const std::string action = run.action();
+                if (action.empty() ||
+                    action.find("&text;") != std::string::npos)
+                    break;  // not an actionable link: line information instead
                 const std::string hint = run.hint();
                 if (!hint.empty())
                     return DecodeRunBytes(hint, run.encoding());

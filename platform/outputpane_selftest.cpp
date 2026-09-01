@@ -3080,6 +3080,84 @@ struct CanonSpy {
     }
 };
 
+// ── 18c-bis. an unsubstituted "&text;" is not a link ─────────────────────
+//
+// "&text;" is the MXP entity for a tag's own enclosed text.  It survives into
+// the action only when the substitution never happened -- the enclosed text ran
+// past MAX_TEXT (mxp/mxpClose.cpp:18) -- so what is left is not a command
+// anybody meant to send.  Windows refuses every affordance for such a run: the
+// click (mushview.cpp:2158-2160), the hand cursor (:2848-2850, whose comment is
+// "we know what &text; is"), the MXP menu (:3538-3541) and the tooltip
+// (:4280-4282).  The port tested only isLink(), so the run underlined,
+// hand-cursored and, on a click, sent the literal "say &text;" to the MUD.
+//
+// Every arm has the same-shaped control one row below it, with an ordinary
+// action, so "the affordance is gone for everything" cannot pass either.
+void TestUnsubstitutedTextPlaceholderIsNotALink()
+{
+    printf("an action still carrying \"&text;\" is refused everywhere "
+           "(mushview.cpp:2158-2160)\n");
+
+    Harness h;
+    auto linkLine = [](const char* action) {
+        SOutputRun run;
+        run.text = "click here";
+        run.fg   = 0x00FFFFFFu;
+        run.setLink(action, "the hint", 0x0400 /*ACTION_SEND*/);
+        SOutputLine line;
+        line.push_back(run);
+        return line;
+    };
+    h.pane->AppendLine(linkLine("say &text;"));   // row 0: substitution failed
+    h.pane->AppendLine(linkLine("say hello"));    // row 1: the control
+
+    std::vector<std::string> fired;
+    h.pane->m_fn_link_clicked =
+        [&](const std::string& a, int, bool, SRunEncoding) { fired.push_back(a); };
+
+    const int cw = h.pane->CharWidth();
+    const int lh = h.pane->LineHeight();
+    auto clickRow = [&](int row) {
+        SendMouse(h.pane, wxEVT_LEFT_DOWN, cw * 2 + cw / 2, row * lh + lh / 2);
+        SendMouse(h.pane, wxEVT_LEFT_UP,   cw * 2 + cw / 2, row * lh + lh / 2);
+    };
+
+    // ── the click ────────────────────────────────────────────────────────
+    clickRow(0);
+    opCheck(fired.empty(),
+            "clicking a link whose action still has \"&text;\" sends nothing");
+    clickRow(1);
+    opCheck(fired.size() == 1 && fired[0] == "say hello",
+            "control: the ordinary link beside it still fires");
+
+    // ── the context menu ─────────────────────────────────────────────────
+    {
+        wxMenu menu;
+        h.pane->BuildContextMenu(menu, cw * 2 + 1, lh / 2);
+        opCheck(ItemNamed(menu, "Copy Action") == nullptr,
+                "...and it is offered no link items in the context menu");
+    }
+    {
+        wxMenu menu;
+        h.pane->BuildContextMenu(menu, cw * 2 + 1, lh + lh / 2);
+        opCheck(ItemNamed(menu, "Copy Action") != nullptr,
+                "control: the ordinary link IS offered them");
+    }
+
+    // ── the hand cursor ──────────────────────────────────────────────────
+    // Asked through PointIsOverUsableLink, which is the whole of OnMotion's
+    // hand-cursor test.  Not through GetCursor(): two wxCursor objects built
+    // from the same stock id do not compare equal (measured -- IsSameAs
+    // compares ref data, and each construction makes its own), so the cursor
+    // itself cannot be read back at all.
+    opCheck(h.pane->PointIsOverUsableLink(cw * 2 + cw / 2, lh + lh / 2),
+            "fixture: an ordinary link really is hand-cursor material");
+    opCheck(!h.pane->PointIsOverUsableLink(cw * 2 + cw / 2, lh / 2),
+            "...and the \"&text;\" one is not (no affordance at all)");
+    opCheck(!h.pane->PointIsOverUsableLink(cw * 40, lh + lh / 2),
+            "control: nor is ordinary space past the end of the link run");
+}
+
 // ── 18d. the link cluster: what the items SAY and what they SEND ─────────
 //
 // Windows' IDR_MXP_MENU is exactly one item per alternative, labelled with the
@@ -3931,6 +4009,7 @@ int RunOutputPaneSelfTest()
     TestPullSeamReads();
     TestPullSeamDetectsURLs();
     TestLinkEncodingTravelsWithTheAction();
+    TestUnsubstitutedTextPlaceholderIsNotALink();
     TestPendingRowUsesTheRunPipeline();
     TestMiddleClickIsInert();
     TestContextMenuShape();

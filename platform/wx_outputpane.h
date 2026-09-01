@@ -660,6 +660,13 @@ public:
     // from wxApp::OnInit, where wxYield corrupts the heap (CLAUDE.md, 8f12c1c).
     bool AutoScrollTick();
 
+    // Whether the pointer is over a link this pane would ACT on -- the test
+    // OnMotion's hand-cursor branch makes.  Public because the cursor itself
+    // cannot be read back: wxCursor carries no comparable identity, so
+    // GetCursor() cannot be compared with wxCursor(wxCURSOR_HAND), and an
+    // affordance nothing can observe is one nothing can pin.
+    bool PointIsOverUsableLink(int clientX, int clientY) const;
+
     // Whether to auto-copy text selection to the clipboard on mouse release.
     // Corresponds to world option copy_selection_to_clipboard.
     void SetCopySelectionToClipboard(bool v) { m_copySelToClip = v; }

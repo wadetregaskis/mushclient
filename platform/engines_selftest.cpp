@@ -260,6 +260,7 @@ const Dialect kDialects[] = {
   "function size(s) return tostring(#s) end\n"
   "function boom(s) error('deliberate') end\n"
   "function boomnul(s) error('nul\\0here') end\n"
+  "function boomlatin(s) error('bad: ' .. s) end\n"
   "function rnothing() end\n"
   "function rtrue() return true end\n"
   "function rfalse() return false end\n"
@@ -358,6 +359,7 @@ const Dialect kDialects[] = {
   "def size(s):\n    return str(len(s.encode('utf-8', 'surrogateescape')))\n"
   "def boom(s):\n    raise RuntimeError('deliberate')\n"
   "def boomnul(s):\n    raise RuntimeError('nul\\0here')\n"
+  "def boomlatin(s):\n    raise RuntimeError('bad: ' + s)\n"
   // *a: called via both the rich overload (zero args) and the simple one
   // (one string arg, R2-07-F6's DispatchEmbedded coverage) -- unlike Lua,
   // Python raises on an unexpected positional argument.
@@ -458,6 +460,7 @@ const Dialect kDialects[] = {
   "sub size { return length($_[0]); }\n"
   "sub boom { die 'deliberate'; }\n"
   "sub boomnul { die \"nul\\0here\"; }\n"
+  "sub boomlatin { die 'bad: ' . $_[0]; }\n"
   "sub rnothing { return; }\n"
   "sub rtrue { return 1; }\n"
   "sub rfalse { return 0; }\n"
@@ -538,6 +541,7 @@ const Dialect kDialects[] = {
   "function size(s) { return String(s.length); }\n"
   "function boom(s) { throw new Error('deliberate'); }\n"
   "function boomnul(s) { throw new Error('nul\\0here'); }\n"
+  "function boomlatin(s) { throw new Error('bad: ' + s); }\n"
   "function rnothing() { }\n"
   "function rtrue() { return true; }\n"
   "function rfalse() { return false; }\n"
@@ -633,6 +637,7 @@ const Dialect kDialects[] = {
   "proc size {s} { return [string length $s] }\n"
   "proc boom {s} { error deliberate }\n"
   "proc boomnul {s} { error nul\\0here }\n"
+  "proc boomlatin {s} { error \"bad: $s\" }\n"
   // args: called via both overloads (see the Python rnothing comment above);
   // Tcl also errors on an unexpected positional argument.
   "proc rnothing {args} { }\n"
@@ -716,6 +721,7 @@ const Dialect kDialects[] = {
   "def size(s); s.bytesize.to_s; end\n"
   "def boom(s); raise 'deliberate'; end\n"
   "def boomnul(s); raise \"nul\\0here\"; end\n"
+  "def boomlatin(s); raise 'bad: ' + s; end\n"
   // (*a): called via both overloads (see the Python rnothing comment above);
   // Ruby also errors on an unexpected positional argument.
   "def rnothing(*a); nil; end\n"
@@ -1358,6 +1364,22 @@ void battery_errors(Engine& e, const Dialect& d)
     bool errnul = false;
     e.callRtn("boomnul", "untouched", &errnul);
     check(errnul, L, "a raise with a NUL in its message is reported, not a crash");
+
+    // An error whose MESSAGE embeds non-UTF-8 MUD text must still be reported
+    // with its bytes intact.  Python decodes every incoming string with
+    // surrogateescape, so a handler that concatenates the matched line into
+    // its own exception raises a message holding lone surrogates -- and
+    // report_error read it back with PyUnicode_AsUTF8, the STRICT codec,
+    // which refuses those: the user was shown an EMPTY description, only on
+    // exactly the lines that most need diagnosing.  Lua is the control (its
+    // strings are bytes and never travel a codec), and saw() reads raw line
+    // bytes, so the 0xE9 needle matches only if the bytes really landed.
+    CString latin1; latin1 = "caf\xE9";
+    bool errl = false;
+    e.callRtn("boomlatin", latin1, &errl);
+    check(errl, L, "an error carrying non-UTF-8 text is reported as an error");
+    check(e.saw("caf\xE9"), L,
+          "...and its text reaches the output window with its bytes intact");
 }
 
 // 5. State: globals persist between calls, and engines do not see each other's.

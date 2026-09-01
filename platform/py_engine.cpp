@@ -379,6 +379,31 @@ PyObject* resolve(PyObject* ns, const char* dotted)
   return obj;
   }
 
+// Encode a Python str to bytes for error reporting: surrogateescape, NOT the
+// strict codec.  Everything that entered the script through this engine's own
+// decoders -- trigger lines, wildcards, table values, the simple-callback
+// argument, any string a world method returned -- can hold the lone surrogates
+// U+DC80..U+DCFF that escape produces, and PyUnicode_AsUTF8 refuses those.  So
+// a handler that raised with the matched line in its message (a Latin-1 MUD is
+// enough) came back NULL here and the user was shown an EMPTY description --
+// on exactly the lines that most need diagnosing.  Mirrors the
+// result-direction fix in the simple ExecutePython overload below, and
+// length-explicit for the same reason.  Clearing the encode error is safe: the
+// caller holds the exception being formatted in PyErr_Fetch'd locals, so the
+// indicator being cleared is only this helper's own failure.
+bool py_str_to_cstring (PyObject* o, CString& out)
+  {
+  PyObject* enc = PyUnicode_AsEncodedString (o, "utf-8", "surrogateescape");
+  if (!enc) { PyErr_Clear (); return false; }
+  char*      p = nullptr;
+  Py_ssize_t n = 0;
+  const bool ok = (PyBytes_AsStringAndSize (enc, &p, &n) == 0 && p);
+  if (ok) out = CString (p, (int) n);
+  else    PyErr_Clear ();
+  Py_DECREF (enc);
+  return ok;
+  }
+
 // Format the pending Python exception and surface it like LuaError does.
 void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
   {
@@ -397,13 +422,13 @@ void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
       {
       PyObject* sep = PyUnicode_FromString("");
       PyObject* joined = PyUnicode_Join(sep, fmt);
-      if (joined) { const char* s = PyUnicode_AsUTF8(joined); if (s) msg = s; Py_DECREF(joined); }
+      if (joined) { py_str_to_cstring (joined, msg); Py_DECREF (joined); }
       Py_DECREF(sep); Py_DECREF(fmt);
       }
     }
   Py_XDECREF(tbmod);
   if (msg.IsEmpty() && value)
-    { PyObject* str = PyObject_Str(value); if (str) { const char* s = PyUnicode_AsUTF8(str); if (s) msg = s; Py_DECREF(str); } }
+    { PyObject* str = PyObject_Str(value); if (str) { py_str_to_cstring (str, msg); Py_DECREF (str); } }
 
   Py_XDECREF(type); Py_XDECREF(value); Py_XDECREF(tb);
   PyErr_Clear();

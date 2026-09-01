@@ -880,6 +880,69 @@ int RunNotepadSelfTest()
             }
         }
         remove(crPath);
+
+        // (vi) DoSave's bReplace flag is "Save Copy As": MFC's
+        //      CDocument::DoSave writes the file on both arms but only calls
+        //      SetPathName when bReplace is TRUE.  world.SaveNotepad's
+        //      ReplaceExisting -- whose Lua default is FALSE -- passes
+        //      straight through, so the port's unconditional re-target made
+        //      every two-argument SaveNotepad silently redirect the user's
+        //      next Cmd-S (and the close-time save) at the copy.
+        const char* srcPath  = "/tmp/mushclient_notepad_selftest_copyas_src.txt";
+        const char* copyPath = "/tmp/mushclient_notepad_selftest_copyas_copy.txt";
+        const char* newPath  = "/tmp/mushclient_notepad_selftest_copyas_new.txt";
+        const std::string srcText = "alpha\nbeta\n";
+        {
+            FILE* fp = fopen(srcPath, "wb");
+            if (fp) { fwrite(srcText.data(), 1, srcText.size(), fp); fclose(fp); }
+        }
+        remove(copyPath);
+        remove(newPath);
+        if (g_wxhook_open_text_file)
+        {
+            CTextDocument* td =
+                static_cast<CTextDocument*>(g_wxhook_open_text_file(srcPath));
+            CWxNotepadFrame* frame =
+                CWxNotepadFrame::Find("mushclient_notepad_selftest_copyas_src.txt");
+            if (frame) frame->Hide();
+            npCheck(td != nullptr && frame != nullptr,
+                    "the save-a-copy fixture opens into a notepad");
+            if (td && frame)
+            {
+                const CString before = td->GetPathName();
+                const wxString beforeTitle = frame->GetTitle();
+
+                // Dirty the document first, so "the flag clears on both arms"
+                // below discriminates rather than restating the initial state.
+                td->SetModifiedFlag(TRUE);
+
+                npCheck(td->DoSave(copyPath, FALSE) != FALSE,
+                        "DoSave(path, FALSE) writes the copy");
+                npCheck(SlurpFile(copyPath) == srcText,
+                        "...with the notepad's bytes");
+                npCheck(td->GetPathName() == before,
+                        "...but the document still points at the ORIGINAL file "
+                        "(was: silently re-targeted at the copy)");
+                npCheck(frame->GetTitle() == beforeTitle,
+                        "...and the frame keeps its caption");
+                npCheck(!td->IsModified(),
+                        "...and the modified flag clears on both arms");
+
+                // The control: a TRUE save must still re-target and rename --
+                // a lambda that stopped saving, or stopped re-pointing
+                // entirely, would pass everything above.
+                npCheck(td->DoSave(newPath, TRUE) != FALSE,
+                        "DoSave(path, TRUE) still saves");
+                npCheck(td->GetPathName() == CString(newPath),
+                        "...and DOES re-point the document (Save As semantics)");
+                npCheck(frame->GetTitle() ==
+                            wxT("mushclient_notepad_selftest_copyas_new.txt"),
+                        "...and renames the frame to the new basename");
+            }
+        }
+        remove(srcPath);
+        remove(copyPath);
+        remove(newPath);
     }
 
     // ── 5. Quitting asks about unsaved notepads ────────────────────────────

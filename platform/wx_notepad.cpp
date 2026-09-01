@@ -366,7 +366,7 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
         return std::string(buf);
     };
 
-    pDoc->m_fn_save_to_file = [this](const std::string& path, bool /*bReplace*/) -> bool {
+    pDoc->m_fn_save_to_file = [this](const std::string& path, bool bReplace) -> bool {
         if (!m_ctrl) return false;
         wxString wxPath = wxString::FromUTF8(path.c_str());
 
@@ -396,10 +396,22 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
         bool ok = NotepadWriteFile(pathUtf8.data(), text,
                                    m_pDoc->m_iLineEndings);
         if (ok) {
-            m_pDoc->SetPathName(static_cast<const char*>(
-                wxPath.ToUTF8().data()));
+            // MFC's CDocument::DoSave writes on both arms but only calls
+            // SetPathName when bReplace is TRUE -- that IS the flag's meaning
+            // ("Save Copy As"): world.SaveNotepad's ReplaceExisting, whose Lua
+            // default is FALSE, passes straight through, so an unconditional
+            // re-target here silently redirected the user's next Cmd-S (and
+            // the close-time save) at the copy.  The modified flag clears on
+            // BOTH arms, matching CDocument::OnSaveDocument, which
+            // CTextDocument does not override.  The guard sits AFTER the
+            // empty-path dialog above, as on Windows: a prompted !bReplace
+            // save does not re-point either.
+            if (bReplace) {
+                m_pDoc->SetPathName(static_cast<const char*>(
+                    wxPath.ToUTF8().data()));
+                SetTitle(wxFileName(wxPath).GetFullName());
+            }
             m_pDoc->SetModifiedFlag(FALSE);
-            SetTitle(wxFileName(wxPath).GetFullName());
         } else {
             // The write FAILED (a full disk, a read-only path, a yanked volume).
             // This is past the dialog-cancel early return above, so it is a real

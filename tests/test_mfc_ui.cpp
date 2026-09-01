@@ -1413,6 +1413,36 @@ TEST(Document, SaveModifiedPromptsOnlyForADirtyDocument) {
     g_wxhook_message_box = saved;
 }
 
+// MFC's CDocument::DoSave ends `if (bReplace) SetPathName(newName);` -- the
+// FALSE arm is "Save Copy As" and must leave the document pointing at its
+// original file.  The shim always re-pointed; harmless only because every
+// world-side caller passes TRUE (the notepad's own lambda had the same bug
+// with real consequences -- world.SaveNotepad's Lua default is FALSE).
+TEST(Document, CopyAsDoesNotRetargetTheDocument) {
+    char pathA[256], pathB[256];
+    snprintf(pathA, sizeof pathA, "/tmp/mc_test_copyas_a_%d.mcl", (int)getpid());
+    snprintf(pathB, sizeof pathB, "/tmp/mc_test_copyas_b_%d.mcl", (int)getpid());
+    unlink(pathA);
+    unlink(pathB);
+
+    CDocument d;
+    d.SetPathName(pathA);
+
+    // FALSE: the file is written, the document is NOT re-pointed.
+    EXPECT_TRUE(d.DoSave(pathB, FALSE));
+    struct stat st;
+    EXPECT_EQ(0, stat(pathB, &st));                       // the copy exists
+    EXPECT_STREQ(pathA, (LPCTSTR)d.GetPathName());        // still the original
+
+    // TRUE: the control -- Save As really does re-point, so a DoSave that
+    // stopped assigning the path entirely cannot pass this test.
+    EXPECT_TRUE(d.DoSave(pathB, TRUE));
+    EXPECT_STREQ(pathB, (LPCTSTR)d.GetPathName());
+
+    unlink(pathA);
+    unlink(pathB);
+}
+
 TEST(Document, ViewListIteration) {
     CDocument d;
     EXPECT_EQ((POSITION)nullptr, d.GetFirstViewPosition());

@@ -177,6 +177,20 @@ void* g_saveDoc    = NULL;
 bool  g_saveAs     = false;
 void* g_saveParent = NULL;
 
+
+// The wxToolBar inside a CWorldToolBars strip that carries `id`.  The bars are
+// private to CWorldToolBars and are built with wxID_ANY, so FindWindowById
+// cannot reach them; this walk can, and it is what lets the harness read a
+// button's PRESSED state, which is the whole of the defect below.
+wxToolBar* findToolBarWith(wxWindow* root, int id)
+{
+    if (wxToolBar* tb = dynamic_cast<wxToolBar*>(root))
+        if (tb->FindById(id)) return tb;
+    for (wxWindow* c : root->GetChildren())
+        if (wxToolBar* r = findToolBarWith(c, id)) return r;
+    return NULL;
+}
+
 // Click a toolbar button.  wxEVT_TOOL is delivered to the bar's FRAME, which is
 // where CWorldToolBars binds its handler.
 void pressTool(wxWindow* barFrame, int id)
@@ -1626,6 +1640,94 @@ int RunMenuBarSelfTest()
         frame->Unbind(wxEVT_MENU, &recordForwardedCmd);
         delete bars;              // UnInits its wxAuiManager -- before the host goes
         tbHost->Destroy();
+        wxYield();
+    }
+
+
+    // ── the World bar's check buttons follow the truth (2026-09-01) ─────────
+    // CWorldToolBars::UpdateState ran the canonical ON_UPDATE_COMMAND_UI for
+    // each button against the DOCUMENT alone, where Windows' MFC routes a
+    // toolbar update view -> document -> frame -> app.  Freeze Output's
+    // canonical handler is CMUSHView::OnUpdateDisplayFreezeoutput
+    // (mushview.cpp:3240) on the never-constructed view, and the document's map
+    // ends in OnFixMenus, which returns before capturing anything -- so
+    // `checked` stayed -1 and ToggleTool was never called for that button at
+    // all.  Its pressed state was therefore whatever wxToolBarTool::Action's
+    // auto-toggle last wrote, which inverts as soon as the freeze is changed
+    // from any of the other four doors (the Display menu, the output pane's
+    // context item, the status-bar pane, scrolling back).
+    //
+    // Driven through a real COutputPane, because the port's answer for this
+    // command is `doc->m_pWorldView->isPaused()` and the world frame IS that
+    // view.  The bar is a standalone strip fed the real document, which is the
+    // only way in to UpdateState from out here.
+    {
+        CMUSHclientDoc* fdoc = new CMUSHclientDoc();
+        fdoc->m_mush_name   = "zz_selftest_toolbarcheck";
+        fdoc->m_nWrapColumn = 80;
+        fdoc->m_maxlines    = 5000;
+        fdoc->SetUpOutputWindow();
+        CWorldChildFrame* wf =
+            new CWorldChildFrame(frame, fdoc, wxT("zz_selftest_toolbarcheck"));
+        wf->Show();
+        wxYield();
+
+        wxFrame*    tbHost  = new wxFrame(frame, wxID_ANY, wxT("toolbar-checks"));
+        wxBoxSizer* tbSizer = new wxBoxSizer(wxVERTICAL);
+        tbHost->SetSizer(tbSizer);
+        CWorldToolBars* bars = new CWorldToolBars(tbHost, tbSizer);
+
+        wxToolBar* wb = findToolBarWith(tbHost, ID_DISPLAY_FREEZEOUTPUT);
+        check(wb != NULL, "the World toolbar carries a Freeze Output button");
+        check(wf->OutputPane() != NULL, "...and the world window has an output pane");
+
+        if (wb && wf->OutputPane()) {
+            // FREEZE through one of the other doors -- not the button.  This is
+            // the assertion that fails at HEAD: nothing ever ticked it.
+            wf->OutputPane()->SetPaused(true);
+            bars->UpdateState(fdoc);
+            check(wb->GetToolState(ID_DISPLAY_FREEZEOUTPUT),
+                  "freezing the pane presses the toolbar's Freeze button");
+
+            // Both polarities, so an implementation stuck on `true` fails here.
+            wf->OutputPane()->SetPaused(false);
+            bars->UpdateState(fdoc);
+            check(!wb->GetToolState(ID_DISPLAY_FREEZEOUTPUT),
+                  "...and un-freezing releases it again");
+
+            // The inversion itself.  wxToolBarTool::Action presses a
+            // wxITEM_CHECK tool BEFORE dispatching the click, so this is
+            // exactly the state a click leaves behind; with the pane running,
+            // the next update must correct it rather than leave the button
+            // reading the opposite of the truth.
+            wb->ToggleTool(ID_DISPLAY_FREEZEOUTPUT, true);
+            bars->UpdateState(fdoc);
+            check(!wb->GetToolState(ID_DISPLAY_FREEZEOUTPUT),
+                  "...and a click's own auto-toggle is corrected, not kept");
+
+            // Log Session: the document HAS always answered this one
+            // (OnUpdateFileLogsession, doc.cpp:1008) -- the button was simply
+            // built wxITEM_NORMAL, so the answer had nowhere to go.
+            check(!wb->GetToolState(ID_FILE_LOGSESSION),
+                  "the Log Session button is up on a world that is not logging");
+            FILE* const saved = fdoc->m_logfile;
+            fdoc->m_logfile = fopen("/dev/null", "w");
+            bars->UpdateState(fdoc);
+            check(fdoc->m_logfile == NULL ||
+                  wb->GetToolState(ID_FILE_LOGSESSION),
+                  "...and pressed while the session IS being logged");
+            if (fdoc->m_logfile) fclose(fdoc->m_logfile);
+            fdoc->m_logfile = saved;
+            bars->UpdateState(fdoc);
+            check(!wb->GetToolState(ID_FILE_LOGSESSION),
+                  "...and up again when the log closes");
+        }
+
+        delete bars;              // UnInits its wxAuiManager -- before the host
+        tbHost->Destroy();
+        fdoc->m_pWorldView = NULL;
+        wx_unregister_world_frame(fdoc);
+        wf->Destroy();
         wxYield();
     }
 

@@ -34,17 +34,34 @@ merges. Final state: `ctest` 78/78 (extended on), ASan suite 77/77.
   lockstep protocol; speeding it up (adaptive tick or a nudge-Poll after
   CHAT_FILE_BLOCK_REQUEST) is its own decision.
 - ~~Windows' `OnTestEnd` also clears the output selection~~ — **closed later the
-  same day**: `FireScrollCommand`'s End arm now clears it (Start pinned as the
-  arm that must not).
+  same day**, and then WIDENED by an adversarial re-verify to the whole family:
+  End (menu / keys / command id), Ctrl+Z, unfreezing Freeze Output, the pane's
+  own Ctrl+End arm, and the unpause-on-send tail all clear now, with
+  `world.SetScroll(-1)` pinned as the arm that must not.  Still open from that
+  re-verify, deliberately: Windows also runs OnTestEnd on a resize while at
+  the buffer end (mushview.cpp:3196-3197) — not ported; and
+  ON_PLUGIN_SELECTION_CHANGED is fired NOWHERE on the port (its only sender
+  lives in CMUSHView), so every selection change here skips the plugin
+  callback — a port-wide gap deserving its own change.
 - ~~`FireMacro`'s SEND_NOW arm bypasses unpause_on_send~~ — **closed later the
-  same day**, mirroring `SendCommand`'s tail (sendvw.cpp:756 via SendMacro).
+  same day**, then widened: keypad slots, Repeat Last Command and
+  accelerator-Execute sends had the same gap; all six SendCommand riders now
+  share one `UnpauseOutputOnSend`.  Known narrow divergence, recorded not
+  hidden: Windows runs the tail after a SUCCESSFUL send, most port sites
+  before Execute (RepeatLastCommand, which already models the success gate,
+  runs it after) — observable only when Execute fails or a script re-pauses
+  mid-Execute.
 - `WindowDrawImageAlpha`/`WindowGetImageAlpha` now **refuse 24-bit images with
   eImageNotInstalled on macOS as they always did on Windows** (gdi#1) — a
   user-visible change that is parity, flagged in WINDOWS-VALIDATION.md §10bb.
 - ~~`dialogs/Splash.cpp` reads an uninitialised `DIBSECTION` field through
   `CBitmap::GetObject`~~ — **closed later the same day**: `GetObject` honours
   the caller's declared buffer size (latent until the RESOURCE `LoadImage` form
-  is ever served — `CSplashWnd::Create` bails on its null today).
+  is ever served — `CSplashWnd::Create` bails on its null today).  The
+  re-verify added the NULL size query and two recorded Win32 gaps (DDB-shaped
+  bitmaps still answer a DIBSECTION; `dsBm.bmBits` stays NULL where Win32's
+  DIBSECTION return promises pixels), and noted that if the splash path ever
+  DOES run, upstream's own `1 << biBitCount` is UB at 32 bpp on both platforms.
 
 ## What ASan added
 

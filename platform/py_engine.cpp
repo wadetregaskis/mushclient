@@ -577,10 +577,33 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   if (result)
     {
     *result = true;
-    if (PyBool_Check (res))      *result = (res == Py_True);
-    else if (PyLong_Check (res)) *result = (PyObject_IsTrue (res) == 1);  // never raises (PyLong_AsLong can overflow + leave an exception set)
-    else if (res == Py_None)     *result = true;   // no explicit return → keep going
-    else                         *result = PyObject_IsTrue (res) ? true : false;
+    if (PyBool_Check (res))
+      *result = (res == Py_True);
+    else if (res == Py_None)
+      *result = true;                  // no explicit return → keep going
+    else
+      {
+      // Covers PyLong too: ordinary int truthiness never raises, but an int
+      // SUBCLASS overriding __bool__ theoretically could, so PyLong is not
+      // special-cased out of the -1 check.
+      const int t = PyObject_IsTrue (res);
+      if (t < 0)
+        {
+        // The truthiness coercion ITSELF raised (a numpy/pandas-style
+        // ambiguous __bool__, or a pathological __len__).  -1 is truthy in C,
+        // so this used to read as "keep going, no error" -- with the
+        // exception left PENDING on the one interpreter every world and
+        // plugin share (see the header comment), to be picked up by whatever
+        // unrelated Python callback ran next and misattributed to it.
+        // Report it against THIS handler instead, exactly as a raising call
+        // is handled a few lines above.
+        Py_DECREF (res);
+        dispid = DISPID_UNKNOWN;
+        report_error (m_pDoc, szType, szProcedure);
+        return true;
+        }
+      *result = (t != 0);
+      }
     }
 
   // Whether the handler answered at all, which `result` cannot express -- its

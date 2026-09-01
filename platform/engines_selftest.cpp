@@ -371,6 +371,8 @@ const Dialect kDialects[] = {
   "def rnil():\n    return None\n"
   "def rbig():\n    return 1 << 64\n"
   "def rbigneg():\n    return -(1 << 64)\n"
+  "class Ambiguous:\n    def __bool__(self):\n        raise ValueError('ambiguous truth')\n"
+  "def badbool():\n    return Ambiguous()\n"
   "def params(a, b, c, d):\n"
   "    world.SetVariable('p', '%d|%d|%s|%s' % (int(a), int(b), c, d))\n"
   "def tbl(s, t):\n    world.SetVariable('t', t.get('key', '?'))\n"
@@ -1013,6 +1015,25 @@ void battery_keepgoing(Engine& e, const Dialect& d)
           "returning an integer beyond 64 bits keeps processing, not a crash");
     check(e.callRich("rbigneg") == true, L,
           "...and so does a negative one");
+
+    // CPython-only: a handler whose RETURN VALUE's truthiness itself raises
+    // (a numpy-style ambiguous __bool__).  PyObject_IsTrue answers -1 with an
+    // exception set; -1 is truthy in C, so the old arm read the failure as
+    // "keep going, no error" and left the exception PENDING on the one
+    // interpreter every world and plugin share -- the next unrelated Python
+    // callback then died with the stale exception and was disabled in this
+    // handler's stead.  The other five languages have no truthiness protocol
+    // that can raise, so there is nothing to control against.
+    if (strcmp(d.key, "python") == 0) {
+        bool errAmb = false;
+        e.callRich("badbool", &errAmb);
+        check(errAmb, L,
+              "a return value whose truthiness itself raises is a script error");
+        bool errNext = false;
+        const bool keepNext = e.callRich("rtrue", &errNext);
+        check(!errNext && keepNext, L,
+              "...and the callback that runs next is not poisoned by it");
+    }
 
     // The rule that surprises people, and the one Windows also implements: a
     // handler returning numeric 0 STOPS, even in languages where 0 is truthy.

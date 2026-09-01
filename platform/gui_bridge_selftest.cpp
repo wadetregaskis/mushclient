@@ -1198,6 +1198,59 @@ void TestDdxCharsetRoundTrip()
     host->Destroy();
 }
 
+// ── 11a. The Multi-Line Trigger conversion idiom is not a no-op (2026-09-01) ─
+// CWorldChildFrame::MakeMultiLineTrigger (the port twin of
+// CMUSHView::OnDisplayMultilinetrigger) converts the dialog's text with
+// strText.Replace(ENDLINE, "\\n") — keyed on CRLF, because that is what a
+// Windows CEdit hands DDX.  Before the CRLF seam fix, the bridge returned
+// LF-only text, the Replace matched NOTHING, and the trigger was stored with
+// raw LFs — which Save_XML_string wrote unescaped into the match attribute,
+// and the parser then refused the whole world file ("not terminated").  This
+// drives the exact seam the conversion depends on and asserts the replacement
+// COUNT, so "the Replace did nothing" fails.
+void TestMultiLineTriggerSeam()
+{
+    printf("Multi-Line Trigger conversion seam (ENDLINE is CRLF):\n");
+
+    wxFrame* host = new wxFrame(nullptr, wxID_ANY, wxT("mlt-host"));
+    wxTextCtrl* tc = new wxTextCtrl(host, wxID_ANY, wxEmptyString,
+                                    wxDefaultPosition, wxDefaultSize,
+                                    wxTE_MULTILINE);
+
+    // The dialog seeds CRLF (dlg.m_strTriggerText.Replace("\\n", "\r\n"))
+    // and DDX pushes it in; an untouched OK reads it straight back out.
+    g_wxhook_set_window_text((void*) tc, "line1\r\nline2");
+    char* raw = g_wxhook_get_window_text((void*) tc);
+    CString strText(raw ? raw : "");
+    free(raw);
+
+    // iLinesToMatch counts '\n' — one per break, as on Windows, not two.
+    int iCount = 1;
+    for (const char* q = strText; *q; q++)
+        if (*q == '\n') iCount++;
+    check(iCount == 2, "two selected lines count as 2 lines to match (was: 3)");
+
+    check(strText.Replace(ENDLINE, "\\n") == 1,
+          "Replace(ENDLINE, ...) replaces ONE break (was: matched nothing)");
+    check(strText.Find('\n') == -1 && strText.Find('\r') == -1,
+          "...and no raw LF/CR survives into the trigger's match text");
+    check(strText == CString("line1\\nline2"),
+          "...the stored pattern is the two-character escape Windows produces");
+
+    // The EDITED path must come back CRLF too — the memo answering the seeded
+    // bytes would make the untouched case exact while an edit regressed.
+    tc->ChangeValue(wxT("alpha\nbeta\ngamma"));
+    raw = g_wxhook_get_window_text((void*) tc);
+    CString strEdited(raw ? raw : "");
+    free(raw);
+    check(strEdited.Replace(ENDLINE, "\\n") == 2,
+          "an EDITED selection converts both breaks (the expansion, not the memo)");
+    check(strEdited == CString("alpha\\nbeta\\ngamma"),
+          "...into the canonical escaped pattern");
+
+    host->Destroy();
+}
+
 // ── 11b. CEdit offsets are BYTES, not characters (2026-08-18) ──────────────
 // The CEdit hooks answered in wxWidgets CHARACTER positions, but every
 // canonical caller uses the same numbers to index the UTF-8 CString it got
@@ -2597,6 +2650,7 @@ int RunGuiBridgeSelfTest()
     TestClipboardRoundTrip();
     TestFunctionListView();
     TestDdxCharsetRoundTrip();
+    TestMultiLineTriggerSeam();
     TestEditOffsetsAreBytes();
     TestScriptingPageBrowse();
     TestListBoxMutators();

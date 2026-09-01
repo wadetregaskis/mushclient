@@ -353,6 +353,11 @@ const Dialect kDialects[] = {
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
+  // Module level and deliberately FIRST: the module body itself reads
+  // __name__, the way logging.getLogger(__name__) does, so the battery below
+  // pins what the namespace really carried at load.
+  "MOD_NAME = __name__\n"
+  "def modname():\n    world.SetVariable('mn', MOD_NAME)\n"
   "def keep(s):\n    pass\n"
   "def change(s):\n    return 'replaced'\n"
   "def wrap(s):\n    return '<' + s + '>'\n"
@@ -1784,6 +1789,27 @@ void battery_tcl_platform(Engine& e, const Dialect& d)
           "[info nameofexecutable] names the real binary, not the empty string");
 }
 
+// 6a-ter. The Python module namespace.  PyRun_String executes the script body
+//     in a bare dict which CPython does NOT seed with __name__.  There is no
+//     NameError, which is what makes it treacherous: LOAD_NAME falls back to
+//     the builtins module, whose own __name__ is "builtins" (measured:
+//     exec("x = __name__", {}) yields "builtins") -- so every
+//     `if __name__ == "__main__":` guard silently never fired,
+//     logging.getLogger(__name__) logged under "builtins", and script-defined
+//     classes got __module__ = "builtins".  The dialect source reads __name__
+//     at module level (MOD_NAME, its first line, the getLogger shape); this
+//     battery pins the VALUE, and "builtins" is exactly what a regression
+//     answers.  CPython-specific, so run_language gates the call.
+void battery_py_namespace(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    e.seed("mn", "handler never ran");
+    e.callRich("modname");
+    check(e.var("mn") == "__main__", L,
+          "the module namespace carries __name__, and it is \"__main__\"");
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -1856,6 +1882,8 @@ bool run_language(const Dialect& d)
     battery_state     (e, d);
     if (strcmp(d.key, "tcl") == 0)        // Tcl-specific platform bootstrap
         battery_tcl_platform(e, d);
+    if (strcmp(d.key, "python") == 0)     // CPython-specific namespace seeding
+        battery_py_namespace(e, d);
     battery_trace     (d);
     battery_error_routing(d);
     battery_stale_proxy  (d);

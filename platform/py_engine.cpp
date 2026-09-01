@@ -462,6 +462,18 @@ void CScriptEngine::OpenPython ()
   e->ns  = PyDict_New ();
   PyObject* builtins = PyImport_ImportModule ("builtins");
   if (builtins) { PyDict_SetItemString (e->ns, "__builtins__", builtins); Py_DECREF (builtins); }
+  // Every real module namespace carries __name__, and PyRun_String does not
+  // add one to a bare dict.  Without it there is no NameError -- LOAD_NAME
+  // falls back to the builtins module, whose own __name__ is "builtins"
+  // (measured: exec("x = __name__", {}) yields "builtins") -- which is
+  // quietly worse: `if __name__ == "__main__":` guards never fire,
+  // logging.getLogger(__name__) logs under "builtins", and script-defined
+  // classes get __module__ = "builtins", breaking pickle and
+  // typing.get_type_hints.  "__main__" is what running the script directly
+  // would set, so the __main__ guard fires the way the author expects for
+  // what is, functionally, this script's entry point.
+  PyObject* modname = PyUnicode_FromString ("__main__");
+  if (modname) { PyDict_SetItemString (e->ns, "__name__", modname); Py_DECREF (modname); }
   e->world = make_world (m_pDoc);
   if (e->world) PyDict_SetItemString (e->ns, "world", e->world);
   m_pyEngine = e;

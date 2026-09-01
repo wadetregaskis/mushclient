@@ -113,12 +113,14 @@ void CColourButton::OnRButtonDown(UINT nFlags, CPoint point)
     }
 
 	CMenu menu;
+
+  bool bEnable = GetClipboardColour (m_clipboardColour);
+
+#ifdef _WIN32
 	VERIFY(menu.LoadMenu(IDR_COLOUR_POPUP));
 
 	CMenu* pPopup = menu.GetSubMenu(0);
 	ASSERT(pPopup != NULL);
-
-  bool bEnable = GetClipboardColour (m_clipboardColour);
 
   // disable paste if no colour there
   pPopup->EnableMenuItem (ID_POPUP_PASTECOLOUR, 
@@ -129,6 +131,31 @@ void CColourButton::OnRButtonDown(UINT nFlags, CPoint point)
                           point.x, 
                           point.y,
 		                      this);
+#else
+  // The port has no menu-resource loader (CMenu::LoadMenu is a permanent
+  // FALSE), so IDR_COLOUR_POPUP's two items never arrive and the popup would
+  // come up empty.  Build them by hand, exactly as the tray and regexp menus
+  // already do off Windows (mainfrm.cpp, dialogs/EditDlg.cpp).  The labels and
+  // the order are IDR_COLOUR_POPUP's own (platform/mushclient_dialogs.rc).
+  // docs/UPSTREAM-DIVERGENCES.md 23.
+	CMenu* pPopup = menu.GetSubMenu(0);
+  pPopup->AppendMenu (MF_STRING | MF_ENABLED, ID_POPUP_COPYCOLOUR, "&Copy");
+  pPopup->AppendMenu (MF_STRING | (bEnable ? MF_ENABLED : MF_GRAYED),
+                      ID_POPUP_PASTECOLOUR, "&Paste");
+
+  // ... and the shim's TrackPopupMenu behaves as if TPM_RETURNCMD were set: it
+  // ANSWERS the chosen id rather than posting WM_COMMAND to the owner, so
+  // without this the menu would appear and the choice go nowhere.  Same arm
+  // CMainFrame::LeftTrayClick carries, for the same reason.
+  const UINT nSelected = pPopup->TrackPopupMenu (TPM_LEFTALIGN | TPM_RIGHTBUTTON,
+                                                 point.x,
+                                                 point.y,
+                                                 this);
+  if (nSelected == ID_POPUP_COPYCOLOUR)
+    OnPopupCopycolour ();
+  else if (nSelected == ID_POPUP_PASTECOLOUR)
+    OnPopupPastecolour ();
+#endif
 }
 
 void CColourButton::OnPopupCopycolour() 

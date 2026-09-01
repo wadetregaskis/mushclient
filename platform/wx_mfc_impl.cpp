@@ -61,6 +61,7 @@
 #include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 #include "platform/wx_statusitem.h"   // ApplyTrayItemFromPrefs (the menu-bar "tray" item)
 #include "platform/wx_activity.h"     // ShowActivityWindow (Game ▸ Activity List)
+#include "dialogs/world_prefs/ButtonColour.h"  // CColourButton — the swatch right-click menu
 #include "platform/ma_sound.h"        // miniaudio sound engine (volume/pan/buffers)
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
@@ -6023,6 +6024,19 @@ public:
         // A swatch click edits the colour; route to the canonical handler
         // (BN_CLICKED) so e.g. CPrefsP5::On<colour> opens the colour picker.
         Bind(wxEVT_LEFT_UP, &OwnerDrawButton::OnClick, this);
+        // A swatch RIGHT-click is Copy colour / Paste colour
+        // (CColourButton::OnRButtonDown, dialogs/world_prefs/ButtonColour.cpp).
+        // Nothing was bound, so that menu was unreachable on every one of the
+        // ~50 colour swatches in the app -- the message map's ON_WM_RBUTTONDOWN
+        // and ON_WM_CONTEXTMENU are empty macros here, and no wx event routed
+        // to either handler.
+        //
+        // RIGHT_UP is CONSUMED (no Skip), which is also what stops the pair
+        // firing twice: wx only synthesises wxEVT_CONTEXT_MENU from a right-up
+        // nobody handled.  The CONTEXT_MENU bind is for the routes that never
+        // produce one -- the keyboard menu key, and AppKit's menuForEvent:.
+        Bind(wxEVT_RIGHT_UP, &OwnerDrawButton::OnRightUp, this);
+        Bind(wxEVT_CONTEXT_MENU, &OwnerDrawButton::OnContextMenu, this);
     }
     CButton* m_cbtn = nullptr;   // canonical backing button (set by bind hook)
 
@@ -6047,6 +6061,40 @@ private:
         if (painted) {
             pdc.DrawBitmap(*painted, 0, 0, false);
             delete painted;
+        }
+    }
+
+    // Both arms hand CLIENT coordinates to the canonical handler, which is
+    // what Win32's WM_RBUTTONDOWN carries: CColourButton::OnRButtonDown does
+    // its own GetClientRect + ClientToScreen and offsets by the point, and both
+    // of those are hook-wired for a bridged control (mfc_ui.h:3434/3438).
+    // The only owner-draw button in the app with a context menu is the colour
+    // swatch, and its handler is protected, so the canonical class supplies a
+    // port-only public entry point (ButtonColour.h).  A dynamic_cast rather
+    // than an assumption: every other owner-draw button must still fall
+    // through to whatever the parent does.
+    CColourButton* Swatch() const { return dynamic_cast<CColourButton*>(m_cbtn); }
+
+    void OnRightUp(wxMouseEvent& e)
+    {
+        CColourButton* sw = Swatch();
+        if (!sw) { e.Skip(); return; }
+        sw->ShowColourPopup(CPoint(e.GetX(), e.GetY()));
+    }
+
+    void OnContextMenu(wxContextMenuEvent& e)
+    {
+        CColourButton* sw = Swatch();
+        if (!sw) { e.Skip(); return; }
+        // wxContextMenuEvent carries SCREEN coordinates, or wxDefaultPosition
+        // for a keyboard invocation -- which is the (-1, -1) the canonical
+        // handler already has an arm for.
+        const wxPoint pos = e.GetPosition();
+        if (pos == wxDefaultPosition)
+            sw->ShowColourPopup(CPoint(-1, -1));
+        else {
+            const wxPoint client = ScreenToClient(pos);
+            sw->ShowColourPopup(CPoint(client.x, client.y));
         }
     }
 

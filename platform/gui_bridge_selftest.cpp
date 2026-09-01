@@ -47,6 +47,7 @@
 #include "dialogs/MapDlg.h"                            // CMapDlg — the mapper's "make alias"
 #include "dialogs/world_prefs/aliasdlg.h"              // CAliasDlg — what it runs
 #include "dialogs/ColourComboBox.h"                    // CColourComboBox — owner-draw combo
+#include "dialogs/world_prefs/ButtonColour.h"          // CColourButton — the swatch right-click menu
 
 #include <cctype>                       // isxdigit/islower — the GUID shape check
 #include <cstring>                      // strcmp — the OptionsTable row lookup
@@ -2971,6 +2972,185 @@ void TestOwnerDrawColourCombos()
     }
 }
 
+
+// ── 40. The colour swatch's right-click Copy/Paste menu ───────────────────
+// Three independent gaps made this Windows feature completely unreachable on
+// every one of the ~50 colour swatches in the app:
+//   A. OwnerDrawButton bound only wxEVT_PAINT and wxEVT_LEFT_UP, and the
+//      port's ON_WM_RBUTTONDOWN / ON_WM_CONTEXTMENU macros are EMPTY, so
+//      CColourButton::OnRButtonDown could not be reached by any gesture.
+//   B. CMenu::LoadMenu is a permanent FALSE (no menu-resource loader), and
+//      GetSubMenu(0) then materialises an EMPTY popup -- so even a delivered
+//      gesture would have shown a menu with no items in it.
+//   C. TrackPopupMenu behaves as if TPM_RETURNCMD were set: it ANSWERS the id
+//      rather than posting WM_COMMAND to the owner, and the canonical caller
+//      discards the return value, so a chosen item would have done nothing.
+// All three are asserted here, because fixing any two of them leaves the
+// feature just as dead.
+namespace swatchmenu {
+    // The menu the popup hook was handed, copied out before the arena moves.
+    std::vector<CMenu::Item> lastItems;
+    int  lastX = -1, lastY = -1;
+    int  calls = 0;
+    int  answer = 0;        // what the "user" picks
+
+    int hook(CMenu* menu, int x, int y, unsigned /*flags*/)
+    {
+        ++calls;
+        lastItems = menu ? menu->m_items : std::vector<CMenu::Item>();
+        lastX = x; lastY = y;
+        return answer;
+    }
+}
+
+void TestColourSwatchContextMenu()
+{
+    printf("Colour swatch right-click (Copy/Paste colour):\n");
+
+    // IDD_PREFS_P3 is the Custom Colours page: 32 BS_OWNERDRAW swatches, which
+    // is where a user actually right-clicks.  Driving the real template proves
+    // the style byte still routes to OwnerDrawButton as well.
+    const RcDialog* p3 = MfcDialogResources().FindDialog(IDD_PREFS_P3);
+    check(p3 != nullptr, "IDD_PREFS_P3 (Custom Colours) is in the resources");
+    if (!p3) return;
+
+    wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *p3);
+    wxWindow* swatch = dlg->FindWindow(IDC_SWATCH_CUSTOM1);
+    check(swatch != nullptr, "...and carries the first custom-colour swatch");
+    if (!swatch) { dlg->Destroy(); return; }
+
+    CColourButton btn;
+    btn.m_colour = RGB(0x33, 0x66, 0xFF);
+    CDataExchange dx;
+    dx.m_pDlgWnd = CWnd::FromHandle((HWND) dlg);
+    dx.m_bSaveAndValidate = FALSE;
+    DDX_Control(&dx, IDC_SWATCH_CUSTOM1, btn);
+    check(btn.m_hWnd == (HWND) swatch,
+          "DDX_Control binds the canonical CColourButton onto it");
+
+    int (*savedPopup)(CMenu*, int, int, unsigned) = g_wxhook_popup_menu;
+    g_wxhook_popup_menu = swatchmenu::hook;
+    CMenu::ResetArena();
+
+    // Make sure the clipboard holds no colour, so Paste must come back GREYED.
+    putontoclipboard(CString("not a colour at all"), false);
+
+    swatchmenu::calls = 0;
+    swatchmenu::answer = 0;                 // cancelled
+    {
+        wxMouseEvent rup(wxEVT_RIGHT_UP);
+        rup.SetPosition(wxPoint(4, 5));
+        rup.SetEventObject(swatch);
+        swatch->GetEventHandler()->ProcessEvent(rup);
+    }
+    check(swatchmenu::calls == 1,
+          "a right-click on a swatch raises a menu at all (gap A)");
+
+    // Gap B: the two items IDR_COLOUR_POPUP would have supplied.
+    check(swatchmenu::lastItems.size() == 2,
+          "...carrying exactly the resource's two items (gap B)");
+    bool haveCopy = false, havePaste = false, pasteGreyed = false;
+    for (const CMenu::Item& it : swatchmenu::lastItems) {
+        if (it.arg == ID_POPUP_COPYCOLOUR)  haveCopy = true;
+        if (it.arg == ID_POPUP_PASTECOLOUR) {
+            havePaste   = true;
+            pasteGreyed = (it.flags & MF_GRAYED) != 0;
+        }
+    }
+    check(haveCopy && havePaste, "...Copy colour and Paste colour");
+    check(pasteGreyed,
+          "...with Paste greyed while the clipboard holds no colour");
+
+    // The anchor.  OnRButtonDown offsets the click by the control's SCREEN
+    // origin, arithmetic that gap A's absence has never once exercised.
+    {
+        wxPoint origin = swatch->ClientToScreen(wxPoint(0, 0));
+        check(swatchmenu::lastX == origin.x + 4 &&
+              swatchmenu::lastY == origin.y + 5,
+              "...anchored at the swatch's screen origin plus the click offset");
+    }
+
+    // Gap C: choosing Copy must actually copy.
+    swatchmenu::answer = ID_POPUP_COPYCOLOUR;
+    {
+        wxMouseEvent rup(wxEVT_RIGHT_UP);
+        rup.SetPosition(wxPoint(1, 1));
+        rup.SetEventObject(swatch);
+        swatch->GetEventHandler()->ProcessEvent(rup);
+    }
+    CString copied;
+    GetClipboardContents(copied, false, false);
+    // COLORREF is 0x00BBGGRR, and OnPopupCopycolour writes it as VB's "&h"
+    // hex -- so RGB(0x33,0x66,0xFF) copies as &hFF6633, not &h3366FF.
+    check(copied == CString("&hFF6633"),
+          "choosing Copy colour puts the swatch's colour on the clipboard (gap C)");
+
+    // ... and with a colour there, Paste is now ENABLED and really pastes.
+    btn.m_colour = RGB(0, 0, 0);
+    swatchmenu::answer = ID_POPUP_PASTECOLOUR;
+    {
+        wxMouseEvent rup(wxEVT_RIGHT_UP);
+        rup.SetPosition(wxPoint(1, 1));
+        rup.SetEventObject(swatch);
+        swatch->GetEventHandler()->ProcessEvent(rup);
+    }
+    bool pasteLive = true;
+    for (const CMenu::Item& it : swatchmenu::lastItems)
+        if (it.arg == ID_POPUP_PASTECOLOUR && (it.flags & MF_GRAYED))
+            pasteLive = false;
+    check(pasteLive, "with a colour on the clipboard Paste is no longer greyed");
+    check(btn.m_colour == RGB(0x33, 0x66, 0xFF),
+          "...and choosing it really changes the swatch's colour");
+
+    // The grey-out is the whole of the guard -- OnPopupPastecolour assigns
+    // m_clipboardColour unconditionally, because on Windows a greyed item
+    // cannot be chosen.  Both polarities of that grey-out are asserted above,
+    // which is what stops the enable/disable arm being one-directional; do NOT
+    // "test" it by picking the greyed item, which no user can do.
+
+    // The keyboard/trackpad route: a wxContextMenuEvent with no position is
+    // Win32's (-1, -1), which the canonical handler anchors at the control's
+    // top-left plus (5, 5).
+    swatchmenu::calls = 0;
+    swatchmenu::answer = 0;
+    {
+        wxContextMenuEvent cme(wxEVT_CONTEXT_MENU, swatch->GetId(),
+                               wxDefaultPosition);
+        cme.SetEventObject(swatch);
+        swatch->GetEventHandler()->ProcessEvent(cme);
+    }
+    check(swatchmenu::calls == 1,
+          "the context-menu route (menu key / two-finger tap) raises it too");
+    {
+        wxPoint origin = swatch->ClientToScreen(wxPoint(0, 0));
+        check(swatchmenu::lastX == origin.x + 5 &&
+              swatchmenu::lastY == origin.y + 5,
+              "...at the keyboard anchor, the canonical (-1,-1) arm");
+    }
+
+    // And an owner-draw button that is NOT a swatch must be left alone -- the
+    // bind is by dynamic_cast, not by assumption.
+    {
+        CButton plain;
+        DDX_Control(&dx, IDC_SWATCH_CUSTOM2, plain);
+        wxWindow* other = dlg->FindWindow(IDC_SWATCH_CUSTOM2);
+        swatchmenu::calls = 0;
+        if (other) {
+            wxMouseEvent rup(wxEVT_RIGHT_UP);
+            rup.SetPosition(wxPoint(2, 2));
+            rup.SetEventObject(other);
+            other->GetEventHandler()->ProcessEvent(rup);
+        }
+        check(swatchmenu::calls == 0,
+              "a plain owner-draw button raises no colour menu");
+    }
+
+    g_wxhook_popup_menu = savedPopup;
+    putontoclipboard(CString(""), false);
+    CMenu::ResetArena();
+    dlg->Destroy();
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -3012,6 +3192,7 @@ int RunGuiBridgeSelfTest()
     TestMapperAliasKeepsEveryDialogField();
     TestSendAndPasteDelaysAcceptTheOptionRange();
     TestOwnerDrawColourCombos();
+    TestColourSwatchContextMenu();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

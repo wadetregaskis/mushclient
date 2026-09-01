@@ -3837,6 +3837,19 @@ would prove it (`CMUSHView` / `CSendView`) is never constructed on the port.
   `("CtrlKeypadPlus")` from the Immediate window, which is the route that was
   broken on the port and has always worked on Windows.
 
+- **The colour swatch's right-click menu forks off Windows**
+  (`dialogs/world_prefs/ButtonColour.cpp`, `docs/UPSTREAM-DIVERGENCES.md` 23).
+  The `#ifdef _WIN32` arm is the original code verbatim; the only thing that
+  moved on the Windows side is `bool bEnable = GetClipboardColour (...)`, which
+  now runs a few lines earlier, before `LoadMenu` rather than after it (nothing
+  between them touches the clipboard or the menu).  `ButtonColour.h` gains one
+  inline method inside `#ifndef _WIN32`.  **To check:** right-click a colour
+  swatch on World Properties ▸ Custom Colours.  The two-item *Copy* / *Paste*
+  menu must appear at the pointer exactly as before, *Paste* greyed until a
+  colour has been copied, and both items must work.  Also try the keyboard
+  context-menu key on a focused swatch — that is the `(-1, -1)` arm, and it is
+  the same code on both platforms.
+
 ---
 
 ## 10. Round two — results of the second empirical pass (2026-08-20)

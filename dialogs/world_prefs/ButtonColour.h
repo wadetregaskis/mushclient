@@ -19,6 +19,15 @@ public:
 
 // Operations
 public:
+#ifndef _WIN32
+  // PORT ONLY (docs/UPSTREAM-DIVERGENCES.md 23).  Windows dispatches
+  // WM_RBUTTONDOWN to OnRButtonDown through ON_WM_RBUTTONDOWN; the port's
+  // ON_WM_* macros are empty and an owner-draw swatch is a wx control with no
+  // message map behind it, so the bridge calls this instead.  `point` is in
+  // CLIENT coordinates, which is what WM_RBUTTONDOWN carries; (-1, -1) means a
+  // keyboard invocation, exactly as Win32 uses it.
+  void ShowColourPopup (CPoint point) { OnRButtonDown (0, point); }
+#endif
 
 // Overrides
 	// ClassWizard generated virtual function overrides

@@ -524,8 +524,16 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
     // 0 -- the form MUSHclient's own documentation tells people to use.
     // Returning nil still means "no explicit return", i.e. keep going.
     if      (r == Qnil)             *result = true;
-    else if (RB_TYPE_P (r, T_FIXNUM) || RB_TYPE_P (r, T_BIGNUM))
-                                    *result = (rb_num2ll (r) != 0);
+    // FIXNUM and BIGNUM split, never combined through rb_num2ll: that RAISES
+    // RangeError for an Integer outside long long range, and rb_protect has
+    // already returned -- a tagless raise here is rb_bug -> abort, killing the
+    // whole client on a handler whose last expression is e.g. `1 << 64` (the
+    // same hazard ruby_error_message and ruby_to_s above are guarded against).
+    // A T_BIGNUM can never be zero -- CRuby normalises anything in Fixnum range
+    // to T_FIXNUM, so |Bignum| >= 2^62 -- which makes `true` exact, and both
+    // arms allocation-free and raise-free (FIX2LONG is a tag-bit shift).
+    else if (RB_TYPE_P (r, T_FIXNUM)) *result = (FIX2LONG (r) != 0);
+    else if (RB_TYPE_P (r, T_BIGNUM)) *result = true;
     else if (RB_TYPE_P (r, T_FLOAT))*result = (rb_num2dbl (r) != 0.0);
     else                            *result = RTEST (r);
     }

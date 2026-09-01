@@ -189,6 +189,7 @@ struct Engine {
 //     rzero()     returns numeric 0
 //     rone()      returns numeric 1
 //     rnil()      returns the language's nil/None/undef
+//     rbig() / rbigneg()  return an integer beyond +/-2^64
 //     params(a,b,c,d)  writes "a|b|c|d" (ints) into world variable "p"
 //     tbl(s, t)   writes t["key"] into world variable "t"
 //     bump()      increments a global and writes it into "n"
@@ -265,6 +266,8 @@ const Dialect kDialects[] = {
   "function rzero() return 0 end\n"
   "function rone() return 1 end\n"
   "function rnil() return nil end\n"
+  "function rbig() return 2^64 end\n"
+  "function rbigneg() return -(2^64) end\n"
   "function params(a, b, c, d)\n"
   "  world.SetVariable('p', string.format('%d|%d|%s|%s', a, b, c, d)) end\n"
   "function tbl(s, t) world.SetVariable('t', t.key or '?') end\n"
@@ -362,6 +365,8 @@ const Dialect kDialects[] = {
   "def rzero():\n    return 0\n"
   "def rone():\n    return 1\n"
   "def rnil():\n    return None\n"
+  "def rbig():\n    return 1 << 64\n"
+  "def rbigneg():\n    return -(1 << 64)\n"
   "def params(a, b, c, d):\n"
   "    world.SetVariable('p', '%d|%d|%s|%s' % (int(a), int(b), c, d))\n"
   "def tbl(s, t):\n    world.SetVariable('t', t.get('key', '?'))\n"
@@ -455,6 +460,8 @@ const Dialect kDialects[] = {
   "sub rzero { return 0; }\n"
   "sub rone { return 1; }\n"
   "sub rnil { return undef; }\n"
+  "sub rbig { return 2**64; }\n"
+  "sub rbigneg { return -(2**64); }\n"
   "sub params { $world->SetVariable('p', sprintf('%d|%d|%s|%s', @_)); }\n"
   "sub tbl { my ($s, $t) = @_; $world->SetVariable('t', $t->{key} || '?'); }\n"
   "our $n = 0;\n"
@@ -531,6 +538,8 @@ const Dialect kDialects[] = {
   "function rzero() { return 0; }\n"
   "function rone() { return 1; }\n"
   "function rnil() { return null; }\n"
+  "function rbig() { return Math.pow(2, 64); }\n"
+  "function rbigneg() { return -Math.pow(2, 64); }\n"
   "function params(a, b, c, d) {\n"
   "  world.SetVariable('p', [Math.round(a), Math.round(b), c, d].join('|')); }\n"
   "function tbl(s, t) { world.SetVariable('t', t.key || '?'); }\n"
@@ -624,6 +633,8 @@ const Dialect kDialects[] = {
   "proc rzero {} { return 0 }\n"
   "proc rone {} { return 1 }\n"
   "proc rnil {} { return {} }\n"
+  "proc rbig {} { return [expr {1 << 64}] }\n"
+  "proc rbigneg {} { return [expr {-(1 << 64)}] }\n"
   "proc params {a b c d} {\n"
   "  world SetVariable p [format \"%d|%d|%s|%s\" [expr {int($a)}] [expr {int($b)}] $c $d] }\n"
   "proc tbl {s t} {\n"
@@ -702,6 +713,8 @@ const Dialect kDialects[] = {
   "def rzero; 0; end\n"
   "def rone; 1; end\n"
   "def rnil; nil; end\n"
+  "def rbig; 1 << 64; end\n"
+  "def rbigneg; -(1 << 64); end\n"
   "def params(a, b, c, d)\n"
   "  world.SetVariable('p', '%d|%d|%s|%s' % [a.to_i, b.to_i, c, d])\n"
   "end\n"
@@ -967,6 +980,20 @@ void battery_keepgoing(Engine& e, const Dialect& d)
     check(e.callRich("rtrue")    == true,  L, "returning true keeps processing");
     check(e.callRich("rfalse")   == false, L, "returning false stops processing");
     check(e.callRich("rone")     == true,  L, "returning 1 keeps processing");
+
+    // A handler whose last expression is an Integer beyond 64 bits must still
+    // answer "keep going", not kill the process.  Ruby's arm read the result
+    // with rb_num2ll, which RAISES RangeError past long long range -- with no
+    // Ruby tag live (rb_protect had already returned), that raise is
+    // rb_bug -> abort: the whole client died on `1 << 64` as a handler's
+    // implicit return.  Every language expresses the value somehow (as a
+    // double where that is all it has); it is nonzero either way, so the one
+    // right answer is true -- and for Ruby, merely REACHING the next assertion
+    // is the crash guard.
+    check(e.callRich("rbig")    == true, L,
+          "returning an integer beyond 64 bits keeps processing, not a crash");
+    check(e.callRich("rbigneg") == true, L,
+          "...and so does a negative one");
 
     // The rule that surprises people, and the one Windows also implements: a
     // handler returning numeric 0 STOPS, even in languages where 0 is truthy.

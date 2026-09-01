@@ -405,6 +405,54 @@ void TestSortedListStyles()
     }
 }
 
+// ── 2d. BS_DEFPUSHBUTTON becomes the dialog's default item ────────────────
+// Windows' dialog manager presses the template's DEFPUSHBUTTON on Enter from
+// any non-button control.  The bridge dropped the style, and wx's own
+// machinery could not compensate: wxTextCtrl::OnChar presses the dialog's
+// default ITEM, which nothing set.  The last three fixtures are the
+// non-degenerate ones -- their default is NOT the IDOK button, so a fix that
+// hardcodes "the button whose id is IDOK" passes the first row and fails
+// them; the negative control fails a fix that defaults the first button.
+void TestDefaultButtons()
+{
+    printf("Dialog bridge (BS_DEFPUSHBUTTON -> wx default item):\n");
+
+    struct { int idd; int ctlId; const char* what; } rows[] = {
+        { IDD_GLOBAL_CHANGE,  IDOK,              "Global Change defaults to Change All (IDOK)" },
+        { IDD_CHOOSE_NOTEPAD, IDC_OPEN_EXISTING, "Choose Notepad defaults to Open existing" },
+        { IDD_LUA_DEBUG,      ID_DO_COMMAND,     "the Lua debugger defaults to Do Command" },
+        { IDD_IMPORT_XML,     IDC_PLUGINS_LIST,  "Import XML defaults to Load/View Plugins" },
+    };
+    for (const auto& r : rows)
+    {
+        const RcDialog* t = MfcDialogResources().FindDialog(r.idd);
+        check(t != nullptr, "default-button template is in the recovered resources");
+        if (!t) continue;
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+        wxWindow* def = dlg->GetDefaultItem();
+        check(def != nullptr && def == dlg->FindWindow(r.ctlId), r.what);
+        dlg->Destroy();
+    }
+
+    // Negative control: no BS_DEFPUSHBUTTON, no default item.
+    {
+        RcDialog synth;
+        synth.id = 3; synth.cx = 200; synth.cy = 100;
+        synth.caption = "default-selftest";
+        RcControl plain;
+        plain.className = "Button"; plain.id = 1000;
+        plain.style = 0x50010000;    // WS_* | BS_PUSHBUTTON -- not the default style
+        plain.x = 5; plain.y = 5; plain.cx = 50; plain.cy = 14;
+        plain.text = "Plain";
+        synth.controls.push_back(plain);
+
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, synth);
+        check(dlg->GetDefaultItem() == nullptr,
+              "a template with no BS_DEFPUSHBUTTON gets no default item");
+        dlg->Destroy();
+    }
+}
+
 // ── 2c. ES_NUMBER / ES_UPPERCASE reach the bridged edit controls ──────────
 // ES_NUMBER makes non-digit keystrokes (the minus sign included) untypeable on
 // Windows, which is the only guard on fields with no DDV -- Recall's line
@@ -2663,6 +2711,7 @@ int RunGuiBridgeSelfTest()
     TestListBoxStyles();
     TestSortedListStyles();
     TestEditStyleValidators();
+    TestDefaultButtons();
     TestNewWorldDefaults();
     TestProgressDialog();
     TestMessageBoxDecode();

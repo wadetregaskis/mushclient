@@ -542,6 +542,30 @@ wxDialog* BuildWxDialogFromTemplate(wxWindow* parent, const RcDialog& t)
                                  wxDefaultPosition, wxDefaultSize,
                                  style);
     PopulateWindowFromTemplate(dlg, t);
+    // The template's BS_DEFPUSHBUTTON is the dialog's default button: Windows
+    // presses it on Enter from any non-button control (61 templates declare
+    // one, three of them on a non-IDOK id).  SetDefaultItem, NOT
+    // wxButton::SetDefault -- on wxOSX SetDefault also gives the NSButton the
+    // Return key equivalent, and AppKit runs performKeyEquivalent: BEFORE
+    // keyDown:, which would press the button ahead of the bridge's
+    // wxEVT_CHAR_HOOK -> PreTranslateMessage arm, breaking the Lua input
+    // boxes' deliberate <enter> swallow and the entity dialogs' Alt+Return
+    // editor chord.  SetDefaultItem alone sets the default item wx's own
+    // wxTextCtrl::OnChar presses on Return, keeping MFC's order:
+    // PreTranslateMessage first, then the default button.  (The cost: the
+    // button is not painted with the macOS accent fill.)  Deliberately done
+    // here and not in PopulateWindowFromTemplate: that also fills property-
+    // sheet page panels, whose top-level window is the sheet -- a page's
+    // default would steal the sheet's own ok->SetDefault().
+    for (const RcControl& c : t.controls)
+    {
+        if (c.className != "Button" || c.id <= 0) continue;
+        if (!(c.style & WS_VISIBLE)) continue;
+        if ((c.style & BS_TYPEMASK) != BS_DEFPUSHBUTTON) continue;
+        if (wxButton* btn = wxDynamicCast(dlg->FindWindow(c.id), wxButton))
+            dlg->SetDefaultItem(btn);
+        break;
+    }
     dlg->SetClientSize(dlg->GetMinClientSize());
     // The template size is the smallest sensible layout; let the user grow the
     // dialog but not shrink controls into each other.

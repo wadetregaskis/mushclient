@@ -151,6 +151,54 @@ int RunPalMiniWindowSelfTest()
                 "restore the background after the chord probe");
     }
 
+    // ── CircleOp action 5 = Pie: the radials stop ON the ellipse ──────────
+    // Win32 treats Extra1..4 as DIRECTION points defining two rays from the
+    // ellipse centre; the wedge's sides run centre -> ellipse and the points
+    // themselves are never stroked to, which is why the API invites putting
+    // them well outside the rectangle.  The shim used to draw wx's elliptic-arc
+    // pie and then stroke two literal lines to the raw points, so each ray
+    // point outside the ellipse left a pen-coloured spike running across the
+    // miniwindow.  Rays straight down and straight right, both far outside, so
+    // the wedge is the bottom-right quadrant.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the pie probe");
+        mwCheck(doc->WindowCircleOp(W, 5, 4, 4, 44, 44,
+                                    kGreen, 0 /*PS_SOLID*/, 1,
+                                    kRed, 0 /*solid*/,
+                                    24, 100, 100, 24) == eOK,
+                "WindowCircleOp (pie, rays far outside the ellipse) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 32, 32) == kRed,
+                "the wedge itself is filled");
+        mwCheck(doc->WindowGetPixel(W, 50, 24) == kBlue,
+                "nothing is painted along the ray BEYOND the ellipse");
+        mwCheck(doc->WindowGetPixel(W, 24, 46) == kBlue,
+                "...nor along the other one");
+
+        // With a NULL brush wx's DrawEllipticArc strokes only the arc, so the
+        // radii came SOLELY from those two mis-aimed lines: the figure was an
+        // arc plus two spikes and no radii at all.  Windows strokes arc + two
+        // correct radii here.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the null-brush pie probe");
+        mwCheck(doc->WindowCircleOp(W, 5, 4, 4, 44, 44,
+                                    kGreen, 0 /*PS_SOLID*/, 1,
+                                    kRed, 1 /*BS_NULL*/,
+                                    24, 100, 100, 24) == eOK,
+                "WindowCircleOp (pie, null brush) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 35, 24) != kBlue,
+                "the horizontal radius IS stroked with no brush to close it");
+        mwCheck(doc->WindowGetPixel(W, 24, 35) != kBlue,
+                "...and the vertical one");
+        mwCheck(doc->WindowGetPixel(W, 50, 24) == kBlue,
+                "...and each stops at the ellipse, not at the caller's point");
+        mwCheck(doc->WindowGetPixel(W, 32, 32) == kBlue,
+                "...and a null brush fills nothing");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the pie probe");
+    }
+
     // ── CircleOp brush style 8-12 = the built-in mono patterns ────────────
     // GDI colours a 1-bpp pattern brush from the DC (0 bits -> text colour,
     // 1 bits -> background colour).  wx ignores those and paints the stipple

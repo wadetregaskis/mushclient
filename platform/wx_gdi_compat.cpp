@@ -1432,16 +1432,37 @@ bool CDC::Pie(int x1, int y1, int x2, int y2,
     CDCImpl* p = Impl(this);
     if (!p) return false;
     p->ApplyPen(); p->ApplyBrush();
-    int cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    int rx = (x2 - x1) / 2, ry = (y2 - y1) / 2;
+    // (xS,yS)/(xE,yE) are DIRECTION points: they define two rays from the
+    // ellipse centre, and the wedge's sides run from the centre to where each
+    // ray CROSSES the ellipse.  The points themselves are never stroked to, and
+    // Win32 invites putting them well outside the rectangle.
+    //
+    // This used to draw wx's elliptic-arc pie and then stroke two LITERAL lines
+    // from the centre to the raw points, so any ray point outside the ellipse
+    // left a pen-coloured spike shooting out of the wedge, potentially right
+    // across the miniwindow -- and with a NULL brush there were no radii at
+    // all, because wx's DrawEllipticArc strokes only the arc then.
+    //
+    // Trace the wedge instead -- centre, then the arc, and let DrawPolygon
+    // close it: the two closing edges ARE the radii, terminating on the
+    // ellipse.  Same technique as Chord and RoundRect above, and the same
+    // reason the EXCLUSIVE extent has to be spelled out here now that the
+    // outline is traced rather than handed to wx as (x, y, w, h).
+    const EllipseExtent e = ExclusiveEllipse(x1, y1, x2, y2);
+    const double cx = e.cx, cy = e.cy, rx = e.rx, ry = e.ry;
     if (rx <= 0 || ry <= 0) return false;
-    double startDeg = atan2(-(double)(yS - cy) / ry, (double)(xS - cx) / rx) * 180.0 / M_PI;
-    double endDeg   = atan2(-(double)(yE - cy) / ry, (double)(xE - cx) / rx) * 180.0 / M_PI;
-    p->dc.DrawEllipticArc(x1, y1, x2 - x1, y2 - y1, startDeg, endDeg);
-    // connect arcs to center (pie wedge lines)
-    p->dc.SetBrush(*wxTRANSPARENT_BRUSH);
-    p->dc.DrawLine(cx, cy, xS, yS);
-    p->dc.DrawLine(cx, cy, xE, yE);
+    double startDeg = atan2(-((double) yS - cy) / ry, ((double) xS - cx) / rx) * 180.0 / M_PI;
+    double endDeg   = atan2(-((double) yE - cy) / ry, ((double) xE - cx) / rx) * 180.0 / M_PI;
+    if (endDeg <= startDeg) endDeg += 360.0;      // wx sweeps anticlockwise
+    const int SEG = 32;
+    std::vector<wxPoint> pts;
+    pts.reserve(SEG + 2);
+    pts.emplace_back(wxRound(cx), wxRound(cy));   // the wedge's apex
+    for (int i = 0; i <= SEG; ++i) {
+        const double a = wxDegToRad(startDeg + (endDeg - startDeg) * i / SEG);
+        pts.emplace_back(wxRound(cx + rx * cos(a)), wxRound(cy - ry * sin(a)));
+    }
+    p->dc.DrawPolygon((int) pts.size(), pts.data());
     return true;
 }
 

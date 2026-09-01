@@ -108,32 +108,13 @@ bool SendToFront(const char* name)
 
 // InitZlib: single-sourced in doc_shared.cpp (#ifndef _WIN32).
 
-// ── CMUSHclientDoc::SendNAWS ──────────────────────────────────────────────────
-// Sends a NAWS (Negotiate About Window Size) subnegotiation packet directly,
-// bypassing the Windows view-iteration loop in SendWindowSizes().
-// Called from CWorldChildFrame::OnSize whenever the output pane is resized.
-// Clamps cols/rows to [1, 65535] to produce valid two-byte big-endian values.
-void CMUSHclientDoc::SendNAWS(int cols, int rows)
-{
-    cols = std::max(1, std::min(cols, 65535));
-    rows = std::max(1, std::min(rows, 65535));
-
-    // Always update m_gui_rows so that the next SendWindowSizes call
-    // (triggered by e.g. a wrap-column change) uses the correct row count.
-    m_gui_rows = rows;
-
-    if (m_iConnectPhase != eConnectConnectedToMud ||
-        !ConnectionOpen() || !m_bNAWS_wanted)
-        return;
-
-    unsigned char p[] = {
-        (unsigned char)IAC, (unsigned char)SB, (unsigned char)TELOPT_NAWS,
-        (unsigned char)HIBYTE(cols), (unsigned char)LOBYTE(cols),
-        (unsigned char)HIBYTE(rows), (unsigned char)LOBYTE(rows),
-        (unsigned char)IAC, (unsigned char)SE
-    };
-    SendPacket(p, sizeof p);
-}
+// CMUSHclientDoc::SendNAWS: single-sourced in doc_shared.cpp (#ifndef _WIN32),
+// beside SendWindowSizes -- it used to be a private copy here that built the
+// NAWS payload raw, un-escaped, missing the f878ff5 fix (a dimension byte of
+// exactly 255 IS an IAC and must be doubled per RFC 854/1073).  Hoisting it
+// removed the twin outright instead of re-applying the fix to a copy, and
+// puts it where the headless suite can reach it (mushapp_stubs.cpp is
+// mushgui_adapters-only and no test executable links it).
 
 // ── CMUSHclientDoc::CheckTickTimers ───────────────────────────────────────────
 // Windows-only timer callback (WM_TIMER).  No-op on non-Windows.

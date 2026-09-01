@@ -1249,10 +1249,26 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
 
     // No sides named AND no interior asked for = Win32 draws nothing.  BF_MIDDLE
     // on its own is a legitimate call (fill, no border), so it must not be
-    // caught by the side-flag test.
-    if ((nFlags & (BF_RECT | BF_MIDDLE)) == 0) return;
+    // caught by the side-flag test.  BF_DIAGONAL names a figure of its own and
+    // needs no side bit at all (it then behaves as ENDBOTTOMRIGHT).
+    if ((nFlags & (BF_RECT | BF_MIDDLE | BF_DIAGONAL)) == 0) return;
 
     RECT r = *lpRect;
+
+    // BF_MONO and BF_FLAT replace the BEVEL with a flat border: one colour the
+    // whole way round each ring, with no top-left/bottom-right split.  Both
+    // were dropped entirely, so a caller asking for a flat or monochrome
+    // border got the full two-tone 3D box.  BF_MONO's pair is
+    // COLOR_WINDOWFRAME over COLOR_WINDOW; BF_FLAT's is COLOR_3DSHADOW over
+    // COLOR_3DFACE.  BF_MONO wins when both are named.
+    //
+    // BF_SOFT is still dropped, deliberately: unlike these two it does not
+    // change the SHAPE, only which grey the bevel uses, and choosing that shade
+    // from this side would be inventing a measurement.  Recorded in
+    // docs/UPSTREAM-DIVERGENCES.md section 8.
+    const bool  flatEdge  = (nFlags & (BF_MONO | BF_FLAT)) != 0;
+    const COLORREF flatOuter = (nFlags & BF_MONO) ? 0x000000 : kShadow;
+    const COLORREF flatInner = (nFlags & BF_MONO) ? 0xFFFFFF : kFace;
 
     // BF_MIDDLE fills the interior with the button-face colour.  Win32 strokes
     // the rings over that fill, so filling the whole rect first leaves the same
@@ -1294,9 +1310,46 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
         if (nFlags & BF_BOTTOM) strip(l,  b, rr - l + 1, 1,          br);
     };
 
+    if (nFlags & BF_DIAGONAL) {
+        // BF_DIAGONAL replaces the box with a single diagonal vector bounded by
+        // the rectangle, and the BF_ side bits then name its END POINT rather
+        // than a side: BF_DIAGONAL_ENDTOPLEFT (0x13) &c.  BF_DIAGONAL with no
+        // corner named behaves as ENDBOTTOMRIGHT.  The flag was dropped
+        // entirely, so `WindowRectOp(win, 5, ..., EDGE_SUNKEN,
+        // BF_DIAGONAL_ENDTOPLEFT)` -- documented in miniwindow.cpp and exposed
+        // to Lua as miniwin.rect_diagonal_end_top_left -- saw BF_TOP|BF_LEFT and
+        // strokes two sides of a sunken box: a completely different picture,
+        // returned as eOK either way.
+        //
+        // Win32 additionally SHADES the diagonal, using both ring colours on
+        // either side of it.  That is not reproduced here: a two-pixel band
+        // necessarily leaves the rectangle on one side unless it is shortened,
+        // and which side carries which shade cannot be derived from this
+        // platform -- it needs a Windows read (docs/UPSTREAM-DIVERGENCES.md
+        // section 8).  One line in the outer ring's lit/shadowed colour is the
+        // honest approximation until then.
+        const int l = r.left, t = r.top, rr = r.right - 1, b = r.bottom - 1;
+        if (rr < l || b < t) return;
+        int sx, sy, ex, ey;
+        switch (nFlags & (BF_LEFT | BF_TOP | BF_RIGHT | BF_BOTTOM)) {
+        case BF_TOP | BF_LEFT:     sx = rr; sy = b; ex = l;  ey = t; break;
+        case BF_TOP | BF_RIGHT:    sx = l;  sy = b; ex = rr; ey = t; break;
+        case BF_BOTTOM | BF_LEFT:  sx = rr; sy = t; ex = l;  ey = b; break;
+        default:                   sx = l;  sy = t; ex = rr; ey = b; break;
+        }
+        const COLORREF diag = flatEdge ? flatOuter
+                            : (nEdge & BDR_SUNKENOUTER) ? kDkShadow : kLight;
+        p->dc.SetPen(wxPen(WxCol(diag)));
+        p->dc.DrawLine(sx, sy, ex, ey);   // inclusive here, and Win32's diagonal
+                                          // does reach the corner it names
+    } else {
     // Outer ring.
-    if (nEdge & BDR_RAISEDOUTER)      ring(r, kLight,    kDkShadow);
-    else if (nEdge & BDR_SUNKENOUTER) ring(r, kDkShadow, kLight);
+    if (nEdge & BDR_RAISEDOUTER)
+        ring(r, flatEdge ? flatOuter : kLight,
+                flatEdge ? flatOuter : kDkShadow);
+    else if (nEdge & BDR_SUNKENOUTER)
+        ring(r, flatEdge ? flatOuter : kDkShadow,
+                flatEdge ? flatOuter : kLight);
 
     // Inner ring, inset by one pixel on whichever sides the outer ring used.
     RECT ri = r;
@@ -1305,8 +1358,13 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
     if (nFlags & BF_RIGHT)  ri.right--;
     if (nFlags & BF_BOTTOM) ri.bottom--;
 
-    if (nEdge & BDR_RAISEDINNER)      ring(ri, kHilight, kShadow);
-    else if (nEdge & BDR_SUNKENINNER) ring(ri, kShadow,  kHilight);
+    if (nEdge & BDR_RAISEDINNER)
+        ring(ri, flatEdge ? flatInner : kHilight,
+                 flatEdge ? flatInner : kShadow);
+    else if (nEdge & BDR_SUNKENINNER)
+        ring(ri, flatEdge ? flatInner : kShadow,
+                 flatEdge ? flatInner : kHilight);
+    }
 
     // BF_ADJUST: report the client rect left inside the border.
     if (nFlags & BF_ADJUST) {

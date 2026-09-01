@@ -549,6 +549,73 @@ int RunPalMiniWindowSelfTest()
         mwCheck(doc->WindowGetPixel(W, 11, 39) == doc->WindowGetPixel(W, 25, 39),
                 "...on the bottom edge either");
 
+        // BF_DIAGONAL (0x0010) replaces the box with a diagonal vector, and the
+        // side bits then name its END POINT.  It was dropped entirely, so
+        // BF_DIAGONAL_ENDTOPLEFT (0x13) was read as BF_TOP|BF_LEFT and drew two
+        // sides of a box -- a completely different picture, returned as eOK.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the BF_DIAGONAL probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x13) == eOK,
+                "WindowRectOp (DrawEdge, BF_DIAGONAL_ENDTOPLEFT) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 25, 25) != kBlue,
+                "BF_DIAGONAL draws a diagonal across the rectangle");
+        mwCheck(doc->WindowGetPixel(W, 25, 10) == kBlue,
+                "...INSTEAD of the box: the top side is not stroked");
+        mwCheck(doc->WindowGetPixel(W, 10, 25) == kBlue,
+                "...nor the left side");
+        mwCheck(doc->WindowGetPixel(W, 39, 25) == kBlue &&
+                doc->WindowGetPixel(W, 25, 39) == kBlue,
+                "...and neither of the unnamed sides either");
+        // The other end point puts the vector on the ANTI-diagonal, so a probe
+        // on one diagonal must miss the other -- an implementation that ignored
+        // the corner bits and always drew top-left to bottom-right would pass
+        // the block above and fail here.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the second BF_DIAGONAL probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x16) == eOK,
+                "WindowRectOp (DrawEdge, BF_DIAGONAL_ENDTOPRIGHT) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 15, 34) != kBlue &&
+                doc->WindowGetPixel(W, 34, 15) != kBlue,
+                "ENDTOPRIGHT runs bottom-left to top-right");
+        mwCheck(doc->WindowGetPixel(W, 15, 15) == kBlue &&
+                doc->WindowGetPixel(W, 34, 34) == kBlue,
+                "...and NOT along the other diagonal");
+
+        // BF_MONO (0x8000) and BF_FLAT (0x4000) replace the bevel with a FLAT
+        // border -- one colour the whole way round each ring.  Both were
+        // dropped, so a caller asking for either got the two-tone 3D box.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the BF_MONO probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x800F) == eOK,
+                "WindowRectOp (DrawEdge, BF_RECT|BF_MONO) succeeds");
+        {
+            const long o = doc->WindowGetPixel(W, 10, 25);
+            mwCheck(o == doc->WindowGetPixel(W, 39, 25) &&
+                    o == doc->WindowGetPixel(W, 25, 10) &&
+                    o == doc->WindowGetPixel(W, 25, 39),
+                    "BF_MONO's outer ring is ONE colour all round (no bevel)");
+            mwCheck(o == kBlack, "...COLOR_WINDOWFRAME, i.e. black");
+            mwCheck(doc->WindowGetPixel(W, 11, 25) == kWhite,
+                    "...over an inner ring of COLOR_WINDOW, i.e. white");
+        }
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the BF_FLAT probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x400F) == eOK,
+                "WindowRectOp (DrawEdge, BF_RECT|BF_FLAT) succeeds");
+        {
+            const long o = doc->WindowGetPixel(W, 10, 25);
+            mwCheck(o == doc->WindowGetPixel(W, 39, 25) &&
+                    o == doc->WindowGetPixel(W, 25, 10) &&
+                    o == doc->WindowGetPixel(W, 25, 39),
+                    "BF_FLAT's outer ring is ONE colour all round (no bevel)");
+            mwCheck(o == 0x808080L, "...COLOR_3DSHADOW");
+            mwCheck(doc->WindowGetPixel(W, 11, 25) == 0xC0C0C0L,
+                    "...over an inner ring of COLOR_3DFACE");
+            mwCheck(o != kBlack,
+                    "...and BF_FLAT is not BF_MONO (different colour tables)");
+        }
+
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the DrawEdge probe");
     }

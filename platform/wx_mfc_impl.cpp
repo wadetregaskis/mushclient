@@ -1318,7 +1318,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->AppendSeparator();
     gameMenu->Append(32320 /*ID_INPUT_GLOBALCHANGE*/,    wxT("&Global Change…\tCtrl+Shift+G"));
     gameMenu->Append(32325 /*ID_GAME_SENDTOALLWORLDS*/,  wxT("&Send To All Worlds…\tCtrl+Alt+S"));
-    gameMenu->Append(32203 /*ID_DISPLAY_ACTIVITYLIST*/,  wxT("&Activity List"));
+    // A CHECK item: Windows ticks it while the Activity window exists
+    // (CMainFrame::OnUpdateDisplayActivitylist, mainfrm.cpp:1164), and a plain
+    // wx item ignores wxUpdateUIEvent::Check() even when an arm calls it.
+    gameMenu->AppendCheckItem(32203 /*ID_DISPLAY_ACTIVITYLIST*/,
+                              wxT("&Activity List"));
     gameMenu->Append(32326 /*ID_EDIT_GENERATECHARACTERNAME*/, wxT("Generate Character &Name…"));
     gameMenu->Append(32323 /*ID_EDIT_SPELLCHECK*/,       wxT("Chec&k Spelling"));
     append_canon_section(gameMenu, SEC_GAME);   // Mapper, Reset Timers, Auto Say, Send File, Wrap Output, …
@@ -1624,6 +1628,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             // reading the parent's style flag reported the wrong thing once the
             // pin started being applied to the world frames as well.
             evt.Check(App.m_bAlwaysOnTop != 0);
+        } else if (id == 32203 /*ID_DISPLAY_ACTIVITYLIST*/) {
+            // Windows: Enable(TRUE) unconditionally, SetCheck from whether the
+            // activity view exists (mainfrm.cpp:1164).  The port's equivalent
+            // state is the singleton frame in wx_activity.cpp.
+            evt.Enable(true);
+            evt.Check(ActivityWindowIsOpen());
         } else if (id == ID_MENU_VIEW_FULLSCREEN) {
             // Same target as the command arm, or the tick reports one window
             // while the other is the one that moved.

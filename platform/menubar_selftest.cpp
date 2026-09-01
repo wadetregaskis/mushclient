@@ -48,6 +48,7 @@
 #include "platform/wx_toolbar.h"     // CWorldToolBars — the Connect/Disconnect toggle
 #include "platform/app_config.h"     // OpenAppConfig — redirected around the toolbar blocks
 #include "platform/menu_ui_rules.h"  // kPortMenuIdDisconnect — the id both must agree on
+#include "platform/wx_activity.h"    // ActivityWindowIsOpen — the Activity List tick
 #include "dialogs/world_prefs/TreePropertySheet.h"   // m_iWantedPage — which page a Configure command asked for
 
 // Defined in wx_toolbar.cpp: the world in activity slot 1..10.  The menu/
@@ -811,6 +812,50 @@ int RunMenuBarSelfTest()
                       "...and off again");
 
                 App.m_bAlwaysOnTop = savedOnTop;
+            }
+
+
+            // ── Game ▸ Activity List ticks while the window is open ─────────
+            // CMainFrame::OnUpdateDisplayActivitylist (mainfrm.cpp:1164) is
+            // Enable(TRUE) + SetCheck(App.m_pActivityView != NULL).  The port
+            // built the item with Append (so wx discards a Check() outright)
+            // and had no update-UI arm for the id at all, so the tick — which
+            // on Windows is the ONLY sign the window is already open, since
+            // choosing the item again merely raises it — was never shown.
+            {
+                wxMenuItem* activity = mb->FindItem(32203);
+                check(activity != NULL,
+                      "Game > Activity List is in the menu bar");
+                check(activity && activity->IsCheckable(),
+                      "...as a check item, or wx drops the answer");
+
+                check(!ActivityWindowIsOpen(),
+                      "the activity window is closed to begin with");
+                const UiAnswer shut = probeUi(frame, 32203);
+                check(shut.claimed && shut.setEnabled && shut.enabled,
+                      "...and the item is live regardless, as on Windows");
+                check(shut.setChecked && !shut.checked,
+                      "...and unticked");
+
+                // Open it through the command id, which is the route a user
+                // takes; that also proves the command arm and the update arm
+                // agree about which id they are talking about.
+                fireCmd(frame, 32203);
+                check(ActivityWindowIsOpen(),
+                      "choosing Activity List opens the activity window");
+                const UiAnswer open = probeUi(frame, 32203);
+                check(open.setChecked && open.checked,
+                      "...and the menu item is now ticked");
+
+                // Both directions: an arm that ticked unconditionally passes
+                // the assertion above and fails this one.
+                if (wxWindow* w = wxWindow::FindWindowByLabel(wxT("Activity")))
+                    w->Close(true);
+                check(!ActivityWindowIsOpen(),
+                      "closing it clears the singleton again");
+                const UiAnswer reshut = probeUi(frame, 32203);
+                check(reshut.setChecked && !reshut.checked,
+                      "...and the tick goes away with it");
             }
 
             // A View item that deliberately stays live with nothing open --

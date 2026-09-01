@@ -4326,45 +4326,83 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         if (startIdx < 0) startIdx = n - 1;
     }
 
-    // Returns the (optionally lowercased) plain text of line i.  Used only for
-    // locating the match WITHIN the found line, i.e. once per search, not once
-    // per line -- the scan itself goes through the cache below.
-    auto lineText = [this, caseSensitive](int i) -> wxString {
-        wxString s;
-        for (const auto& run : LineAt(i))
-            if (!run.horiz_rule)
-                s += DecodeRunText(run);
-        return caseSensitive ? s : s.Lower();
-    };
-
     // One scan for this (term, case flag, buffer generation); repeated Find
     // Next presses reuse it.
     RebuildFindCache(term, caseSensitive);
     if (m_findCache.empty()) return false;
 
+    // ── the rest of the CURRENT line first ────────────────────────────────
+    // Windows visits every OCCURRENCE, not every matching line:
+    // CSendView::DoFind sets m_bRepeatOnSameLine (sendvw.cpp:1399, comment "we
+    // can find multiple instances on the same line") and FindRoutine builds the
+    // line's whole match list, popping one entry per press and only moving on
+    // when it is empty (Finding.cpp:123-130, :189-219).  The port's cache is
+    // per LINE, so without this the second "gold" in "gold coins and more gold
+    // dust" was unreachable -- Find Next jumped past it to the next matching
+    // line, or, if that line was the only match, reselected the first "gold"
+    // for ever.
+    //
+    // Only the ONE line the selection is on is re-scanned, so the
+    // O(1)-per-keypress cost of the cache is untouched.
+    int foundIdx = -1;
+    int matchStart = -1, matchEnd = -1;
+    std::vector<HighlightHit> hits;
+    {
+        const int curLine = forward ? (selEnd.valid()   ? selEnd.line   : -1)
+                                    : (selStart.valid() ? selStart.line : -1);
+        if (curLine >= 0 && curLine < n) {
+            MatchesOnLine(curLine, searchTerm, caseSensitive, hits);
+            for (const HighlightHit& hit : hits) {
+                // Strictly past the current selection, so a repeated press
+                // cannot land on the occurrence it is already sitting on.
+                if (forward) {
+                    if (hit.start >= selEnd.col)
+                        { foundIdx = curLine; matchStart = hit.start;
+                          matchEnd = hit.end; break; }
+                } else {
+                    if (hit.end <= selStart.col)
+                        { foundIdx = curLine; matchStart = hit.start;
+                          matchEnd = hit.end; }   // keep the LAST such one
+                }
+            }
+        }
+    }
+
+    // ── otherwise the next matching LINE ──────────────────────────────────
     // The first cached match at or after (forward) / at or before (backward)
     // the start point, wrapping.  upper_bound/lower_bound rather than a walk so
     // this stays O(log matches) with a capped-at-9999 cache.
-    int foundIdx = -1;
-    if (forward) {
-        auto it = std::lower_bound(m_findCache.begin(), m_findCache.end(), startIdx);
-        foundIdx = (it != m_findCache.end()) ? *it : m_findCache.front();
-    } else {
-        auto it = std::upper_bound(m_findCache.begin(), m_findCache.end(), startIdx);
-        foundIdx = (it != m_findCache.begin()) ? *(it - 1) : m_findCache.back();
+    if (foundIdx < 0) {
+        if (forward) {
+            auto it = std::lower_bound(m_findCache.begin(), m_findCache.end(), startIdx);
+            foundIdx = (it != m_findCache.end()) ? *it : m_findCache.front();
+        } else {
+            auto it = std::upper_bound(m_findCache.begin(), m_findCache.end(), startIdx);
+            foundIdx = (it != m_findCache.begin()) ? *(it - 1) : m_findCache.back();
+        }
+
+        // Select the precise matched substring (not the whole line) so the user
+        // can see exactly which occurrence was found: the FIRST on the line
+        // going forwards, the LAST going backwards, so that the very next press
+        // continues through the line's own occurrences in the direction of
+        // travel rather than skipping them.
+        MatchesOnLine(foundIdx, searchTerm, caseSensitive, hits);
+        if (!hits.empty()) {
+            const HighlightHit& hit = forward ? hits.front() : hits.back();
+            matchStart = hit.start;
+            matchEnd   = hit.end;
+        } else {
+            // The cache said this line matches and the enumerator disagrees:
+            // select from the head rather than nothing, which is what the old
+            // `lt.find(...) == npos` arm did.
+            matchStart = 0;
+            matchEnd   = (int) searchTerm.size();
+        }
     }
     (void) n;
 
-    // Select the precise matched substring (not the whole line) so the user
-    // can see exactly which occurrence was found.
-    {
-        wxString lt      = lineText(foundIdx);
-        size_t   matchOff = lt.find(searchTerm);
-        int selStart = (matchOff != wxString::npos) ? (int)matchOff : 0;
-        int selEnd   = selStart + (int)searchTerm.size();
-        m_selAnchor  = SelPoint{foundIdx, selStart};
-        m_selFocus   = SelPoint{foundIdx, selEnd};
-    }
+    m_selAnchor = SelPoint{foundIdx, matchStart};
+    m_selFocus  = SelPoint{foundIdx, matchEnd};
 
     // CSendView::DoFind's last act on the view is
     // `m_topview->EnsureSelectionVisible ()` (sendvw.cpp:1475) — the SAME
@@ -4392,12 +4430,23 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
 }
 
 // ── HighlightHitsForLine ──────────────────────────────────────────────────
-// See the header.  Character ranges of the current search term in line
-// `lineIdx`, using the raw-bytes path where that is exactly equivalent.
+// See the header.  Character ranges of the CURRENT search term in line
+// `lineIdx` -- the paint's caller, which asks about the term the find bar last
+// highlighted with.
 void COutputPane::HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& out)
 {
+    MatchesOnLine(lineIdx, m_searchTermLower, m_searchCaseSensitive, out);
+}
+
+// ── MatchesOnLine ─────────────────────────────────────────────────────────
+// See the header.  Every occurrence on one line, using the raw-bytes path
+// where that is exactly equivalent.
+void COutputPane::MatchesOnLine(int lineIdx, const wxString& termFolded,
+                                bool caseSensitive,
+                                std::vector<HighlightHit>& out)
+{
     out.clear();
-    if (m_searchTerm.IsEmpty()) return;
+    if (termFolded.IsEmpty()) return;
     if (lineIdx < 0 || lineIdx >= LineCountI()) return;
     const SOutputLine& line = LineAt(lineIdx);
 
@@ -4414,10 +4463,10 @@ void COutputPane::HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& o
             if (c >= 0x80) { fastable = false; break; }
 
     if (fastable) {
-        const wxScopedCharBuffer tb = m_searchTermLower.utf8_str();
+        const wxScopedCharBuffer tb = termFolded.utf8_str();
         const std::string term(tb.data(), tb.length());
         if (!term.empty()) {
-            if (!m_searchCaseSensitive)
+            if (!caseSensitive)
                 for (char& c : m_hlScratch)
                     if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
             size_t p = 0;
@@ -4432,8 +4481,8 @@ void COutputPane::HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& o
             if (!run.horiz_rule)
                 plain += DecodeRunText(run);
 
-        wxString cmpPlain = m_searchCaseSensitive ? plain : plain.Lower();
-        const wxString& cmpTerm = m_searchTermLower;
+        wxString cmpPlain = caseSensitive ? plain : plain.Lower();
+        const wxString& cmpTerm = termFolded;
         if (!cmpTerm.empty()) {
             std::wstring pw = cmpPlain.ToStdWstring();
             std::wstring tw = cmpTerm.ToStdWstring();

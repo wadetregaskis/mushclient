@@ -1219,6 +1219,86 @@ void TestFindNext()
             "after Clear Output there is nothing to find");
 }
 
+// ── 7b. Find Next visits every OCCURRENCE, not every matching line ────────
+//
+// Windows' Find sets m_bRepeatOnSameLine (sendvw.cpp:1399, comment "we can find
+// multiple instances on the same line") and FindRoutine builds the line's whole
+// match list, popping one entry per press and moving to another line only when
+// it is empty (Finding.cpp:123-130, :189-219).  The port's cache is per LINE and
+// it resumed from selEnd.line + 1, always selecting the FIRST occurrence on
+// whatever line it landed on -- so the second "gold" in "Gold coins and more
+// gold dust" could not be reached at all, and if that line were the only match
+// the same first occurrence came back for ever.
+//
+// The fixture puts the two occurrences in DIFFERENT case and searches
+// case-insensitively, so the selected TEXT says which one was found: a test
+// that only asserted the line number could not tell "stayed put" from "advanced
+// within the line".
+void TestFindVisitsEveryOccurrenceOnALine()
+{
+    printf("Find Next: every occurrence, including several on one line "
+           "(sendvw.cpp:1399)\n");
+
+    Harness h;
+    h.pane->AppendLine(MakeLine("gold nugget"));                   // line 0: one
+    h.pane->AppendLine(MakeLine("Gold coins and more gold dust")); // line 1: two
+    h.pane->AppendLine(MakeLine("silver only"));                   // line 2: none
+
+    int line = -1, ord = 0, total = 0;
+    auto press = [&](bool forward) {
+        h.pane->FindNext("gold", forward, &line, &ord, &total, false);
+        // NOTE the named local: utf8_str() can hand back a NON-owning view into
+        // the wxString's own buffer, so taking it from the temporary would leave
+        // it dangling at the semicolon -- and read back as "".
+        const wxString sel = h.pane->GetSelectionText();
+        const wxScopedCharBuffer b = sel.utf8_str();
+        return std::string(b.data() ? b.data() : "");
+    };
+    auto step = [&](bool forward, int wantLine, const char* wantText,
+                    const char* what) {
+        const std::string got = press(forward);
+        const bool ok = (line == wantLine && got == wantText);
+        printf("  [%s] %s (line %d %s, got \"%s\" wanted \"%s\")\n",
+               ok ? "PASS" : "FAIL", what, line,
+               line == wantLine ? "as wanted" : "WRONG", got.c_str(), wantText);
+        (ok ? g_pass : g_fail)++;
+    };
+
+    // Forward, from the top.  Note steps 2 and 3: the SAME line twice, with a
+    // different occurrence each time.
+    step(true, 0, "gold", "1st: the only match on line 0");
+    step(true, 1, "Gold", "2nd: the first match on line 1");
+    step(true, 1, "gold", "3rd: the SECOND match on the SAME line "
+                          "(this is the whole finding)");
+    step(true, 0, "gold", "4th: only now does it leave the line, wrapping");
+
+    // Backward is the mirror image, and it needs its own arm: the direction
+    // decides both which occurrence a landing selects (the LAST, so the next
+    // press has somewhere to go) and which end of the selection the in-line
+    // scan measures from.  Start below line 1 so the first press walks back
+    // onto it.
+    // 1-based, and it must not be EMPTY: GetNormalizedSel refuses a collapsed
+    // region, which would leave Find with no start point at all.
+    h.pane->SetSelectionRange(3, 3, 1, 2);     // line 2, its first character
+    step(false, 1, "gold", "back 1st: the LAST match on line 1");
+    step(false, 1, "Gold", "back 2nd: the earlier match on the SAME line");
+    step(false, 0, "gold", "back 3rd: and only then the previous line");
+
+    // The control that keeps the case-insensitive arms honest: searching
+    // case-SENSITIVELY for "gold" leaves line 1 with a single occurrence, so
+    // the second press must move OFF the line.  A same-line scan that ignored
+    // the case flag would find "Gold" here and stay.
+    h.pane->SetSelectionRange(0, 0, 0, 0);
+    h.pane->FindNext("gold", true, &line, &ord, &total, /*caseSensitive*/ true);
+    opCheckEq(total, 2, "control: case-sensitive \"gold\" matches two lines");
+    while (line != 1)                          // walk to the two-occurrence line
+        h.pane->FindNext("gold", true, &line, &ord, &total, true);
+    opCheck(h.pane->GetSelectionText() == wxT("gold"),
+            "control: on line 1 it selects the lower-case occurrence");
+    h.pane->FindNext("gold", true, &line, &ord, &total, true);
+    opCheckEq(line, 0, "control: with one match on the line it moves on");
+}
+
 // ── 8. A mouse release does no work the world did not ask for ─────────────
 //
 // AutoCopySelection used to materialise SelectedText() before looking at
@@ -3687,6 +3767,11 @@ void TestDragAutoScrollRepeats()
         opCheck(h.pane->AutoScrollTick(), "...and the repeat runs upwards too");
         opCheckEq(rowPos(h) - afterMotion, -1,
                   "...one line per repeat, the other way");
+        // End the drag before the fixture goes away.  wxFrame::Destroy only
+        // QUEUES the deletion, and this harness runs no event loop, so a pane
+        // left mid-drag survives with its auto-scroll timer still armed -- and
+        // then fires it inside the one wxYield this file does have
+        // (PumpDeferred), against a window that is by then being destroyed.
         endDrag(h, 20, 2);
     }
     {
@@ -3739,6 +3824,7 @@ int RunOutputPaneSelfTest()
     TestLeaveWindowCancelsMouseOver();
     TestDragAutoScrollRepeats();
     TestFindNext();
+    TestFindVisitsEveryOccurrenceOnALine();
     TestCopyJoinsSoftWrappedLines();
     TestReleaseDoesNotMaterialiseUnlessAsked();
     TestSearchHighlightOffsets();

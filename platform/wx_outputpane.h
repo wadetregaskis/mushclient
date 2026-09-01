@@ -253,6 +253,14 @@ public:
     struct HighlightHit { int start, end; };
     void HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& out);
 
+    // Every occurrence of `termFolded` on one line, in order.  The enumerator
+    // HighlightHitsForLine is written around, hoisted so Find Next can share it
+    // instead of carrying a third copy of the fast-path/decode-fallback pair.
+    // `termFolded` must already be lower-cased when caseSensitive is false,
+    // which is what both callers hold anyway.
+    void MatchesOnLine(int lineIdx, const wxString& termFolded,
+                       bool caseSensitive, std::vector<HighlightHit>& out);
+
     // Re-resolve every buffered run's colours against a new palette, in place.
     //
     // The alternative is what the port used to do: have the engine re-emit the

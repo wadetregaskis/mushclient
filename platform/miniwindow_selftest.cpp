@@ -1372,6 +1372,36 @@ int RunPalMiniWindowSelfTest()
         mwCheck(doc->m_BackgroundBitmap.GetBitmap(&bmInfo) &&
                     bmInfo.bmWidth == 9,
                 "...and the bitmap is real (9 wide)");
+
+        // GetObject honours nCount -- the Splash.cpp protocol.  Splash passes
+        // sizeof(DIBSECTION) and reads dsBmih.biClrUsed / biBitCount; the old
+        // body ignored nCount, filled the leading BITMAP and left the rest as
+        // stack garbage.  POISONED first, so "wrote nothing there" fails.
+        DIBSECTION ds;
+        memset(&ds, 0x7F, sizeof ds);
+        mwCheck(doc->m_BackgroundBitmap.GetObject((int) sizeof ds, &ds)
+                    == (int) sizeof(DIBSECTION),
+                "GetObject(sizeof DIBSECTION) answers the DIBSECTION size");
+        mwCheck(ds.dsBm.bmWidth == 9 && ds.dsBm.bmHeight == 5,
+                "...its BITMAP half matches GetBitmap");
+        mwCheck(ds.dsBmih.biSize == sizeof(BITMAPINFOHEADER) &&
+                ds.dsBmih.biWidth == 9 && ds.dsBmih.biHeight == 5 &&
+                ds.dsBmih.biPlanes == 1 &&
+                ds.dsBmih.biBitCount == ds.dsBm.bmBitsPixel &&
+                ds.dsBmih.biCompression == 0 && ds.dsBmih.biClrUsed == 0,
+                "...its DIB half is coherent, no byte left poisoned");
+        // The other direction of "honours nCount": a BITMAP-sized buffer gets
+        // the BITMAP and NOT ONE BYTE past it.
+        memset(&ds, 0x7F, sizeof ds);
+        mwCheck(doc->m_BackgroundBitmap.GetObject((int) sizeof(BITMAP), &ds)
+                    == (int) sizeof(BITMAP),
+                "GetObject(sizeof BITMAP) keeps the BITMAP-only contract");
+        mwCheck(ds.dsBm.bmWidth == 9 && ds.dsBmih.biSize == 0x7F7F7F7Fu,
+                "...and writes nothing past the caller's declared size");
+        memset(&ds, 0x7F, sizeof ds);
+        mwCheck(doc->m_BackgroundBitmap.GetObject(4, &ds) == 0 &&
+                ds.dsBm.bmType == 0x7F7F7F7F,
+                "...and a buffer smaller than a BITMAP is refused untouched");
         mwCheck(doc->SetBackgroundImage("", 0) == eOK,
                 "SetBackgroundImage('') accepts the clear");
         // The zero-first contract, which this build did not keep: ten call sites
@@ -1389,6 +1419,11 @@ int RunPalMiniWindowSelfTest()
                 bmInfo.bmBitsPixel == 0 && bmInfo.bmType == 0 &&
                 bmInfo.bmBits == NULL,
                 "...and GetBitmap zeroed the caller's BITMAP before failing");
+        memset(&ds, 0x7F, sizeof ds);
+        mwCheck(doc->m_BackgroundBitmap.GetObject((int) sizeof ds, &ds) == 0 &&
+                ds.dsBm.bmWidth == 0 && ds.dsBmih.biSize == 0 &&
+                ds.dsBmih.biBitCount == 0,
+                "...and GetObject zeroes the whole declared buffer before failing");
         doc->WindowDelete("bgsrc");
         ::unlink(png);
     }

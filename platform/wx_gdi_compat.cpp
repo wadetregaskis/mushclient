@@ -770,10 +770,21 @@ BOOL CBitmap::GetBitmap(BITMAP* pBitmap) {
     return TRUE;
 }
 
-int CBitmap::GetObject(int /*nCount*/, void* lpObject) const {
-    if (!lpObject) return 0;
+// nCount is honoured, not ignored: Splash.cpp passes sizeof(DIBSECTION) and
+// reads dsBmih.biClrUsed / biBitCount, which an nCount-blind BITMAP-only fill
+// leaves as stack garbage -- the D-15 shape again (a signature satisfied, a
+// protocol not).  Everything the caller's declared buffer can hold is zeroed
+// first, per the zero-before-fail contract above, and nothing past nCount is
+// ever written.  One deliberate simplification vs Win32: real GetObject
+// answers a DIBSECTION only for DIB-section bitmaps and falls back to BITMAP
+// for DDBs; on this side every live CBitmap is DIB-backed (a wxBitmap), so a
+// caller asking for the DIBSECTION always gets one.
+int CBitmap::GetObject(int nCount, void* lpObject) const {
+    if (!lpObject || nCount < (int) sizeof(BITMAP)) return 0;
+    const bool wantDib = nCount >= (int) sizeof(DIBSECTION);
+    if (wantDib) *static_cast<DIBSECTION*>(lpObject) = {};
     BITMAP* pbm = static_cast<BITMAP*>(lpObject);
-    *pbm = {};
+    if (!wantDib) *pbm = {};
     if (!m_impl) return 0;
     wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
     const double sc = bmp->GetScaleFactor();
@@ -781,7 +792,20 @@ int CBitmap::GetObject(int /*nCount*/, void* lpObject) const {
     pbm->bmHeight     = wx_logical_extent(bmp->GetHeight(), sc);
     pbm->bmPlanes     = 1;
     wx_fill_bitmap_depth(this, pbm);
-    return sizeof(BITMAP);
+    if (!wantDib) return sizeof(BITMAP);
+    // The DIB half, coherent with the BITMAP half: same extent, the DECLARED
+    // depth (what GetBitmap reports), BI_RGB, and biClrUsed 0 so a palette
+    // count derives from biBitCount alone -- the Splash.cpp arithmetic.
+    DIBSECTION* ds = static_cast<DIBSECTION*>(lpObject);
+    BITMAPINFOHEADER& ih = ds->dsBmih;
+    ih.biSize        = sizeof(BITMAPINFOHEADER);
+    ih.biWidth       = pbm->bmWidth;
+    ih.biHeight      = pbm->bmHeight;
+    ih.biPlanes      = 1;
+    ih.biBitCount    = pbm->bmBitsPixel;
+    ih.biCompression = 0;                       // BI_RGB
+    ih.biSizeImage   = (DWORD) ((long) pbm->bmWidthBytes * pbm->bmHeight);
+    return sizeof(DIBSECTION);
 }
 
 BOOL CBitmap::Attach(HGDIOBJ hObject) {

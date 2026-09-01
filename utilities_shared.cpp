@@ -436,6 +436,47 @@ CString FixHTMLMultilineString (const CString strToFix)
 
   } // end of FixHTMLMultilineString
 
+// escape a string for an XML ATTRIBUTE value: < > & " as FixHTMLString, plus
+// tab / LF / CR as &#9; / &#10; / &#13;.  NOT FixHTMLString itself -- that is
+// shared with WriteToLog, the log-file-name %-expansions and world.FixupHTML,
+// whose exact output is pinned -- and not FixHTMLMultilineString either, which
+// serves ELEMENT content, where a literal newline is legal and must stay one.
+// The parser (CXMLparser::GetValue) refuses a raw control character inside a
+// quoted value, so before this existed a member holding a lone CR/LF/tab was
+// written raw and the saved world file could never be reopened; the entity
+// forms round-trip, since Get_XML_Entity accepts 9, 10 and 13 (see
+// docs/UPSTREAM-DIVERGENCES.md §22).  Declared in stdafx.h.
+CString FixXMLAttributeString (const CString strToFix)
+  {
+  CString strOldString = strToFix;
+  CString strNewString;
+
+  int i;
+
+  while ((i = strOldString.FindOneOf ("<>&\"\t\n\r")) != -1)
+    {
+    strNewString += strOldString.Left (i);
+
+    switch (strOldString [i])
+      {
+      case '<':  strNewString += "&lt;";   break;
+      case '>':  strNewString += "&gt;";   break;
+      case '&':  strNewString += "&amp;";  break;
+      case '"':  strNewString += "&quot;"; break;
+      case '\t': strNewString += "&#9;";   break;
+      case '\n': strNewString += "&#10;";  break;
+      case '\r': strNewString += "&#13;";  break;
+      }
+
+    strOldString = strOldString.Mid (i + 1);
+    }
+
+  strNewString += strOldString;
+
+  return strNewString;
+
+  } // end of FixXMLAttributeString
+
 // wildcard → regular expression.  Behaviourally identical to the Windows
 // Utilities.cpp form; the only difference is the control-char (<0x20) hex escape
 // uses snprintf("%02x") instead of the Windows-only _itoa (same two-digit

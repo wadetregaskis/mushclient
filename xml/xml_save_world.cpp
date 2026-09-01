@@ -157,12 +157,16 @@ void Save_XML_string (CArchive& ar,
                       const CString & str,
                       const bool sameline)
   {
-  // shouldn't have newlines, get rid of them if there are any
+  // shouldn't have newlines, get rid of them if there are any.  A lone
+  // CR/LF/tab that survives the ENDLINE collapse is escaped as a numeric
+  // entity rather than written raw -- the parser refuses a raw control
+  // character inside a quoted value, so the raw form made the saved file
+  // unopenable (docs/UPSTREAM-DIVERGENCES.md §22).
   if (!str.IsEmpty ())
     ar.WriteString (CFormat ("%s%s=\"%s\"%s",
                    sameline ? "" : "   ",
                    sName, 
-                   (LPCTSTR) FixHTMLString (Replace (str, ENDLINE, " ")),
+                   (LPCTSTR) FixXMLAttributeString (Replace (str, ENDLINE, " ")),
                    sameline ? " " : NL));
 
   } // end of Save_XML_string

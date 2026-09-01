@@ -3359,6 +3359,134 @@ TEST(WorldLoad, SavedCommentDoubleHyphenCollapsed)
 }
 
 
+// The other half of NumericEntityAllowsLineFeedAndCarriageReturn (:163): the
+// reader was widened (f96a15c) to accept &#10;/&#13;, but the WRITER still
+// emitted a lone CR/LF raw -- Save_XML_string collapsed only the exact CRLF
+// pair, and FixHTMLString escaped only < > & " -- so the port loaded such a
+// file and then destroyed it on the next save: the parser refuses a raw
+// control character inside a quoted value and the whole world became
+// unopenable.  Save_XML_string now escapes a residual CR/LF/tab as the
+// matching numeric entity (FixXMLAttributeString), making writer and reader
+// symmetric.  docs/UPSTREAM-DIVERGENCES.md §22.
+TEST(WorldLoad, NumericEntitySurvivesSaveAndReload)
+{
+    const char* xml = "<?xml version=\"1.0\"?>\n"
+"<!DOCTYPE muclient>\n"
+"<muclient>\n"
+"<triggers>\n"
+"  <trigger match=\"abc&#10;def&#13;ghi\" name=\"t1\" enabled=\"y\">\n"
+"    <send></send>\n"
+"  </trigger>\n"
+"</triggers>\n"
+"</muclient>\n";
+
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_entity_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+        CTrigger* t = nullptr;
+        ASSERT_TRUE(doc.GetTriggerMap().Lookup("t1", t));
+        EXPECT_STREQ("abc\ndef\rghi", (const char*)t->trigger);
+
+        CFile f;
+        ASSERT_TRUE(f.Open(path,
+            CFile::modeWrite | CFile::modeCreate | CFile::shareDenyWrite));
+        {
+            CArchive ar(&f, CArchive::store);
+            doc.Save_World_XML(ar, (unsigned long)~0, CString(""));
+            ar.Close();
+        }
+        f.Flush();
+        f.Close();
+    }
+
+    // The written attribute carries the entities, not raw control characters.
+    std::string c = slurp(path);
+    // The saved match attribute must re-emit the numeric entities.
+    EXPECT_NE(c.find("match=\"abc&#10;def&#13;ghi\""), std::string::npos);
+    // No raw LF/CR anywhere inside a match attribute value.
+    size_t m = c.find("match=\"");
+    ASSERT_NE(m, std::string::npos);
+    size_t close = c.find('"', m + 7);
+    ASSERT_NE(close, std::string::npos);
+    // A raw LF inside the quoted value would make the file unopenable.
+    EXPECT_FALSE(c.find('\n', m + 7) < close);
+
+    // The discriminating leg: the saved file must LOAD, byte-identically.
+    // At the pre-fix HEAD this failed with the parser's "not terminated
+    // (no closing quote)" -- the file the app itself wrote was refused by
+    // the app's own loader.
+    CMUSHclientDoc doc2;
+    ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+    CTrigger* t2 = nullptr;
+    ASSERT_TRUE(doc2.GetTriggerMap().Lookup("t1", t2));
+    EXPECT_STREQ("abc\ndef\rghi", (const char*)t2->trigger);
+}
+
+// The same hole without any hand-authored XML, and on BOTH platforms: the
+// script API stores match text unfiltered (methods_triggers.cpp), so
+// world.AddTrigger("t", "a\nb", ...) put a raw LF in the trigger and the next
+// save produced an unloadable file -- upstream latent bug, closed by the same
+// writer escape.  A tab exercises the pre-existing upstream half (Get_XML_Entity
+// always accepted &#9;, but FixHTMLString could never re-emit one).
+TEST(WorldLoad, AddTriggerEmbeddedControlCharsSurviveSaveAndReload)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_addtrig_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_EQ((long)eOK, doc.AddTrigger("t_lf", "a\nb", "resp",
+                                            1 /*eEnabled*/, -1, 0, "", ""));
+        ASSERT_EQ((long)eOK, doc.AddTrigger("t_tab", "a\tb", "resp",
+                                            1 /*eEnabled*/, -1, 0, "", ""));
+        CFile f;
+        ASSERT_TRUE(f.Open(path,
+            CFile::modeWrite | CFile::modeCreate | CFile::shareDenyWrite));
+        {
+            CArchive ar(&f, CArchive::store);
+            doc.Save_World_XML(ar, (unsigned long)~0, CString(""));
+            ar.Close();
+        }
+        f.Flush();
+        f.Close();
+    }
+
+    std::string c = slurp(path);
+    EXPECT_NE(c.find("a&#10;b"), std::string::npos);   // LF escaped in the attribute
+    EXPECT_NE(c.find("a&#9;b"),  std::string::npos);   // tab escaped in the attribute
+
+    CMUSHclientDoc doc2;
+    ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc2.GetTriggerMap().Lookup("t_lf", t));
+    EXPECT_STREQ("a\nb", (const char*)t->trigger);
+    t = nullptr;
+    ASSERT_TRUE(doc2.GetTriggerMap().Lookup("t_tab", t));
+    EXPECT_STREQ("a\tb", (const char*)t->trigger);
+}
+
+// Negative control: the escape above is load-bearing BECAUSE the parser
+// rejects the raw form.  If it ever silently started accepting a raw LF
+// inside a quoted value, the escape would stop being what makes the round
+// trip work and this family of tests would prove nothing -- so pin the
+// rejection itself.
+TEST(WorldLoad, RawLinefeedInAttributeValueIsRejected)
+{
+    const char* xml = "<?xml version=\"1.0\"?>\n"
+"<!DOCTYPE muclient>\n"
+"<muclient>\n"
+"<triggers>\n"
+"  <trigger match=\"abc\ndef\" name=\"t1\" enabled=\"y\">\n"
+"    <send></send>\n"
+"  </trigger>\n"
+"</triggers>\n"
+"</muclient>\n";
+
+    CMUSHclientDoc doc;
+    EXPECT_FALSE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+}
+
 // xml_load_world.cpp: world loads carry XML_OVERWRITE, so a second alias
 // (alias_check, ~1577-1584) or timer (timer_check, ~1817-1824) that shares an
 // explicit name deletes the first and the SECOND definition wins -- mirroring

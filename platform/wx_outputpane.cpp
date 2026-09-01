@@ -1232,10 +1232,34 @@ void COutputPane::GotoNextBookmark()
 {
     const int n = LineCountI();
     if (n == 0) return;
-    for (int i = 1; i <= n; ++i) {     // start just past the last one we jumped to
-        int idx = (((m_lastBookmarkLine % n) + n + i) % n);
+
+    // Where to scan FROM: the current selection's start line, read fresh on
+    // every invocation, exactly as CMUSHView::OnDisplayGotobookmark reads
+    // m_selstart_line (mushview.cpp:4862-4877) -- including its
+    // `<= 0 || >= count` arm, which means "no usable origin, start at the head".
+    //
+    // It used to cycle from m_lastBookmarkLine, a member nothing but this
+    // function ever wrote.  Two consequences, both silent: clicking or
+    // selecting between two bookmarks did not move the origin (Windows jumps to
+    // the next bookmark after the CLICK; the port jumped to wherever its last
+    // jump had left off), and a head-trim slid every line index down while
+    // leaving this one where it was -- DropFrontLines shifts m_selAnchor and
+    // m_selFocus and knew nothing about it -- so after a trim the origin named
+    // a different line than the one it had been set from.  Deriving it from the
+    // selection closes both, and needs no separate index to keep in step.
+    //
+    // "Continue from the last jump" still falls out for free, because the
+    // SelectLine below leaves the selection on the line it lands at.
+    int origin = 0;
+    {
+        SelPoint s, e;
+        if (GetNormalizedSel(s, e) && s.line > 0 && s.line < n)
+            origin = s.line;
+    }
+
+    for (int i = 1; i <= n; ++i) {     // start just past the origin, and wrap
+        const int idx = (origin + i) % n;
         if (LineAt(idx).bookmark) {
-            m_lastBookmarkLine = idx;
             // CMUSHView::OnDisplayGotobookmark ends `SelectLine (nNewLine)`
             // (mushview.cpp:4920) — the same call Go To Line makes.  This used
             // to be a bare ScrollToLine: no selection, no visibility guard and
@@ -1244,6 +1268,8 @@ void COutputPane::GotoNextBookmark()
             return;
         }
     }
+    // i == n revisited the origin itself, which is Windows' "if we didn't find
+    // one *but* we were on one anyway, re-go to it" tail (mushview.cpp:4907).
 }
 
 void COutputPane::SetSelectionRange(int startLine, int endLine,

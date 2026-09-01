@@ -1216,9 +1216,6 @@ private:
     // See WantsSelectAll().
     bool m_wantsSelectAll = false;
 
-    // Index of the last bookmark jumped to, so Go To Bookmark cycles forward.
-    int m_lastBookmarkLine = -1;
-
     wxString m_searchTerm;
     // The term already case-folded, so the paint path does not refold it per
     // line, and a scratch buffer reused across lines so the highlight scan

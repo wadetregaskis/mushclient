@@ -1219,6 +1219,97 @@ void TestFindNext()
             "after Clear Output there is nothing to find");
 }
 
+// ── 7a. Go To Bookmark scans from the SELECTION, not from call history ────
+//
+// Windows reads m_selstart_line fresh on every invocation
+// (CMUSHView::OnDisplayGotobookmark, mushview.cpp:4862-4877), and every click
+// and selection writes it -- so the command means "the next bookmark after
+// where I am".  The port cycled from m_lastBookmarkLine, a member only the
+// command itself ever wrote, so where the user was made no difference and a
+// head-trim silently re-pointed it at another line.
+//
+// The discriminating case is the LAST one: a jump followed by a selection
+// somewhere else.  Everything before it passes under both behaviours.
+void TestGotoBookmarkStartsFromTheSelection()
+{
+    printf("Go To Bookmark scans from the selection "
+           "(mushview.cpp:4862-4877)\n");
+
+    Harness h;
+    h.Feed(200);
+    h.pane->SetBookmark(10,  true);
+    h.pane->SetBookmark(150, true);
+
+    // Where the command left the selection, 0-based.
+    auto landedOn = [&]() {
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        return h.pane->GetSelectionInfo(sl, sc, el, ec) ? (int)(sl - 1) : -1;
+    };
+    // Put the selection on a line without going through the command.
+    auto selectLineDirectly = [&](int line) {
+        h.pane->SetSelectionRange(line + 1, line + 1, 1, 4);
+    };
+
+    {
+        // No selection at all: Windows' `m_selstart_line <= 0` arm -- start at
+        // the head, so the FIRST bookmark.
+        h.pane->SetSelectionRange(0, 0, 0, 0);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 10, "with no selection it starts at the head");
+    }
+    {
+        // Sitting between the two: the next one after the selection.
+        selectLineDirectly(100);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 150, "from line 100 it goes to the bookmark at 150");
+    }
+    {
+        // Past the last one: wrap.
+        selectLineDirectly(160);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 10, "from line 160 it wraps round to the one at 10");
+    }
+    {
+        // Called twice with nothing in between, it still cycles: the command's
+        // own SelectLine leaves the selection on the line it landed at, which
+        // is the next call's origin.  (Windows relies on exactly this.)
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 150, "called again it moves on to the next one");
+    }
+    {
+        // THE case that separates the two behaviours.  The last jump left the
+        // selection at 150; move it back to line 20 -- as a click would -- and
+        // the answer must follow the SELECTION (150), not the call history
+        // (which would say 10, the one after 150).
+        selectLineDirectly(20);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 150,
+                  "a selection moved back before a bookmark is where the next "
+                  "scan starts -- NOT where the last jump ended");
+    }
+    {
+        // The mirror, so the case above cannot pass by simply always answering
+        // 150: move the selection PAST 150 and the answer must change.
+        selectLineDirectly(151);
+        h.pane->GotoNextBookmark();
+        opCheckEq(landedOn(), 10,
+                  "control: moved past it, the same command answers differently");
+    }
+    {
+        // Only one bookmark, and the selection is already on it: Windows' "if
+        // we didn't find one *but* we were on one anyway, re-go to it" tail
+        // (mushview.cpp:4907-4912).
+        Harness h2;
+        h2.Feed(50);
+        h2.pane->SetBookmark(20, true);
+        h2.pane->SetSelectionRange(21, 21, 1, 4);
+        h2.pane->GotoNextBookmark();
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        opCheck(h2.pane->GetSelectionInfo(sl, sc, el, ec) && sl - 1 == 20,
+                "the only bookmark, already selected, is selected again");
+    }
+}
+
 // ── 7b. Find Next visits every OCCURRENCE, not every matching line ────────
 //
 // Windows' Find sets m_bRepeatOnSameLine (sendvw.cpp:1399, comment "we can find
@@ -3824,6 +3915,7 @@ int RunOutputPaneSelfTest()
     TestLeaveWindowCancelsMouseOver();
     TestDragAutoScrollRepeats();
     TestFindNext();
+    TestGotoBookmarkStartsFromTheSelection();
     TestFindVisitsEveryOccurrenceOnALine();
     TestCopyJoinsSoftWrappedLines();
     TestReleaseDoesNotMaterialiseUnlessAsked();

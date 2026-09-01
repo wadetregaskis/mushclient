@@ -1332,6 +1332,53 @@ int RunMenuBarSelfTest()
                 doc->m_strLogLinePreambleNotes  = "";
             }
 
+            // ── File > Export ... pre-fills the world name PLUS the set suffix ──
+            // twin-drift#1: Set_Up_Set_Strings (platform/mushapp_stubs.cpp) used
+            // to leave suggested_name untouched, so every export's save panel
+            // defaulted to the bare world name instead of e.g.
+            // "MenuBarSelfTest triggers" -- the suffix evaluate.cpp's Windows
+            // version appends (suggested_name += " triggers", etc.), which is
+            // what the save dialog pre-fills.  Save_Set is mushgui_adapters-only
+            // (never linked into a headless test executable), so an in-app
+            // selftest is the only way to pin it -- same reasoning, same hook,
+            // as the Log-Session block just above.
+            {
+                char* (*const savedFileDlg)(bool, const char*, const char*,
+                                            const char*, const char*, bool, bool)
+                    = g_wxhook_file_dialog;
+                static std::string s_defaultFile;
+                g_wxhook_file_dialog = [](bool, const char*, const char*,
+                                          const char* defaultFile, const char*,
+                                          bool, bool) -> char* {
+                    s_defaultFile = defaultFile ? defaultFile : "";
+                    return nullptr;   // cancel -- nothing should be written
+                };
+
+                struct { int set_type; const char* suffix; } kCases[] = {
+                    { TRIGGER, "triggers" },
+                    { ALIAS,   "aliases" },
+                    { COLOUR,  "colours" },
+                    { MACRO,   "macros" },
+                    { TIMER,   "timers" },
+                };
+                bool allMatched = true;
+                for (const auto& c : kCases) {
+                    s_defaultFile.clear();
+                    doc->Save_Set(c.set_type, nullptr);
+                    char want[128];
+                    snprintf(want, sizeof want, "%s %s",
+                             (LPCTSTR) doc->m_mush_name, c.suffix);
+                    if (s_defaultFile != want) allMatched = false;
+                }
+                check(allMatched,
+                      "export set: the save panel is pre-filled with the world "
+                      "name plus the per-set suffix (was: the bare world name, "
+                      "every export losing the \" triggers\"/\" aliases\"/... "
+                      "Windows appends)");
+
+                g_wxhook_file_dialog = savedFileDlg;
+            }
+
             // ── Display ▸ Stop Sound Playing and its two new halves ─────────
             // Stop Sound Playing is handled by BOTH doc.cpp and mainfrm.cpp, and
             // MFC routes it to the DOCUMENT while one is active — which is why

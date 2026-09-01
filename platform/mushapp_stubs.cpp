@@ -108,32 +108,13 @@ bool SendToFront(const char* name)
 
 // InitZlib: single-sourced in doc_shared.cpp (#ifndef _WIN32).
 
-// ── CMUSHclientDoc::SendNAWS ──────────────────────────────────────────────────
-// Sends a NAWS (Negotiate About Window Size) subnegotiation packet directly,
-// bypassing the Windows view-iteration loop in SendWindowSizes().
-// Called from CWorldChildFrame::OnSize whenever the output pane is resized.
-// Clamps cols/rows to [1, 65535] to produce valid two-byte big-endian values.
-void CMUSHclientDoc::SendNAWS(int cols, int rows)
-{
-    cols = std::max(1, std::min(cols, 65535));
-    rows = std::max(1, std::min(rows, 65535));
-
-    // Always update m_gui_rows so that the next SendWindowSizes call
-    // (triggered by e.g. a wrap-column change) uses the correct row count.
-    m_gui_rows = rows;
-
-    if (m_iConnectPhase != eConnectConnectedToMud ||
-        !ConnectionOpen() || !m_bNAWS_wanted)
-        return;
-
-    unsigned char p[] = {
-        (unsigned char)IAC, (unsigned char)SB, (unsigned char)TELOPT_NAWS,
-        (unsigned char)HIBYTE(cols), (unsigned char)LOBYTE(cols),
-        (unsigned char)HIBYTE(rows), (unsigned char)LOBYTE(rows),
-        (unsigned char)IAC, (unsigned char)SE
-    };
-    SendPacket(p, sizeof p);
-}
+// CMUSHclientDoc::SendNAWS: single-sourced in doc_shared.cpp (#ifndef _WIN32),
+// beside SendWindowSizes -- it used to be a private copy here that built the
+// NAWS payload raw, un-escaped, missing the f878ff5 fix (a dimension byte of
+// exactly 255 IS an IAC and must be doubled per RFC 854/1073).  Hoisting it
+// removed the twin outright instead of re-applying the fix to a copy, and
+// puts it where the headless suite can reach it (mushapp_stubs.cpp is
+// mushgui_adapters-only and no test executable links it).
 
 // ── CMUSHclientDoc::CheckTickTimers ───────────────────────────────────────────
 // Windows-only timer callback (WM_TIMER).  No-op on non-Windows.
@@ -148,6 +129,14 @@ void CMUSHclientDoc::CheckTickTimers()
 // ── Set_Up_Set_Strings: non-Windows version ───────────────────────────────────
 // Returns the file extension, dialog title, and wxWidgets wildcard filter string
 // for each set type.  Returns TRUE on bad set_type (mirrors Windows version).
+//
+// suggested_name arrives as the world name (Save_Set) and must come back with
+// the per-set suffix appended -- that is what the save dialog pre-fills, and
+// it is the whole reason the parameter is by reference.  This used to leave it
+// untouched, so every export defaulted to the bare world name instead of e.g.
+// "Discworld triggers"; see evaluate.cpp's Windows version, which this mirrors
+// (its filter-string syntax and dialog titles are MFC-specific and differ on
+// purpose -- only the suffix and the STRING case are meant to match exactly).
 BOOL Set_Up_Set_Strings(int set_type,
                                 CString& suggested_name,
                                 CString& filter,
@@ -159,26 +148,37 @@ BOOL Set_Up_Set_Strings(int set_type,
         ext    = "mct";
         filter = "MUSHclient trigger files (*.mct)|*.mct|All files (*.*)|*.*";
         title  = "Trigger file";
+        suggested_name += " triggers";
         break;
     case ALIAS:
         ext    = "mca";
         filter = "MUSHclient alias files (*.mca)|*.mca|All files (*.*)|*.*";
         title  = "Alias file";
+        suggested_name += " aliases";
         break;
     case COLOUR:
         ext    = "mcc";
         filter = "MUSHclient colour files (*.mcc)|*.mcc|All files (*.*)|*.*";
         title  = "Colour file";
+        suggested_name += " colours";
         break;
     case MACRO:
         ext    = "mcm";
         filter = "MUSHclient macro files (*.mcm)|*.mcm|All files (*.*)|*.*";
         title  = "Macro file";
+        suggested_name += " macros";
+        break;
+    case STRING:
+        ext    = "mcs";
+        filter = "MUSHclient string files (*.mcs)|*.mcs|All files (*.*)|*.*";
+        title  = "String file";
+        suggested_name += " strings";
         break;
     case TIMER:
         ext    = "mci";
         filter = "MUSHclient timer files (*.mci)|*.mci|All files (*.*)|*.*";
         title  = "Timer file";
+        suggested_name += " timers";
         break;
     default:
         return TRUE;   // bad set_type
@@ -427,15 +427,25 @@ BOOL CMDIFrameWnd::LoadFrame(UINT id, DWORD style, CWnd* pParent, void* /*pConte
 // Route through g_wxhook_message_box when it is set (mushgui at runtime);
 // fall back to stderr for headless builds.
 // The literals in HeadlessMessageBoxAnswer (platform/wx_mfc_hooks.h, which
-// cannot see the shim) must be the real ID* values.
+// cannot see the shim) must be the real ID* values; same for
+// ApplyDefaultMessageBoxIcon and the MB_* values (Utilities.cpp's Windows
+// UMessageBox default-icon fill, reproduced here -- see that helper's comment).
 static_assert (IDOK == 1 && IDCANCEL == 2 && IDABORT == 3 && IDNO == 7,
                "ID* constants moved: fix HeadlessMessageBoxAnswer");
+static_assert (MB_OK == 0 && MB_OKCANCEL == 1 && MB_YESNOCANCEL == 3 &&
+               MB_YESNO == 4 && MB_ICONEXCLAMATION == 0x30,
+               "MB_* constants moved: fix ApplyDefaultMessageBoxIcon");
 
-int UMessageBox(const char* sText, UINT nType, const char* caption) {
+// The dispatch, with no icon fill -- what AfxMessageBox routes to (see
+// mfc_exceptions.h for why AfxMessageBox must NOT go through UMessageBox).
+int UMessageBoxRaw(const char* sText, UINT nType, const char* caption) {
     if (g_wxhook_message_box)
         return g_wxhook_message_box(sText ? sText : "", caption ? caption : "MUSHclient", nType);
     fprintf(stderr, "MUSHclient [%s]: %s\n", caption ? caption : "MUSHclient", sText ? sText : "");
     return HeadlessMessageBoxAnswer(nType);
+}
+int UMessageBox(const char* sText, UINT nType, const char* caption) {
+    return UMessageBoxRaw(sText, ApplyDefaultMessageBoxIcon(nType), caption);
 }
 int TMessageBox(const char* sText, UINT nType) {
     return UMessageBox(sText, nType, "MUSHclient");

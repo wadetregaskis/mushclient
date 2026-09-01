@@ -2392,6 +2392,66 @@ TEST(SmallArms, NawsEscapesADimensionByteOfExactly255)
     delete doc;
 }
 
+// twin-drift#0: platform/mushapp_stubs.cpp used to carry a SECOND, private NAWS
+// packet builder -- CMUSHclientDoc::SendNAWS, called from the resize/font-change
+// path (CWorldChildFrame::ApplyWrapColumnAndNAWS) -- that wrote the four payload
+// bytes raw, missing the f878ff5 escaping fix entirely.  It is now #ifndef _WIN32
+// only, hoisted into doc_shared.cpp beside SendWindowSizes, delegating to it --
+// so this test exercises the ACTUAL macOS resize path, not just SendWindowSizes,
+// and its very existence in a headless, mushcore-linked test makes the twin
+// structurally impossible to reintroduce (mushapp_stubs.cpp is
+// mushgui_adapters-only and no test executable ever linked it).
+#ifndef _WIN32
+TEST(SmallArms, SendNAWSEscapesADimensionByteOfExactly255)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bNAWS_wanted = TRUE;
+
+    // 255 columns, 30 rows -- the column LOW byte is 0xFF and must go out
+    // doubled.  Unfixed (raw payload bytes), the wire carries the 9-byte
+    // unescaped form and this find() fails.
+    doc->SendNAWS(255, 30);
+    const std::string colsEscaped =
+        { '\xFF', '\xFA', '\x1F', 0, '\xFF', '\xFF', 0, 30, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(colsEscaped) != std::string::npos);
+
+    // ...and the unescaped form must NOT be there, so a fix that appends the
+    // doubled byte as well as the raw one cannot pass on the assertion above.
+    const std::string colsRaw =
+        { '\xFF', '\xFA', '\x1F', 0, '\xFF', 0, 30, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(colsRaw) == std::string::npos);
+
+    // The same for the ROWS pair -- 255 rows, 80 columns.
+    wire(doc).sent.clear();
+    doc->SendNAWS(80, 255);
+    const std::string rowsEscaped =
+        { '\xFF', '\xFA', '\x1F', 0, 80, 0, '\xFF', '\xFF', '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(rowsEscaped) != std::string::npos);
+    EXPECT_EQ(255, doc->m_gui_rows);   // SendNAWS still updates m_gui_rows
+
+    // Control: 256 rows is 0x01 0x00 -- nothing here may be escaped, so a fix
+    // that doubles every byte (or every high bit) fails this while still
+    // passing the two above.
+    wire(doc).sent.clear();
+    doc->SendNAWS(80, 256);
+    const std::string plain =
+        { '\xFF', '\xFA', '\x1F', 0, 80, 1, 0, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(plain) != std::string::npos);
+    EXPECT_EQ(9, (int)wire(doc).sent.size());   // exactly the 9 unescaped bytes
+
+    // m_gui_rows is updated even while disconnected -- SendNAWS's own comment
+    // says why: the next SendWindowSizes call (e.g. from a wrap-column change)
+    // must see the current row count.  Only the PACKET is gated.
+    doc->m_iConnectPhase = eConnectNotConnected;
+    wire(doc).sent.clear();
+    doc->SendNAWS(80, 42);
+    EXPECT_TRUE(wire(doc).sent.empty());
+    EXPECT_EQ(42, doc->m_gui_rows);
+
+    delete doc;
+}
+#endif
+
 // world.TextRectangle must renegotiate the window size with the MUD.
 //
 // Reserving a text rectangle shrinks the area the output is laid out in, so the

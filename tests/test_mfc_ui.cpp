@@ -6534,6 +6534,61 @@ TEST(MfcUi, UMessageBoxHeadlessFallbackDeclines)
         EXPECT_NE(0, UMessageBox("x", c.type, "t"));
 }
 
+// ── UMessageBox fills in a default icon, matching Windows ──────────────────
+// twin-drift#2: the port's two UMessageBox twins (platform/windows_stubs.cpp
+// for headless test builds, platform/mushapp_stubs.cpp for mushgui) used to
+// forward nType straight through to the hook, so an icon-less caller reached
+// wxMessageDialog with the icon nibble still zero.  Windows' UMessageBox
+// (Utilities.cpp, #ifdef _WIN32) ORs in MB_ICONEXCLAMATION for OK / OKCANCEL /
+// YESNO / YESNOCANCEL when the caller specified none -- reproducing MFC's
+// AfxMessageBox default -- and about 60 of the tree's ~103 UMessageBox /
+// TMessageBox call sites rely on exactly that fill.  ApplyDefaultMessageBoxIcon
+// (platform/wx_mfc_hooks.h) is the shared decision both twins now call before
+// touching the hook.
+TEST(MfcUi, ApplyDefaultMessageBoxIconFillsInTheWindowsDefault)
+{
+    // The four button sets Windows fills, each with no icon bit set.
+    EXPECT_EQ((unsigned)(MB_OK | MB_ICONEXCLAMATION),
+              ApplyDefaultMessageBoxIcon(MB_OK));
+    EXPECT_EQ((unsigned)(MB_OKCANCEL | MB_ICONEXCLAMATION),
+              ApplyDefaultMessageBoxIcon(MB_OKCANCEL));
+    EXPECT_EQ((unsigned)(MB_YESNO | MB_ICONEXCLAMATION),
+              ApplyDefaultMessageBoxIcon(MB_YESNO));
+    EXPECT_EQ((unsigned)(MB_YESNOCANCEL | MB_ICONEXCLAMATION),
+              ApplyDefaultMessageBoxIcon(MB_YESNOCANCEL));
+
+    // Windows' own comment calls these two "rarely used... caller should
+    // specify the icon" and fills neither -- a fix that filled every button
+    // set would wrongly paint these too.
+    EXPECT_EQ((unsigned)MB_ABORTRETRYIGNORE,
+              ApplyDefaultMessageBoxIcon(MB_ABORTRETRYIGNORE));
+    EXPECT_EQ((unsigned)MB_RETRYCANCEL,
+              ApplyDefaultMessageBoxIcon(MB_RETRYCANCEL));
+
+    // A caller that already picked an icon is never overridden -- so a fix
+    // that unconditionally ORs the exclamation bit in fails this.
+    EXPECT_EQ((unsigned)(MB_OK | MB_ICONINFORMATION),
+              ApplyDefaultMessageBoxIcon(MB_OK | MB_ICONINFORMATION));
+    EXPECT_EQ((unsigned)(MB_YESNO | MB_ICONSTOP),
+              ApplyDefaultMessageBoxIcon(MB_YESNO | MB_ICONSTOP));
+
+    // Through the real UMessageBox path, via the hook: the flags the hook
+    // actually receives are the ones a real prompt reaches wxMessageDialog
+    // with, so this pins the wiring, not just the helper in isolation.
+    // g_wxhook_message_box is a plain function pointer, so the capture has to
+    // be static -- same pattern the mxp-charset block above (s_modals) uses.
+    static unsigned s_capturedFlags = 0;
+    s_capturedFlags = 0;
+    int (*savedHook)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char*, const char*, unsigned flags) -> int {
+        s_capturedFlags = flags;
+        return IDOK;
+    };
+    UMessageBox("Cannot connect. World name not specified", MB_OK, "MUSHclient");
+    g_wxhook_message_box = savedHook;
+    EXPECT_EQ((unsigned)(MB_OK | MB_ICONEXCLAMATION), s_capturedFlags);
+}
+
 // ── CProgressDlg: the shipping bodies, not a twin ───────────────────────────
 //
 // dialogs/ProgDlg.cpp is in mushcore as of 2026-08-07; fourteen hand-written

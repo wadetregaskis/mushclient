@@ -4371,6 +4371,60 @@ TEST(SweepR4, ExecuteLuaSimpleOverloadMissingRoutineRestoresNoteStyle)
     EXPECT_EQ((int) HILITE, (int) doc.m_iNoteStyle);
 }
 
+// twin-drift#4: scripting/lua_utils_portable.cpp's GetNestedFunction (the
+// resolver behind every script/plugin entry-point lookup, reached here via
+// ExecuteLua) used to hand-split the dotted name with no whitespace trimming,
+// where the real body (Utilities.cpp, linked into mushgui) uses
+// StringToVector(..., true).  A callback name saved with stray whitespace --
+// e.g. world.AddTrigger's ScriptName field, which methods_triggers.cpp writes
+// into strProcedure verbatim (only the XML LOADER trims it, via
+// GET_STRING_TRIM) -- resolved on Windows and in mushgui but not in any
+// headless test executable.  This runs the padded name through the REAL
+// resolution path (ExecuteLua -> GetNestedFunction), not the helper in
+// isolation, so it fails on the untrimmed twin and passes once it matches
+// Utilities.cpp.
+TEST(SweepR4, ExecuteLuaResolvesAProcedureNamePaddedWithWhitespace)
+{
+    CMUSHclientDoc doc;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc.m_ScriptEngine = engine;
+
+    ASSERT_EQ(0, luaL_dostring(engine->L,
+        "function OnTick_twindrift4(p) return 'fired:' .. p end"));
+
+    DISPID dispid = 1;   // "live" -- ExecuteLua actually attempts the call
+    long count = 0;
+    CString result;
+    const bool err = engine->ExecuteLua(dispid, " OnTick_twindrift4 ",
+                                        eDontChangeAction, "test", "test",
+                                        CString("ping"), count, result);
+
+    EXPECT_FALSE(err);
+    EXPECT_EQ((DISPID) 1, dispid);           // untouched -- no error arm taken
+    EXPECT_EQ(CString("fired:ping"), result);   // the callback really ran
+    EXPECT_EQ(1, count);
+}
+
+// Companion: a null/empty name is "not found", not a crash or a raised error
+// -- Windows' GetNestedFunction added this guard specifically to stop a
+// spurious "Cannot find the function '' - item '' is table" message box when
+// a world's unset handler defaults to an empty string.  Passes today by
+// coincidence (both the old and new split produce one empty-string element
+// for ""); pinned here so a future edit cannot silently drop the explicit
+// early-out (which is also what makes a NULL sName defined behaviour, unlike
+// the old std::string(sName) construction).
+TEST(SweepR4, FindLuaFunctionOnEmptyNameIsNotFoundNotAnError)
+{
+    lua_State* L = luaL_newstate();
+    luaL_openlibs(L);
+
+    EXPECT_FALSE(FindLuaFunction(L, ""));
+    EXPECT_EQ(0, lua_gettop(L));   // no stack garbage left behind
+
+    lua_close(L);
+}
+
 // ── round 5: lua_methods / methods_info / spellchecker corners ────────────
 
 #include "tests/fake_worldview.h"

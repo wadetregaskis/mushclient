@@ -4975,6 +4975,32 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
 
   }  // end of CMUSHclientDoc::SendWindowSizes 
 
+#ifndef _WIN32
+// ── CMUSHclientDoc::SendNAWS ──────────────────────────────────────────────────
+// Non-Windows only (doc.h declares this under #ifndef _WIN32 -- Windows has no
+// equivalent; every NAWS packet there goes through SendWindowSizes's view-
+// iteration loop above).  Sends a NAWS subnegotiation directly with explicit
+// col/row counts, bypassing that loop -- called from
+// CWorldChildFrame::ApplyWrapColumnAndNAWS whenever the output pane is resized
+// or the font changes.  Clamps cols/rows to [1, 65535] to produce valid
+// two-byte big-endian values, then delegates to SendWindowSizes so the payload
+// goes out through AppendNAWSByte exactly like every other NAWS packet -- a
+// dimension byte of exactly 255 IS an IAC and must be doubled per RFC 854/1073
+// (see AppendNAWSByte's comment above).  This used to be a private copy in
+// platform/mushapp_stubs.cpp that built the payload raw and missed that fix.
+void CMUSHclientDoc::SendNAWS (int cols, int rows)
+  {
+  cols = std::max (1, std::min (cols, 65535));
+  rows = std::max (1, std::min (rows, 65535));
+
+  // Always update m_gui_rows so that the next SendWindowSizes call
+  // (triggered by e.g. a wrap-column change) uses the correct row count.
+  m_gui_rows = rows;
+
+  SendWindowSizes (cols);   // escapes through AppendNAWSByte
+  }   // end of CMUSHclientDoc::SendNAWS
+#endif
+
 
 
 

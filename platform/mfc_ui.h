@@ -5788,7 +5788,11 @@ inline UINT AfxGetFileTitle(LPCTSTR lpszPathName, LPTSTR lpszTitle, UINT nMax)
 // caller passing MB_YESNO was told IDOK, which is neither of its buttons.
 inline int AfxMessageBox(LPCTSTR msg, UINT nType = MB_OK, UINT = 0)
 {
-    return UMessageBox(msg ? msg : "", nType, "MUSHclient");
+    // UMessageBoxRaw, not UMessageBox: real Windows keeps AfxMessageBox and
+    // ::UMessageBox as separate funnels (see mfc_exceptions.h), and only the
+    // latter adds a default icon.  Going through UMessageBox here would give
+    // every AfxMessageBox call site an icon Windows never shows it.
+    return UMessageBoxRaw(msg ? msg : "", nType, "MUSHclient");
 }
 // Overload for callers that pass a string-table resource ID (IDP_* / IDS_*).
 // There is no string table on the port (CString::LoadString returns false), so
@@ -5798,7 +5802,7 @@ inline int AfxMessageBox(UINT nIDPrompt, UINT nType = MB_OK, UINT /*nIDHelp*/ = 
 {
     char buf[64];
     snprintf(buf, sizeof(buf), "Error %u", nIDPrompt);
-    return UMessageBox(buf, nType, "MUSHclient");
+    return UMessageBoxRaw(buf, nType, "MUSHclient");
 }
 
 // ── Windows API function stubs ────────────────────────────────────────────

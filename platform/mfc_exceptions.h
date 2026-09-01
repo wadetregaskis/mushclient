@@ -20,8 +20,19 @@
 // Defined in platform/windows_stubs.cpp (mushcore) / mushapp_stubs.cpp
 // (mushapp): routes through the wx message-box hook in the GUI, stderr headless.
 int TMessageBox(const char* sText, UINT nType);
-// Same box, with a caller-chosen caption — what AfxMessageBox routes to.
+// The same box, with a caller-chosen caption, and Windows' UMessageBox
+// default-icon fill applied (see ApplyDefaultMessageBoxIcon, wx_mfc_hooks.h).
 int UMessageBox(const char* sText, UINT nType, const char* caption);
+// The same dispatch with NO icon fill -- what AfxMessageBox routes to, NOT
+// UMessageBox.  docs/WINDOWS-VALIDATION.md (~"two hooks because they do not
+// funnel") records that real Windows keeps these as separate funnels:
+// ::AfxMessageBox -> CWinApp::DoMessageBox -> ::MessageBoxW with the caller's
+// raw nType, no icon default; ::UMessageBox (Utilities.cpp) is MUSHclient's
+// OWN function that adds one.  The port already unifies both onto one wx
+// hook for plumbing reasons (mfc_ui.h's AfxMessageBox calls this, not
+// UMessageBox) -- UMessageBoxRaw keeps that unification from also merging
+// the icon-fill into AfxMessageBox, which real Windows never applies there.
+int UMessageBoxRaw(const char* sText, UINT nType, const char* caption);
 
 // ── CException base ───────────────────────────────────────────────────────
 // MFC CException is the root of all MFC exceptions.

@@ -404,6 +404,90 @@ void TestCloseBoxRunsOnCancel()
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// Esc in a bridged dialog runs the canonical Cancel arm.
+//
+// wx's own Esc→Cancel looks the Cancel button up by wxID_CANCEL (5101), and
+// template controls keep their Win32 ids (IDCANCEL == 2), so no bridged
+// dialog has one -- Esc had NO route to Cancel at all.  The bridge's
+// CHAR_HOOK now translates it, offers it to PreTranslateMessage first (MFC's
+// order -- CDebugLuaDlg maps Esc to "continue execution"), and dispatches the
+// IDCANCEL command when the override declines.
+// ══════════════════════════════════════════════════════════════════════════
+
+class CEscProbe : public CDialog
+{
+public:
+    CEscProbe() : CDialog(IDD_SEND_TO_ALL) {}
+
+    bool m_eatEscape    = false;   // the CDebugLuaDlg shape when true
+    int  m_preSawEscape = 0;
+
+    BOOL OnInitDialog() override
+    {
+        rec("OnInitDialog");
+        CDialog::OnInitDialog();
+        wxDialog* dlg = static_cast<wxDialog*>(m_hWnd);
+        wxTheApp->CallAfter([this, dlg]() {
+            // The event AppKit hands wx for a real Escape key-down.
+            wxKeyEvent esc(wxEVT_CHAR_HOOK);
+            esc.m_keyCode = WXK_ESCAPE;
+            esc.SetEventObject(dlg);
+            dlg->GetEventHandler()->ProcessEvent(esc);
+            if (m_eatEscape)
+            {
+                chk(dlg->IsModal(),
+                    "an Esc consumed by PreTranslateMessage leaves the dialog open");
+                SendCommand(dlg, wxEVT_BUTTON, IDCANCEL);   // close for real
+            }
+        });
+        return TRUE;
+    }
+
+    BOOL PreTranslateMessage(MSG* pMsg) override
+    {
+        if (pMsg->message == WM_KEYDOWN && pMsg->wParam == VK_ESCAPE)
+        {
+            ++m_preSawEscape;
+            if (m_eatEscape) return TRUE;
+        }
+        return CDialog::PreTranslateMessage(pMsg);
+    }
+
+    void OnCancel()  override { rec("OnCancel"); CDialog::OnCancel(); }
+    void OnDestroy() override { rec("OnDestroy"); }
+};
+
+void TestEscapeRunsCancel()
+{
+    printf("Esc in a bridged dialog runs the canonical Cancel arm:\n");
+
+    {
+        ResetTranscript();
+        CEscProbe probe;
+        const INT_PTR rc = probe.DoModal();
+        chkSeq("OnInitDialog OnCancel OnDestroy",
+               "Esc dispatched the IDCANCEL command (no wxID_CANCEL button "
+               "exists for wx's own machinery to find)");
+        chk(rc == IDCANCEL, "and DoModal returns IDCANCEL");
+        chk(probe.m_preSawEscape == 1,
+            "PreTranslateMessage saw the key FIRST (MFC's order)");
+    }
+
+    // The CDebugLuaDlg shape: an override that consumes Esc must stop the
+    // Cancel arm -- exactly one OnCancel below, and it is the driver's own
+    // close click, not the swallowed Esc.
+    {
+        ResetTranscript();
+        CEscProbe probe;
+        probe.m_eatEscape = true;
+        probe.DoModal();
+        chk(probe.m_preSawEscape == 1, "the swallowing override saw the key");
+        chkSeq("OnInitDialog OnCancel OnDestroy",
+               "a PreTranslateMessage that consumes Esc stops the Cancel arm");
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // A right-click on a bridged list dispatches NM_RDBLCLK.
 //
 // bind_list_notifications synthesised LVN_COLUMNCLICK, NM_DBLCLK and
@@ -874,6 +958,7 @@ int RunDialogBridgeSelfTest()
 
     TestCommandRouting();
     TestCloseBoxRunsOnCancel();
+    TestEscapeRunsCancel();
     TestListRightClickDispatchesRdblclk();
     TestDeferredListReload();
     TestTreeSheetLifecycle();

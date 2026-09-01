@@ -886,11 +886,21 @@ void TestDialogKeyTranslation()
     check(DialogKeyToMsg(WXK_TAB, true, &msg) && msg.message == WM_KEYDOWN,
           "Alt+TAB is still a plain WM_KEYDOWN");
 
-    // Everything else must be refused, so the caller Skip()s it and wx's own
-    // Esc→Cancel and Enter→default-button keep working in every dialog.  A
-    // blanket hook here would break all of them.
+    // Esc: wx's own Esc→Cancel looks the Cancel button up by wxID_CANCEL
+    // (5101), which no bridged control carries (template ids are Win32's,
+    // IDCANCEL == 2), so the bridge translates Esc and dispatches IDCANCEL
+    // itself -- after PreTranslateMessage has had first refusal, which is how
+    // CDebugLuaDlg's "Continue Execution (Esc)" keeps winning.
+    msg = MSG{};
+    check(DialogKeyToMsg(WXK_ESCAPE, false, &msg) &&
+          msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE,
+          "ESCAPE becomes WM_KEYDOWN/VK_ESCAPE (the bridge's Esc->Cancel arm)");
+
+    // Everything else must be refused, so the caller Skip()s it and the
+    // focused control's own key handling keeps working in every dialog.  A
+    // blanket hook here would break all of it.
     const int kPassThrough[] = {
-        WXK_ESCAPE, WXK_SPACE, WXK_BACK, WXK_DELETE, WXK_LEFT, WXK_UP,
+        WXK_SPACE, WXK_BACK, WXK_DELETE, WXK_LEFT, WXK_UP,
         WXK_F1, WXK_HOME, WXK_PAGEUP, WXK_NUMPAD_ADD, 'a', 'Z', '0', '\'',
     };
     bool anyTranslated = false;
@@ -902,7 +912,7 @@ void TestDialogKeyTranslation()
         if (m.message != 0x1234) anyTranslated = true;   // and it left *msg alone
     }
     check(!anyTranslated,
-          "every other key is refused untouched (Esc, arrows, letters, F-keys)");
+          "every other key is refused untouched (arrows, letters, F-keys)");
 
     check(!DialogKeyToMsg(WXK_TAB, false, nullptr),
           "a null MSG is refused rather than written through");

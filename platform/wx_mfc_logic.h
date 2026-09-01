@@ -45,10 +45,14 @@ long MessageBoxStyleForMbFlags(unsigned flags, MbRelabel* relabel);
 int MbResultForWxId(MbRelabel relabel, int wxId);
 
 // ── MFC dialog CHAR_HOOK key translation ───────────────────────────────────
-// Fill *msg for the two keys the bridge offers to PreTranslateMessage (TAB and
-// RETURN, the latter as WM_SYSKEYDOWN when Alt is down), and return true.
+// Fill *msg for the three keys the bridge offers to PreTranslateMessage (TAB,
+// RETURN — as WM_SYSKEYDOWN when Alt is down — and ESCAPE), and return true.
 // Returns false — leaving *msg untouched — for every other key, which the
-// caller must Skip() so wx's own Esc→Cancel / Enter→default-button survive.
+// caller must Skip() so the focused control's own key handling survives.
+// Escape is translated because wx's own Esc→Cancel looks the button up by
+// wxID_CANCEL (5101), an id no bridged control carries (template buttons keep
+// their Win32 ids, IDCANCEL == 2) — the bridge dispatches the IDCANCEL
+// command itself when PreTranslateMessage declines the key.
 bool DialogKeyToMsg(int wxKeyCode, bool altDown, MSG* msg);
 
 // ── CMenu → wxMenu (world.WindowMenu, CMiniWindow::Menu) ───────────────────

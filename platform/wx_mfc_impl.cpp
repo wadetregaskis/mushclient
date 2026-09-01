@@ -4434,6 +4434,17 @@ bool DialogKeyToMsg(int wxKeyCode, bool altDown, MSG* msg)
             msg->message = altDown ? WM_SYSKEYDOWN : WM_KEYDOWN;
             msg->wParam  = VK_RETURN;
             return true;
+        case WXK_ESCAPE:
+            // Esc must be translated too: wxDialog's own Esc handling looks
+            // for a button with wxID_CANCEL (5101), and template controls
+            // keep their Win32 ids (IDCANCEL is 2), so no bridged dialog has
+            // one and the key had NO route to Cancel at all.  The caller
+            // offers it to PreTranslateMessage first (CDebugLuaDlg maps Esc
+            // to "continue execution") and dispatches the IDCANCEL command
+            // itself when that declines.
+            msg->message = WM_KEYDOWN;
+            msg->wParam  = VK_ESCAPE;
+            return true;
         default:
             return false;
     }
@@ -4542,11 +4553,20 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     //                 dialog wants no default button
     //   Alt+RETURN -> CTimerDlg / CTriggerDlg / CAliasDlg open the multi-line
     //                 editor for the "send" text (MFC sees WM_SYSKEYDOWN)
-    // Translate only those two keys and Skip() everything else: a blanket hook
-    // would disturb wxDialog's own Esc->Cancel and Enter->default-button in every
-    // dialog in the app.  (Don't be tempted to add wxTE_PROCESS_TAB in the dialog
-    // builder as a shortcut for the tab case -- that hardcodes the preference ON
-    // for every ES_MULTILINE edit regardless of the flag.)
+    //   ESCAPE     -> declined by nearly every override, and then dispatched
+    //                 as the IDCANCEL command below, NOT Skip()ed.  wx's own
+    //                 Esc->Cancel cannot work in a bridged dialog: it looks
+    //                 the button up by wxID_CANCEL (5101), and template
+    //                 controls keep their Win32 ids (IDCANCEL is 2), so
+    //                 before this arm Esc had no route to Cancel at all.
+    // Translate only those keys and Skip() everything else: a blanket hook
+    // would disturb the focused control's own key handling in every dialog in
+    // the app.  RETURN in particular is Skip()ed when PreTranslateMessage
+    // declines it, so wx's Enter -> default-item press (fed by SetDefaultItem
+    // in BuildWxDialogFromTemplate) still runs.  (Don't be tempted to add
+    // wxTE_PROCESS_TAB in the dialog builder as a shortcut for the tab case --
+    // that hardcodes the preference ON for every ES_MULTILINE edit regardless
+    // of the flag.)
     dlg->Bind(wxEVT_CHAR_HOOK, [cdlg](wxKeyEvent& e) {
         MSG msg{};
         if (!DialogKeyToMsg(e.GetKeyCode(), e.AltDown(), &msg)) {
@@ -4554,7 +4574,18 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
             return;
         }
         // MFC's contract: TRUE means the override consumed the key.
-        if (!cdlg->PreTranslateMessage(&msg)) e.Skip();
+        if (cdlg->PreTranslateMessage(&msg)) return;
+        if (msg.wParam == VK_ESCAPE) {
+            // The dialog manager's Esc: an IDCANCEL command.  A mapped
+            // ON_BN_CLICKED(IDCANCEL) handler wins -- the same precedence as
+            // the wxEVT_BUTTON bind above -- otherwise the OnCancel virtual,
+            // which every dialog has whether or not it shows a Cancel button
+            // (IDD_SCRIPT_ERROR and friends close this way on Windows too).
+            if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) IDCANCEL))
+                cdlg->OnCancel();
+            return;   // consumed either way, as the dialog manager consumes it
+        }
+        e.Skip();
     });
     // Command-UI: run each control's ON_UPDATE_COMMAND_UI handler on idle so
     // buttons enable/disable/check by state (e.g. after a list-selection change),

@@ -333,9 +333,30 @@ public:
     bool WantsSelectAll() const { return m_wantsSelectAll; }
     void ClearSelectAllClaim() { m_wantsSelectAll = false; }
 
-    // Scroll to the very bottom of the buffer and re-engage auto-scroll.
-    // Safe to call at any time; no-op if already at the bottom.
+    // Scroll to the very bottom of the buffer and re-engage auto-scroll
+    // UNCONDITIONALLY.  This is the EXPLICIT unfreeze: the Pause command, the
+    // hint bar, Escape, world.Pause(false).  Windows spells those `m_freeze =
+    // false` directly rather than going through ScrollToPosition, which is why
+    // they ignore keep_pause_at_bottom -- see ScrollToBufferEnd for the other
+    // kind of jump to the end.
     void ScrollToBottom();
+
+    // Jump to the end of the buffer and then let the world's options decide
+    // whether output resumes -- CMUSHView::OnTestEnd (mushview.cpp:1619-1653)
+    // and world.SetScroll(-1) (methods_output.cpp:620-635) both reach the end
+    // through ScrollToPosition, whose tail is
+    //
+    //     if (m_bAutoFreeze) {
+    //       if (m_bKeepFreezeAtBottom) m_freeze = m_freeze || (pt.y < bottom);
+    //       else                       m_freeze = pt.y < bottom;
+    //     }
+    //
+    // (mushview.cpp:4598-4604).  Arriving AT the bottom makes `pt.y < bottom`
+    // false, so with keep_pause_at_bottom on a frozen view stays frozen -- the
+    // latch is that option's entire purpose -- and with auto_pause off nothing
+    // touches the freeze at all.  RefreshAutoScrollFromPosition is that tail;
+    // ScrollToTop() already ends in it, and these callers now do too.
+    void ScrollToBufferEnd();
 
     // Programmatically pause (disengage auto-scroll) or unpause (re-engage).
     // Mirrors world.Pause() scripting API.  When pausing, the scroll position

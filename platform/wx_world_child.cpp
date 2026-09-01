@@ -4145,7 +4145,11 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
     if (code == WXK_END && evt.RawControlDown()) {
         CancelOutputFade();
-        if (m_output) m_output->ScrollToBottom();
+        // ScrollToBufferEnd, not ScrollToBottom: ID_TEST_END goes through
+        // CMUSHView::OnTestEnd -> ScrollToPosition, whose tail leaves a frozen
+        // view frozen when the world sets keep_pause_at_bottom.  See the
+        // header note on the two APIs.
+        if (m_output) m_output->ScrollToBufferEnd();
         return;
     }
 
@@ -4331,7 +4335,9 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Without this it fell through to the text control's native undo.
     if (evt.RawControlDown() && code == 'Z' &&
         m_doc && m_doc->m_bCtrlZGoesToEndOfBuffer && m_output) {
-        m_output->ScrollToBottom();
+        // CSendView::OnEditCtrlZ calls OnTestEnd (sendvw.cpp:2217-2225), so
+        // this is the same jump Ctrl+End makes and obeys the same latch.
+        m_output->ScrollToBufferEnd();
         return;
     }
 
@@ -6346,7 +6352,10 @@ void CWorldChildFrame::setScroll(long pos)
 {
     if (!m_output) return;
     if (pos == -1) {
-        m_output->ScrollToBottom();
+        // Windows reaches the end through ScrollToPosition here too
+        // (methods_output.cpp:620-635), so -1 is a jump, not an unfreeze: with
+        // keep_pause_at_bottom set it leaves a frozen pane frozen.
+        m_output->ScrollToBufferEnd();
     } else if (pos <= 0) {
         m_output->ScrollToTop();
     } else {

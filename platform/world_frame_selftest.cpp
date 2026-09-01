@@ -3698,6 +3698,108 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── the three "jump to the end" routes obey keep_pause_at_bottom ────────
+    // Ctrl+End from the command bar (ID_TEST_END -> CMUSHView::OnTestEnd),
+    // Ctrl+Z with ctrl_z_goes_to_end_of_buffer (CSendView::OnEditCtrlZ ->
+    // OnTestEnd, sendvw.cpp:2217-2225) and world.SetScroll(-1)
+    // (methods_output.cpp:620-635) all reach the end through ScrollToPosition,
+    // whose tail is `m_freeze = m_freeze || (pt.y < bottom)` when the world
+    // sets keep_pause_at_bottom -- and pt.y IS bottom for all three, so a
+    // frozen view stays frozen.  All three called the pane's explicit-unfreeze
+    // API here, so on the port they always resumed output; the option's whole
+    // purpose is that only an explicit unfreeze does that.
+    {
+        doc->ClearOutput();
+        for (int i = 0; i < 300; ++i)
+            doc->Note(("latch fixture line " + std::to_string(i + 1)).c_str());
+        doc->UpdateAllViews(NULL);
+
+        wxTextCtrl* bar = child->ActiveInputPublic();
+        check(bar != NULL, "jump latch: the world window has a command bar");
+
+        const unsigned short savedCtrlZ = doc->m_bCtrlZGoesToEndOfBuffer;
+        doc->m_bAutoFreeze = 1;
+        pane->SetAllowAutoFreeze(true);
+        pane->SetKeepPauseAtBottom(true);
+
+        auto sendToBar = [&](int code) {
+            wxKeyEvent e(wxEVT_KEY_DOWN);
+            e.m_keyCode     = code;
+            e.m_controlDown = true;
+#if defined(__WXOSX__) || defined(__WXMAC__)
+            // RawControlDown(), which every arm of OnInputKeyDown tests, reads
+            // this member on macOS and m_controlDown everywhere else.
+            e.m_rawControlDown = true;
+#endif
+            e.SetEventObject(bar);
+            if (bar) bar->GetEventHandler()->ProcessEvent(e);
+        };
+
+        // (a) Ctrl+End in the command bar.
+        pane->ScrollPage(-1);
+        check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        sendToBar(WXK_END);
+        check(pane->IsAtBufferEnd(),
+              "jump latch: Ctrl+End moved the view to the end");
+        check(pane->IsPaused(),
+              "jump latch: ...and left it frozen (was: Ctrl+End always "
+              "resumed, so the next burst scrolled the text away)");
+
+        // (b) Ctrl+Z, opt-in via ctrl_z_goes_to_end_of_buffer.
+        doc->m_bCtrlZGoesToEndOfBuffer = 1;
+        pane->ScrollPage(-1);
+        check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        sendToBar('Z');
+        check(pane->IsAtBufferEnd(),
+              "jump latch: Ctrl+Z moved the view to the end");
+        check(pane->IsPaused(), "jump latch: ...and left it frozen");
+
+        // (c) world.SetScroll(-1).
+        pane->ScrollPage(-1);
+        check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        child->setScroll(-1);
+        check(pane->IsAtBufferEnd(),
+              "jump latch: SetScroll(-1) moved the view to the end");
+        check(pane->IsPaused(), "jump latch: ...and left it frozen");
+
+        // The control: with the option OFF -- its default -- all three resume,
+        // so the assertions above are about the latch and not about the three
+        // routes having stopped working.
+        pane->SetKeepPauseAtBottom(false);
+        pane->ScrollPage(-1);
+        sendToBar(WXK_END);
+        check(!pane->IsPaused(),
+              "jump latch (control): with the option OFF Ctrl+End resumes");
+        pane->ScrollPage(-1);
+        sendToBar('Z');
+        check(!pane->IsPaused(),
+              "jump latch (control): ...and so does Ctrl+Z");
+        pane->ScrollPage(-1);
+        child->setScroll(-1);
+        check(!pane->IsPaused(),
+              "jump latch (control): ...and so does SetScroll(-1)");
+
+        // Escape is the OTHER kind: an explicit unfreeze, which must still
+        // work with the latch on or the pane could never be resumed by hand.
+        pane->SetKeepPauseAtBottom(true);
+        pane->ScrollPage(-1);
+        check(pane->IsPaused(), "jump latch (fixture): scrolled up, frozen");
+        {
+            wxKeyEvent e(wxEVT_KEY_DOWN);
+            e.m_keyCode = WXK_ESCAPE;
+            e.SetEventObject(bar);
+            if (bar) bar->GetEventHandler()->ProcessEvent(e);
+        }
+        check(!pane->IsPaused(),
+              "jump latch: Escape still resumes -- the explicit unfreeze is "
+              "not what the latch holds");
+
+        doc->m_bCtrlZGoesToEndOfBuffer = savedCtrlZ;
+        pane->SetKeepPauseAtBottom(false);
+        pane->ScrollToBottom();
+        doc->ClearOutput();
+    }
+
     // ── "is logging active?" is ONE question with ONE answer ───────────────
     // The frame used to keep a session log of its own -- its own FILE*, its own
     // format, opened only from the output pane's context menu -- so the status

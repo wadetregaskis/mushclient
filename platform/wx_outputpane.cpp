@@ -919,6 +919,17 @@ void COutputPane::ScrollToBottom()
         m_fn_autoscroll_changed(true);
 }
 
+// See the header.  UpdateScrollbars(true) moves the viewport to the very end
+// without touching m_autoScroll, and RefreshAutoScrollFromPosition is the
+// ScrollToPosition tail -- the auto_pause gate and the keep_pause_at_bottom
+// latch -- so the two together ARE OnTestEnd.  Same shape as ScrollToTop().
+void COutputPane::ScrollToBufferEnd()
+{
+    UpdateScrollbars(true);
+    RefreshAutoScrollFromPosition();
+    Refresh(false);
+}
+
 void COutputPane::SetPaused(bool paused)
 {
     if (paused) {
@@ -4091,8 +4102,12 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         return;
     }
     if (evt.RawControlDown() && code == WXK_END) {
-        // Ctrl+End: scroll to the bottom and re-engage auto-scroll.
-        ScrollToBottom();
+        // Ctrl+End: jump to the end of the buffer -- ID_TEST_END, i.e.
+        // CMUSHView::OnTestEnd, which reaches it through ScrollToPosition and
+        // so does NOT unfreeze a view whose world says keep_pause_at_bottom.
+        // This called ScrollToBottom, the explicit-unfreeze API, so Ctrl+End
+        // always resumed output and the next burst scrolled the text away.
+        ScrollToBufferEnd();
         return;
     }
 

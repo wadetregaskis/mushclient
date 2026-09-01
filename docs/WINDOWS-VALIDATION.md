@@ -3821,6 +3821,22 @@ would prove it (`CMUSHView` / `CSendView`) is never constructed on the port.
   sounds* off still silences both.  Nothing else reads those two pointers on
   this path, so the only way to see a regression is the sound itself.
 
+- **`CSendView::OnKeypadCommand`'s id → slot switch is hoisted**
+  (`utilities_shared.cpp` `KeypadCommandIdToSlot` / `KeypadSlotDigit`;
+  `sendvw.cpp:1053` now calls both).  Same shape as `MacroCommandIdToSlot`
+  before it, and for the same reason — the port has no `CSendView`, so
+  `world.DoCommand ("Keypad1")` reached nothing.  The view's body is otherwise
+  untouched: the auto-say save/restore, the `m_keypad_enable` branch, the
+  `SendCommand` call and the `ReplaceSel` else-arm all stay where they were.
+  **To check:** with *Enable keypad* on and the Keypad page configured, press
+  each of the fifteen numpad keys and the fifteen Ctrl+numpad ones — every one
+  must send exactly the slot it did before.  Then turn *Enable keypad* off and
+  press them again: each must TYPE its own character into the command bar at
+  the caret (`0`-`9`, `.`, `/`, `*`, `-`, `+`), which is the arm that reads
+  `sValues[]`.  Finally `world.DoCommand ("Keypad1")` and
+  `("CtrlKeypadPlus")` from the Immediate window, which is the route that was
+  broken on the port and has always worked on Windows.
+
 ---
 
 ## 10. Round two — results of the second empirical pass (2026-08-20)

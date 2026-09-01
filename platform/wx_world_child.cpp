@@ -3927,6 +3927,80 @@ void CWorldChildFrame::CancelOutputFade()
     if (m_output) m_output->Refresh(false);
 }
 
+// ── FireKeypad ─────────────────────────────────────────────────────────────
+// Send keypad slot idx (the port's half of CSendView::OnKeypadCommand's
+// keypad-enabled arm).  A member rather than a lambda inside OnInputKeyDown
+// because the COMMAND-ID route needs it too — world.DoCommand ("Keypad1").
+// False when the slot declines, so a key-driven caller can fall through and
+// type its digit.
+bool CWorldChildFrame::FireKeypad(int idx)
+{
+    if (!m_doc) return false;
+    if (!m_doc->m_keypad_enable) return false;
+    if (idx < 0 || idx >= eKeypad_Max_Items) return false;
+    // By value, not by reference: Execute() can run a script that
+    // rewrites m_keypad[idx] out from under us.
+    CString kp = m_doc->m_keypad[idx];
+    // DIVERGENCE FROM WINDOWS, deliberate — keep this guard.  Windows
+    // sends even a blank keypad slot (sendvw.cpp:1093) because its
+    // else-arm types the digit instead (:1099).  Here the early-out IS
+    // that else-arm: it lets an unbound numpad key fall through to
+    // evt.Skip() and type its digit.  Removing it would send a blank
+    // line to the MUD for every unconfigured numpad key.  (The command-id
+    // caller has no keystroke to fall through to, so it runs the else-arm
+    // itself — see FireKeypadCommand.)
+    if (kp.IsEmpty()) return false;
+    // Windows turns auto-say off for keypad commands — you don't want
+    // to *say* "west" (sendvw.cpp:1039-1041).  Inert on the port today
+    // (auto-say is applied only in OnInputEnter), included so this path
+    // stays correct if that changes.
+    BOOL bSavedAutoSay = m_doc->m_bEnableAutoSay;
+    m_doc->m_bEnableAutoSay = FALSE;
+    if (m_doc->m_bTranslateBackslashSequences)   // sendvw.cpp:707-709
+        kp = ::FixupEscapeSequences(kp);
+    m_doc->m_iCurrentActionSource = eUserKeypad;  // GetInfo(239) == 3
+    m_doc->m_iExecutionDepth = 0;                 // sendvw.cpp:702
+    m_doc->Execute(kp);                           // not EvaluateCommand
+    m_doc->m_iCurrentActionSource = eUnknownActionSource;
+    m_doc->m_bEnableAutoSay = bSavedAutoSay;
+    m_doc->UpdateAllViews(nullptr);
+    return true;
+}
+
+// ── FireKeypadCommand ──────────────────────────────────────────────────────
+// The COMMAND-ID entry point for the 30 keypad slots, which on Windows is
+// CSendView::OnKeypadCommand — a view the port never constructs, so
+// world.DoCommand ("Keypad1") .. ("CtrlKeypadPlus") posted an id nothing
+// matched, was skipped, and still returned eOK.  accelerators.cpp publishes all
+// thirty names to scripts, and GetInternalCommandsList lists them.
+//
+// Unlike the KEY route this always CLAIMS the command, because there is no
+// keystroke behind it to fall through to: when the slot declines (keypad
+// disabled, or the slot is blank) it types the digit at the command bar's
+// caret, which is literally what Windows' else-arm does
+// (GetEditCtrl().ReplaceSel (sValues[iIndex])).  False only for an id that is
+// not a keypad command at all, so the caller can keep looking.
+bool CWorldChildFrame::FireKeypadCommand(int id)
+{
+    if (!m_doc) return false;
+    const int idx = KeypadCommandIdToSlot((unsigned int) id);
+    if (idx == -1) return false;
+
+    if (FireKeypad(idx))
+        return true;
+
+    // The else-arm: type the digit where the caret is.
+    if (wxTextCtrl* bar = ActiveInput()) {
+        const wxString digit = wxString::FromUTF8(KeypadSlotDigit(idx));
+        if (!digit.IsEmpty()) {
+            long from = 0, to = 0;
+            bar->GetSelection(&from, &to);
+            bar->Replace(from, to, digit);
+        }
+    }
+    return true;
+}
+
 // ── FireNamedMacroCommand ──────────────────────────────────────────────────
 // The command-id entry point for the 17 named slots.  ID_ACTIONS_QUIT and
 // ID_ACTIONS_LOGOUT confirm first and QUIT suppresses auto-reconnect, exactly
@@ -3993,6 +4067,11 @@ bool CWorldChildFrame::FireNamedMacroCommand(int id)
         FireMacro(slot);
         return true;
     }
+
+    // The keypad slots, by command id — the same gap one table over.  Pressing
+    // the numpad key already worked; world.DoCommand ("Keypad1") did not.
+    if (FireKeypadCommand(id))
+        return true;
 
     return false;
 }
@@ -4600,35 +4679,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         auto fireMacro = [this](int idx) -> bool { return FireMacro(idx); };
 
         // Helper: send a keypad key by index.
-        auto fireKeypad = [this](int idx) -> bool {
-            if (!m_doc->m_keypad_enable) return false;
-            if (idx < 0 || idx >= eKeypad_Max_Items) return false;
-            // By value, not by reference: Execute() can run a script that
-            // rewrites m_keypad[idx] out from under us.
-            CString kp = m_doc->m_keypad[idx];
-            // DIVERGENCE FROM WINDOWS, deliberate — keep this guard.  Windows
-            // sends even a blank keypad slot (sendvw.cpp:1093) because its
-            // else-arm types the digit instead (:1099).  Here the early-out IS
-            // that else-arm: it lets an unbound numpad key fall through to
-            // evt.Skip() and type its digit.  Removing it would send a blank
-            // line to the MUD for every unconfigured numpad key.
-            if (kp.IsEmpty()) return false;
-            // Windows turns auto-say off for keypad commands — you don't want
-            // to *say* "west" (sendvw.cpp:1039-1041).  Inert on the port today
-            // (auto-say is applied only in OnInputEnter), included so this path
-            // stays correct if that changes.
-            BOOL bSavedAutoSay = m_doc->m_bEnableAutoSay;
-            m_doc->m_bEnableAutoSay = FALSE;
-            if (m_doc->m_bTranslateBackslashSequences)   // sendvw.cpp:707-709
-                kp = ::FixupEscapeSequences(kp);
-            m_doc->m_iCurrentActionSource = eUserKeypad;  // GetInfo(239) == 3
-            m_doc->m_iExecutionDepth = 0;                 // sendvw.cpp:702
-            m_doc->Execute(kp);                           // not EvaluateCommand
-            m_doc->m_iCurrentActionSource = eUnknownActionSource;
-            m_doc->m_bEnableAutoSay = bSavedAutoSay;
-            m_doc->UpdateAllViews(nullptr);
-            return true;
-        };
+        auto fireKeypad = [this](int idx) -> bool { return FireKeypad(idx); };
 
         bool ctrl  = evt.RawControlDown();
         bool shift = evt.ShiftDown();

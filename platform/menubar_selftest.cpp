@@ -1405,6 +1405,101 @@ int RunMenuBarSelfTest()
                 }
             }
 
+
+            // ── keypad command ids reach the keypad, not evt.Skip() ─────────
+            // The same gap one table over.  All 30 keypad slots work from a
+            // real numpad (OnInputKeyDown maps WXK_NUMPAD* straight to a slot),
+            // but the COMMAND-ID way in -- world.DoCommand("Keypad1"), which
+            // accelerators.cpp publishes and GetInternalCommandsList lists --
+            // arrived at CSendView::OnKeypadCommand on Windows and at nothing
+            // at all here, so it was skipped while DoCommand returned eOK.
+            {
+                wxTextCtrl* bar = child->ActiveInputPublic();
+                check(bar != NULL, "the world window has a command bar (keypad)");
+
+                // "0.0.0.0" is CheckConnected's own escape hatch (doc.cpp:2785)
+                // -- it returns "not connected" without a message box, so the
+                // send half is silent and nothing modal can appear in this
+                // loop-free harness.  The alias fires before that check.
+                const CString savedServer = doc->m_server;
+                doc->m_server = "0.0.0.0";
+                const unsigned short savedAliases = doc->m_enable_aliases;
+                const unsigned short savedKeypad  = doc->m_keypad_enable;
+                doc->m_enable_aliases = TRUE;
+                doc->m_keypad_enable  = TRUE;
+
+                auto addAlias = [&](const char* text) -> CAlias* {
+                    CAlias* a    = new CAlias();
+                    a->name      = CString(text);
+                    a->contents  = "";
+                    a->bEnabled  = TRUE;
+                    a->bRegexp   = false;
+                    a->iSendTo   = eSendToVariable;
+                    a->strVariable = "zz_keypad_probe";
+                    a->iSequence = DEFAULT_ALIAS_SEQUENCE;
+                    a->strLabel  = CString(text);
+                    a->regexp    = regcomp(
+                        ConvertToRegularExpression(a->name, true, true), 0);
+                    doc->GetAliasMap().SetAt(a->strLabel, a);
+                    doc->GetAliasArray().Add(a);
+                    doc->GetAliasRevMap()[a] = std::string(text);
+                    return a;
+                };
+
+                CAlias* aPlain = addAlias("zz_kp_plain");
+                CAlias* aCtrl  = addAlias("zz_kp_ctrl");
+                doc->m_keypad[eKeypad_1]      = "zz_kp_plain";
+                doc->m_keypad[eCtrl_Keypad_1] = "zz_kp_ctrl";
+
+                // Two DIFFERENT slots, one from each half of the table, so a
+                // handler wired to one fixed slot passes the first and fails
+                // the second.
+                check(fireCmd(frame, ID_KEYPAD_1),
+                      "DoCommand(\"Keypad1\") is claimed by a handler");
+                check(aPlain->nMatched == 1 && aCtrl->nMatched == 0,
+                      "...and sends the keypad 1 slot, not some other one");
+                check(fireCmd(frame, ID_CTRL_KEYPAD_1),
+                      "DoCommand(\"CtrlKeypad1\") is claimed too");
+                check(aCtrl->nMatched == 1,
+                      "...and sends the CTRL keypad 1 slot, a different one");
+
+                // The declining arm.  A command id has no keystroke to fall
+                // through to, so where the KEY path lets an unbound numpad key
+                // type its digit, the id path must type the digit itself --
+                // literally CSendView's else-arm,
+                // GetEditCtrl().ReplaceSel(sValues[iIndex]).
+                doc->m_keypad_enable = FALSE;
+                if (bar) {
+                    bar->SetValue(wxT("ab"));
+                    bar->SetInsertionPoint(1);
+                    const bool claimed = fireCmd(frame, ID_KEYPAD_5);
+                    check(claimed,
+                          "with the keypad off the id is still claimed, not skipped");
+                    check(bar->GetValue() == wxT("a5b"),
+                          "...and types its digit at the caret, as Windows does");
+                    bar->SetValue(wxEmptyString);
+                }
+                doc->m_keypad_enable = TRUE;
+
+                // The arm matches thirty ids, not a range: an id no message
+                // map knows must still be passed on, and must fire no slot.
+                // (The adjacent ID_GAME_CONFIGURE_KEYPAD would be the sharper
+                // control, but it opens the modal prefs sheet -- there is no
+                // event loop here to close one.  tests/test_utilities.cpp
+                // pins that id against KeypadCommandIdToSlot instead.)
+                const long plainBefore = aPlain->nMatched;
+                check(!fireCmd(frame, 30054),
+                      "...while an id the arm does not own is still skipped");
+                check(aPlain->nMatched == plainBefore,
+                      "...and fires no keypad slot");
+
+                doc->m_keypad[eKeypad_1]      = "";
+                doc->m_keypad[eCtrl_Keypad_1] = "";
+                doc->m_enable_aliases = savedAliases;
+                doc->m_keypad_enable  = savedKeypad;
+                doc->m_server         = savedServer;
+            }
+
             // ── a canonical command with no menu item of its own still runs ──
             // The port's Configure menu items carry PRIVATE ids, so the
             // canonical ID_GAME_CONFIGURE_* ids only ever arrive from

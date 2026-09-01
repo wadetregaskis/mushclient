@@ -1826,6 +1826,81 @@ int MacroCommandIdToSlot (const unsigned int nIDC)
   return -1;
   }   // end of MacroCommandIdToSlot
 
+// ── KeypadCommandIdToSlot ───────────────────────────────────────────────────
+// Which m_keypad[] slot a keypad COMMAND ID names, or -1 for an id that is not
+// one.  Hoisted verbatim out of CSendView::OnKeypadCommand (sendvw.cpp), which
+// now calls it, for the same reason MacroCommandIdToSlot above was: the port
+// needs the mapping too (CSendView is never constructed there, so every
+// world.DoCommand ("Keypad1") fell through the frame dispatcher and did
+// nothing while still returning eOK), and a hand-copied 30-case switch is
+// exactly the kind of twin that drifts.
+//
+// The digit each slot TYPES when the keypad is disabled stays in
+// CSendView::OnKeypadCommand's sValues[]: it is the view's else-arm, not part
+// of the id mapping.  See KeypadSlotDigit below for the port's copy.
+int KeypadCommandIdToSlot (const unsigned int nIDC)
+  {
+  switch (nIDC)
+    {
+    // normal keys
+    case ID_KEYPAD_0          : return eKeypad_0    ;
+    case ID_KEYPAD_1          : return eKeypad_1    ;
+    case ID_KEYPAD_2          : return eKeypad_2    ;
+    case ID_KEYPAD_3          : return eKeypad_3    ;
+    case ID_KEYPAD_4          : return eKeypad_4    ;
+    case ID_KEYPAD_5          : return eKeypad_5    ;
+    case ID_KEYPAD_6          : return eKeypad_6    ;
+    case ID_KEYPAD_7          : return eKeypad_7    ;
+    case ID_KEYPAD_8          : return eKeypad_8    ;
+    case ID_KEYPAD_9          : return eKeypad_9    ;
+    case ID_KEYPAD_DOT        : return eKeypad_Dot  ;
+    case ID_KEYPAD_SLASH      : return eKeypad_Slash;
+    case ID_KEYPAD_STAR       : return eKeypad_Star ;
+    case ID_KEYPAD_DASH       : return eKeypad_Dash ;
+    case ID_KEYPAD_PLUS       : return eKeypad_Plus ;
+
+    // control keys
+    case  ID_CTRL_KEYPAD_0    : return eCtrl_Keypad_0    ;
+    case  ID_CTRL_KEYPAD_1    : return eCtrl_Keypad_1    ;
+    case  ID_CTRL_KEYPAD_2    : return eCtrl_Keypad_2    ;
+    case  ID_CTRL_KEYPAD_3    : return eCtrl_Keypad_3    ;
+    case  ID_CTRL_KEYPAD_4    : return eCtrl_Keypad_4    ;
+    case  ID_CTRL_KEYPAD_5    : return eCtrl_Keypad_5    ;
+    case  ID_CTRL_KEYPAD_6    : return eCtrl_Keypad_6    ;
+    case  ID_CTRL_KEYPAD_7    : return eCtrl_Keypad_7    ;
+    case  ID_CTRL_KEYPAD_8    : return eCtrl_Keypad_8    ;
+    case  ID_CTRL_KEYPAD_9    : return eCtrl_Keypad_9    ;
+    case  ID_CTRL_KEYPAD_DOT  : return eCtrl_Keypad_Dot  ;
+    case  ID_CTRL_KEYPAD_SLASH: return eCtrl_Keypad_Slash;
+    case  ID_CTRL_KEYPAD_STAR : return eCtrl_Keypad_Star ;
+    case  ID_CTRL_KEYPAD_DASH : return eCtrl_Keypad_Dash ;
+    case  ID_CTRL_KEYPAD_PLUS : return eCtrl_Keypad_Plus ;
+    }
+
+  return -1;
+  }   // end of KeypadCommandIdToSlot
+
+// ── KeypadSlotDigit ─────────────────────────────────────────────────────────
+// What CSendView::OnKeypadCommand's sValues[] types into the command bar when
+// the keypad is DISABLED (sendvw.cpp) -- "0".."9", ".", "/", "*", "-", "+",
+// the same fifteen for the plain and the Ctrl half.  Shared so the port's
+// command-id route can do the same thing; the empty string for an out-of-range
+// slot, which is the only value it can safely add to a line.
+const char * KeypadSlotDigit (const int iIndex)
+  {
+  static const char * const sValues [eKeypad_Max_Items] =
+    {
+    // normal
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "/", "*", "-", "+",
+    // ctrl
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "/", "*", "-", "+"
+    };
+
+  if (iIndex < 0 || iIndex >= eKeypad_Max_Items)
+    return "";
+  return sValues [iIndex];
+  }   // end of KeypadSlotDigit
+
 // ── OSVersionString ─────────────────────────────────────────────────────────
 // The operating-system name world.Debug ("summary") reports.  Lifted out of
 // world_debug.cpp (which only ever links into the GUI product) so the

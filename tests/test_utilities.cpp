@@ -1648,6 +1648,82 @@ TEST(MacroCommandIds, EveryMacroCommandIdMapsToItsOwnSlot)
     EXPECT_EQ(-1, MacroCommandIdToSlot(0));
 }
 
+
+// ═══ KeypadCommandIdToSlot / KeypadSlotDigit ═══════════════════════════════
+// The keypad command id -> m_keypad[] slot table, hoisted out of
+// CSendView::OnKeypadCommand for exactly the reason the macro one above was:
+// the port never constructs CSendView, so world.DoCommand("Keypad1") posted an
+// id no arm matched, was skipped, and still returned eOK.  All thirty names are
+// published to scripts (accelerators.cpp) and listed by
+// world.GetInternalCommandsList.
+TEST(KeypadCommandIds, EveryKeypadCommandIdMapsToItsOwnSlot)
+{
+    struct Row { unsigned id; int slot; const char* name; const char* digit; };
+    static const Row kRows[] = {
+        { ID_KEYPAD_0,     eKeypad_0,     "Keypad0",     "0" },
+        { ID_KEYPAD_1,     eKeypad_1,     "Keypad1",     "1" },
+        { ID_KEYPAD_2,     eKeypad_2,     "Keypad2",     "2" },
+        { ID_KEYPAD_3,     eKeypad_3,     "Keypad3",     "3" },
+        { ID_KEYPAD_4,     eKeypad_4,     "Keypad4",     "4" },
+        { ID_KEYPAD_5,     eKeypad_5,     "Keypad5",     "5" },
+        { ID_KEYPAD_6,     eKeypad_6,     "Keypad6",     "6" },
+        { ID_KEYPAD_7,     eKeypad_7,     "Keypad7",     "7" },
+        { ID_KEYPAD_8,     eKeypad_8,     "Keypad8",     "8" },
+        { ID_KEYPAD_9,     eKeypad_9,     "Keypad9",     "9" },
+        { ID_KEYPAD_DOT,   eKeypad_Dot,   "KeypadDot",   "." },
+        { ID_KEYPAD_SLASH, eKeypad_Slash, "KeypadSlash", "/" },
+        { ID_KEYPAD_STAR,  eKeypad_Star,  "KeypadStar",  "*" },
+        { ID_KEYPAD_DASH,  eKeypad_Dash,  "KeypadDash",  "-" },
+        { ID_KEYPAD_PLUS,  eKeypad_Plus,  "KeypadPlus",  "+" },
+
+        { ID_CTRL_KEYPAD_0,     eCtrl_Keypad_0,     "CtrlKeypad0",     "0" },
+        { ID_CTRL_KEYPAD_1,     eCtrl_Keypad_1,     "CtrlKeypad1",     "1" },
+        { ID_CTRL_KEYPAD_2,     eCtrl_Keypad_2,     "CtrlKeypad2",     "2" },
+        { ID_CTRL_KEYPAD_3,     eCtrl_Keypad_3,     "CtrlKeypad3",     "3" },
+        { ID_CTRL_KEYPAD_4,     eCtrl_Keypad_4,     "CtrlKeypad4",     "4" },
+        { ID_CTRL_KEYPAD_5,     eCtrl_Keypad_5,     "CtrlKeypad5",     "5" },
+        { ID_CTRL_KEYPAD_6,     eCtrl_Keypad_6,     "CtrlKeypad6",     "6" },
+        { ID_CTRL_KEYPAD_7,     eCtrl_Keypad_7,     "CtrlKeypad7",     "7" },
+        { ID_CTRL_KEYPAD_8,     eCtrl_Keypad_8,     "CtrlKeypad8",     "8" },
+        { ID_CTRL_KEYPAD_9,     eCtrl_Keypad_9,     "CtrlKeypad9",     "9" },
+        { ID_CTRL_KEYPAD_DOT,   eCtrl_Keypad_Dot,   "CtrlKeypadDot",   "." },
+        { ID_CTRL_KEYPAD_SLASH, eCtrl_Keypad_Slash, "CtrlKeypadSlash", "/" },
+        { ID_CTRL_KEYPAD_STAR,  eCtrl_Keypad_Star,  "CtrlKeypadStar",  "*" },
+        { ID_CTRL_KEYPAD_DASH,  eCtrl_Keypad_Dash,  "CtrlKeypadDash",  "-" },
+        { ID_CTRL_KEYPAD_PLUS,  eCtrl_Keypad_Plus,  "CtrlKeypadPlus",  "+" },
+    };
+
+    std::set<int> seen;
+    for (const Row& r : kRows) {
+        const int got = KeypadCommandIdToSlot(r.id);
+        EXPECT_EQ(r.slot, got);
+        // In range, or the sender indexes past m_keypad[].
+        EXPECT_TRUE(got >= 0 && got < eKeypad_Max_Items);
+        // No two commands may share a slot, or one keypad key fires for two.
+        EXPECT_TRUE(seen.insert(got).second);
+        // The digit the DISABLED keypad types (CSendView's sValues[]).
+        EXPECT_STREQ(r.digit, KeypadSlotDigit(got));
+    }
+    // 15 plain + 15 ctrl, every one distinct.  The literal catches a row
+    // silently going missing.
+    EXPECT_EQ(sizeof(kRows) / sizeof(kRows[0]), seen.size());
+    EXPECT_EQ((size_t) 30, seen.size());
+    EXPECT_EQ((size_t) eKeypad_Max_Items, seen.size());
+
+    // The adjacent prefs command, whose id sits near the block, is NOT a slot:
+    // returning 0 rather than -1 would fire keypad 0 for "Configure Keypad".
+    EXPECT_EQ(-1, KeypadCommandIdToSlot(ID_GAME_CONFIGURE_KEYPAD));
+    // Nor is a macro id, nor 0.
+    EXPECT_EQ(-1, KeypadCommandIdToSlot(ID_MACRO_F1));
+    EXPECT_EQ(-1, KeypadCommandIdToSlot(0));
+
+    // And the digit table refuses an out-of-range slot rather than reading off
+    // the end of sValues[] -- the empty string is the only value that can
+    // safely be added to a line.
+    EXPECT_STREQ("", KeypadSlotDigit(-1));
+    EXPECT_STREQ("", KeypadSlotDigit(eKeypad_Max_Items));
+}
+
 // ── Port-only from here to the end of the Sounds family ───────────────────
 // The whole g_wxhook_sound_* / g_wxhook_play_sound seam exists only off
 // Windows: it is the miniaudio backend the port substituted for DirectSound,

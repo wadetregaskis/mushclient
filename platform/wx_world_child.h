@@ -334,6 +334,17 @@ public:
     // is empty or out of range, so a key-driven caller can fall through.
     bool FireMacro(int idx);
 
+    // Fire keypad slot idx (the port's half of CSendView::OnKeypadCommand).
+    // False if the keypad is disabled or the slot is empty, so a key-driven
+    // caller can fall through and type the digit instead.
+    bool FireKeypad(int idx);
+
+    // Command-id entry point for the 30 keypad slots — world.DoCommand
+    // ("Keypad1") .. ("CtrlKeypadPlus").  Always claims a keypad id: with no
+    // keystroke to fall through to, a declining slot types its digit, which is
+    // Windows' own else-arm.  False for an id that is not a keypad command.
+    bool FireKeypadCommand(int id);
+
     // Command-id entry point for the 17 NAMED macro slots (up/down/north/…/
     // logout/quit), which have no key binding on any platform and are reached
     // only by id — world.DoCommand, the Input menu, the world toolbar.  False

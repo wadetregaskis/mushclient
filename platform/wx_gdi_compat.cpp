@@ -1369,18 +1369,37 @@ bool CDC::RoundRect(const CRect& r, CPoint pt) {
     return RoundRect(r.left, r.top, r.right, r.bottom, pt.x, pt.y);
 }
 
+// Win32's shape bounding rectangle is right/bottom-EXCLUSIVE: the ellipse is
+// inscribed in x1..x2-1 / y1..y2-1, centred at x1 + (w-1)/2 with radius
+// (w-1)/2.  Rectangle and Ellipse get that for free from wx's (x, y, w, h)
+// form, and RoundRect above says it explicitly -- but an op that TRACES its own
+// outline has to, and Chord/Pie below did not.
+struct EllipseExtent { double cx, cy, rx, ry; };
+
+static inline EllipseExtent ExclusiveEllipse(int x1, int y1, int x2, int y2) {
+    const double xr = x2 - 1.0, yb = y2 - 1.0;
+    return { (x1 + xr) / 2.0, (y1 + yb) / 2.0, (xr - x1) / 2.0, (yb - y1) / 2.0 };
+}
+
 bool CDC::Chord(int x1, int y1, int x2, int y2,
                 int x3, int y3, int x4, int y4)
 {
     CDCImpl* p = Impl(this);
     if (!p) return false;
     p->ApplyPen(); p->ApplyBrush();
-    // wx DrawEllipticArc: start/end in degrees (anticlockwise from 3 o'clock)
-    int cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    int rx = (x2 - x1) / 2, ry = (y2 - y1) / 2;
+    // wx DrawEllipticArc: start/end in degrees (anticlockwise from 3 o'clock).
+    //
+    // The centre/radii used to come from the INCLUSIVE rectangle -- centre
+    // (x1+x2)/2, radius (x2-x1)/2 -- so the traced figure was one pixel wider
+    // and taller than an Ellipse over the identical rectangle and its extreme
+    // points landed on x == x2 / y == y2, coordinates GDI never touches.  This
+    // is the same off-by-one RoundRect above was corrected for; the commit that
+    // gave Chord its polygon fixed the wedge-vs-chord SHAPE and left the extent.
+    const EllipseExtent e = ExclusiveEllipse(x1, y1, x2, y2);
+    const double cx = e.cx, cy = e.cy, rx = e.rx, ry = e.ry;
     if (rx <= 0 || ry <= 0) return false;
-    double startDeg = atan2(-(double)(y3 - cy) / ry, (double)(x3 - cx) / rx) * 180.0 / M_PI;
-    double endDeg   = atan2(-(double)(y4 - cy) / ry, (double)(x4 - cx) / rx) * 180.0 / M_PI;
+    double startDeg = atan2(-((double) y3 - cy) / ry, ((double) x3 - cx) / rx) * 180.0 / M_PI;
+    double endDeg   = atan2(-((double) y4 - cy) / ry, ((double) x4 - cx) / rx) * 180.0 / M_PI;
 
     // A CHORD, not a pie.  Win32 bounds the region with the arc plus the
     // straight line joining its two endpoints; wxDC::DrawEllipticArc draws the

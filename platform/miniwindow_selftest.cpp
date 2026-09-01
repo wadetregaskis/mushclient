@@ -123,6 +123,29 @@ int RunPalMiniWindowSelfTest()
         mwCheck(doc->WindowGetPixel(W, 24, 18) != kRed,
                 "...and NOT below the chord line, which a pie would fill");
 
+        // ...and the figure's EXTENT is the exclusive one, like every other
+        // shape op.  Chord traces its own outline, so unlike Ellipse (which
+        // gets it from wx's (x, y, w, h) form) it has to say so -- and it used
+        // to use the inclusive centre (x1+x2)/2 and radius (x2-x1)/2, putting
+        // its extremes on x2/y2, a pixel past GDI's last pixel and a pixel
+        // outside the rectangle the caller gave.  The right HALF of the ellipse
+        // (start at the bottom, end at the top, sweeping anticlockwise through
+        // 3 o'clock) puts arc extremes exactly on the right and bottom edges.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlack, 0) == eOK,
+                "clear before the chord extent probe");
+        mwCheck(doc->WindowCircleOp(W, 4, L, T, R, B,
+                                    kRed, 0, 1, kRed, 0 /*solid*/,
+                                    24, 100, 24, 4) == eOK,
+                "WindowCircleOp (chord, right half) succeeds");
+        mwCheck(doc->WindowGetPixel(W, R - 1, 24) == kRed,
+                "the chord reaches x2-1 on the midline");
+        mwCheck(doc->WindowGetPixel(W, R, 24) != kRed,
+                "...and NOT x2 itself (Win32's bounding rect is right-exclusive)");
+        mwCheck(doc->WindowGetPixel(W, 24, B - 1) == kRed,
+                "...reaches y2-1 at the bottom of the arc");
+        mwCheck(doc->WindowGetPixel(W, 24, B) != kRed,
+                "...and NOT y2 itself (bottom-exclusive too)");
+
         // Leave the canvas as we found it for the assertions that follow.
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the chord probe");

@@ -30,9 +30,14 @@ merges. Final state: `ctest` 78/78 (extended on), ASan suite 77/77.
 - `DrawEdge`'s **BF_SOFT** is a recorded gap (UPSTREAM-DIVERGENCES.md §8): it
   changes only a bevel grey no macOS observation can check; a plausible-wrong
   shade would be worse than an acknowledged gap.
-- **MudMaster file transfer stays ~25 KB/s**: the Poll drain loop cannot help a
-  lockstep protocol; speeding it up (adaptive tick or a nudge-Poll after
-  CHAT_FILE_BLOCK_REQUEST) is its own decision.
+- ~~MudMaster file transfer stays ~25 KB/s~~ — **closed with the nudge-Poll
+  option**: a successful Send requests one expedited 1 ms re-poll from the
+  pump, so lockstep exchanges run at RTT speed instead of one block per 20 ms
+  tick; self-limiting (sustained only by further sends), and a high-RTT peer
+  falls back to the tick unchanged.  The adaptive-interval alternative was
+  deliberately not taken.  The improvement is pump-level and only observable
+  in-app; the mechanism (flag set on success, consumed once, not set on a
+  failed send) is pinned headlessly.
 - ~~Windows' `OnTestEnd` also clears the output selection~~ — **closed later the
   same day**, and then WIDENED by an adversarial re-verify to the whole family:
   End (menu / keys / command id), Ctrl+Z, unfreezing Freeze Output, the pane's
@@ -46,10 +51,11 @@ merges. Final state: `ctest` 78/78 (extended on), ASan suite 77/77.
   called from every mutation site including the new-output clear and the
   trims (an adversarial re-verify refuted the first version's claim that
   Windows stays silent there — its clear IS addedstuff -> OnTestEnd ->
-  SelectionChanged).  One Windows sender remains unported, recorded not
-  hidden: CSendView::CheckForSelectionChange (sendvw.cpp:2593) — selecting
-  text in the command bar clears the OUTPUT selection and notifies; CSendView
-  is stubbed here (the dead-view family), so neither half happens.
+  SelectionChanged).  The last Windows sender is ALSO ported now: the
+  selection-exclusivity pair — CheckForSelectionChange polled from the world
+  timer (a command-bar selection drops the output's) and SelectionChanged's
+  CancelSelection tail (a new output selection collapses the bar's to its
+  end) — both pinned with directional controls.
 - ~~`FireMacro`'s SEND_NOW arm bypasses unpause_on_send~~ — **closed later the
   same day**, then widened: keypad slots, Repeat Last Command and
   accelerator-Execute sends had the same gap; all six SendCommand riders now

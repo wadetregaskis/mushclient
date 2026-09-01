@@ -2148,7 +2148,9 @@ TEST(Ddv, PluginWizardIdLengthIsEnforced) {
     struct P1 : CPluginWizardPage1 { using CPluginWizardPage1::DoDataExchange; };
     CMUSHclientDoc doc;
     P1 page;
+    CPluginWizardPage2 page2;          // the save arm dereferences m_pPage2
     page.m_doc = &doc;                 // CheckObjectName dereferences it
+    page.m_pPage2 = &page2;
     page.m_strName = "TestPlugin";
 
     CDataExchange dx;                  // control-less: only the DDV decides
@@ -3609,6 +3611,7 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
     // The sentinel byte one past the end must survive.
     char small[12];
     memset(small, '#', sizeof small);
+    small[0] = '\0';   // OPENFILENAME: lpstrFile is an init STRING; NUL = none
     CFileDialog snug(FALSE, "mcl", nullptr, 0, "Worlds|*.mcl||");
     snug.m_ofn.lpstrFile = small;
     snug.m_ofn.nMaxFile  = 8;

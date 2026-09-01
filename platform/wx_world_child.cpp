@@ -3766,11 +3766,12 @@ void CWorldChildFrame::FireAcceleratorCommand(WORD nID)
         // path as CSendView::SendCommand") but was not actually doing, so an
         // accelerator whose text used the script prefix or contained the command
         // stack character behaved differently from typing the same text.
-        UnpauseOutputOnSend();   // sendvw.cpp:756 via OnAcceleratorCommand's
-                                 // SendCommand at :2301; the SendTo arm below
-                                 // does not ride SendCommand and must not thaw
         m_doc->m_iExecutionDepth = 0;
-        m_doc->Execute(sCommand.c_str());
+        if (m_doc->Execute(sCommand.c_str()) == 0 /*eOK*/)
+            UnpauseOutputOnSend();   // sendvw.cpp:756 via OnAcceleratorCommand's
+                                     // SendCommand at :2301, after its success
+                                     // gate; the SendTo arm below does not ride
+                                     // SendCommand and must not thaw
     } else {
         // Resolve the key name for the trace message (linear search — rare path).
         CString key = "unknown key";
@@ -3936,15 +3937,18 @@ bool CWorldChildFrame::FireMacro(int idx)
         CString cmd = mac;
         if (m_doc->m_bTranslateBackslashSequences)
             cmd = ::FixupEscapeSequences(cmd);
-        // Windows' SEND_NOW macros ride SendCommand (SendMacro's call at
-        // sendvw.cpp:797), so they get its unpause tail -- going straight to
-        // Execute() skipped it, and a macro fired into frozen scrollback left
-        // the reply off-screen.
-        UnpauseOutputOnSend();
         m_doc->m_iCurrentActionSource = eUserMacro;
         m_doc->m_iExecutionDepth = 0;
-        m_doc->Execute(cmd);
+        const long execRc = m_doc->Execute(cmd);
         m_doc->m_iCurrentActionSource = eUnknownActionSource;
+        // Windows' SEND_NOW macros ride SendCommand (SendMacro's call at
+        // sendvw.cpp:797), whose Execute failure returns BEFORE both the
+        // history add (:736) and the unpause tail (:756) -- so a macro the
+        // engine refused records nothing and thaws nothing.
+        if (execRc != 0 /*eOK*/) {
+            m_doc->UpdateAllViews(nullptr);
+            break;
+        }
         // Record AFTER Execute, matching OnInputEnter's history add
         // (sendvw.cpp:736 does the same, after its own Execute) --
         // m_bOmitFromCommandHistory is set by evaluate.cpp while an alias with
@@ -3955,6 +3959,7 @@ bool CWorldChildFrame::FireMacro(int idx)
         if (!m_doc->m_bDoNotAddMacrosToCommandHistory &&
             !m_doc->m_bOmitFromCommandHistory && !m_doc->m_bNoEcho)
             addToCommandHistory(mac);
+        UnpauseOutputOnSend();                   // SendCommand's tail (:756)
         m_doc->UpdateAllViews(nullptr);
         break;
     }
@@ -4046,13 +4051,13 @@ bool CWorldChildFrame::FireKeypad(int idx)
     m_doc->m_bEnableAutoSay = FALSE;
     if (m_doc->m_bTranslateBackslashSequences)   // sendvw.cpp:707-709
         kp = ::FixupEscapeSequences(kp);
-    UnpauseOutputOnSend();                        // sendvw.cpp:756, the tail
-                                                  // of the SendCommand this
-                                                  // path rides at :1074
     m_doc->m_iCurrentActionSource = eUserKeypad;  // GetInfo(239) == 3
     m_doc->m_iExecutionDepth = 0;                 // sendvw.cpp:702
-    m_doc->Execute(kp);                           // not EvaluateCommand
+    const long kpRc = m_doc->Execute(kp);         // not EvaluateCommand
     m_doc->m_iCurrentActionSource = eUnknownActionSource;
+    if (kpRc == 0 /*eOK*/)
+        UnpauseOutputOnSend();   // sendvw.cpp:756, the success-gated tail of
+                                 // the SendCommand this path rides at :1074
     m_doc->m_bEnableAutoSay = bSavedAutoSay;
     m_doc->UpdateAllViews(nullptr);
     return true;
@@ -4217,12 +4222,11 @@ void CWorldChildFrame::FireScrollCommand(EScrollCommand which)
 // option one layer up (mushview.cpp:2177) and ends in the same OnTestEnd.
 // ONE body for all of those, so the sites cannot drift again.
 //
-// Most port sites run this BEFORE Execute, where Windows' tail runs after a
-// successful send; the port's typed path established that placement and the
-// difference is only observable when Execute fails or a script re-pauses
-// mid-Execute -- recorded in docs/BUGHUNT-2026-09.md rather than silently
-// re-ordered here.  RepeatLastCommand, which already models SendCommand's
-// success gate, runs it after Execute exactly as Windows does.
+// Placement matches Windows at every site: the SendCommand riders run this
+// AFTER their success-gated Execute (the tail sits past sendvw.cpp:727-730's
+// failure return), and the hyperlink path runs it at click time, before the
+// dispatch, which is where CMUSHView::OnLButtonDown has it (mushview.cpp:
+// 2176-2181).
 void CWorldChildFrame::UnpauseOutputOnSend()
 {
     if (!m_doc || !m_output) return;
@@ -5447,8 +5451,6 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     m_doc->m_bOmitFromCommandHistory = false;    // sendvw.cpp:625
 
     // Unpause output on send (unpause_on_send world option, default on).
-    UnpauseOutputOnSend();
-
     // EvaluateCommand processes aliases, speed-walks, and scripting callbacks
     // before sending the text to the MUD — the same path Windows uses for
     // keyboard input from CMUSHclientView::OnChar / ProcessCommand.
@@ -5533,6 +5535,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
             if (!isPassword && !m_doc->m_bOmitFromCommandHistory)
                 addToCommandHistory(strForHistory);
             reenterForAutoRepeat(strForHistory);
+            UnpauseOutputOnSend();               // SendCommand's tail (:756)
         }
         m_doc->UpdateAllViews(nullptr);
         return;
@@ -5626,6 +5629,12 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
         addToCommandHistory(strForHistory);
 
     reenterForAutoRepeat(strForHistory);
+
+    // SendCommand's tail (sendvw.cpp:756), in Windows' position: after the
+    // Execute whose failure already returned above, and after the
+    // history/auto-repeat block (:736-:753).  A command the engine refused
+    // therefore leaves the freeze alone, exactly as Windows does.
+    UnpauseOutputOnSend();
 
     // Flush any output produced by alias scripts / triggers to the pane.
     m_doc->UpdateAllViews(nullptr);

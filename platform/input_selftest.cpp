@@ -1064,6 +1064,25 @@ int RunInputSelfTest()
             chk(!pane->IsPaused(),
                 "F7: a SEND_NOW macro unpauses when unpause_on_send is on");
 
+            // The tail is success-gated (sendvw.cpp:727-730 returns before
+            // :756 -- and before the :736 history add): a macro the engine
+            // refuses must neither thaw nor record.  The refusal here is
+            // Execute's empty-line arm, whose CheckConnected answers
+            // eWorldClosed on this disconnected fixture
+            // (methods_commands.cpp:278-292).
+            doc->m_macros[MAC_F7] = "\n";
+            pane->SetPaused(true);
+            const size_t histBefore = child->commandList(0).size();
+            child->FireMacro(MAC_F7);
+            chk(pane->IsPaused(),
+                "...and a macro the engine refuses leaves the freeze alone "
+                "(the tail sits after the success gate)");
+            chk(child->commandList(0).size() == histBefore,
+                "...and records nothing (the history add is behind the same "
+                "gate on Windows, sendvw.cpp:736)");
+            pane->SetPaused(false);
+            doc->m_macros[MAC_F7] = "f7_unpause";
+
             doc->m_bUnpauseOnSend = 0;
             pane->SetPaused(true);
             child->FireMacro(MAC_F7);

@@ -1580,6 +1580,111 @@ void TestEditOffsetsAreBytes()
     host->Destroy();
 }
 
+// ── 11c. The Complete Word popup's caret anchor (2026-08-31) ──────────────
+// FunctionMenu (scripting/functionlist.cpp:663) positions the popup with
+//   dlg.m_pt = editctrl.PosFromChar (n);  editctrl.ClientToScreen (&dlg.m_pt);
+// and CCompleteWordDlg::OnInitDialog applies it with SetWindowPos(SWP_NOSIZE).
+// All three shim members were inert, so the anchor was computed and thrown away
+// three times over and the popup opened wherever the bridge put it.
+//
+// Only a live wx control exercises the first step, so it belongs here rather
+// than in tests/test_mfc_ui.cpp (which pins the plumbing with a fake hook).
+// No wxYield anywhere: SetSize/GetRect are synchronous on this side of the
+// window server, and this harness exits from wxApp::OnInit.
+void TestCaretAnchorChain()
+{
+    printf("Complete Word caret anchor (PosFromChar -> ClientToScreen -> SetWindowPos):\n");
+
+    wxFrame* host = new wxFrame(nullptr, wxID_ANY, wxT("anchor-host"),
+                                wxPoint(60, 70), wxSize(500, 300));
+
+    wxTextCtrl* tc = new wxTextCtrl(host, wxID_ANY, wxEmptyString,
+                                    wxPoint(0, 0), wxSize(400, 200),
+                                    wxTE_MULTILINE | wxTE_DONTWRAP);
+    tc->SetValue(wxT("first line\nsecond line\nthird line"));
+
+    CEdit ed;
+    ed.m_hWnd = (HWND) tc;
+    // Byte offsets (the CEdit seam): line starts are 0, 11, 23 for this ASCII
+    // text.  Two characters on the same line must differ in x, and a character
+    // two lines down must be exactly two rows lower -- a shim answering a
+    // constant (the old CPoint()) fails all of these.
+    const int lineH = tc->GetCharHeight();
+    check(lineH > 0, "the control reports a character height to build rows from");
+
+    const CPoint a = ed.PosFromChar(3);    // line 0, column 3
+    const CPoint b = ed.PosFromChar(7);    // line 0, column 7
+    const CPoint c = ed.PosFromChar(26);   // line 2, column 3
+    const CPoint home = ed.PosFromChar(23);  // line 2, column 0
+
+    check(a.x > 0, "PosFromChar answers a real column offset, not 0");
+    check(b.x > a.x && b.y == a.y,
+          "...further along the same line is further right, on the same row");
+    check(a.y == 0 && c.y == 2 * lineH,
+          "...and the row is the line number times the character height");
+    check(home.x == 0 && home.y == c.y,
+          "...while the first character of a line sits at the left edge of it");
+
+    // The byte/character seam: "wörld" starts at byte 7 but character 6, so a
+    // shim that handed the byte offset to wx would measure one character too
+    // much.  Same fixture shape as TestEditOffsetsAreBytes, and it is the whole
+    // reason PosFromChar cannot simply forward its argument.
+    {
+        wxTextCtrl* u8 = new wxTextCtrl(host, wxID_ANY, wxEmptyString,
+                                        wxPoint(0, 210), wxSize(400, 60));
+        u8->SetValue(wxString::FromUTF8("h\xC3\xA9llo w\xC3\xB6rld"));
+        CEdit ue;
+        ue.m_hWnd = (HWND) u8;
+
+        int wExpect = 0, hExpect = 0;
+        u8->GetTextExtent(wxString::FromUTF8("h\xC3\xA9llo "), &wExpect, &hExpect);
+        const CPoint w = ue.PosFromChar(7);   // byte 7 == character 6 == 'w'
+        check(w.x == wExpect,
+              "PosFromChar reads its argument as a byte offset, not a character one");
+        check(ue.PosFromChar(13).x > w.x,
+              "...and the end of the text is further right than its middle");
+    }
+
+    // Step 2: CEdit is a CWnd, not a CView, so this used to be a no-op.
+    CPoint screen = a;
+    ed.ClientToScreen(&screen);
+    const wxPoint truth = tc->ClientToScreen(wxPoint(a.x, a.y));
+    check(screen.x == truth.x && screen.y == truth.y,
+          "ClientToScreen on a CEdit maps the anchor into screen coordinates");
+    check(!(screen.x == a.x && screen.y == a.y),
+          "...and the control is not at the screen origin, so the two differ");
+
+    // Step 3: the position-only SetWindowPos the popup's OnInitDialog uses.
+    wxFrame* popup = new wxFrame(nullptr, wxID_ANY, wxT("anchor-popup"),
+                                 wxPoint(10, 20), wxSize(240, 160));
+    CWnd pop;
+    pop.m_hWnd = (HWND) popup;
+
+    pop.SetWindowPos(nullptr, 300, 400, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    wxRect r = popup->GetRect();
+    check(r.x == 300 && r.y == 400,
+          "SetWindowPos(SWP_NOSIZE) moves the window to the anchor");
+    check(r.width == 240 && r.height == 160,
+          "...and leaves its size alone");
+
+    pop.SetWindowPos(nullptr, 0, 0, 320, 180, SWP_NOMOVE | SWP_NOZORDER);
+    r = popup->GetRect();
+    check(r.width == 320 && r.height == 180,
+          "SetWindowPos(SWP_NOMOVE) resizes it");
+    check(r.x == 300 && r.y == 400,
+          "...and leaves its position alone");
+
+    // The always-on-top spelling must not move anything (mainfrm.cpp:1529).
+    pop.SetWindowPos(&CWnd::wndTopMost, 0, 0, 0, 0,
+                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    r = popup->GetRect();
+    check(r.x == 300 && r.y == 400 && r.width == 320 && r.height == 180,
+          "...and a Z-order-only call changes neither");
+
+    popup->Destroy();
+    host->Destroy();
+}
+
 // ── 12. Scripting page: Browse speaks the port's languages (2026-08-12) ────
 // CPrefsP17::ScriptBrowser's Python/Tcl/Ruby cases were behind USE_PYTHON/
 // USE_TCL/USE_RUBY, which only stdafx.h's _WIN32 arm defines — so with the
@@ -2884,6 +2989,7 @@ int RunGuiBridgeSelfTest()
     TestDdxCharsetRoundTrip();
     TestMultiLineTriggerSeam();
     TestEditOffsetsAreBytes();
+    TestCaretAnchorChain();
     TestScriptingPageBrowse();
     TestListBoxMutators();
     TestLuaDirectoryPicker();

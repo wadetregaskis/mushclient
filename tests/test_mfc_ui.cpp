@@ -34,6 +34,8 @@
 #include "dialogs/InsertUnicodeDlg.h"  // CInsertUnicodeDlg — no wx dependency at
                                         // all, so tests/CMakeLists.txt compiles
                                         // the real .cpp into this test binary too
+#include "platform/wx_mfc_hooks.h"     // g_wxhook_message_box — captures the text
+                                        // DDV_MinMaxString actually puts up
 
 #include <algorithm>
 #include <chrono>     // CStringList walk-complexity pin
@@ -1101,6 +1103,74 @@ TEST(Files, CStdioFileReadWriteString) {
     CStdioFile closed;
     CString s;
     EXPECT_FALSE(closed.ReadString(s));
+}
+
+// Windows reads a CFile::typeText / fopen("r") file through the CRT's text
+// mode, which turns every CRLF into a lone LF before the caller sees it.  POSIX
+// has no such mode, so the shim has to do it: without this, the notepad, the
+// name generator, the variables import and -- the one caller that does not
+// defensively TrimRight -- Tip of the Day all saw a trailing '\r' the Windows
+// build never sees.  tips.txt itself ships CRLF.
+//
+// LF-only input is the control: it must come back byte-identical, so a fix that
+// merely chopped the last character would fail here.
+TEST(Files, TextModeReadsCollapseCrlfLikeTheCrtDoes) {
+    std::string path = temp_path("crlf.txt");
+    {
+        FILE* f = fopen(path.c_str(), "wb");        // raw bytes, exactly as shipped
+        ASSERT_TRUE(f != nullptr);
+        fputs("line one\r\nline two\r\n\r\nlf only\nbare\rcr\r\n", f);
+        fclose(f);
+    }
+    {
+        CStdioFile f(path.c_str(), CFile::modeRead);
+        ASSERT_TRUE(f.IsOpen());
+        CString s;
+        EXPECT_TRUE(f.ReadString(s));
+        EXPECT_STREQ("line one", (LPCTSTR)s);
+        EXPECT_TRUE(f.ReadString(s));
+        EXPECT_STREQ("line two", (LPCTSTR)s);
+        EXPECT_TRUE(f.ReadString(s));               // a CRLF blank line is BLANK
+        EXPECT_STREQ("", (LPCTSTR)s);
+        EXPECT_TRUE(f.ReadString(s));               // LF-only line: unchanged
+        EXPECT_STREQ("lf only", (LPCTSTR)s);
+        EXPECT_TRUE(f.ReadString(s));               // a lone '\r' mid-line stays,
+        EXPECT_STREQ("bare\rcr", (LPCTSTR)s);       // exactly as on Windows
+    }
+    {
+        // Buffer variant: MFC keeps the newline here, so the '\r' must go and
+        // the '\n' must stay -- "line one\n", not "line one\r\n" and not
+        // "line one".
+        CStdioFile f(path.c_str(), CFile::modeRead);
+        ASSERT_TRUE(f.IsOpen());
+        char buf[64];
+        EXPECT_TRUE(f.ReadString(buf, sizeof buf));
+        EXPECT_STREQ("line one\n", buf);
+        EXPECT_TRUE(f.ReadString(buf, sizeof buf));
+        EXPECT_STREQ("line two\n", buf);
+        EXPECT_TRUE(f.ReadString(buf, sizeof buf));
+        EXPECT_STREQ("\n", buf);
+    }
+    {
+        // _fgetts is the alias CTipDlg::GetNextTipString reads its lines with,
+        // straight off a raw fopen(path, "r") FILE* -- not a CStdioFile.
+        FILE* fp = fopen(path.c_str(), "r");
+        ASSERT_TRUE(fp != nullptr);
+        char buf[64];
+        // Boolean forms, not EXPECT_EQ/ASSERT_NE: mc_test's describe() streams a
+        // const char* into an ostringstream, and libc++ strlen()s a null one, so
+        // a FAILING comparison against a null char* crashes inside the report.
+        ASSERT_TRUE(_fgetts(buf, (int)sizeof buf, fp) != nullptr);
+        EXPECT_STREQ("line one\n", buf);
+        EXPECT_TRUE(strchr(buf, '\r') == nullptr);
+        ASSERT_TRUE(_fgetts(buf, (int)sizeof buf, fp) != nullptr);
+        ASSERT_TRUE(_fgetts(buf, (int)sizeof buf, fp) != nullptr);
+        // TipDlg.cpp:139 decides "blank or comment" from the FIRST byte, so a
+        // CRLF blank line has to arrive with '\n' there, not '\r'.
+        EXPECT_EQ('\n', buf[0]);
+        fclose(fp);
+    }
+    CFile::Remove(path.c_str());
 }
 
 TEST(Files, CMemFileWritableGrowsAndDetaches) {
@@ -3078,6 +3148,14 @@ TEST(Utils, AfxStringHelpers) {
     EXPECT_STREQ("sub", (LPCTSTR)out);
     AfxFormatString1(out, 0, nullptr);
     EXPECT_STREQ("", (LPCTSTR)out);
+    // IDS_MIN_STRING_SIZE (resource.h:1442) is the one id that has to carry a
+    // sentence: DDV_MinMaxString builds its "too short" prompt through it, and
+    // the passthrough made that modal read as a bare number.  The passthrough
+    // stays for every other id -- the two assertions above are the control.
+    AfxFormatString1(out, 32337, "24");
+    EXPECT_STREQ("Please enter at least 24 characters.", (LPCTSTR)out);
+    AfxFormatString1(out, 32337, nullptr);
+    EXPECT_STREQ("Please enter at least  characters.", (LPCTSTR)out);
 
     CString sub;
     EXPECT_TRUE(AfxExtractSubString(sub, "a\nbb\nccc", 1));
@@ -3350,6 +3428,47 @@ TEST(CommonDialogs, ColorDialogCarriesColour) {
     EXPECT_EQ(RGB(10, 20, 30), dlg.GetColor());
 }
 
+static long s_pickSeed;
+static int  s_pickCalls;
+
+// CColorDialog had no DoModal of its own, so it inherited CDialog's -- which
+// runs the dialog bridge on template 0, a template that does not exist.  The
+// Colour Picker's "Other colour..." button and its large swatch both bottom out
+// in `if (dlg.DoModal () != IDOK) return;`, so both were silent no-ops.
+TEST(CommonDialogs, ColorDialogHeadlessCancelsHookedPicks) {
+    long (*const saved)(long) = g_wxhook_pick_colour;
+
+    // No hook: IDCANCEL, and the seeded colour still comes back out.
+    g_wxhook_pick_colour = nullptr;
+    CColorDialog none(RGB(10, 20, 30));
+    EXPECT_EQ((INT_PTR)IDCANCEL, none.DoModal());
+    EXPECT_EQ(RGB(10, 20, 30), none.GetColor());
+
+    // Hooked: the ctor colour must reach the picker (the mutation that drops the
+    // seed is what opens the panel on black), and the answer must land in m_cc.
+    s_pickCalls = 0;
+    g_wxhook_pick_colour = [](long suggested) -> long {
+        s_pickSeed = suggested; ++s_pickCalls; return (long)RGB(1, 2, 3);
+    };
+    CColorDialog ok(RGB(10, 20, 30));
+    EXPECT_EQ((INT_PTR)IDOK, ok.DoModal());
+    EXPECT_EQ(1, s_pickCalls);
+    EXPECT_EQ((long)RGB(10, 20, 30), s_pickSeed);
+    EXPECT_EQ(RGB(1, 2, 3), ok.GetColor());
+
+    // -1 is the hook's cancel sentinel: IDCANCEL, and the seed is left alone
+    // rather than being overwritten with 0x00FFFFFF.
+    g_wxhook_pick_colour = [](long) -> long { return -1; };
+    CColorDialog cancelled(RGB(10, 20, 30));
+    EXPECT_EQ((INT_PTR)IDCANCEL, cancelled.DoModal());
+    EXPECT_EQ(RGB(10, 20, 30), cancelled.GetColor());
+
+    // Back to null, NOT to `saved`: test_lua_scripting's PickColourIsHeadlessNoop
+    // asserts world.PickColour(255) == -1, which needs this hook unset.
+    g_wxhook_pick_colour = nullptr;
+    (void)saved;
+}
+
 static WxFontChoice s_fontIn;
 
 TEST(CommonDialogs, FontDialogHeadlessCancelsHookedFills) {
@@ -3457,7 +3576,11 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
         s_fdOverwrite = ow;
         return strdup("/picked/dir/result.mcl");
     };
-    char initial[] = "/worlds/dir/start.mcl";
+    // _MAX_PATH, not sizeof("/worlds/dir/start.mcl"): the buffer is what DoModal
+    // writes the chosen path back into, and the constructor's nMaxFile default
+    // is _MAX_PATH -- the same bargain the canonical GetBuffer(_MAX_PATH)
+    // callers strike.
+    char initial[_MAX_PATH] = "/worlds/dir/start.mcl";
     CFileDialog dlg(FALSE, "mcl", nullptr, OFN_OVERWRITEPROMPT, "Worlds|*.mcl||");
     dlg.m_ofn.lpstrFile = initial;
     EXPECT_EQ((INT_PTR)IDOK, dlg.DoModal());
@@ -3473,6 +3596,47 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
     ASSERT_NE((POSITION)nullptr, pos);
     EXPECT_STREQ("/picked/dir/result.mcl", (LPCTSTR)dlg.GetNextPathName(pos));
     EXPECT_EQ((POSITION)nullptr, pos);
+    // The OPENFILENAME write-back: Windows' common dialog puts the chosen path
+    // in the caller's lpstrFile buffer, and three canonical File>Open handlers
+    // read it from there rather than calling GetPathName().  Asserting the
+    // buffer, not GetPathName(), is the whole point -- GetPathName() was right
+    // all along, which is why nothing caught this.
+    EXPECT_STREQ("/picked/dir/result.mcl", initial);
+    EXPECT_EQ((DWORD)_MAX_PATH, dlg.m_ofn.nMaxFile);   // supplied by the ctor
+
+    // A caller with its own smaller buffer must say so, exactly as on Windows;
+    // the write-back then truncates to nMaxFile-1 and stays NUL-terminated.
+    // The sentinel byte one past the end must survive.
+    char small[12];
+    memset(small, '#', sizeof small);
+    CFileDialog snug(FALSE, "mcl", nullptr, 0, "Worlds|*.mcl||");
+    snug.m_ofn.lpstrFile = small;
+    snug.m_ofn.nMaxFile  = 8;
+    EXPECT_EQ((INT_PTR)IDOK, snug.DoModal());
+    EXPECT_STREQ("/picked", small);              // 7 chars + NUL, not 22
+    EXPECT_EQ('#', small[8]);                    // nothing written past nMaxFile
+    EXPECT_STREQ("/picked/dir/result.mcl", (LPCTSTR)snug.GetPathName());
+
+    // A cancel must leave the caller's buffer exactly as it was -- the three
+    // canonical callers seed it with the name to reopen on.
+    {
+        HookGuard<decltype(g_wxhook_file_dialog)> nope(g_wxhook_file_dialog);
+        g_wxhook_file_dialog = [](bool, const char*, const char*, const char*,
+                                  const char*, bool, bool) -> char* {
+            return nullptr;
+        };
+        char keep[_MAX_PATH] = "/keep/me.mcl";
+        CFileDialog cancelled(TRUE, nullptr, nullptr, 0, nullptr);
+        cancelled.m_ofn.lpstrFile = keep;
+        EXPECT_EQ((INT_PTR)IDCANCEL, cancelled.DoModal());
+        EXPECT_STREQ("/keep/me.mcl", keep);
+    }
+
+    // A null lpstrFile is the common case (most callers only read GetPathName)
+    // and must not crash.
+    CFileDialog noBuf(FALSE, nullptr, nullptr, 0, nullptr);
+    EXPECT_EQ((INT_PTR)IDOK, noBuf.DoModal());
+    EXPECT_STREQ("/picked/dir/result.mcl", (LPCTSTR)noBuf.GetPathName());
 
     // lpstrInitialDir takes precedence; filename ctor arg is the hint
     CFileDialog dlg2(TRUE, nullptr, "hint.txt");
@@ -4212,6 +4376,55 @@ TEST(StubSweep, DialogAndDdxRemainder) {
     DDX_LBIndex(&dx, 1, idx);
     DDX_LBString(&dx, 1, s);
     EXPECT_STREQ("keep", (LPCTSTR)s);
+}
+
+// The end-to-end half of the AfxFormatString1 fix: DDV_MinMaxString
+// (DDV_validation.cpp, the real MFC-shared source) builds MFC's "too short"
+// prompt through AfxFormatString1(IDS_MIN_STRING_SIZE), so with the shim's
+// blanket passthrough a field below its minimum length put up a modal box whose
+// entire text was a bare number.  Live callers: the Plugin Wizard's plugin-ID
+// page (24, 24) and the Global Preferences locale (2, 3).
+//
+// This asserts the STRING the box was asked to show, not merely that a box
+// appeared -- the passthrough shows one too.
+TEST(Ddv, MinMaxStringExplainsTheMinimumLength) {
+    static CString s_text;
+    static int     s_boxes;
+    s_text = "";
+    s_boxes = 0;
+    int (*const saved)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char* t, const char*, unsigned) -> int {
+        s_text = t ? t : ""; ++s_boxes; return IDOK;
+    };
+
+    CDataExchange dx;
+    dx.m_bSaveAndValidate = TRUE;
+
+    // Too short, minimum > 1 -> the AfxFormatString1(IDS_MIN_STRING_SIZE) arm.
+    bool failed = false;
+    CString id = "not-24-chars";
+    try { DDV_MinMaxString(&dx, id, 24, 24); }
+    catch (const CDdxValidationFail&) { failed = true; }
+    EXPECT_TRUE(failed);                       // the veto itself was never broken
+    EXPECT_EQ(1, s_boxes);
+    EXPECT_STREQ("Please enter at least 24 characters.", (LPCTSTR)s_text);
+
+    // The minimum == 1 arm has its own literal message and must stay untouched.
+    CString blank = "";
+    failed = false;
+    try { DDV_MinMaxString(&dx, blank, 1, 10); }
+    catch (const CDdxValidationFail&) { failed = true; }
+    EXPECT_TRUE(failed);
+    EXPECT_EQ(2, s_boxes);
+    EXPECT_STREQ("This field may not be blank", (LPCTSTR)s_text);
+
+    // A long-enough value shows nothing at all -- the control that proves the
+    // two assertions above are not just reading a box that always appears.
+    CString ok = "123456789012345678901234";
+    DDV_MinMaxString(&dx, ok, 24, 24);
+    EXPECT_EQ(2, s_boxes);
+
+    g_wxhook_message_box = saved;
 }
 
 TEST(StubSweep, ControlClassRemainder) {
@@ -4955,6 +5168,187 @@ TEST(Wnd, SetWindowPlacementMovesTheWindow) {
     EXPECT_EQ(1, s_calls);
 
     g_wxhook_move_window = saved;
+}
+
+// Every CWnd geometry-mapping overload was a no-op for anything that is not a
+// CView -- CView carries its own real copies, which is why the gap survived in
+// the classes that actually hit it (CDialog, CButton, CEdit, every control).
+// 5cfd0e5 fixed GetClientRect's pointer forms; the CRect& spelling, which is
+// what the standard MFC idiom `CRect r; wnd.GetClientRect(r);` binds -- it is
+// the sole candidate, an unadorned name cannot bind a CRect* -- still zeroed
+// the rect, and ClientToScreen/ScreenToClient were untouched on every overload.
+//
+// The structs are pre-poisoned, so "the call did nothing" cannot pass.
+static int s_c2sDx, s_c2sDy;
+
+TEST(Wnd, GeometryMappingOverloadsAllAgree) {
+    HookGuard<decltype(g_wxhook_get_client_rect)> g1(g_wxhook_get_client_rect);
+    HookGuard<decltype(g_wxhook_get_window_rect)> g2(g_wxhook_get_window_rect);
+    HookGuard<decltype(g_wxhook_client_to_screen)> g3(g_wxhook_client_to_screen);
+    HookGuard<decltype(g_wxhook_screen_to_client)> g4(g_wxhook_screen_to_client);
+
+    g_wxhook_get_client_rect = [](const void*, RECT* r) {
+        r->left = 0; r->top = 0; r->right = 300; r->bottom = 200;
+    };
+    g_wxhook_get_window_rect = [](const void*, RECT* r) {
+        r->left = 7; r->top = 9; r->right = 307; r->bottom = 209;
+    };
+    // A translation, so client and screen coordinates genuinely differ -- an
+    // identity mapping would make every assertion below vacuous.
+    s_c2sDx = 100; s_c2sDy = 40;
+    g_wxhook_client_to_screen = [](const void*, int* x, int* y) {
+        *x += s_c2sDx; *y += s_c2sDy;
+    };
+    g_wxhook_screen_to_client = [](const void*, int* x, int* y) {
+        *x -= s_c2sDx; *y -= s_c2sDy;
+    };
+
+    CWnd w;
+    w.m_hWnd = (HWND)(void*)1;
+
+    // GetClientRect: by-name and address-of must give the same real answer.
+    CRect byName(-1, -1, -1, -1);
+    CRect byAddr(-2, -2, -2, -2);
+    w.GetClientRect(byName);
+    w.GetClientRect(&byAddr);
+    EXPECT_EQ(0L,   (long)byName.left);
+    EXPECT_EQ(300L, (long)byName.right);
+    EXPECT_EQ(200L, (long)byName.bottom);
+    EXPECT_EQ((long)byAddr.left,   (long)byName.left);
+    EXPECT_EQ((long)byAddr.right,  (long)byName.right);
+    EXPECT_EQ((long)byAddr.bottom, (long)byName.bottom);
+
+    // GetWindowRect gained the same reference spelling.
+    CRect win(-1, -1, -1, -1);
+    w.GetWindowRect(win);
+    EXPECT_EQ(7L,   (long)win.left);
+    EXPECT_EQ(307L, (long)win.right);
+
+    // ClientToScreen maps BOTH corners of a rect, by name and by address.
+    CRect rName(10, 20, 110, 220);
+    CRect rAddr(10, 20, 110, 220);
+    w.ClientToScreen(rName);
+    w.ClientToScreen(&rAddr);
+    EXPECT_EQ(110L, (long)rName.left);     // 10 + 100
+    EXPECT_EQ(60L,  (long)rName.top);      // 20 + 40
+    EXPECT_EQ(210L, (long)rName.right);    // 110 + 100
+    EXPECT_EQ(260L, (long)rName.bottom);   // 220 + 40
+    EXPECT_EQ((long)rAddr.left,   (long)rName.left);
+    EXPECT_EQ((long)rAddr.bottom, (long)rName.bottom);
+
+    // ...and ScreenToClient undoes it, so the round trip returns the original.
+    w.ScreenToClient(rName);
+    EXPECT_EQ(10L,  (long)rName.left);
+    EXPECT_EQ(220L, (long)rName.bottom);
+
+    // The point overloads: CPoint (which is NOT a POINT here) and POINT.
+    CPoint cp(10, 20);
+    w.ClientToScreen(&cp);
+    EXPECT_EQ(110, cp.x);
+    EXPECT_EQ(60,  cp.y);
+    w.ScreenToClient(&cp);
+    EXPECT_EQ(10, cp.x);
+    EXPECT_EQ(20, cp.y);
+
+    POINT pt = { 10, 20 };
+    w.ClientToScreen(&pt);
+    EXPECT_EQ(110L, (long)pt.x);
+    EXPECT_EQ(60L,  (long)pt.y);
+    w.ScreenToClient(&pt);
+    EXPECT_EQ(10L, (long)pt.x);
+    EXPECT_EQ(20L, (long)pt.y);
+
+    RECT raw = { 10, 20, 110, 220 };
+    w.ClientToScreen(&raw);
+    EXPECT_EQ(110L, (long)raw.left);
+    EXPECT_EQ(260L, (long)raw.bottom);
+
+    // A null pointer and a hookless CWnd are both refusals, not crashes.
+    w.ClientToScreen((POINT*)nullptr);
+    w.ScreenToClient((CRect*)nullptr);
+    g_wxhook_client_to_screen = nullptr;
+    CPoint untouched(3, 4);
+    w.ClientToScreen(&untouched);
+    EXPECT_EQ(3, untouched.x);
+    EXPECT_EQ(4, untouched.y);
+}
+
+// The Complete Word popup is anchored at the caret by a three-step chain --
+// CEdit::PosFromChar -> CWnd::ClientToScreen -> CWnd::SetWindowPos -- and every
+// step used to discard its input.  ClientToScreen is pinned by the test above;
+// these are the other two.
+static int s_pfcChar, s_swpX, s_swpY, s_swpCx, s_swpCy, s_swpCalls;
+static bool s_swpMove, s_swpSize;
+
+TEST(Edit, PosFromCharAsksTheControlAndFallsBackToTheOrigin) {
+    HookGuard<decltype(g_wxhook_edit_pos_from_char)> g(g_wxhook_edit_pos_from_char);
+
+    // No hook (headless / mushcore): the historical (0,0), unchanged.
+    g_wxhook_edit_pos_from_char = nullptr;
+    CEdit bare;
+    CPoint none = bare.PosFromChar(17);
+    EXPECT_EQ(0, none.x);
+    EXPECT_EQ(0, none.y);
+
+    s_pfcChar = -1;
+    g_wxhook_edit_pos_from_char = [](const void*, int nChar, int* x, int* y) {
+        s_pfcChar = nChar; *x = 64; *y = 26;
+    };
+    CEdit e;
+    CPoint pt = e.PosFromChar(17);
+    EXPECT_EQ(17, s_pfcChar);        // the index really travels
+    EXPECT_EQ(64, pt.x);
+    EXPECT_EQ(26, pt.y);
+
+    // A hook that answers nothing leaves the caller's (0,0) alone rather than
+    // writing junk -- PositionToCoords can decline.
+    g_wxhook_edit_pos_from_char = [](const void*, int, int*, int*) {};
+    CPoint silent = e.PosFromChar(3);
+    EXPECT_EQ(0, silent.x);
+    EXPECT_EQ(0, silent.y);
+}
+
+TEST(Wnd, SetWindowPosHonoursTheMoveAndSizeFlagsSeparately) {
+    HookGuard<decltype(g_wxhook_set_window_pos)> g(g_wxhook_set_window_pos);
+    s_swpCalls = 0;
+    g_wxhook_set_window_pos = [](void*, int x, int y, int cx, int cy,
+                                 bool bMove, bool bSize) {
+        s_swpX = x; s_swpY = y; s_swpCx = cx; s_swpCy = cy;
+        s_swpMove = bMove; s_swpSize = bSize; ++s_swpCalls;
+    };
+
+    CWnd w;
+
+    // The Complete Word popup's own call: move, keep the size.
+    w.SetWindowPos(nullptr, 120, 340, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    EXPECT_EQ(1, s_swpCalls);
+    EXPECT_EQ(120, s_swpX);
+    EXPECT_EQ(340, s_swpY);
+    EXPECT_TRUE(s_swpMove);
+    EXPECT_FALSE(s_swpSize);
+
+    // Resize in place (mainfrm's info-bar rich edit).
+    w.SetWindowPos(nullptr, 0, 0, 3000, 20, SWP_NOMOVE | SWP_NOZORDER);
+    EXPECT_EQ(2, s_swpCalls);
+    EXPECT_FALSE(s_swpMove);
+    EXPECT_TRUE(s_swpSize);
+    EXPECT_EQ(3000, s_swpCx);
+    EXPECT_EQ(20, s_swpCy);
+
+    // Both at once.
+    w.SetWindowPos(nullptr, 5, 6, 7, 8, 0);
+    EXPECT_EQ(3, s_swpCalls);
+    EXPECT_TRUE(s_swpMove);
+    EXPECT_TRUE(s_swpSize);
+
+    // The always-on-top spelling -- SetWindowPos(&wndTopMost, 0,0,0,0,
+    // SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE) at mainfrm.cpp:1529 and
+    // MUSHclient.cpp:768 -- asks only for a Z-order change, and its coordinates
+    // are dummies.  Acting on them would slam every world window to the origin,
+    // so this MUST NOT reach the hook at all.
+    w.SetWindowPos(&CWnd::wndTopMost, 0, 0, 0, 0,
+                   SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    EXPECT_EQ(3, s_swpCalls);
 }
 
 TEST(Wnd, InertStubSurface) {

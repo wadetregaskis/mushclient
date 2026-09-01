@@ -314,7 +314,8 @@ public:
                                  r->right - r->left, r->bottom - r->top,
                                  repaint != FALSE);
     }
-    void SetWindowPos(const CWnd*, int, int, int, int, UINT) {}
+    // Defined out-of-line after mfc_ui.h — the SWP_* flags live there.
+    void SetWindowPos(const CWnd*, int x, int y, int cx, int cy, UINT nFlags);
     void BringWindowToTop() {}
     void SetRedraw(BOOL = TRUE) {}
     void RedrawWindow(const RECT* = nullptr, CRgn* = nullptr, UINT = 0) {
@@ -372,16 +373,53 @@ public:
     void  ModifyStyleEx(DWORD, DWORD, UINT = 0) {}
     DWORD GetStyle() const { return 0; }
     DWORD GetExStyle() const { return 0; }
-    void  ScreenToClient(POINT*) const {}
-    void  ClientToScreen(POINT*) const {}
-    void  ScreenToClient(RECT*) const {}
-    void  ClientToScreen(RECT*) const {}
-    void  ScreenToClient(CPoint* p) const { (void)p; }
-    void  ClientToScreen(CPoint* p) const { (void)p; }
-    void  ScreenToClient(CRect* r) const { (void)r; }
-    void  ClientToScreen(CRect* r) const { (void)r; }
-    // CRect& overloads — declared here, defined after mfc_ui.h (CRect must be complete)
+    // Every one of these was a no-op, on every overload, for everything that is
+    // not a CView — CView carries its own real copies (mfc_ui.h), which is why
+    // the gap survived: the classes that hit it are the dialogs and controls.
+    // The canonical caret-anchoring idiom
+    //   dlg.m_pt = editctrl.PosFromChar (n); editctrl.ClientToScreen (&dlg.m_pt);
+    // therefore threw its answer away twice over.
+    void  ScreenToClient(POINT* p) const {
+        if (!g_wxhook_screen_to_client || !p) return;
+        int x = (int) p->x, y = (int) p->y;
+        g_wxhook_screen_to_client(m_hWnd, &x, &y);
+        p->x = x; p->y = y;
+    }
+    void  ClientToScreen(POINT* p) const {
+        if (!g_wxhook_client_to_screen || !p) return;
+        int x = (int) p->x, y = (int) p->y;
+        g_wxhook_client_to_screen(m_hWnd, &x, &y);
+        p->x = x; p->y = y;
+    }
+    // A rect maps both corners, exactly as Win32's MapWindowPoints does for a
+    // RECT and as CView's own overrides already do here.
+    void  ScreenToClient(RECT* r) const {
+        if (!g_wxhook_screen_to_client || !r) return;
+        int l = (int) r->left, t = (int) r->top, ri = (int) r->right, b = (int) r->bottom;
+        g_wxhook_screen_to_client(m_hWnd, &l, &t);
+        g_wxhook_screen_to_client(m_hWnd, &ri, &b);
+        r->left = l; r->top = t; r->right = ri; r->bottom = b;
+    }
+    void  ClientToScreen(RECT* r) const {
+        if (!g_wxhook_client_to_screen || !r) return;
+        int l = (int) r->left, t = (int) r->top, ri = (int) r->right, b = (int) r->bottom;
+        g_wxhook_client_to_screen(m_hWnd, &l, &t);
+        g_wxhook_client_to_screen(m_hWnd, &ri, &b);
+        r->left = l; r->top = t; r->right = ri; r->bottom = b;
+    }
+    // CPoint / CRect overloads — declared here, defined after mfc_ui.h (both
+    // types must be complete: CRect derives from RECT and can be cast to one,
+    // CPoint deliberately does not and has to be copied field by field).
+    void  ScreenToClient(CPoint* p) const;
+    void  ClientToScreen(CPoint* p) const;
+    void  ScreenToClient(CRect* r) const;
+    void  ClientToScreen(CRect* r) const;
+    // CRect& overloads — the spelling the standard MFC idiom actually binds.
+    // `CRect r; wnd.GetClientRect(r);` cannot bind a CRect* parameter without
+    // an &, so these are the sole candidates, not merely the closest match:
+    // 5cfd0e5 fixed the pointer forms and this spelling still read back zeros.
     void  GetClientRect(CRect& r) const;
+    void  GetWindowRect(CRect& r) const;
     void  ClientToScreen(CRect& r) const;
     void  ScreenToClient(CRect& r) const;
     BOOL  CreateEx(DWORD, LPCTSTR, LPCTSTR, DWORD, int, int, int, int, HWND, HMENU, LPVOID = nullptr) { return FALSE; }
@@ -514,9 +552,43 @@ inline void CWnd::SetFont(CFont* pFont, BOOL) {
     if (g_wxhook_set_font && pFont && pFont->m_impl)
         g_wxhook_set_font(m_hWnd, pFont->m_impl);
 }
-inline void CWnd::GetClientRect(CRect& r) const { r.left=r.top=r.right=r.bottom=0; }
-inline void CWnd::ClientToScreen(CRect& r) const { (void)r; }
-inline void CWnd::ScreenToClient(CRect& r) const { (void)r; }
+// Win32 SetWindowPos.  CCompleteWordDlg::OnInitDialog positions the Complete
+// Word popup at the caret with the position-only form (SWP_NOSIZE), and a no-op
+// here was the last of the three steps that threw that anchor away.
+//
+// The Z-order window and the activation flags are dropped: wx has no equivalent,
+// and always-on-top -- the only thing in the tree that asks for one -- has its
+// own path (apply_always_on_top).  Those callers pass SWP_NOMOVE|SWP_NOSIZE with
+// dummy (0,0,0,0) coordinates, so they must stay a no-op here; applying what
+// they pass would slam every frame to the origin.
+inline void CWnd::SetWindowPos(const CWnd*, int x, int y, int cx, int cy, UINT nFlags) {
+    const bool bMove = (nFlags & SWP_NOMOVE) == 0;
+    const bool bSize = (nFlags & SWP_NOSIZE) == 0;
+    if (!bMove && !bSize) return;              // Z-order / activation only
+    if (g_wxhook_set_window_pos)
+        g_wxhook_set_window_pos(m_hWnd, x, y, cx, cy, bMove, bSize);
+}
+
+inline void CWnd::ScreenToClient(CPoint* p) const {
+    if (!g_wxhook_screen_to_client || !p) return;
+    int x = p->x, y = p->y;
+    g_wxhook_screen_to_client(m_hWnd, &x, &y);
+    p->x = x; p->y = y;
+}
+inline void CWnd::ClientToScreen(CPoint* p) const {
+    if (!g_wxhook_client_to_screen || !p) return;
+    int x = p->x, y = p->y;
+    g_wxhook_client_to_screen(m_hWnd, &x, &y);
+    p->x = x; p->y = y;
+}
+// RECT is CRect's sole, first base, so the C-style cast is exact — the same one
+// CView's own overrides and GetClientRect(CRect*) above use.
+inline void CWnd::ScreenToClient(CRect* r) const { ScreenToClient((RECT*) r); }
+inline void CWnd::ClientToScreen(CRect* r) const { ClientToScreen((RECT*) r); }
+inline void CWnd::GetClientRect(CRect& r) const  { GetClientRect((RECT*) &r); }
+inline void CWnd::GetWindowRect(CRect& r) const  { GetWindowRect((RECT*) &r); }
+inline void CWnd::ClientToScreen(CRect& r) const { ClientToScreen((RECT*) &r); }
+inline void CWnd::ScreenToClient(CRect& r) const { ScreenToClient((RECT*) &r); }
 
 // ── #pragma warning equivalents ───────────────────────────────────────────
 // MSVC pragmas that appear in the source — silently ignore on clang/gcc

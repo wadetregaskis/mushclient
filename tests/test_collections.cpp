@@ -160,6 +160,33 @@ TEST(PtrList, FindLocatesByValueAndReportsMisses)
     EXPECT_TRUE(list.Find(c.make(1234)) == nullptr);
 }
 
+// MFC's CPtrList::Find(value, startAfter) resumes at the node AFTER startAfter,
+// which is what makes the canonical find-next loop terminate.  The shim used to
+// start AT it, so Find(x, previousMatch) handed back that same POSITION forever.
+TEST(PtrList, FindStartsStrictlyAfterTheGivenPosition)
+{
+    Cells c; IntList list;
+    int* target = c.make(7);
+    list.AddTail(c.make(1));          // a non-matching head, so "resume" != "restart"
+    POSITION first  = list.AddTail(target);
+    POSITION second = list.AddTail(target);
+    list.AddTail(c.make(9));
+
+    EXPECT_TRUE(list.Find(target) == first);          // NULL startAfter = from the head
+    EXPECT_TRUE(list.Find(target, first) == second);  // and not `first` again
+    EXPECT_TRUE(list.Find(target, second) == nullptr);
+
+    // The canonical find-next idiom terminates, visiting each match once.
+    int seen = 0;
+    for (POSITION p = list.Find(target); p; p = list.Find(target, p))
+        {
+        ++seen;
+        ASSERT_LE(seen, 8);                            // an unfixed Find spins here
+        EXPECT_EQ(target, list.GetAt(p));
+        }
+    EXPECT_EQ(2, seen);
+}
+
 TEST(PtrList, EmptyListWalksZeroTimesAndReportsEmpty)
 {
     IntList list;

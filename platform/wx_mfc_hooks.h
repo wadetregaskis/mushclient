@@ -132,6 +132,15 @@ extern void (*g_wxhook_set_window_text)(void* hwnd, const char* text);
 
 // Window position / size
 extern void (*g_wxhook_move_window)(void* hwnd, int x, int y, int w, int h, bool repaint);
+// CWnd::SetWindowPos.  Separate from move_window because the Win32 call can ask
+// for a move without a resize (SWP_NOSIZE) or the reverse (SWP_NOMOVE), and the
+// value it leaves out has to come from the window itself in the window's OWN
+// coordinate space -- screen for a top-level, parent-client for a child.  That
+// is what wxWindow::SetSize(..., wxSIZE_USE_EXISTING) knows and GetWindowRect
+// (always screen) does not, so the choice belongs on the wx side.  Z-order and
+// the activation flags have no wx equivalent and are dropped.
+extern void (*g_wxhook_set_window_pos)(void* hwnd, int x, int y, int cx, int cy,
+                                       bool bMove, bool bSize);
 
 // Destroy window
 extern void (*g_wxhook_destroy_window)(void* hwnd);
@@ -359,6 +368,11 @@ extern int  (*g_wxhook_edit_line_info)(void* hwnd, int op, int arg);
 // of which were silently dropped while the shim methods were `{}`.
 extern void (*g_wxhook_edit_set_max_length)(void* hwnd, int chars);  // 0 = no limit
 extern void (*g_wxhook_edit_set_readonly)(void* hwnd, bool readOnly);
+// CEdit::PosFromChar (EM_POSFROMCHAR): the client coordinates of the character
+// at byte offset `nChar`, the same byte-offset seam ops 1-4 of edit_line_info
+// use.  Writes *x/*y only when it can answer, so a caller that pre-set them
+// keeps its own value.
+extern void (*g_wxhook_edit_pos_from_char)(const void* hwnd, int nChar, int* x, int* y);
 // CWnd::SetFont — `font` is the CFont's wxFont* (CGdiObject::m_impl).  The wx
 // side copies it, so the caller may destroy the CFont afterwards.
 extern void (*g_wxhook_set_font)(void* hwnd, void* font);

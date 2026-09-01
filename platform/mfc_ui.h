@@ -2850,25 +2850,57 @@ public:
     static bool GetStatus(LPCTSTR, void*) { return false; }
 };
 
+// ── Text-mode line endings ────────────────────────────────────────────────
+// Windows reads these files through the CRT's TEXT mode -- CFile::typeText, or
+// a plain fopen(path, "r") -- which translates every CRLF to a lone LF before
+// the caller ever sees it.  POSIX has no text mode ("r" and "rb" are the same
+// call), so the port has to do the translation itself or every line read out of
+// a CRLF file carries a stray '\r' that the Windows build never sees.
+//
+// Collapse a "\r\n" pair only, which is exactly what the CRT does: a lone '\r'
+// is left alone on Windows too.  (A CRLF split across two fgets buffers is not
+// handled -- the '\r' ends one call and the '\n' starts the next -- which needs
+// state this shim does not carry and no caller in the tree can reach.)
+inline void McTextModeCollapse(char* s)
+{
+    if (!s) return;
+    size_t len = strlen(s);
+    if (len >= 2 && s[len - 2] == '\r' && s[len - 1] == '\n') {
+        s[len - 2] = '\n';
+        s[len - 1] = '\0';
+    }
+}
+
 class CStdioFile : public CFile {
 public:
     CStdioFile() = default;
     CStdioFile(LPCTSTR path, UINT mode) : CFile(path, mode) {}
     CStdioFile(FILE* fp) { m_fp = fp; }  // attach to existing FILE*
 
+    // MFC drops the newline from the CString form and keeps it in the buffer
+    // form; both see text-mode bytes, so neither ever hands back a '\r'.
+    // CArchive::ReadString (below) has always stripped it -- these two were the
+    // odd ones out, and the two ReadStrings disagreed.
     bool ReadString(CString& rString) {
         if (!m_fp) return false;
         rString.Empty();
         int c;
         while ((c = fgetc(m_fp)) != EOF) {
-            if (c == '\n') return true;
+            if (c == '\n') {
+                const int n = rString.GetLength();
+                if (n > 0 && rString[n - 1] == '\r')
+                    rString = rString.Left(n - 1);
+                return true;
+            }
             rString += (char)c;
         }
         return !rString.IsEmpty();
     }
     bool ReadString(LPTSTR buf, UINT max) {
         if (!m_fp || max == 0) return false;
-        return fgets(buf, (int)max, m_fp) != nullptr;
+        if (fgets(buf, (int)max, m_fp) == nullptr) return false;
+        McTextModeCollapse(buf);
+        return true;
     }
     void WriteString(LPCTSTR str) {
         // MFC-faithful: throws on a failed write (see CFile::Write above).
@@ -4162,7 +4194,18 @@ public:
     int   LineFromChar(int n = -1) const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 3, n) : 0; }
     BOOL  LineScroll(int, int = 0) { return FALSE; }
     int   GetFirstVisibleLine() const { return 0; }
-    CPoint PosFromChar(UINT) const { return CPoint(); }  // char index → client coords
+    // EM_POSFROMCHAR: where in the control's client area the given character
+    // sits.  FunctionMenu (scripting/functionlist.cpp:663) anchors the Complete
+    // Word popup on it, so a permanent (0,0) put the popup at the bridge's
+    // default placement instead of beside the word being completed.  The index
+    // is a byte offset, the same seam GetSel and edit_line_info's ops 1-4 use.
+    CPoint PosFromChar(UINT nChar) const {
+        CPoint pt;                       // (0,0) — the no-hook / headless answer
+        if (g_wxhook_edit_pos_from_char)
+            g_wxhook_edit_pos_from_char((const void*) m_hWnd, (int) nChar,
+                                        &pt.x, &pt.y);
+        return pt;
+    }
     // Handle-based access (used in chatsock.cpp)
     HLOCAL GetHandle() const { return nullptr; }
     void   SetHandle(HLOCAL) {}
@@ -4968,6 +5011,28 @@ public:
     CHOOSECOLOR m_cc;  // embedded by value (Windows CColorDialog::m_cc)
     CColorDialog(COLORREF cr=0, DWORD=0, CWnd* = nullptr) { m_cc.rgbResult = cr; }
     COLORREF GetColor() const { return m_cc.rgbResult; }
+
+    // Without this the class inherited CDialog::DoModal, which runs the dialog
+    // bridge with m_nIDTemplate == 0 -- no such template exists, so it printed a
+    // line to stderr and returned IDCANCEL in the same instant.  The Colour
+    // Picker's "Other colour..." button and its large swatch (which forwards to
+    // the same handler) both bottom out in `if (dlg.DoModal () != IDOK) return;`,
+    // so both were silent no-ops.  Route to the wxColourDialog wrapper that was
+    // already there for world.PickColour, the same shape CFontDialog::DoModal
+    // uses; a null hook (headless / mushcore) keeps the old IDCANCEL.
+    //
+    // m_cc.rgbResult is in/out exactly as on Windows: it seeds the picker and
+    // GetColor() reads the answer back from it, and a cancel leaves the seed
+    // alone.  Not carried over: CHOOSECOLOR::lpCustColors, the 16 custom slots
+    // (ColourPickerDlg.cpp's file-static CustomColours) -- wx's colour dialog
+    // owns its own custom palette and there is nowhere to put them.
+    INT_PTR DoModal() override {
+        if (!g_wxhook_pick_colour) return IDCANCEL;
+        const long picked = g_wxhook_pick_colour((long) m_cc.rgbResult);
+        if (picked == -1) return IDCANCEL;          // the hook's cancel sentinel
+        m_cc.rgbResult = (COLORREF) picked;
+        return IDOK;
+    }
 };
 
 class CFontDialog : public CDialog {
@@ -5065,10 +5130,36 @@ public:
         m_ofn.lpstrDefExt = lpszDefExt;
         m_ofn.Flags       = dwFlags;
         m_ofn.lpstrFilter = lpszFilter;
+        // MFC's own constructor sets this (it points lpstrFile at an internal
+        // _MAX_PATH buffer), which is why the canonical callers that swap in
+        // their own `fileName.GetBuffer(_MAX_PATH)` never set it themselves and
+        // still get a correctly-bounded write-back.  A caller with a smaller
+        // buffer must set nMaxFile to match, exactly as on Windows.
+        m_ofn.nMaxFile    = _MAX_PATH;
         // lpszFileName and lpstrFile/lpstrTitle are usually set by callers
         // after construction via m_ofn.lpstrFile / m_ofn.lpstrTitle.
         if (lpszFileName && *lpszFileName)
             m_strResult = lpszFileName;  // pre-fill as hint
+    }
+
+    // Windows' GetOpenFileName writes the chosen path into the caller-supplied
+    // OPENFILENAME::lpstrFile buffer, and three canonical handlers read it back
+    // from there instead of calling GetPathName(): CMainFrame::DoFileOpen
+    // (mainfrm.cpp:1845), CActivityDoc::OnFileOpen (ActivityDoc.cpp:108) and
+    // CTextDocument::OnFileOpen (TextDocument.cpp:380).  DoModal used to fill
+    // only m_strResult/m_paths, so lpstrFile kept its pre-dialog contents -- for
+    // those three, a GetBuffer(_MAX_PATH) scratch full of NULs -- and the
+    // following OpenDocumentFile("") returned nullptr with nothing shown.  All
+    // three are unreachable today (the wx menu layer claims ID_FILE_OPEN first),
+    // which is what made this the D-15 shape: the signature was satisfied and
+    // the protocol was not.
+    void WriteBackChosenPath() {
+        if (!m_ofn.lpstrFile || m_ofn.nMaxFile == 0) return;
+        const char* src = (LPCTSTR) m_strResult;
+        size_t n = strlen(src);
+        if (n > (size_t) m_ofn.nMaxFile - 1) n = (size_t) m_ofn.nMaxFile - 1;
+        memcpy(m_ofn.lpstrFile, src, n);
+        m_ofn.lpstrFile[n] = '\0';
     }
 
     INT_PTR DoModal() override {
@@ -5141,6 +5232,7 @@ public:
                     m_strResult = path;
                     free(path);
                     m_paths.push_back(m_strResult);
+                    WriteBackChosenPath();
                     return IDOK;
                 }
                 // Multi-select result: NUL-separated full paths, the block
@@ -5150,6 +5242,13 @@ public:
                 free(path);
                 if (!m_paths.empty()) {
                     m_strResult = m_paths.front();
+                    // Deliberately NOT written back to lpstrFile: Windows packs
+                    // "dir\0name1\0name2\0\0" there under OFN_ALLOWMULTISELECT,
+                    // and all three multi-select call sites in the tree read the
+                    // answer with GetStartPosition/GetNextPathName instead (the
+                    // protocol fixed in 5d6345e).  Packing the port's block of
+                    // *full* paths would put a different shape in the caller's
+                    // buffer than Windows does, for a field nothing reads.
                     return IDOK;
                 }
                 // An OK with nothing selected cannot come out of wx, but a
@@ -6932,7 +7031,18 @@ inline DWORD GetModuleFileName(void* /*hModule*/, LPTSTR buf, DWORD n) {
 #  define _fstat(fd,buf) fstat(fd,buf)
 #endif
 #ifndef _fgetts
-#  define _fgetts  fgets
+// fgets on a file the caller opened "r" -- i.e. text mode on Windows.  Its one
+// call site in the tree is CTipDlg::GetNextTipString (dialogs/TipDlg.cpp:133),
+// which ReleaseBuffer()s the bytes verbatim into the tip it displays; tips.txt
+// ships CRLF, so every Tip of the Day carried a trailing "\r\n", and the
+// blank/comment skip test one line down (*lpsz != '\n') could not recognise a
+// CRLF blank line because the leading byte was '\r'.
+inline char* McFgetts(char* buf, int max, FILE* fp) {
+    char* r = fgets(buf, max, fp);
+    if (r) McTextModeCollapse(r);
+    return r;
+}
+#  define _fgetts  McFgetts
 #endif
 #ifndef _tcstok
 #  define _tcstok  strtok
@@ -7921,7 +8031,29 @@ inline HLOCAL  LocalFree(HLOCAL p)  { free(p); return nullptr; }
 // FormatMessage already defined earlier in this file.
 
 // ── Afx helpers ───────────────────────────────────────────────────────────
-inline void AfxFormatString1(CString& out, UINT, LPCTSTR s) { out = s ? s : ""; }
+// AfxFormatString1 loads a string-table entry and substitutes %1 with s.  The
+// port has no string table at all (CString::LoadString returns empty and the
+// recovered resources carry no STRINGTABLE), so the generic answer can only be
+// the substitution argument on its own.
+//
+// That is fine for a caption but not for a sentence: DDV_MinMaxString
+// (DDV_validation.cpp:51) builds its "too short" prompt this way, so a field
+// below its minimum length put up a modal box whose entire text was a bare
+// number -- "24" in the Plugin Wizard's plugin-ID page, "2" for the Global
+// Preferences locale.  The veto was right; the explanation was gibberish.
+//
+// So the one id that has to carry a sentence is spelled out here, exactly as
+// McDdvFailRange (above) already hardcodes MFC's numeric-range wording for the
+// same reason.  Every other id keeps the passthrough.  IDS_MIN_STRING_SIZE is
+// written as its literal value (resource.h:1442) rather than #included:
+// mfc_ui.h is pulled in through compat.h long before resource.h is available.
+inline void AfxFormatString1(CString& out, UINT nIDS, LPCTSTR s)
+{
+    if (nIDS == 32337 /* IDS_MIN_STRING_SIZE */)
+        out.Format("Please enter at least %s characters.", s ? s : "");
+    else
+        out = s ? s : "";
+}
 inline void AfxFormatString2(CString& out, UINT, LPCTSTR s1, LPCTSTR s2) { out = ""; }
 inline void AfxOleLockApp()   {}
 inline void AfxOleUnlockApp() {}

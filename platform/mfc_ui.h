@@ -4939,6 +4939,28 @@ public:
     CHOOSECOLOR m_cc;  // embedded by value (Windows CColorDialog::m_cc)
     CColorDialog(COLORREF cr=0, DWORD=0, CWnd* = nullptr) { m_cc.rgbResult = cr; }
     COLORREF GetColor() const { return m_cc.rgbResult; }
+
+    // Without this the class inherited CDialog::DoModal, which runs the dialog
+    // bridge with m_nIDTemplate == 0 -- no such template exists, so it printed a
+    // line to stderr and returned IDCANCEL in the same instant.  The Colour
+    // Picker's "Other colour..." button and its large swatch (which forwards to
+    // the same handler) both bottom out in `if (dlg.DoModal () != IDOK) return;`,
+    // so both were silent no-ops.  Route to the wxColourDialog wrapper that was
+    // already there for world.PickColour, the same shape CFontDialog::DoModal
+    // uses; a null hook (headless / mushcore) keeps the old IDCANCEL.
+    //
+    // m_cc.rgbResult is in/out exactly as on Windows: it seeds the picker and
+    // GetColor() reads the answer back from it, and a cancel leaves the seed
+    // alone.  Not carried over: CHOOSECOLOR::lpCustColors, the 16 custom slots
+    // (ColourPickerDlg.cpp's file-static CustomColours) -- wx's colour dialog
+    // owns its own custom palette and there is nowhere to put them.
+    INT_PTR DoModal() override {
+        if (!g_wxhook_pick_colour) return IDCANCEL;
+        const long picked = g_wxhook_pick_colour((long) m_cc.rgbResult);
+        if (picked == -1) return IDCANCEL;          // the hook's cancel sentinel
+        m_cc.rgbResult = (COLORREF) picked;
+        return IDOK;
+    }
 };
 
 class CFontDialog : public CDialog {

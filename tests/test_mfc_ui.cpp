@@ -3186,6 +3186,47 @@ TEST(CommonDialogs, ColorDialogCarriesColour) {
     EXPECT_EQ(RGB(10, 20, 30), dlg.GetColor());
 }
 
+static long s_pickSeed;
+static int  s_pickCalls;
+
+// CColorDialog had no DoModal of its own, so it inherited CDialog's -- which
+// runs the dialog bridge on template 0, a template that does not exist.  The
+// Colour Picker's "Other colour..." button and its large swatch both bottom out
+// in `if (dlg.DoModal () != IDOK) return;`, so both were silent no-ops.
+TEST(CommonDialogs, ColorDialogHeadlessCancelsHookedPicks) {
+    long (*const saved)(long) = g_wxhook_pick_colour;
+
+    // No hook: IDCANCEL, and the seeded colour still comes back out.
+    g_wxhook_pick_colour = nullptr;
+    CColorDialog none(RGB(10, 20, 30));
+    EXPECT_EQ((INT_PTR)IDCANCEL, none.DoModal());
+    EXPECT_EQ(RGB(10, 20, 30), none.GetColor());
+
+    // Hooked: the ctor colour must reach the picker (the mutation that drops the
+    // seed is what opens the panel on black), and the answer must land in m_cc.
+    s_pickCalls = 0;
+    g_wxhook_pick_colour = [](long suggested) -> long {
+        s_pickSeed = suggested; ++s_pickCalls; return (long)RGB(1, 2, 3);
+    };
+    CColorDialog ok(RGB(10, 20, 30));
+    EXPECT_EQ((INT_PTR)IDOK, ok.DoModal());
+    EXPECT_EQ(1, s_pickCalls);
+    EXPECT_EQ((long)RGB(10, 20, 30), s_pickSeed);
+    EXPECT_EQ(RGB(1, 2, 3), ok.GetColor());
+
+    // -1 is the hook's cancel sentinel: IDCANCEL, and the seed is left alone
+    // rather than being overwritten with 0x00FFFFFF.
+    g_wxhook_pick_colour = [](long) -> long { return -1; };
+    CColorDialog cancelled(RGB(10, 20, 30));
+    EXPECT_EQ((INT_PTR)IDCANCEL, cancelled.DoModal());
+    EXPECT_EQ(RGB(10, 20, 30), cancelled.GetColor());
+
+    // Back to null, NOT to `saved`: test_lua_scripting's PickColourIsHeadlessNoop
+    // asserts world.PickColour(255) == -1, which needs this hook unset.
+    g_wxhook_pick_colour = nullptr;
+    (void)saved;
+}
+
 static WxFontChoice s_fontIn;
 
 TEST(CommonDialogs, FontDialogHeadlessCancelsHookedFills) {

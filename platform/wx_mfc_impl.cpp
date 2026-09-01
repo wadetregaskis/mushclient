@@ -3987,7 +3987,12 @@ static long hook_pick_colour(long suggested)
         unsigned char b = (suggested >> 16) & 0xFF;
         data.SetColour(wxColour(r, g, b));
     }
-    wxColourDialog dlg(wxGetActiveWindow(), &data);
+    // ActiveDialogParent(), not wxGetActiveWindow(): inside a bridged dialog's
+    // modal loop on macOS the latter is null, and a parentless picker can open
+    // invisibly -- which looks exactly like the button did nothing.  The file
+    // and font pickers were moved off it for the same reason.  This matters now
+    // that CColorDialog::DoModal routes here from inside CColourPickerDlg.
+    wxColourDialog dlg(ActiveDialogParent(), &data);
     if (dlg.ShowModal() != wxID_OK)
         return -1;
     wxColour col = dlg.GetColourData().GetColour();

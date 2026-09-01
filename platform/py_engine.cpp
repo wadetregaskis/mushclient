@@ -79,10 +79,22 @@ void py_to_variant(PyObject* o, VARIANT& v)
   VariantInit(&v);
   if (o == nullptr || o == Py_None)        { v.vt = VT_EMPTY; return; }
   if (PyBool_Check(o))                     { v.vt = VT_BOOL; v.boolVal = (o == Py_True); return; }
-  if (PyLong_Check(o))                     { v.vt = VT_I4;   v.lVal = PyLong_AsLong(o);
-                                             if (v.lVal == -1 && PyErr_Occurred())
-                                               { PyErr_Clear(); v.vt = VT_R8; v.dblVal = PyLong_AsDouble(o); }
-                                             return; }
+  if (PyLong_Check(o))
+    {
+    v.vt = VT_I4;  v.lVal = PyLong_AsLong(o);
+    if (v.lVal != -1 || !PyErr_Occurred()) return;
+    PyErr_Clear();
+    v.vt = VT_R8;  v.dblVal = PyLong_AsDouble(o);
+    // An int beyond double range (~1.8e308) makes PyLong_AsDouble itself RAISE
+    // OverflowError and answer -1.0 -- unchecked, the method received -1.0 and
+    // the pending exception leaked into whatever Python ran next (the same
+    // leaked-exception failure mode the Unicode comment below describes
+    // fixing).  Marshal the digits instead: fall through to the str(o)
+    // fallback at the bottom, which is exact for an integer and is what every
+    // other unconvertible value already gets.
+    if (v.dblVal != -1.0 || !PyErr_Occurred()) return;
+    PyErr_Clear();
+    }
   if (PyFloat_Check(o))                    { v.vt = VT_R8;   v.dblVal = PyFloat_AsDouble(o); return; }
   if (PyUnicode_Check(o))
     {

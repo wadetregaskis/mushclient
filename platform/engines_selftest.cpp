@@ -378,6 +378,7 @@ const Dialect kDialects[] = {
   "def rbigneg():\n    return -(1 << 64)\n"
   "class Ambiguous:\n    def __bool__(self):\n        raise ValueError('ambiguous truth')\n"
   "def badbool():\n    return Ambiguous()\n"
+  "def hugeint():\n    world.SetVariable('huge', 10**400)\n    world.SetVariable('hugeafter', 'clean')\n"
   "def params(a, b, c, d):\n"
   "    world.SetVariable('p', '%d|%d|%s|%s' % (int(a), int(b), c, d))\n"
   "def tbl(s, t):\n    world.SetVariable('t', t.get('key', '?'))\n"
@@ -1810,6 +1811,30 @@ void battery_py_namespace(Engine& e, const Dialect& d)
           "the module namespace carries __name__, and it is \"__main__\"");
 }
 
+// 6a-quater. A Python int beyond double range crossing to the world API.
+//     py_to_variant falls back to PyLong_AsDouble for an int that overflows
+//     long, but never checked THAT call's error: past ~1.8e308 it raises
+//     OverflowError and answers -1.0, so the world method received -1 and the
+//     pending exception leaked into whatever Python ran next -- CPython turns
+//     "returned a result with an exception set" into a SystemError against
+//     the innocent call.  Now the digits cross as a string (exact for an
+//     integer) and nothing leaks.  CPython-specific; run_language gates it.
+void battery_py_overflow(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    e.seed("huge", "handler never ran");
+    e.seed("hugeafter", "handler never ran");
+    bool err = false;
+    e.callRich("hugeint", &err);
+    std::string expected = "1";
+    expected.append(400, '0');
+    check(!err && e.var("huge") == expected, L,
+          "an int beyond double range arrives as its exact digits, not -1");
+    check(e.var("hugeafter") == "clean", L,
+          "...and the world call right after is not poisoned by a leaked OverflowError");
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -1882,8 +1907,10 @@ bool run_language(const Dialect& d)
     battery_state     (e, d);
     if (strcmp(d.key, "tcl") == 0)        // Tcl-specific platform bootstrap
         battery_tcl_platform(e, d);
-    if (strcmp(d.key, "python") == 0)     // CPython-specific namespace seeding
+    if (strcmp(d.key, "python") == 0) {   // CPython-specific behaviours
         battery_py_namespace(e, d);
+        battery_py_overflow (e, d);
+    }
     battery_trace     (d);
     battery_error_routing(d);
     battery_stale_proxy  (d);

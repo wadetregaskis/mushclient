@@ -1037,6 +1037,33 @@ int RunInputSelfTest()
         chk(!foundOff,
             "...but not when do_not_add_macros_to_command_history is set");
 
+        // ── unpause_on_send reaches SEND_NOW macros ─────────────────────────
+        // Windows' macros ride SendCommand, whose tail unpauses (sendvw.cpp:756
+        // via SendMacro:796); the port's FireMacro went straight to Execute and
+        // skipped it.  Both directions: the option ON unpauses, OFF leaves the
+        // freeze alone -- the OFF arm is what separates "the gate is read" from
+        // "SEND_NOW always unpauses".
+        {
+            COutputPane* pane = child->OutputPane();
+            const unsigned short savedUnpause = doc->m_bUnpauseOnSend;
+            doc->m_macros[MAC_F7] = "f7_unpause";
+
+            doc->m_bUnpauseOnSend = 1;
+            pane->SetPaused(true);
+            chk(pane->IsPaused(), "fixture: the pane really paused");
+            child->FireMacro(MAC_F7);
+            chk(!pane->IsPaused(),
+                "F7: a SEND_NOW macro unpauses when unpause_on_send is on");
+
+            doc->m_bUnpauseOnSend = 0;
+            pane->SetPaused(true);
+            child->FireMacro(MAC_F7);
+            chk(pane->IsPaused(),
+                "...and leaves the pause alone when the option is off");
+            pane->SetPaused(false);
+            doc->m_bUnpauseOnSend = savedUnpause;
+        }
+
         doc->m_macros[MAC_F7]                  = savedMac;
         doc->m_macro_type[MAC_F7]              = savedType;
         doc->m_bDoNotAddMacrosToCommandHistory = savedDoNot;

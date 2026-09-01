@@ -3924,6 +3924,13 @@ bool CWorldChildFrame::FireMacro(int idx)
         CString cmd = mac;
         if (m_doc->m_bTranslateBackslashSequences)
             cmd = ::FixupEscapeSequences(cmd);
+        // Unpause output on send: Windows' SEND_NOW macros ride SendCommand,
+        // whose tail runs this same gate (sendvw.cpp:756 via SendMacro's
+        // SendCommand call at :796) -- going straight to Execute() skipped it,
+        // so a macro fired into frozen scrollback left the reply off-screen.
+        // Same two lines and same placement as sendCommand's own arm.
+        if (m_doc->m_bUnpauseOnSend && m_output && m_output->IsPaused())
+            m_output->SetPaused(false);
         m_doc->m_iCurrentActionSource = eUserMacro;
         m_doc->m_iExecutionDepth = 0;
         m_doc->Execute(cmd);

@@ -250,6 +250,17 @@ struct Dialect {
     // tcl_to_variant marshals every argument as VT_BSTR, so there is no
     // VT_EMPTY for it to send).
     const char* nilArgs;
+
+    // A NATIVE boolean crossing into a parameter the dispatch map declares as
+    // a STRING or a NUMBER.  bools(s) writes true into world.SetVariable (a
+    // VTS_BSTR parameter) and into world.SetOption (VTS_I4), and returns
+    // "<stored>|<option after the boolean>|<option after a plain 1>".  Null
+    // for a language with no native boolean at this boundary (Perl: an SV is
+    // an IV here; Tcl: everything marshals as VT_BSTR).  boolExpect is what
+    // that string must be -- carried beside the source so the expectation and
+    // the language that produces it cannot drift apart.
+    const char* boolArgs;
+    const char* boolExpect;
 };
 
 const Dialect kDialects[] = {
@@ -351,7 +362,24 @@ const Dialect kDialects[] = {
   "  world.EnableTrigger('n_true', true)\n"
   "  world.EnableTrigger('n_false', false)\n"
   "  return 'done'\n"
-  "end\n" },
+  "end\n",
+  // Lua is the live CONTROL here, and deliberately disagrees.  Its binding
+  // does not travel mc_dispatch at all, and my_checkstring is lua_tolstring,
+  // which answers NULL for a boolean -- so world.SetVariable('bv', true) is a
+  // loud argument error in Lua where the COM-shaped path silently stores
+  // VARIANT_TRUE's rendering.  If this row ever starts agreeing with the other
+  // three, the control has stopped controlling.
+  "function bools(s)\n"
+  "  local ok = pcall(function() world.SetVariable('bv', true) end)\n"
+  "  if not ok then return 'raised' end\n"
+  "  world.SetOption('paste_delay', 5)\n"
+  "  world.SetOption('paste_delay', true)\n"
+  "  local a = world.GetOption('paste_delay')\n"
+  "  world.SetOption('paste_delay', 1)\n"
+  "  local b = world.GetOption('paste_delay')\n"
+  "  return tostring(world.GetVariable('bv')) .. '|' .. tostring(a) .. '|' .. tostring(b)\n"
+  "end\n",
+  "raised" },
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
@@ -464,7 +492,19 @@ const Dialect kDialects[] = {
   "    world.EnableTrigger('n_nil', None)\n"
   "    world.EnableTrigger('n_true', True)\n"
   "    world.EnableTrigger('n_false', False)\n"
-  "    return 'done'\n" },
+  "    return 'done'\n",
+  "def bools(s):\n"
+  "    try:\n"
+  "        world.SetVariable('bv', True)\n"
+  "    except Exception:\n"
+  "        return 'raised'\n"
+  "    world.SetOption('paste_delay', 5)\n"
+  "    world.SetOption('paste_delay', True)\n"
+  "    a = world.GetOption('paste_delay')\n"
+  "    world.SetOption('paste_delay', 1)\n"
+  "    b = world.GetOption('paste_delay')\n"
+  "    return '%s|%s|%s' % (world.GetVariable('bv'), a, b)\n",
+  "-1|5|1" },
 
 // ── Perl ──────────────────────────────────────────────────────────────────
 { "perl", "Perl", "perl",
@@ -545,7 +585,10 @@ const Dialect kDialects[] = {
   "  $world->EnableTrigger('n_true', 1);\n"
   "  $world->EnableTrigger('n_false', 0);\n"
   "  return 'done';\n"
-  "}\n" },
+  "}\n",
+  // Perl has no native boolean at this boundary: sv_to_variant sees an IV, so
+  // !!1 crosses as VT_I4 1 and never meets the VT_BOOL arm at all.
+  nullptr, nullptr },
 
 // ── JavaScript ────────────────────────────────────────────────────────────
 { "js", "JS", "javascript",
@@ -641,7 +684,17 @@ const Dialect kDialects[] = {
   "  world.EnableTrigger('n_true', true);\n"
   "  world.EnableTrigger('n_false', false);\n"
   "  return 'done';\n"
-  "}\n" },
+  "}\n",
+  "function bools(s) {\n"
+  "  try { world.SetVariable('bv', true); } catch (e) { return 'raised'; }\n"
+  "  world.SetOption('paste_delay', 5);\n"
+  "  world.SetOption('paste_delay', true);\n"
+  "  var a = world.GetOption('paste_delay');\n"
+  "  world.SetOption('paste_delay', 1);\n"
+  "  var b = world.GetOption('paste_delay');\n"
+  "  return world.GetVariable('bv') + '|' + a + '|' + b;\n"
+  "}\n",
+  "-1|5|1" },
 
 // ── Tcl ───────────────────────────────────────────────────────────────────
 { "tcl", "Tcl", "tcl",
@@ -725,7 +778,8 @@ const Dialect kDialects[] = {
   "}\n"
   "proc probeloud {s} { world SetVariable probe }\n",
   nullptr,     // `world Foo` is a command invocation; nothing to coerce
-  nullptr },   // ...and no nil either: every Tcl argument marshals as VT_BSTR
+  nullptr,     // ...and no nil either: every Tcl argument marshals as VT_BSTR
+  nullptr, nullptr },   // ...nor a boolean, for that same reason
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
 { "ruby", "Ruby", "ruby",
@@ -817,7 +871,21 @@ const Dialect kDialects[] = {
   "  world.EnableTrigger('n_true', true)\n"
   "  world.EnableTrigger('n_false', false)\n"
   "  'done'\n"
-  "end\n" },
+  "end\n",
+  "def bools(s)\n"
+  "  begin\n"
+  "    world.SetVariable('bv', true)\n"
+  "  rescue Exception\n"
+  "    return 'raised'\n"
+  "  end\n"
+  "  world.SetOption('paste_delay', 5)\n"
+  "  world.SetOption('paste_delay', true)\n"
+  "  a = world.GetOption('paste_delay')\n"
+  "  world.SetOption('paste_delay', 1)\n"
+  "  b = world.GetOption('paste_delay')\n"
+  "  world.GetVariable('bv').to_s + '|' + a.to_s + '|' + b.to_s\n"
+  "end\n",
+  "-1|5|1" },
 };
 
 const int kDialectCount = (int) (sizeof kDialects / sizeof kDialects[0]);
@@ -1777,6 +1845,58 @@ void battery_explicit_nil(const Dialect& d, const bool strict)
     }
 }
 
+// 5g. A native boolean crossing into a STRING or a NUMBER parameter.
+//     The scripting hosts the Windows build rides marshal `true` as
+//     VARIANT_TRUE, whose value is -1, and oleaut's VarBstrFromBool /
+//     VarI4FromBool pass that NUMBER through -- so a string parameter receives
+//     "-1" and a numeric one receives -1.  The port's engines sent 1, so
+//         world.SetVariable ("flag", True)
+//     stored "1" here and "-1" on Windows, and
+//         world.SetOption (<a boolean option>, True)
+//     succeeded here while Windows refused it (every boolean option's range is
+//     0..1, so -1 is out of range).  Same plugin line, different world state,
+//     no error on either platform.
+//
+//     This is the half tests/test_mc_dispatch.cpp cannot see: that file builds
+//     its own VARIANTs, so it pins the substrate but says nothing about what
+//     py_engine / js_engine / ruby_engine actually put in one.  Here the real
+//     interpreter produces the boolean.
+//
+//     The observable is deliberately the OPTION's value rather than SetOption's
+//     return code: an out-of-range refusal and a successful write are told
+//     apart by what paste_delay holds afterwards, so no error constant is
+//     hard-coded and the assertion still fails if the call quietly succeeds.
+//     The trailing "|1" is the control -- SetOption with a plain 1 must still
+//     work, or "the option did not change" would prove nothing.
+//
+//     Lua is the live control and deliberately disagrees: it does not travel
+//     mc_dispatch, and my_checkstring (lua_tolstring) rejects a boolean, so a
+//     Lua script gets a loud error where the COM-shaped five get "-1".
+void battery_boolean_marshalling(const Dialect& d)
+{
+    const char* L = d.display;
+    const char* what = "a native boolean reaches a string parameter as "
+                       "VARIANT_TRUE's -1";
+    if (!d.boolArgs) {
+        skip(L, what, "this language has no native boolean at this boundary");
+        return;
+    }
+
+    std::string src(d.source);
+    src += d.boolArgs;
+    Engine e(d.language, src.c_str());
+    if (!e.ok) { skip(L, what, "engine failed to open"); return; }
+
+    // Poison the variable the script must overwrite, so a call that never ran
+    // cannot read as an empty-but-plausible answer.
+    e.seed("bv", "handler never ran");
+
+    const CString got = e.callRtn("bools", "");
+    check(got == d.boolExpect, L, what);
+    if (got != d.boolExpect)
+        printf("      expected \"%s\", got \"%s\"\n", d.boolExpect, (LPCTSTR) got);
+}
+
 // 6a-bis. Tcl platform bootstrap: [info nameofexecutable].
 //     Tcl_FindExecutable(NULL) does only the encoding half of what its old
 //     comment claimed -- TclpFindExecutable returns immediately on a NULL
@@ -1962,6 +2082,7 @@ bool run_language(const Dialect& d)
     battery_explicit_nil(d, false);       // option off -- the everyday path
     battery_explicit_nil(d, true);        // ...and on: strict must not read an
                                           // explicit nil as a MISSING argument
+    battery_boolean_marshalling(d);
     battery_mxp_callsite(d);
     battery_trigger_callsite(d, true);    // box ticked
     // The negative control at the SAME layer: without it, hard-coding the flag

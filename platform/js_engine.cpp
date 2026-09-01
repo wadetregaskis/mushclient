@@ -194,7 +194,8 @@ void js_to_variant(JSContextRef ctx, JSValueRef v, VARIANT& out)
   {
   VariantInit(&out);
   if (!v || JSValueIsUndefined(ctx, v) || JSValueIsNull(ctx, v)) { out.vt = VT_EMPTY; return; }
-  if (JSValueIsBoolean(ctx, v)) { out.vt = VT_BOOL; out.boolVal = JSValueToBoolean(ctx, v) ? 1 : 0; return; }
+  // -1 is VARIANT_TRUE; see the boolean note in platform/mc_dispatch.cpp.
+  if (JSValueIsBoolean(ctx, v)) { out.vt = VT_BOOL; out.boolVal = JSValueToBoolean(ctx, v) ? -1 : 0; return; }
   if (JSValueIsNumber(ctx, v))
     {
     double d = JSValueToNumber(ctx, v, nullptr);

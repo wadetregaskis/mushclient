@@ -8387,6 +8387,65 @@ Windows — a script error. The port has no channel to report that from
 then refuses it with `eOptionOutOfRange`. Both end in a refusal, but only one
 of them is catchable, and that gap is recorded rather than fixed.
 
+### §10bd — OWED: what a script's `true` looks like to a non-boolean parameter
+
+Not a result — the second half of §10bc's question, and the same caveat: the
+Windows side is documented COM behaviour, never measured here.
+
+`py_engine` / `js_engine` / `ruby_engine` marshalled a language `true` as
+`VT_BOOL` with `boolVal = 1`, and `mc_dispatch` coerced that to `1` for a
+numeric parameter and `"1"` for a string one. They now send **VARIANT_TRUE**,
+which is `-1`, and the substrate passes the number through — `VarI4FromBool`
+and `VarBstrFromBool` both render the value, and MFC's coercion passes no
+`VARIANT_ALPHABOOL`, so a string parameter should receive `"-1"` rather than
+`"True"`.
+
+A `VTS_BOOL` parameter is deliberately **not** part of this: `VARIANT_BOOL` is
+16-bit where MFC's `BOOL` is 32-bit, so that conversion cannot be a copy, and
+every shipping method with a `BOOL` parameter normalises for itself anyway
+(`Enabled != 0`, `bNewValue != 0`). `var_to_bool` keeps those at 0/1 so `-1`
+can never reach a `BOOL` member that is stored raw — `m_bMapping` and
+`m_bRemoveMapReverses` are written straight from the property setter.
+
+Run this on the Windows build, in a **Python** world (JScript and Ruby should
+agree; Perl has no native boolean at this boundary and Tcl sends everything as
+a string, so neither can be asked):
+
+```python
+world.SetVariable("bv", True)
+world.Note("string param: " + world.GetVariable("bv"))
+
+world.SetOption("paste_delay", 5)
+world.SetOption("paste_delay", True)
+world.Note("after boolean: %s" % world.GetOption("paste_delay"))
+world.SetOption("paste_delay", 1)
+world.Note("after plain 1: %s" % world.GetOption("paste_delay"))
+```
+
+- `string param: -1` → the string arm is right and this half closes. `1`
+  means revert `var_to_cstr`'s `VT_BOOL` arm and the three engine
+  marshallers; `True` means MFC does pass `VARIANT_ALPHABOOL` after all, which
+  nothing here predicted, and the arm should format the word instead.
+- `after boolean: 5` → the numeric arm is right: `-1` is outside every boolean
+  option's `0..1` range, so Windows refuses the call and leaves the option
+  alone. `after boolean: 1` means the number did not arrive as `-1` and the
+  numeric arm should go back to `boolVal ? 1 : 0`.
+- `after plain 1: 1` is the control. If that fails, the fixture is wrong and
+  neither of the two readings above means anything.
+
+**This is a user-visible behaviour change on macOS, and it is the one worth
+watching for.** A port-only Python/JS/Ruby plugin that says
+`world.SetOption (<a boolean option>, True)` used to succeed here and now gets
+`eOptionOutOfRange`. That is Windows parity — the same line has always failed
+silently on Windows — but from a mac user's seat it reads as a regression, so
+if the run above says the port is right, it is worth a release note rather
+than only a commit message. The port-side pin is
+`McDispatch.ALanguageBooleanReachesANumericParameterAsMinusOne`, and the
+engine-side one is the `bools` row of `--engines-selftest`, which asks the
+real interpreter for the boolean and keeps Lua as a live control (Lua does not
+travel `mc_dispatch`, and `my_checkstring` rejects a boolean outright, so it
+raises where the other three store `-1`).
+
 ## §11 — The in-app probe suite
 
 ```

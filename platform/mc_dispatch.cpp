@@ -153,12 +153,41 @@ long var_to_long(const VARIANT* a)
     case VT_I4:   return a->lVal;
     case VT_R4:   return round_to_long ((double) a->fltVal);
     case VT_R8:   return round_to_long (a->dblVal);
-    case VT_BOOL: return a->boolVal ? 1 : 0;
+    // The VARIANT_BOOL value ITSELF, not its truth: oleaut's VarI4FromBool
+    // hands the number straight across, and a script's true is VARIANT_TRUE,
+    // which is -1.  See the boolean note above var_to_bool below.
+    case VT_BOOL: return a->boolVal;
     case VT_BSTR: { long b;
                     if (bool_word (a->bstrVal, b)) return b;
                     return str_to_long (a->bstrVal); }
     default:      return 0;
     }
+  }
+
+// ── A language boolean is VARIANT_TRUE (-1), and stays -1 where a NUMBER or
+// STRING was declared ──────────────────────────────────────────────────────
+// The scripting hosts the Windows build rides (ActiveScript's Python, JScript
+// and Ruby) marshal `true` as VARIANT_TRUE, whose value is -1, not 1.  When
+// that lands in a parameter the dispatch map declares VTS_I4 or VTS_BSTR,
+// oleaut's VarI4FromBool / VarBstrFromBool pass the NUMBER through: the method
+// sees -1, and a string parameter receives "-1" (there is no VARIANT_ALPHABOOL
+// in MFC's coercion, so it is never "True").  The port's engines sent 1 and
+// the substrate coerced to 1 / "1", so the same plugin line ended with
+// different world state on the two platforms, silently:
+//     world.SetVariable ("flag", True)   stored "1" here, "-1" on Windows
+//     world.SetOption (<a boolean option>, True)  succeeded here, and on
+//         Windows is refused eOptionOutOfRange, the option's range being 0..1
+//
+// A parameter the map declares VTS_BOOL is a different question and keeps its
+// canonical 0/1 (var_to_bool below): VARIANT_BOOL is 16-bit and MFC's BOOL is
+// 32-bit, so that conversion cannot be a copy, and every shipping method with
+// a BOOL parameter normalises for itself anyway (`Enabled != 0`,
+// `bNewValue != 0`).  Keeping the two apart is what stops -1 reaching a BOOL
+// member that is stored raw — m_bMapping and m_bRemoveMapReverses are written
+// straight from the property setter.
+static int var_to_bool (const VARIANT* a)
+  {
+  return var_to_long (a) != 0 ? 1 : 0;
   }
 
 double var_to_double(const VARIANT* a)
@@ -170,7 +199,7 @@ double var_to_double(const VARIANT* a)
     case VT_I4:   return a->lVal;
     case VT_R4:   return a->fltVal;
     case VT_R8:   return a->dblVal;
-    case VT_BOOL: return a->boolVal ? 1 : 0;
+    case VT_BOOL: return a->boolVal;          // VARIANT_TRUE is -1.0, as above
     case VT_BSTR: { long b;
                     if (bool_word (a->bstrVal, b)) return b;
                     return a->bstrVal ? atof (a->bstrVal) : 0.0; }
@@ -195,7 +224,10 @@ CString var_to_cstr(const VARIANT* a)
     // float precision so a widened 2.6f does not print representation noise.
     case VT_R4:   s.Format ("%.7g",  (double) a->fltVal);   break;
     case VT_R8:   s.Format ("%.14g", a->dblVal);            break;
-    case VT_BOOL: s = a->boolVal ? "1" : "0";               break;
+    // "-1"/"0", not "1"/"0": VarBstrFromBool renders the VARIANT_BOOL
+    // NUMBER, and MFC's coercion passes no VARIANT_ALPHABOOL, so a script's
+    // true reaching a VTS_BSTR parameter is "-1" on Windows.
+    case VT_BOOL: s.Format ("%d", (int) a->boolVal);        break;
     default:                                                break;
     }
   return s;
@@ -218,7 +250,7 @@ void to_variant(VARIANT& r, const CString& v) { r.vt = VT_BSTR; r.bstrVal = SysA
 template<class T> T prop_from(const VARIANT* v);
 template<> long           prop_from<long>          (const VARIANT* v) { return var_to_long(v); }
 template<> short          prop_from<short>         (const VARIANT* v) { return (short) var_to_long(v); }
-template<> int            prop_from<int>           (const VARIANT* v) { return (int) var_to_long(v); }   // BOOL
+template<> int            prop_from<int>           (const VARIANT* v) { return var_to_bool(v); }   // BOOL — every int-typed property is VT_BOOL
 template<> unsigned short prop_from<unsigned short>(const VARIANT* v) { return (unsigned short) var_to_long(v); }
 template<> double         prop_from<double>        (const VARIANT* v) { return var_to_double(v); }
 template<> CString        prop_from<CString>       (const VARIANT* v) { return var_to_cstr(v); }
@@ -232,7 +264,7 @@ template<class T> struct Holder;
 
 template<> struct Holder<long>   { long v;   Holder(const VARIANT* a):v(var_to_long(a)){}            long   get(){return v;} void finalize(std::vector<VARIANT>*){} };
 template<> struct Holder<short>  { short v;  Holder(const VARIANT* a):v((short)var_to_long(a)){}     short  get(){return v;} void finalize(std::vector<VARIANT>*){} };
-template<> struct Holder<int>    { int v;    Holder(const VARIANT* a):v((int)var_to_long(a)){}       int    get(){return v;} void finalize(std::vector<VARIANT>*){} };  // BOOL
+template<> struct Holder<int>    { int v;    Holder(const VARIANT* a):v(var_to_bool(a)){}            int    get(){return v;} void finalize(std::vector<VARIANT>*){} };  // BOOL — canonical 0/1, see var_to_bool
 template<> struct Holder<double> { double v; Holder(const VARIANT* a):v(var_to_double(a)){}          double get(){return v;} void finalize(std::vector<VARIANT>*){} };
 template<> struct Holder<float>  { float v;  Holder(const VARIANT* a):v((float)var_to_double(a)){}   float  get(){return v;} void finalize(std::vector<VARIANT>*){} };
 

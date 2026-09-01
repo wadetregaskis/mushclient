@@ -1605,17 +1605,19 @@ void TestCaretAnchorChain()
 
     CEdit ed;
     ed.m_hWnd = (HWND) tc;
-    // Byte offsets (the CEdit seam): line starts are 0, 11, 23 for this ASCII
-    // text.  Two characters on the same line must differ in x, and a character
-    // two lines down must be exactly two rows lower -- a shim answering a
-    // constant (the old CPoint()) fails all of these.
+    // Byte offsets (the CEdit seam): for a MULTI-LINE control the seam counts
+    // CRLF line breaks, matching the CRLF CString a canonical caller holds --
+    // line starts are 0, 12, 25 for this ASCII text.  Two characters on the
+    // same line must differ in x, and a character two lines down must be
+    // exactly two rows lower -- a shim answering a constant (the old CPoint())
+    // fails all of these.
     const int lineH = tc->GetCharHeight();
     check(lineH > 0, "the control reports a character height to build rows from");
 
     const CPoint a = ed.PosFromChar(3);    // line 0, column 3
     const CPoint b = ed.PosFromChar(7);    // line 0, column 7
-    const CPoint c = ed.PosFromChar(26);   // line 2, column 3
-    const CPoint home = ed.PosFromChar(23);  // line 2, column 0
+    const CPoint c = ed.PosFromChar(28);   // line 2, column 3
+    const CPoint home = ed.PosFromChar(25);  // line 2, column 0
 
     check(a.x > 0, "PosFromChar answers a real column offset, not 0");
     check(b.x > a.x && b.y == a.y,

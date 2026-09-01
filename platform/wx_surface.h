@@ -115,6 +115,22 @@ private:
     struct Font {
         CFont*   font = nullptr;
         FontSpec spec;
+        // fontMetrics() is O(1) on Windows (GDI copies the font's cached
+        // TEXTMETRIC) and 95 Core Text layouts here, because the shim's
+        // CDC::GetTextMetrics measures every printable ASCII glyph to fill
+        // tmMaxCharWidth.  world.WindowFontInfo pays that for EVERY InfoType,
+        // not only code 7, so asking a font its height cost the whole sweep.
+        //
+        // Latching it on the Font entry is safe because the entry is immutable
+        // for its lifetime: createFont builds the CFont once and never touches
+        // it again, CMiniWindow::Font handles a redefinition by destroying the
+        // old entry and erasing it before creating a NEW id, and m_nextFont
+        // never recycles ids -- so there is no "same id, different font" state
+        // to go stale.  The metrics are display-independent once realized
+        // (createFont folds dpi() in at creation, and measureDc() is a fixed
+        // 1x1 memory DC), so this cache is exactly as stale as the CFont.
+        FontMetrics metrics;
+        bool        metricsValid = false;
     };
 
     Surf* surf(SurfaceId id);
@@ -142,6 +158,13 @@ private:
     std::uint32_t m_nextSurface = 1, m_nextFont = 1;
     CDC* m_measureDc = nullptr;
 };
+
+// How many times fontMetrics() has MEASURED rather than answered from the
+// per-Font cache.  Test hook only: --pal-miniwindow-selftest asserts that N
+// WindowFontInfo calls on one font produce exactly one pass, which is the only
+// honest way to pin the memoisation (a wall-clock bound would be flaky under
+// Guard Malloc / ASan).
+long WxSurfaceFontMetricsPassesForTesting();
 
 } // namespace pal
 

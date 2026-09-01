@@ -17,6 +17,7 @@
 #include "stdafx.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -1029,10 +1030,19 @@ Size WxSurface::measureText(FontId fid, const char* utf8, size_t len) {
     return { sz.cx, sz.cy };
 }
 
+// How many times fontMetrics() has actually MEASURED, i.e. missed the cache.
+// Exposed only so --pal-miniwindow-selftest can pin the memoisation itself:
+// N WindowFontInfo calls on one font must produce exactly one pass.  A
+// wall-clock bound would be flaky under Guard Malloc / ASan; a count is not.
+static std::atomic<long> s_fontMetricsPasses { 0 };
+long WxSurfaceFontMetricsPassesForTesting() { return s_fontMetricsPasses.load(); }
+
 FontMetrics WxSurface::fontMetrics(FontId fid) {
     FontMetrics m;
     Font* f = font(fid);
     if (!f) return m;
+    if (f->metricsValid) return f->metrics;   // see Font::metrics in the header
+    ++s_fontMetricsPasses;
     CDC* dc = measureDc();
     CFont* old = dc->SelectObject(f->font);
     TEXTMETRIC tm;
@@ -1065,6 +1075,8 @@ FontMetrics WxSurface::fontMetrics(FontId fid) {
     else
         m.face = f->spec.face;
     dc->SelectObject(old);
+    f->metrics = m;
+    f->metricsValid = true;
     return m;
 }
 

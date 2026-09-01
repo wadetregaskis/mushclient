@@ -20,6 +20,7 @@
 #include "miniwindow.h"           // CMiniWindow, MouseMoveMiniWindow, MINIWINDOW_*
 #include "scripting/errors.h"
 #include "tests/fake_worldview.h" // the recording pal::IWorldView (header-only)
+#include "platform/wx_surface.h"  // WxSurfaceFontMetricsPassesForTesting
 
 #include <chrono>
 #include <cstdio>
@@ -527,6 +528,50 @@ int RunPalMiniWindowSelfTest()
                         "(so the measurement is real, not a fallback)");
             else
                 mwCheck(false, "WindowFontInfo(6)/(7) return numbers for it");
+        }
+
+        // ── the metrics are MEASURED ONCE per font, not once per query ─────
+        // tmMaxCharWidth is filled by measuring all 95 printable ASCII glyphs,
+        // each a Core Text layout; GDI's GetTextMetrics is O(1) because it
+        // copies the font's cached TEXTMETRIC.  WindowFontInfo pays that sweep
+        // for EVERY InfoType, not only code 7, so asking a font its height cost
+        // 95 measurements -- and lua/mw.lua's popup helper issues seven such
+        // calls before drawing anything.  Nothing cached it.
+        //
+        // Perf cannot be pinned by a clock here (flaky under Guard Malloc and
+        // ASan), so pin the COUNT: repeated queries on one font must measure
+        // exactly once.
+        {
+            const long before = pal::WxSurfaceFontMetricsPassesForTesting();
+            for (int i = 0; i < 12; ++i) {
+                VARIANT v = doc->WindowFontInfo(W, "f1", 1);
+                g_mwSink += (v.vt == VT_I4) ? v.lVal : 0;
+            }
+            const long after = pal::WxSurfaceFontMetricsPassesForTesting();
+            mwCheck(after - before == 0,
+                    "12 more WindowFontInfo calls on a measured font measure 0 times");
+        }
+
+        // ...and the cache must be keyed on the FONT, not on the plugin's name
+        // for it.  Redefining an id destroys the old entry and creates a NEW
+        // one, so a name-keyed cache would hand back the previous face's
+        // metrics -- and pass every assertion above.  "fprop" was proportional;
+        // redefine it as a monospace and the pitch bit must flip back.
+        {
+            const long before = pal::WxSurfaceFontMetricsPassesForTesting();
+            mwCheck(doc->WindowFont(W, "fprop", "Courier New", 12,
+                                    FALSE, FALSE, FALSE, FALSE, 0, 0) == eOK,
+                    "WindowFont redefines an existing font id");
+            VARIANT ppf  = doc->WindowFontInfo(W, "fprop", 19);
+            VARIANT pavg = doc->WindowFontInfo(W, "fprop", 6);
+            VARIANT pmax = doc->WindowFontInfo(W, "fprop", 7);
+            mwCheck(ppf.vt == VT_I4 && (ppf.lVal & 1) == 0,
+                    "...and the redefined font reports its OWN pitch (fixed now)");
+            mwCheck(pavg.vt == VT_I4 && pmax.vt == VT_I4 &&
+                    pavg.lVal > 0 && pmax.lVal >= pavg.lVal,
+                    "...with its own metrics, not the previous face's");
+            mwCheck(pal::WxSurfaceFontMetricsPassesForTesting() - before == 1,
+                    "...measured exactly once for the new font");
         }
     }
 

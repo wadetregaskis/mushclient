@@ -129,6 +129,14 @@ void CMUSHclientDoc::CheckTickTimers()
 // ── Set_Up_Set_Strings: non-Windows version ───────────────────────────────────
 // Returns the file extension, dialog title, and wxWidgets wildcard filter string
 // for each set type.  Returns TRUE on bad set_type (mirrors Windows version).
+//
+// suggested_name arrives as the world name (Save_Set) and must come back with
+// the per-set suffix appended -- that is what the save dialog pre-fills, and
+// it is the whole reason the parameter is by reference.  This used to leave it
+// untouched, so every export defaulted to the bare world name instead of e.g.
+// "Discworld triggers"; see evaluate.cpp's Windows version, which this mirrors
+// (its filter-string syntax and dialog titles are MFC-specific and differ on
+// purpose -- only the suffix and the STRING case are meant to match exactly).
 BOOL Set_Up_Set_Strings(int set_type,
                                 CString& suggested_name,
                                 CString& filter,
@@ -140,26 +148,37 @@ BOOL Set_Up_Set_Strings(int set_type,
         ext    = "mct";
         filter = "MUSHclient trigger files (*.mct)|*.mct|All files (*.*)|*.*";
         title  = "Trigger file";
+        suggested_name += " triggers";
         break;
     case ALIAS:
         ext    = "mca";
         filter = "MUSHclient alias files (*.mca)|*.mca|All files (*.*)|*.*";
         title  = "Alias file";
+        suggested_name += " aliases";
         break;
     case COLOUR:
         ext    = "mcc";
         filter = "MUSHclient colour files (*.mcc)|*.mcc|All files (*.*)|*.*";
         title  = "Colour file";
+        suggested_name += " colours";
         break;
     case MACRO:
         ext    = "mcm";
         filter = "MUSHclient macro files (*.mcm)|*.mcm|All files (*.*)|*.*";
         title  = "Macro file";
+        suggested_name += " macros";
+        break;
+    case STRING:
+        ext    = "mcs";
+        filter = "MUSHclient string files (*.mcs)|*.mcs|All files (*.*)|*.*";
+        title  = "String file";
+        suggested_name += " strings";
         break;
     case TIMER:
         ext    = "mci";
         filter = "MUSHclient timer files (*.mci)|*.mci|All files (*.*)|*.*";
         title  = "Timer file";
+        suggested_name += " timers";
         break;
     default:
         return TRUE;   // bad set_type

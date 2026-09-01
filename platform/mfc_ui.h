@@ -3600,12 +3600,30 @@ class CDataExchange {
 public:
     BOOL m_bSaveAndValidate = TRUE;
     CWnd* m_pDlgWnd = nullptr;
-    void  PrepareCtrl(int) {}
-    void  PrepareEditCtrl(int) {}
-    // MFC's CDataExchange::Fail() sets focus then throws CUserException; the port
-    // throws a lightweight sentinel that UpdateData catches.  Canonical
-    // DoDataExchange code already expects Fail() to abort (Windows contract).
-    void  Fail() { throw CDdxValidationFail(); }
+    // The last-prepared control, MFC's m_hWndLastControl/m_bEditLastControl:
+    // each DDX_ function records the control it exchanges, so a DDV failure
+    // can put the user IN the offending field.  MFC therefore requires a DDV
+    // to follow the DDX of the field it validates, which the generated
+    // DoDataExchange bodies all do.
+    int  m_idLastControl = 0;
+    bool m_bEditLastControl = false;
+    void  PrepareCtrl(int id)     { m_idLastControl = id; m_bEditLastControl = false; }
+    void  PrepareEditCtrl(int id) { m_idLastControl = id; m_bEditLastControl = true; }
+    // MFC's CDataExchange::Fail() sets focus back to the offending control --
+    // selecting an edit's text so the bad value is retype-ready -- then throws
+    // CUserException; the port does the same with a lightweight sentinel that
+    // UpdateData catches.  Canonical DoDataExchange code already expects
+    // Fail() to abort (Windows contract).
+    void  Fail() {
+        if (m_pDlgWnd && m_idLastControl) {
+            if (CWnd* w = m_pDlgWnd->GetDlgItem(m_idLastControl)) {
+                w->SetFocus();
+                if (m_bEditLastControl && g_wxhook_edit_set_sel)
+                    g_wxhook_edit_set_sel((void*) w->m_hWnd, 0, -1);  // select all
+            }
+        }
+        throw CDdxValidationFail();
+    }
 };
 
 // CDialog::UpdateData — run DoDataExchange in the requested direction (FALSE =
@@ -3627,6 +3645,7 @@ inline BOOL CDialog::UpdateData(BOOL bSaveAndValidate) {
 // the control-class-specific ones (DDX_Check, ...) are real but defined after
 // their control classes below.  The rest remain no-ops for now.
 inline void DDX_Text(CDataExchange* pDX, int id, CString& s) {
+    if (pDX) pDX->PrepareEditCtrl(id);
     CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
     if (!w) return;
     if (pDX->m_bSaveAndValidate) w->GetWindowText(s);
@@ -3643,6 +3662,7 @@ inline void DDX_Text(CDataExchange* pDX, int id, CString& s) {
 // legitimately skips controls Windows hides; see wx_dialog_bridge.cpp's
 // WS_VISIBLE arm.)
 inline BOOL DDX_TextNumImpl(CDataExchange* pDX, int id, CString& text) {
+    if (pDX) pDX->PrepareEditCtrl(id);
     CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
     if (!w) { text.Empty(); return FALSE; }
     if (pDX->m_bSaveAndValidate) w->GetWindowText(text);   // control -> text (caller parses)
@@ -3762,6 +3782,7 @@ inline void DDX_Text(CDataExchange* pDX, int id, double& value) {
 // dialog's m_hWnd.
 inline void DDX_Radio(CDataExchange* pDX, int firstId, int& value) {
     if (!pDX || !pDX->m_pDlgWnd) return;
+    pDX->PrepareCtrl(firstId);
     void* dlg = pDX->m_pDlgWnd->m_hWnd;
     if (pDX->m_bSaveAndValidate) {
         if (g_wxhook_radio_get) value = g_wxhook_radio_get(dlg, firstId);
@@ -3783,6 +3804,7 @@ inline void DDX_LBString(CDataExchange*, int, CString&) {}
 // the real widget.  Direction-independent: the binding is needed for both load
 // and save.
 inline void DDX_Control(CDataExchange* pDX, int id, CWnd& ctl) {
+    if (pDX) pDX->PrepareCtrl(id);
     if (pDX && pDX->m_pDlgWnd) {
         if (g_wxhook_get_dlg_item)
             ctl.m_hWnd = (HWND) g_wxhook_get_dlg_item(pDX->m_pDlgWnd->m_hWnd, id);
@@ -4039,6 +4061,7 @@ public:
 // DDX_CBIndex: member <-> combo's selected index.  DDX_CBString: member <->
 // the selected item's text.  Defined here now that CComboBox is complete.
 inline void DDX_CBIndex(CDataExchange* pDX, int id, int& index) {
+    if (pDX) pDX->PrepareCtrl(id);
     CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
     if (!w) return;
     CComboBox* cb = (CComboBox*) w;   // CComboBox adds no data over CWnd
@@ -4055,6 +4078,7 @@ inline void DDX_CBIndex(CDataExchange* pDX, int id, int& index) {
     }
 }
 inline void DDX_CBString(CDataExchange* pDX, int id, CString& value) {
+    if (pDX) pDX->PrepareCtrl(id);
     CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
     if (!w) return;
     CComboBox* cb = (CComboBox*) w;
@@ -4146,6 +4170,7 @@ public:
 // Defined here, after CButton, since it casts GetDlgItem's CWnd* to CButton*
 // (the control classes add no data, so the cast is valid — MFC's contract).
 inline void DDX_Check(CDataExchange* pDX, int id, int& value) {
+    if (pDX) pDX->PrepareCtrl(id);
     CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
     if (!w) return;
     CButton* b = (CButton*) w;

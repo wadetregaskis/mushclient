@@ -1859,6 +1859,90 @@ TEST(Ddx, UnparseableNumericTextIsRejectedRatherThanRead) {
     g_wxhook_message_box = saved;
 }
 
+// MFC's CDataExchange::Fail() puts the user IN the offending control: focus
+// returns to the last-prepared control, and an edit's text is selected so the
+// bad value is retype-ready.  The port's Fail() only threw -- after "Please
+// enter an integer between 20 and 500." on a dense page, nothing said WHICH
+// of the numeric fields was rejected.
+namespace {
+enum { ID_DDV_FIRST = 41, ID_DDV_SECOND = 42, ID_DDV_CHECK = 43 };
+
+class DdvFocusDialog : public CDialog {
+public:
+    int m_first = 5;
+    int m_second = 5;
+    DdvFocusDialog() : CDialog(998) { m_hWnd = (HWND)(void*)this; }
+    void DoDataExchange(CDataExchange* pDX) override {
+        // The MFC contract: each DDV immediately follows the DDX of the field
+        // it validates, which is what makes "last prepared" the right control.
+        DDX_Text(pDX, ID_DDV_FIRST, m_first);
+        DDV_MinMaxInt(pDX, m_first, 0, 10);
+        DDX_Text(pDX, ID_DDV_SECOND, m_second);
+        DDV_MinMaxInt(pDX, m_second, 0, 10);
+    }
+};
+
+// A non-edit control prepared last: focus moves, but no text selection.
+class DdvCheckFailDialog : public CDialog {
+public:
+    int m_check = 0;
+    DdvCheckFailDialog() : CDialog(997) { m_hWnd = (HWND)(void*)this; }
+    void DoDataExchange(CDataExchange* pDX) override {
+        DDX_Check(pDX, ID_DDV_CHECK, m_check);
+        if (pDX->m_bSaveAndValidate) pDX->Fail();
+    }
+};
+
+void* s_ddvFocused;
+int   s_ddvFocusCalls;
+void* s_ddvSelWnd;
+int   s_ddvSelStart, s_ddvSelEnd;
+} // namespace
+
+TEST(Ddv, FailurePutsFocusInTheOffendingEdit) {
+    fakewx::Install hooks;
+    s_ddvFocused = nullptr; s_ddvFocusCalls = 0;
+    s_ddvSelWnd = nullptr;  s_ddvSelStart = s_ddvSelEnd = 99;   // pre-poisoned
+    g_wxhook_set_focus = [](void* h) { s_ddvFocused = h; ++s_ddvFocusCalls; };
+    g_wxhook_edit_set_sel = [](void* h, int s, int e) {
+        s_ddvSelWnd = h; s_ddvSelStart = s; s_ddvSelEnd = e;
+    };
+    int (*const savedBox)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char*, const char*, unsigned) -> int { return IDOK; };
+
+    DdvFocusDialog dlg;
+    EXPECT_TRUE(dlg.UpdateData(FALSE));
+
+    // Fail the SECOND field: "focus the first field" and "focus anything"
+    // both flunk this, so the fixture can discriminate the mapping.
+    fakewx::widget(ID_DDV_SECOND).text = "999";
+    EXPECT_FALSE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_SECOND), s_ddvFocused);
+    EXPECT_EQ(1, s_ddvFocusCalls);
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_SECOND), s_ddvSelWnd);
+    EXPECT_EQ(0,  s_ddvSelStart);              // CEdit::SetSel(0, -1)
+    EXPECT_EQ(-1, s_ddvSelEnd);
+
+    // ...and failing the FIRST focuses the first (the degenerate-fixture guard:
+    // the two cases must land on DIFFERENT controls).
+    s_ddvFocused = nullptr; s_ddvFocusCalls = 0;
+    fakewx::widget(ID_DDV_SECOND).text = "5";
+    fakewx::widget(ID_DDV_FIRST).text  = "999";
+    EXPECT_FALSE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_FIRST), s_ddvFocused);
+
+    // A non-edit control focuses but does NOT select text.
+    s_ddvFocused = nullptr; s_ddvSelWnd = nullptr;
+    DdvCheckFailDialog cdlg;
+    EXPECT_FALSE(cdlg.UpdateData(TRUE));
+    EXPECT_EQ(fakewx::handle_for(ID_DDV_CHECK), s_ddvFocused);
+    EXPECT_EQ((void*)nullptr, s_ddvSelWnd);
+
+    g_wxhook_set_focus = nullptr;
+    g_wxhook_edit_set_sel = nullptr;
+    g_wxhook_message_box = savedBox;
+}
+
 static intptr_t s_modalResult;
 static unsigned s_modalIdd;
 

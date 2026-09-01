@@ -468,13 +468,41 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
         // plugin asked for.  Build the 8x8 tile ALREADY COLOURED instead, which
         // is cheap because it is only 64 pixels.
         //
-        // Transparent gaps (bg == -1) are still not expressible this way: a
-        // stipple has no mask here, so those fall back to painting the gap in
-        // the foreground colour rather than leaving the destination alone.
-        // Recorded in docs/WINDOWS-VALIDATION.md.
+        // The TRANSPARENT request arrives in spec.FG here, not spec.bg.  For a
+        // mono pattern BrushSpecFromWin32 puts BrushColour -- the colour
+        // upstream keys SetBkMode on -- in fg (SetTextColor) and PenColour in
+        // bg (SetBkColor); the hatch arm above is the other way round, which is
+        // why testing spec.bg is right THERE and was wrong here.  pal/isurface.h
+        // states the contract and pal/gdi_surface.cpp implements it as
+        // `SetBkMode (b.fg == (Colour) -1 ? TRANSPARENT : OPAQUE)`.
+        //
+        // Testing spec.bg broke it in two directions at once: a real
+        // BrushColour == -1 took the opaque branch and painted the 1-bits in
+        // PenColour, obliterating what the plugin meant to show through; and a
+        // PenColour of -1 -- which Windows treats as an ordinary opaque
+        // background -- collapsed the tile to one flat BrushColour where
+        // Windows draws a two-tone pattern.
+        //
+        // Transparent gaps are still not expressible as a stipple: it has no
+        // mask, so it cannot leave the destination alone.  The fallback is a
+        // flat tile in the resolved foreground.  A real fix needs a masked
+        // stipple, or the read-modify-write treatment fillRect's hatch arm
+        // already uses, extended to arbitrary shape coverage (ellipse,
+        // roundrect, chord, pie) -- that is where the work goes.  Recorded in
+        // docs/WINDOWS-VALIDATION.md 4c-sexdecies.
         {
-            const Colour fg = spec.fg;
-            const Colour bg = (spec.bg == (Colour)-1) ? spec.fg : spec.bg;
+            // CLR_INVALID in the slot that is NOT the transparency trigger is
+            // just a colour for GDI to resolve, and white is the assumption --
+            // its high-order type byte is undefined, so GDI either masks it to
+            // 0x00FFFFFF or fails the call and keeps the DC default.  The
+            // measurement is owed in docs/WINDOWS-VALIDATION.md; what matters
+            // here is that it is NOT the other caller colour, which is what the
+            // old substitution made it.
+            const bool transparent = (spec.fg == (Colour)-1);
+            const Colour fg = transparent ? (Colour) 0xFFFFFF : spec.fg;
+            const Colour bg = transparent ? fg
+                            : (spec.bg == (Colour)-1) ? (Colour) 0xFFFFFF
+                                                      : spec.bg;
 
             // Build the tile at PHYSICAL resolution.  An 8x8 logical stipple on
             // a 2x canvas is scaled up by wx and its alternating pixels average

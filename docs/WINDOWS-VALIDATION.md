@@ -907,12 +907,38 @@ styles **8-12** came out monochrome whatever colours the plugin asked for. The
    **physical** resolution (each pattern pixel replicated across the scale x
    scale block, with the bitmap's scale factor set so its logical size is still
    8x8), and the selftest asserts both colours survive.
-2. **Transparent gaps** (`bg == -1`) are not expressible as a stipple without a
-   mask, so they currently paint the gap in the foreground colour instead of
-   leaving the destination alone. Windows leaves it alone.
+2. **Transparent gaps** (`fg == -1`, i.e. `BrushColour == -1`) are not
+   expressible as a stipple without a mask, so they currently paint a flat tile
+   in the resolved foreground instead of leaving the destination alone. Windows
+   leaves it alone.
+
+   **Correction (this row named the wrong field, and the code tested it).** For
+   a mono pattern `BrushSpecFromWin32` puts `BrushColour` in `spec.fg`
+   (`SetTextColor`) and `PenColour` in `spec.bg` (`SetBkColor`) — the reverse of
+   the hatch arm — and upstream keys `SetBkMode` on **`BrushColour`**. So the
+   transparent trigger is `spec.fg`, as `pal/isurface.h` and
+   `pal/gdi_surface.cpp` both state. The wx adapter tested `spec.bg`, which
+   broke it in two directions at once: a real `BrushColour == -1` request took
+   the OPAQUE branch and painted the 1-bits in `PenColour`, obliterating what
+   the plugin meant to show through; and a `PenColour` of `-1` — which Windows
+   treats as an ordinary opaque background — collapsed the tile to one flat
+   `BrushColour` where Windows draws a two-tone pattern. Fixed; both directions
+   are pinned in `--pal-miniwindow-selftest`.
 
 Worth confirming on Windows what styles 8-12 actually look like with distinct
-pen and brush colours, so there is a reference to match.
+pen and brush colours, so there is a reference to match. Two specific reads are
+now owed, neither answerable from macOS:
+
+- **What does GDI render for `CLR_INVALID` in the slot that is NOT the
+  transparency trigger** — i.e. `SetBkColor (0xFFFFFFFF)` under
+  `BrushColour != -1`? The high-order type byte is undefined: GDI either masks
+  it to `0x00FFFFFF` (white) or fails the call and leaves the DC's default. The
+  port assumes white. Drive
+  `WindowCircleOp (w, 2, 4, 4, 40, 40, -1, 5, 1, ColourNameToRGB ("red"), 8)`
+  and read the two tile colours back with `WindowGetPixel`.
+- **And for `SetTextColor (0xFFFFFFFF)` under `BrushColour == -1`**, which is
+  what the 0-bits take in the genuinely-transparent case. Same call with the
+  two colours swapped.
 
 ### 4c-septendecies. HiDPI: BGR24 pixel READS are exact now (2026-08-03)
 

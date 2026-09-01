@@ -234,6 +234,63 @@ int RunPalMiniWindowSelfTest()
         // and its alternating pixels average away to one flat colour.
         mwCheck(sawRed > 0 && sawGreen > 0,
                 "a checkerboard pattern keeps BOTH colours (not averaged away)");
+        // ...and the TRANSPARENT request is keyed on BrushColour, not
+        // PenColour.  For a mono pattern the engine puts BrushColour in
+        // spec.fg (SetTextColor) and PenColour in spec.bg (SetBkColor) -- the
+        // reverse of the hatch arm -- and upstream keys SetBkMode on
+        // BrushColour.  The adapter tested spec.bg, which broke BOTH inputs
+        // that carry a -1, in opposite ways.  Probed here in both directions;
+        // neither is reachable from the headless suite, because pal::CpuRaster
+        // drops BrushSpec::monoPattern entirely.
+
+        // (i) PenColour == -1 is an ordinary opaque background on Windows, and
+        // must NOT collapse the tile: it used to substitute BrushColour for it
+        // and paint a single flat block where Windows draws two tones.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the -1 PenColour pattern probe");
+        mwCheck(doc->WindowCircleOp(W, 2, 4, 4, 40, 40,
+                                    -1 /*PenColour*/, 5 /*PS_NULL*/, 1,
+                                    kRed /*BrushColour*/, 8 /*mono "fine"*/,
+                                    0, 0, 0, 0) == eOK,
+                "WindowCircleOp (mono pattern, PenColour -1) succeeds");
+        {
+            int sawRed = 0, sawWhite = 0, sawBlue = 0;
+            for (long x = 10; x < 34; ++x)
+                for (long y = 10; y < 34; ++y) {
+                    const long c = doc->WindowGetPixel(W, x, y);
+                    if      (c == kRed)   sawRed++;
+                    else if (c == kWhite) sawWhite++;
+                    else if (c == kBlue)  sawBlue++;
+                }
+            mwCheck(sawRed > 0 && sawWhite > 0,
+                    "a -1 background resolves to a colour, keeping BOTH tones");
+            mwCheck(sawBlue == 0, "...and the pattern really did cover the area");
+        }
+
+        // (ii) BrushColour == -1 IS the transparent request.  A tiled brush has
+        // no mask, so the port cannot leave the destination alone -- the
+        // documented fallback is a flat tile in the resolved foreground.  What
+        // must NOT happen, and did, is the 1-bits being painted in PenColour:
+        // that obliterates exactly the content the plugin asked to show
+        // through.  (The eventual correct answer is that the underlying blue
+        // survives on the 1-bits; that needs the mask/composite work, so this
+        // assertion is deliberately the weaker fallback.)
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the transparent-gap pattern probe");
+        mwCheck(doc->WindowCircleOp(W, 2, 4, 4, 40, 40,
+                                    kRed /*PenColour*/, 5 /*PS_NULL*/, 1,
+                                    -1 /*BrushColour*/, 8 /*mono "fine"*/,
+                                    0, 0, 0, 0) == eOK,
+                "WindowCircleOp (mono pattern, BrushColour -1) succeeds");
+        {
+            int sawRed = 0;
+            for (long x = 10; x < 34; ++x)
+                for (long y = 10; y < 34; ++y)
+                    if (doc->WindowGetPixel(W, x, y) == kRed) sawRed++;
+            mwCheck(sawRed == 0,
+                    "a transparent request never paints PenColour into the gaps");
+        }
+
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the mono-pattern probe");
     }

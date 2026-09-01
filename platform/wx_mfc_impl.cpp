@@ -1030,8 +1030,9 @@ static CCmdTarget* canon_target(char t, CMUSHclientDoc* doc)
 //                    m_bAutoMenuEnable does for itself on Windows.
 //   3. the DOCUMENT's own ON_UPDATE_COMMAND_UI, for ids neither table names
 //                    (World Configuration is the one this menu needs: doc.cpp
-//                    :1988 greys it mid-connect, which is stricter than the
-//                    "doc != nullptr" the menu bar settles for).
+//                    :1988 greys it mid-connect, which is stricter than
+//                    "doc != nullptr" — the menu bar used to settle for that
+//                    and now comes here too, so all three surfaces agree).
 //
 // Seeds enabled=true / checked=-1 and returns false when nothing owned the id,
 // which leaves the caller free to keep the seeded "live" answer — that is what
@@ -1584,7 +1585,6 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // rest, and are answered by the MenuCommandUiState arm below.
         if (id == wxID_SAVE || id == wxID_SAVEAS ||
             id == wxID_CLOSE ||
-            id == 32158 /*ID_GAME_PREFERENCES*/ ||
             id == ID_DISPLAY_CLEAR_COMMAND_HISTORY ||
             id == ID_MENU_CFG_TRIGGERS  ||
             id == ID_MENU_CFG_ALIASES   ||
@@ -1605,6 +1605,19 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             id == ID_MENU_EXPORT_MACROS) {
             // Need an active world.
             evt.Enable(doc != nullptr);
+        } else if (id == 32158 /*ID_GAME_PREFERENCES*/) {
+            // Not "any world will do".  CMUSHclientDoc::OnUpdateGamePreferences
+            // (doc.cpp:1988) greys World Properties unless the phase is
+            // eConnectNotConnected or eConnectConnectedToMud — "no changing of
+            // address whilst connecting".  This item sat in the list above, so
+            // the menu bar was the one surface that settled for doc != nullptr
+            // while the output pane's context menu and the World toolbar (both
+            // of which reach the document's own handler) greyed it: three
+            // surfaces, two answers.  Step 3 of wx_canonical_menu_ui_state is
+            // that handler.
+            bool enabled = true; int checked = -1;
+            wx_canonical_menu_ui_state(id, doc, enabled, checked);
+            evt.Enable(doc != nullptr && enabled);
         } else if (id == ID_MENU_PRINT_SELECTION ||
                    id == 32255 /*ID_FILE_SAVESELECTION*/) {
             // Needs an active world WITH a selection — the whole point of the

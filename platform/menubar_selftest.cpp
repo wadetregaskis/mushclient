@@ -943,6 +943,13 @@ int RunMenuBarSelfTest()
             check(!probeUi(frame, 0xE200).enabled,
                   "Disconnect is dead while the world is disconnected");
             bool liveThroughout = true, connectDead = true, reconnectDead = true;
+            // World Properties is greyed for the whole of a connect in flight —
+            // "no changing of address whilst connecting"
+            // (CMUSHclientDoc::OnUpdateGamePreferences, doc.cpp:1988).  The menu
+            // bar used to answer `doc != nullptr` for it from a hard-coded list,
+            // while the output pane's context menu and the World toolbar both
+            // reached that handler: three surfaces, two answers.
+            bool prefsDeadMidConnect = true;
             for (int phase = eConnectMudNameLookup; phase <= eConnectDisconnecting;
                  ++phase) {
                 doc->m_iConnectPhase = phase;
@@ -952,12 +959,34 @@ int RunMenuBarSelfTest()
                 }
                 if (probeUi(frame, 32239).enabled) connectDead   = false;
                 if (probeUi(frame, 0xE201).enabled) reconnectDead = false;
+                // Phase 9 is eConnectConnectedToMud, which the rule allows —
+                // it is inside this loop only because Disconnect's rule spans
+                // the whole range.
+                if (phase != eConnectConnectedToMud) {
+                    const UiAnswer prefs =
+                        probeUi(frame, 32158 /*ID_GAME_PREFERENCES*/);
+                    if (!prefs.setEnabled || prefs.enabled) {
+                        prefsDeadMidConnect = false;
+                        printf("    (World Properties live in connect phase %d)\n",
+                               phase);
+                    }
+                }
             }
             check(liveThroughout,
                   "Disconnect stays live through every phase of a hanging connect");
             check(connectDead && reconnectDead,
                   "...while Connect and Reconnect are dead in all of them");
+            check(prefsDeadMidConnect,
+                  "World Properties is greyed while a connect is in flight");
 
+            doc->m_iConnectPhase = eConnectNotConnected;
+            // ...and the other direction, at both ends of the rule, so an arm
+            // that simply greyed the item could not pass either.
+            check(probeUi(frame, 32158).enabled,
+                  "...and live again on a disconnected world");
+            doc->m_iConnectPhase = eConnectConnectedToMud;
+            check(probeUi(frame, 32158).enabled,
+                  "...and on a fully connected one");
             doc->m_iConnectPhase = eConnectNotConnected;
 
             // Scripting and the log caption, the two port-only rules.

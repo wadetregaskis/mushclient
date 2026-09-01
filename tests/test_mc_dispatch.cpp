@@ -31,6 +31,7 @@
 #define VT_DISPATCH 9
 #endif
 
+#include <climits>   // LONG_MIN / LONG_MAX -- the clamping test
 #include <set>
 #include <string>
 #include <vector>
@@ -51,6 +52,7 @@ VARIANT vstr(const char* s)  { VARIANT v; VariantInit(&v); v.vt = VT_BSTR; v.bst
 VARIANT vi4(long n)          { VARIANT v; VariantInit(&v); v.vt = VT_I4;   v.lVal    = n; return v; }
 VARIANT vi2(short n)         { VARIANT v; VariantInit(&v); v.vt = VT_I2;   v.iVal    = n; return v; }
 VARIANT vr8(double d)        { VARIANT v; VariantInit(&v); v.vt = VT_R8;   v.dblVal  = d; return v; }
+VARIANT vr4(float f)         { VARIANT v; VariantInit(&v); v.vt = VT_R4;   v.fltVal  = f; return v; }
 VARIANT vbool(bool b)        { VARIANT v; VariantInit(&v); v.vt = VT_BOOL; v.boolVal = b ? 1 : 0; return v; }
 // The language's nil: Python None, Ruby nil, Perl undef and JavaScript
 // undefined/null all marshal to VT_EMPTY (py_engine.cpp:79 and friends).
@@ -341,6 +343,142 @@ TEST(McDispatch, StringsCoerceToNumericParameters)
     EXPECT_EQ((int) VT_BOOL, (int) info.vt);
     EXPECT_TRUE(info.boolVal != 0);
     MC_VariantClear(info);
+}
+
+// ── a fraction meeting an integer parameter: oleaut ROUNDS ────────────────
+//
+// On Windows these five languages ride the real IDispatch::Invoke, whose
+// VariantChangeType coercion (VarI4FromR8 / VarI4FromStr) rounds to nearest
+// with ties to EVEN.  var_to_long used a C cast and atol, i.e. truncation
+// toward zero, so every fraction of .5 or more landed one short -- silently,
+// eOK either way.  JavaScript feels it most (all its arithmetic is double and
+// js_engine routes a non-integral number as VT_R8); Tcl feels it through the
+// string arm, since tcl_to_variant marshals EVERY argument as VT_BSTR.
+//
+// MoveWorldWindowX's four coordinates are the observable: VTS_I4 each, stored
+// on the view verbatim -- signed and unmasked, unlike the colour properties --
+// and four at a time, so one call pins four values.
+//
+// The pairs are chosen to discriminate the three candidate rules from each
+// other, which a single .5 case cannot do:
+//     truncate      10.5 -> 10   11.5 -> 11   -10.5 -> -10
+//     half-away     10.5 -> 11   11.5 -> 12   -10.5 -> -11
+//     half-to-even  10.5 -> 10   11.5 -> 12   -10.5 -> -10   (oleaut, and ours)
+
+namespace {
+
+struct Coords { long x, y, w, h; };
+
+// Poison the destination first: a coercion that did nothing at all -- or a
+// method that never ran -- must not be able to read as a pass.
+Coords move4(FakeWorldView& view, CMUSHclientDoc& doc,
+             VARIANT a, VARIANT b, VARIANT c, VARIANT d)
+{
+    view.mwX = view.mwY = view.mwW = view.mwH = 0x5EED;
+    VARIANT r; VariantInit(&r);
+    call(doc, "MoveWorldWindowX", { a, b, c, d, vi2(1) }, r);
+    MC_VariantClear(r);
+    return { view.mwX, view.mwY, view.mwW, view.mwH };
+}
+
+}   // namespace
+
+TEST(McDispatch, FractionalNumbersRoundHalfToEvenIntoIntegerParameters)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc;
+    doc.m_pWorldView = &view;
+
+    // The two ties are what separate half-to-even from half-away-from-zero;
+    // 10.7 and 10.2 separate rounding from truncation at all.
+    Coords c = move4(view, doc, vr8(10.5), vr8(11.5), vr8(10.7), vr8(10.2));
+    EXPECT_EQ(10L, c.x);        // tie -> 10 is even
+    EXPECT_EQ(12L, c.y);        // tie -> 12 is even   (truncation gave 11)
+    EXPECT_EQ(11L, c.w);        // truncation gave 10
+    EXPECT_EQ(10L, c.h);
+
+    // Negatives round by the same rule -- toward the even neighbour, not
+    // toward or away from zero.
+    Coords n = move4(view, doc, vr8(-10.5), vr8(-11.5), vr8(-10.7), vr8(-10.2));
+    EXPECT_EQ(-10L, n.x);
+    EXPECT_EQ(-12L, n.y);
+    EXPECT_EQ(-11L, n.w);       // truncation gave -10
+    EXPECT_EQ(-10L, n.h);
+
+    // VT_R4 travels the same road (Perl's NV and Ruby's Float arrive as R8,
+    // but a direct caller can hand a float).  These four are all exact in
+    // binary32, so the float itself contributes no rounding of its own.
+    Coords f = move4(view, doc, vr4(10.5f), vr4(11.5f), vr4(-10.5f), vr4(0.5f));
+    EXPECT_EQ(10L, f.x);
+    EXPECT_EQ(12L, f.y);
+    EXPECT_EQ(-10L, f.w);
+    EXPECT_EQ(0L,  f.h);        // 0 is even
+
+    // Whole numbers are untouched -- the fix must not perturb the common case.
+    Coords w = move4(view, doc, vr8(0), vr8(-1), vr8(4096), vr8(2147483647.0));
+    EXPECT_EQ(0L, w.x);
+    EXPECT_EQ(-1L, w.y);
+    EXPECT_EQ(4096L, w.w);
+    EXPECT_EQ(2147483647L, w.h);
+}
+
+TEST(McDispatch, NumericStringsRoundTheSameWayAsNumbers)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc;
+    doc.m_pWorldView = &view;
+
+    // Tcl reaches this arm for every argument it sends, so it is the widest
+    // of the three.  atol stopped at the '.' and answered 45 for "45.7".
+    Coords c = move4(view, doc, vstr("10.5"), vstr("11.5"), vstr("10.7"), vstr("-10.5"));
+    EXPECT_EQ(10L, c.x);
+    EXPECT_EQ(12L, c.y);
+    EXPECT_EQ(11L, c.w);
+    EXPECT_EQ(-10L, c.h);
+
+    // Plain integers, leading whitespace and a sign are unchanged: this is a
+    // rounding fix, not a re-parse.
+    Coords i = move4(view, doc, vstr("42"), vstr("-7"), vstr("  8"), vstr("+3"));
+    EXPECT_EQ(42L, i.x);
+    EXPECT_EQ(-7L, i.y);
+    EXPECT_EQ(8L,  i.w);
+    EXPECT_EQ(3L,  i.h);
+
+    // ...and the strings atol read as 0 still read as 0.  The port's leniency
+    // for a non-numeric string is deliberate (D-24 / UPSTREAM-DIVERGENCES §17
+    // keep strict checking to arity, never types, because Tcl marshals
+    // everything as a string); strtod would otherwise have widened the set
+    // silently, accepting C99 hex floats and "inf"/"nan" that oleaut's decimal
+    // parser rejects.
+    Coords z = move4(view, doc, vstr("abc"), vstr("0x10"), vstr("inf"), vstr(""));
+    EXPECT_EQ(0L, z.x);
+    EXPECT_EQ(0L, z.y);
+    EXPECT_EQ(0L, z.w);
+    EXPECT_EQ(0L, z.h);
+
+    // The boolean words Tcl sends still win over the numeric read.
+    Coords b = move4(view, doc, vstr("true"), vstr("off"), vstr("yes"), vstr("no"));
+    EXPECT_EQ(1L, b.x);
+    EXPECT_EQ(0L, b.y);
+    EXPECT_EQ(1L, b.w);
+    EXPECT_EQ(0L, b.h);
+}
+
+// A double too large for a long used to be an undefined cast (and, on the
+// string arm, a saturating atol).  Windows answers DISP_E_OVERFLOW, which this
+// substrate has no channel to report; clamping is the honest stand-in, and it
+// is at least well defined.
+TEST(McDispatch, OutOfRangeNumbersClampInsteadOfBeingUndefined)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc;
+    doc.m_pWorldView = &view;
+
+    Coords c = move4(view, doc, vr8(1e300), vr8(-1e300), vr8(0.0 / 0.0), vstr("1e400"));
+    EXPECT_EQ(LONG_MAX, c.x);
+    EXPECT_EQ(LONG_MIN, c.y);
+    EXPECT_EQ(0L, c.w);          // NaN -- what the cast it replaces produced
+    EXPECT_EQ(LONG_MAX, c.h);
 }
 
 // Arguments the script did not supply arrive as VT_ERROR ("not supplied") and

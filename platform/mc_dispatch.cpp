@@ -18,6 +18,8 @@
 #include <type_traits>
 #include <cstdlib>
 #include <cstdio>    // snprintf — MC_DispatchBadArgsMessage()
+#include <cmath>     // nearbyint — round_to_long()
+#include <climits>   // LONG_MIN / LONG_MAX — round_to_long()
 #include <strings.h>   // strcasecmp — bool_word()
 
 // COM constants not in the port's VT_* set.
@@ -92,6 +94,55 @@ static bool bool_word (const char* s, long& out)
   return false;
   }
 
+// ── Fractional value -> integer parameter: oleaut rounds, C truncates ──────
+// On Windows these five languages ride the real IDispatch::Invoke, which
+// coerces a mistyped argument through VariantChangeType — and VarI4FromR8 /
+// VarI4FromStr round to NEAREST with ties to EVEN, where a C cast truncates
+// toward zero.  Every fraction of .5 or more therefore landed one short here,
+// silently and with eOK: a JScript plugin's world.WindowLine (w, x * 0.7, …)
+// with 10.7 drew at 10 rather than 11, and world.DeleteLines (n / 2) for odd
+// n removed one line too few.
+//
+// JavaScript feels it most — all its arithmetic is double, and js_engine
+// routes any non-integral number as VT_R8 — and Tcl feels it through the
+// string arm below, because tcl_to_variant marshals EVERY argument as
+// VT_BSTR, so "45.7" reached atol and became 45.
+//
+// nearbyint is ties-to-even under FE_TONEAREST, the default rounding mode,
+// which nothing in this tree ever changes.  std::round would be wrong: it is
+// ties-AWAY-from-zero, and so disagrees with oleaut on precisely the .5 cases
+// this function exists for (10.5 is 10, not 11).
+static long round_to_long (const double d)
+  {
+  if (d != d)                          // NaN — the cast/atol it replaces gave 0
+    return 0;
+  const double r = std::nearbyint (d);
+  // Out of range is DISP_E_OVERFLOW on Windows, which this substrate has no
+  // channel to report.  Clamp rather than leave the cast undefined — atol,
+  // which the string arm used to call, saturated the same way.
+  if (r <= -9223372036854775808.0) return LONG_MIN;   // -2^63, exactly a double
+  if (r >=  9223372036854775808.0) return LONG_MAX;   //  2^63, one past LONG_MAX
+  return (long) r;
+  }
+
+// The same rounding for a numeric STRING (VarI4FromStr's job on Windows).
+static long str_to_long (const char* s)
+  {
+  if (!s) return 0;
+  const char* p = s;
+  while (*p == ' ' || (*p >= '\t' && *p <= '\r')) ++p;
+  if (*p == '+' || *p == '-') ++p;
+  // strtod (C99) additionally accepts hex floats ("0x10" -> 16), "inf" and
+  // "nan"; oleaut's decimal parser accepts none of them and atol read all
+  // three as 0.  Keep the 0 — widening what counts as a number is a different
+  // question from how a number is rounded.
+  if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'))
+    return 0;
+  if (!(*p >= '0' && *p <= '9') && *p != '.')
+    return 0;
+  return round_to_long (strtod (s, nullptr));
+  }
+
 // ── VARIANT readers (input arg -> C++ scalar/string) ───────────────────────
 long var_to_long(const VARIANT* a)
   {
@@ -100,12 +151,12 @@ long var_to_long(const VARIANT* a)
     {
     case VT_I2:   return a->iVal;
     case VT_I4:   return a->lVal;
-    case VT_R4:   return (long) a->fltVal;
-    case VT_R8:   return (long) a->dblVal;
+    case VT_R4:   return round_to_long ((double) a->fltVal);
+    case VT_R8:   return round_to_long (a->dblVal);
     case VT_BOOL: return a->boolVal ? 1 : 0;
     case VT_BSTR: { long b;
                     if (bool_word (a->bstrVal, b)) return b;
-                    return a->bstrVal ? atol (a->bstrVal) : 0; }
+                    return str_to_long (a->bstrVal); }
     default:      return 0;
     }
   }

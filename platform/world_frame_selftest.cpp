@@ -23,7 +23,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "childfrm.h"     // CChildFrame  ) the world doc template's
-#include "MUSHview.h"     // CMUSHView    ) runtime classes
+#include "mushview.h"     // CMUSHView    ) runtime classes
 #include "resource.h"     // IDR_MUSHCLTYPE
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
 #include <memory>
@@ -1427,7 +1427,9 @@ int RunWorldFrameSelfTest()
         auto sendCtrlL = [&]() {
             wxKeyEvent key(wxEVT_KEY_DOWN);
             key.m_keyCode      = 'L';
+#if defined(__WXOSX__) || defined(__WXMAC__)
             key.m_rawControlDown = true;
+#endif
             key.m_controlDown  = true;
             key.SetEventObject(pane);
             pane->GetEventHandler()->ProcessEvent(key);

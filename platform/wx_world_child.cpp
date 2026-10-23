@@ -5184,6 +5184,9 @@ void CWorldChildFrame::BuildInputBar(bool wrapInput)
     // wxTE_DONTWRAP keeps the single-line feel: long commands scroll
     // horizontally rather than wrapping onto a second visual row.
     style |= wrapInput ? wxTE_BESTWRAP : wxTE_DONTWRAP;
+#ifdef __WXGTK__
+    style |= wxBORDER_SIMPLE;
+#endif
 
     m_input = new wxTextCtrl(this, ID_INPUT, wxEmptyString,
                              wxDefaultPosition, wxDefaultSize, style);
@@ -7226,15 +7229,9 @@ void CWorldChildFrame::RunCloseTeardown(const CloseObserver& observe)
 void CWorldChildFrame::OnSize(wxSizeEvent& evt)
 {
 #ifdef __WXGTK__
-    if (wxMDIParentFrame* parent = GetMDIParent()) {
-        const wxSize curParentSize = parent->GetSize();
-        if (curParentSize != m_gtkParentSize) {
-            m_gtkParentSize = curParentSize;
-            if (evt.GetSize().x > 0 && evt.GetSize().y > 0) {
-                m_gtkWidth  = evt.GetSize().x;
-                m_gtkHeight = evt.GetSize().y;
-            }
-        }
+    if (evt.GetSize().x > 0 && evt.GetSize().y > 0) {
+        m_gtkWidth  = evt.GetSize().x;
+        m_gtkHeight = evt.GetSize().y;
     }
 #endif
     evt.Skip();  // let wxMDIChildFrame / sizer resize children

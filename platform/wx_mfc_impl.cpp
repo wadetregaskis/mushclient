@@ -2203,7 +2203,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             // calling the method is what its handler did anyway.  Everything
             // else goes from "recurse until the stack dies" to "do nothing",
             // which is the right answer for Undo with nothing focused to undo.
-            if (auto* te = dynamic_cast<wxTextCtrl*>(wxWindow::FindFocus())) {
+            wxTextCtrl* te = dynamic_cast<wxTextCtrl*>(wxWindow::FindFocus());
+            if (!te) {
+                if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+                    te = child->ActiveInputPublic();
+            }
+            if (te) {
                 switch (id) {
                 case wxID_CUT:   te->Cut();   break;
                 case wxID_PASTE: te->Paste(); break;

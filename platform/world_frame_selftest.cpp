@@ -2222,6 +2222,7 @@ int RunWorldFrameSelfTest()
             else                    cfg.DeleteEntry(wxT("/geometry/child_x"));
             if (savedY != LONG_MIN) cfg.Write(wxT("/geometry/child_y"), savedY);
             else                    cfg.DeleteEntry(wxT("/geometry/child_y"));
+            cfg.Flush();
         }
     }
 
@@ -2261,6 +2262,7 @@ int RunWorldFrameSelfTest()
             cfg.Write(wxT("/geometry/child_h"), wantH);
             cfg.Write(wxT("/geometry/child_x"), wantX);
             cfg.Write(wxT("/geometry/child_y"), wantY);
+            cfg.Flush();
         }
 
         CMUSHclientDoc* d = new CMUSHclientDoc();

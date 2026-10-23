@@ -580,6 +580,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // entry, so doc-attributed delivery (status bars, activation) can never
     // miss a hand-constructed frame.  OnClose unregisters (see :5576).
     wx_register_world_frame(doc, this);
+#ifdef __WXGTK__
+    wxWindow::Show(true);
+    if (parent)
+        m_gtkParentSize = parent->GetSize();
+#endif
 
     // Vertical sizer: output pane takes all space; input bar at bottom.
     wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
@@ -1802,8 +1807,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     wxConfigBase& cfg = *cfgOwner;
 
         int di = wxDisplay::GetFromWindow(this);
-        if (di < 0) di = 0;               // not mapped yet → primary display
-        const wxRect scr = wxDisplay(di).GetClientArea();
+        if (di < 0 || (unsigned)di >= wxDisplay::GetCount()) di = 0;
+        wxRect scr = (wxDisplay::GetCount() > 0)
+                         ? wxDisplay(di).GetClientArea()
+                         : wxRect();
+        if (scr.width <= 0 || scr.height <= 0)
+            scr = wxRect(0, 0, 1920, 1080);
 
         // FromDIP because the width is specified in *points*, not device pixels:
         // 1000 here means 2000 physical pixels on a 2x Retina display.  It is a
@@ -1829,7 +1838,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
         SetSize((int)w, (int)h);
 
-#ifdef __WXOSX__
+#if defined(__WXOSX__) || defined(__WXGTK__)
         // Restore the saved position too — on macOS this frame IS the window
         // the user drags, so its on-screen position is exactly as much "the
         // user's geometry" as its size.  wx_save_child_geometry (the single
@@ -7216,6 +7225,18 @@ void CWorldChildFrame::RunCloseTeardown(const CloseObserver& observe)
 // next event-loop iteration, after Layout() has already updated child sizes.
 void CWorldChildFrame::OnSize(wxSizeEvent& evt)
 {
+#ifdef __WXGTK__
+    if (wxMDIParentFrame* parent = GetMDIParent()) {
+        const wxSize curParentSize = parent->GetSize();
+        if (curParentSize != m_gtkParentSize) {
+            m_gtkParentSize = curParentSize;
+            if (evt.GetSize().x > 0 && evt.GetSize().y > 0) {
+                m_gtkWidth  = evt.GetSize().x;
+                m_gtkHeight = evt.GetSize().y;
+            }
+        }
+    }
+#endif
     evt.Skip();  // let wxMDIChildFrame / sizer resize children
 
     CallAfter([this]() {
@@ -7251,5 +7272,68 @@ void CWorldChildFrame::OnSize(wxSizeEvent& evt)
         m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);
     });
 }
+
+#ifdef __WXGTK__
+void CWorldChildFrame::Activate()
+{
+    wxWindow::Show(true);
+    wxMDIChildFrame::Activate();
+}
+
+bool CWorldChildFrame::IsMaximized() const
+{
+    if (wxMDIParentFrame* parent = GetMDIParent())
+        return parent->IsMaximized();
+    return false;
+}
+
+bool CWorldChildFrame::ShowFullScreen(bool show, long style)
+{
+    m_gtkFullScreen = show;
+    if (wxMDIParentFrame* parent = GetMDIParent())
+        parent->ShowFullScreen(show, style);
+    return true;
+}
+
+void CWorldChildFrame::DoGetPosition(int* x, int* y) const
+{
+    if (x) *x = m_gtkPosX;
+    if (y) *y = m_gtkPosY;
+}
+
+void CWorldChildFrame::DoGetSize(int* width, int* height) const
+{
+    if (width)  *width  = m_gtkWidth;
+    if (height) *height = m_gtkHeight;
+}
+
+void CWorldChildFrame::DoGetClientSize(int* width, int* height) const
+{
+    if (width)  *width  = m_gtkWidth;
+    if (height) *height = std::max(0, m_gtkHeight - 28);
+}
+
+void CWorldChildFrame::DoSetSize(int x, int y, int width, int height,
+                                 int sizeFlags)
+{
+    if (x != wxDefaultCoord || (sizeFlags & wxSIZE_ALLOW_MINUS_ONE))
+        m_gtkPosX = x;
+    if (y != wxDefaultCoord || (sizeFlags & wxSIZE_ALLOW_MINUS_ONE))
+        m_gtkPosY = y;
+    if (width > 0)
+        m_gtkWidth = width;
+    if (height > 0)
+        m_gtkHeight = height;
+    if (wxMDIParentFrame* parent = GetMDIParent())
+        m_gtkParentSize = parent->GetSize();
+    wxMDIChildFrame::DoSetSize(x, y, m_gtkWidth, m_gtkHeight, sizeFlags);
+    if (GetSizer()) {
+        Layout();
+        wxSizeEvent szEvt(GetSize(), GetId());
+        szEvt.SetEventObject(this);
+        ProcessWindowEvent(szEvt);
+    }
+}
+#endif // __WXGTK__
 
 #endif // !_WIN32

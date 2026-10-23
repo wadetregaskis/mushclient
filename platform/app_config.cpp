@@ -5,6 +5,8 @@
 #include "platform/app_config.h"
 
 #include <wx/fileconf.h>
+#include <sys/stat.h>
+#include <string>
 
 namespace {
 // Empty means "the user's real preferences".  A process-wide single value
@@ -24,6 +26,21 @@ std::unique_ptr<wxConfigBase> OpenAppConfig()
                              g_testConfigPath, wxEmptyString,
                              wxCONFIG_USE_LOCAL_FILE));
     }
+#ifdef __WXGTK__
+    // On Linux/Unix wxConfig("mushclient") defaults to ~/.mushclient, which
+    // collides with the directory ~/.mushclient/ created for history files.
+    // Store preferences in ~/.mushclient/preferences.cfg instead.
+    const char* home = getenv("HOME");
+    if (home && *home) {
+        std::string dir = std::string(home) + "/.mushclient";
+        ::mkdir(dir.c_str(), 0700);
+        std::string path = dir + "/preferences.cfg";
+        return std::unique_ptr<wxConfigBase>(
+            new wxFileConfig(wxEmptyString, wxEmptyString,
+                             wxString::FromUTF8(path.c_str()), wxEmptyString,
+                             wxCONFIG_USE_LOCAL_FILE));
+    }
+#endif
     return std::unique_ptr<wxConfigBase>(new wxConfig(wxT("mushclient")));
 }
 

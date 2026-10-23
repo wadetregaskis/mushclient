@@ -802,6 +802,30 @@ private:
     // Returns true when this frame is the active MDI child.
     bool IsActiveWorld() const;
 
+#ifdef __WXGTK__
+public:
+    void Activate() override;
+    bool IsMaximized() const override;
+    bool IsAlwaysMaximized() const override { return false; }
+    bool ShowFullScreen(bool show, long style = wxFULLSCREEN_ALL) override;
+    bool IsFullScreen() const override { return m_gtkFullScreen; }
+
+protected:
+    void DoGetPosition(int* x, int* y) const override;
+    void DoGetSize(int* width, int* height) const override;
+    void DoGetClientSize(int* width, int* height) const override;
+    void DoSetSize(int x, int y, int width, int height,
+                   int sizeFlags = wxSIZE_AUTO) override;
+
+private:
+    int    m_gtkPosX       = 0;
+    int    m_gtkPosY       = 0;
+    int    m_gtkWidth      = 800;
+    int    m_gtkHeight     = 600;
+    wxSize m_gtkParentSize;
+    bool   m_gtkFullScreen = false;
+#endif
+
     wxDECLARE_EVENT_TABLE();
 };
 

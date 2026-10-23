@@ -31,7 +31,15 @@ extern "C" {
 #include <string>
 #include <vector>
 #include "posix_compat.h"
-#include <png.h>       // the image-family tests emit a real RGBA PNG
+#if defined(__has_include)
+#  if __has_include(<png.h>)
+#    include <png.h>
+#  else
+#    include "png/png.h"
+#  endif
+#else
+#  include "png/png.h"
+#endif       // the image-family tests emit a real RGBA PNG
 #include <sys/resource.h>  // RLIMIT_FSIZE — WindowWrite full-disk test
 #include <csignal>         // SIGXFSZ
 #include <unistd.h>        // getpid

@@ -5655,7 +5655,7 @@ TEST(StdioFileR5, ReadStringBufferVariant)
     EXPECT_TRUE(sf.ReadString(s));
     EXPECT_STREQ("second", (LPCTSTR)s);
     EXPECT_FALSE(sf.ReadString(buf, sizeof buf));   // EOF
-    fclose(f);
+    sf.Close();
     unlink(path);
 
     CStdioFile closed;

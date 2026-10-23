@@ -82,9 +82,11 @@ struct LoopbackClient {
 template <typename Pred>
 static bool pump_until(Pred pred, int max_ms = 2000)
 {
-    for (int waited = 0; waited < max_ms; waited += 10) {
+    for (int waited = 0; waited < max_ms; ++waited) {
         if (pred()) return true;
-        CAsyncSocket::Poll(10);
+        CAsyncSocket::Poll(1);
+        if (pred()) return true;
+        ::usleep(1000);
     }
     return pred();
 }

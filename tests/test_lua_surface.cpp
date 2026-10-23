@@ -907,7 +907,7 @@ TEST(LuaSurface, FrameDependentMethodsAnswerWithoutAMainWindow)
         // "userdata: 00000000" through MSVC's.  Match the value, not the text.
         "local h = world.GetFrame()\n"
         "local s = (h == nil) and 'nil' or tostring(h)\n"
-        "assert(s == 'nil' or s:match('^userdata: 0x?0+$') ~= nil, s)\n"
+        "assert(s == 'nil' or s == 'userdata: (nil)' or s:match('^userdata: 0x?0+$') ~= nil, s)\n"
         // FALSE, matching the PRODUCT — MakeWindowTransparent bails at its
         // LoadLibrary('user32') before touching a window.
         "assert(world.Transparency(0, 1) == false)\n"

@@ -1661,11 +1661,13 @@ TEST(BuildOutputLine, RefusesOutOfRangeAndTheInProgressLine)
 // and say why -- but not to drift unnoticed.
 TEST(OutputRun, StaysSmall)
 {
-    // 64 on LP64 with a 24-byte std::string and a 16-byte shared_ptr.
-    EXPECT_TRUE(sizeof(SOutputRun) <= 64);
-    if (sizeof(SOutputRun) > 64)
-        printf("    sizeof(SOutputRun) = %zu, was 112, budget 64\n",
-               sizeof(SOutputRun));
+    // 64 on LP64 with a 24-byte std::string (libc++) and a 16-byte shared_ptr;
+    // 72 on libstdc++ where sizeof(std::string) is 32.
+    constexpr size_t kBudget = sizeof(std::string) + sizeof(std::shared_ptr<const SRunLink>) + 24;
+    EXPECT_TRUE(sizeof(SOutputRun) <= kBudget);
+    if (sizeof(SOutputRun) > kBudget)
+        printf("    sizeof(SOutputRun) = %zu, budget %zu\n",
+               sizeof(SOutputRun), kBudget);
 }
 
 TEST(OutputRun, AnOrdinaryRunAllocatesNoLink)

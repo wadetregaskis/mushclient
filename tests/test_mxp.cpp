@@ -15,18 +15,49 @@
 
 #if defined(__APPLE__)
 #include <malloc/malloc.h>   // malloc_zone_statistics (exact leak checks)
-#else
-#include <malloc.h>          // mallinfo2 (exact leak checks)
+#elif !defined(_WIN32) && !MC_UNDER_SANITIZER
+#include <atomic>
+#include <cstdlib>
+#include <new>
+
+// glibc ptmalloc2's per-thread tcache keeps freed chunks marked PREV_INUSE, so
+// mallinfo2().uordblks counts tcache-held frees as still in use and misses
+// allocations satisfied from tcache.  Count live C++ heap blocks directly.
+static std::atomic<size_t> g_live_new_blocks{0};
+
+void* operator new(std::size_t sz) {
+    void* p = std::malloc(sz ? sz : 1);
+    if (!p) throw std::bad_alloc();
+    g_live_new_blocks.fetch_add(1, std::memory_order_relaxed);
+    return p;
+}
+void* operator new[](std::size_t sz) {
+    return ::operator new(sz);
+}
+void operator delete(void* p) noexcept {
+    if (p) {
+        g_live_new_blocks.fetch_sub(1, std::memory_order_relaxed);
+        std::free(p);
+    }
+}
+void operator delete[](void* p) noexcept {
+    ::operator delete(p);
+}
+void operator delete(void* p, std::size_t) noexcept {
+    ::operator delete(p);
+}
+void operator delete[](void* p, std::size_t) noexcept {
+    ::operator delete(p);
+}
 #endif
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-// Exact count of blocks (macOS) / bytes (Linux) the heap currently has
-// outstanding. Unlike an RSS high-water mark this is precise enough to
-// bracket a SINGLE call and see a handful of leaked objects -- needed
-// because the MXP ArgumentList leaks below don't accumulate across repeated
-// calls (see the two leak tests for why), so a loop-and-watch-RSS-grow
-// budget can't see them.
+// Exact count of blocks the heap currently has outstanding. Unlike an RSS
+// high-water mark this is precise enough to bracket a SINGLE call and see a
+// handful of leaked objects -- needed because the MXP ArgumentList leaks
+// below don't accumulate across repeated calls (see the two leak tests for
+// why), so a loop-and-watch-RSS-grow budget can't see them.
 static size_t live_heap_blocks()
 {
 #if defined(__APPLE__)
@@ -35,18 +66,17 @@ static size_t live_heap_blocks()
     return (size_t) st.blocks_in_use;
 #elif defined(_WIN32)
     // The debug CRT's own accounting, which is the Windows equivalent of asking
-    // the allocator rather than the OS.  Counts, matching the Apple arm --
-    // note the glibc arm below returns uordblks, which is BYTES, so the three
-    // are not interchangeable and only the delta is ever compared.
+    // the allocator rather than the OS.
     _CrtMemState st;
     _CrtMemCheckpoint(&st);
     size_t n = 0;
     for (int i = 0; i < _MAX_BLOCKS; ++i)
         n += (size_t) st.lCounts[i];
     return n;
+#elif !MC_UNDER_SANITIZER
+    return g_live_new_blocks.load(std::memory_order_relaxed);
 #else
-    struct mallinfo2 mi = mallinfo2();
-    return (size_t) mi.uordblks;
+    return 0;
 #endif
 }
 

@@ -33,9 +33,9 @@
 #include <unistd.h>   // readlink, ssize_t, realpath
 #include <stdlib.h>   // realpath, free()
 #include <sys/stat.h> // stat() — used by CFile::GetStatus
-#include <sys/sysctl.h> // sysctlbyname("hw.memsize") — GlobalMemoryStatus
 #include <time.h>     // clock_gettime / nanosleep — GetTickCount / timeGetTime / Sleep
 #if defined(__APPLE__)
+#  include <sys/sysctl.h>   // sysctlbyname("hw.memsize") — GlobalMemoryStatus
 #  include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
 
@@ -448,10 +448,17 @@ inline void GlobalMemoryStatus(MEMORYSTATUS* ms) {
     ms->dwMemoryLoad = 0;
     ms->dwTotalPhys = 0;
     ms->dwAvailPhys = 0;
+#if defined(__APPLE__)
     uint64_t total = 0;
     size_t   len   = sizeof total;
     if (sysctlbyname("hw.memsize", &total, &len, nullptr, 0) == 0 && total != 0)
         ms->dwTotalPhys = (SIZE_T) total;   // SIZE_T is 64-bit here, so no clamp
+#else
+    long pages = ::sysconf(_SC_PHYS_PAGES);
+    long psize = ::sysconf(_SC_PAGESIZE);
+    if (pages > 0 && psize > 0)
+        ms->dwTotalPhys = (SIZE_T) pages * (SIZE_T) psize;
+#endif
 }
 
 // Hit-test return codes

@@ -111,6 +111,7 @@ cmake -S "$REPO" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_INSTALL_RPATH='$ORIGIN/lib:$ORIGIN' \
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=TRUE \
+    -DCMAKE_EXE_LINKER_FLAGS="-Wl,--disable-new-dtags" \
     ${EXTRA_CMAKE_ARGS:-}
 
 note "building mushgui target (-j$JOBS)"
@@ -229,6 +230,44 @@ if [ "$DO_RELOCATE" = 1 ]; then
     note "  bundled $count shared libraries into lib/"
 fi
 
+# Ensure DT_RPATH tag is set (not DT_RUNPATH) so transitive library lookups in lib/ succeed
+python3 -c "
+import struct, os
+def convert_runpath_to_rpath(filepath):
+    try:
+        with open(filepath, 'rb') as f:
+            elf = bytearray(f.read())
+        if len(elf) < 64 or elf[:4] != b'\x7fELF' or elf[4] != 2:
+            return
+        e_shoff = struct.unpack('<Q', elf[40:48])[0]
+        e_shentsize = struct.unpack('<H', elf[58:60])[0]
+        e_shnum = struct.unpack('<H', elf[60:62])[0]
+        modified = False
+        for i in range(e_shnum):
+            offset = e_shoff + i * e_shentsize
+            sh_type = struct.unpack('<I', elf[offset+4:offset+8])[0]
+            if sh_type == 6:
+                sh_offset = struct.unpack('<Q', elf[offset+24:offset+32])[0]
+                sh_size = struct.unpack('<Q', elf[offset+32:offset+40])[0]
+                sh_entsize = struct.unpack('<Q', elf[offset+56:offset+64])[0]
+                for j in range(0, sh_size, sh_entsize):
+                    tag = struct.unpack('<Q', elf[sh_offset+j:sh_offset+j+8])[0]
+                    if tag == 29:
+                        struct.pack_into('<Q', elf, sh_offset+j, 15)
+                        modified = True
+        if modified:
+            with open(filepath, 'wb') as f:
+                f.write(elf)
+    except Exception:
+        pass
+
+for root, _, files in os.walk('$STAGE_APP'):
+    for name in files:
+        path = os.path.join(root, name)
+        if not os.path.islink(path):
+            convert_runpath_to_rpath(path)
+" 2>/dev/null || true
+
 # ════════════════════════════════════════════════════════════════════════════
 # 5. create portable launcher and desktop file
 # ════════════════════════════════════════════════════════════════════════════
@@ -236,22 +275,43 @@ cat <<'EOF' > "$STAGE_APP/mushclient.sh"
 #!/bin/sh
 HERE="$(cd "$(dirname "$0")" && pwd)"
 export LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GDK_BACKEND="${GDK_BACKEND:-x11,wayland}"
 exec "$HERE/MUSHclient" "$@"
 EOF
 chmod +x "$STAGE_APP/mushclient.sh"
 ln -sf mushclient.sh "$STAGE_APP/mushclient"
 
-cat <<EOF > "$STAGE_APP/mushclient.desktop"
+cat <<'EOF' > "$STAGE_APP/mushclient.desktop"
 [Desktop Entry]
 Name=MUSHclient
 Comment=MUD/MUSH/MOO client with scripting
-Exec=mushclient %F
+Exec=sh -c '"$(dirname "%k")"/mushclient.sh' %F
 Icon=mushclient
 Terminal=false
 Type=Application
 Categories=Game;RolePlaying;Network;
 Keywords=MUD;MUSH;MOO;Telnet;Client;
+StartupNotify=true
 EOF
+chmod +x "$STAGE_APP/mushclient.desktop"
+gio set "$STAGE_APP/mushclient.desktop" metadata::trusted true 2>/dev/null || true
+
+# Also register in user applications menu if directory exists
+if [ -d "$HOME/.local/share/applications" ] || mkdir -p "$HOME/.local/share/applications" 2>/dev/null; then
+    cat <<EOF > "$HOME/.local/share/applications/mushclient.desktop"
+[Desktop Entry]
+Name=MUSHclient
+Comment=MUD/MUSH/MOO client with scripting
+Exec=$STAGE_APP/mushclient.sh %F
+Icon=$STAGE_APP/mushclient.png
+Terminal=false
+Type=Application
+Categories=Game;RolePlaying;Network;
+StartupNotify=true
+EOF
+    chmod +x "$HOME/.local/share/applications/mushclient.desktop"
+    update-desktop-database "$HOME/.local/share/applications/" 2>/dev/null || true
+fi
 
 # ════════════════════════════════════════════════════════════════════════════
 # 6. package .tar.gz archive

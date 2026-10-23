@@ -1111,6 +1111,14 @@ if(NOT WIN32)
         # mushgui builds and runs under ASan, but its findings are not this
         # option's purpose: see docs/SANITIZERS.md "Can the GUI be sanitized?".
         mc_sanitize(mushgui)
+        # The CMake target stays "mushgui" (mushcore/mushgui_adapters/mushgui
+        # build-target convention), but the bundle + executable are named
+        # "MUSHclient" to match the canonical Windows app — so it is
+        # MUSHclient.app/Contents/MacOS/MUSHclient on macOS and MUSHclient on
+        # Linux, and wxWidgets' default app display name (derived from argv[0])
+        # reads "MUSHclient" too.
+        set_target_properties(mushgui PROPERTIES OUTPUT_NAME "MUSHclient")
+
         # wxWidgets on macOS needs the bundle type for proper menu bar / event loop
         if(APPLE)
             # macOS-only Obj-C++ helper (AppKit): disable NSTextView smart-quote
@@ -1122,12 +1130,6 @@ if(NOT WIN32)
             # must not reach the TUs that include the MFC headers.
             target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/platform/wx_osx_statusitem.mm)
             set_target_properties(mushgui PROPERTIES
-                # The CMake target stays "mushgui" (mushcore/mushgui_adapters/mushgui
-                # build-target convention), but the bundle + executable are named
-                # "MUSHclient" to match the canonical Windows app — so it is
-                # MUSHclient.app/Contents/MacOS/MUSHclient, and wxWidgets' default
-                # app display name (derived from argv[0]) reads "MUSHclient" too.
-                OUTPUT_NAME                   "MUSHclient"
                 MACOSX_BUNDLE_GUI_IDENTIFIER  "au.com.gammon.MUSHclient"
                 MACOSX_BUNDLE_BUNDLE_NAME     "MUSHclient"
                 # MUSHCLIENT_VERSION, not PROJECT_VERSION: project()'s VERSION
@@ -1137,6 +1139,7 @@ if(NOT WIN32)
                 MACOSX_BUNDLE_BUNDLE_VERSION  "${MUSHCLIENT_VERSION}"
                 MACOSX_BUNDLE_ICON_FILE       "MUSHclient.icns"
             )
+            set(_mushgui_res_dir "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources")
             # The app icon (built from platform/dialog_art/MUSHclient.png via
             # iconutil) → Contents/Resources, named by CFBundleIconFile above, so
             # the Dock, Cmd-Tab switcher and Finder show MUSHclient's icon.
@@ -1144,113 +1147,81 @@ if(NOT WIN32)
                 # Ensure Contents/Resources exists first — on a freshly-created
                 # bundle this icon copy can be the first thing to write there.
                 COMMAND ${CMAKE_COMMAND} -E make_directory
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources"
+                    "${_mushgui_res_dir}"
                 COMMAND ${CMAKE_COMMAND} -E copy
                     "${CMAKE_SOURCE_DIR}/platform/macos/MUSHclient.icns"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
+                    "${_mushgui_res_dir}/"
                 COMMENT "Bundling the app icon (MUSHclient.icns)")
-            # Bundle the Lua module library into the .app so plugins can
-            # require() the shipped modules (movewindow, mapper, gauge, …)
-            # regardless of the working directory.  OpenLuaDelayed() adds
-            # Contents/Resources/lua to package.path on non-Windows.
-            add_custom_command(TARGET mushgui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CMAKE_SOURCE_DIR}/lua"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/lua"
-                COMMENT "Bundling lua/ modules into mushgui.app/Contents/Resources")
-            # Bundle the recovered dialog resources + the resource.h symbol table
-            # so the MFC-dialog bridge can parse them at runtime.
-            add_custom_command(TARGET mushgui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy
-                    "${CMAKE_SOURCE_DIR}/platform/mushclient_dialogs.rc"
-                    "${CMAKE_SOURCE_DIR}/resource.h"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
-                COMMENT "Bundling dialog resources into mushgui.app/Contents/Resources")
-            # Dialog art (Tip bulb, tray icons, app icon) — the bitmaps/icons the
-            # canonical dialogs reference, from nickgammon/mushclient_resources.
-            # Rendered into SS_ICON/SS_BITMAP statics + the Dock icon by the bridge.
-            add_custom_command(TARGET mushgui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CMAKE_SOURCE_DIR}/platform/dialog_art"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/dialog_art"
-                COMMENT "Bundling dialog art (image statics + Dock icons)")
-            # Toolbar art — the shipped 16x15 4bpp strips behind the Standard,
-            # World and Activity bars.  Renamed from their upstream filenames
-            # (res/toolbar1.bmp, res/game_too.bmp, res/bitmap1.bmp and
-            # "res/mc activity 0..4.bmp") to drop the spaces and to make the
-            # activity style order explicit; see platform/wx_toolbar.cpp.
-            add_custom_command(TARGET mushgui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CMAKE_SOURCE_DIR}/platform/toolbar_art"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/toolbar_art"
-                COMMENT "Bundling toolbar art (Standard/World/Activity bars)")
-            # Licence + credits text (the About box's CCreditsDlg reads these as
-            # "TEXT" resources via the bundled-resource bridge).
-            add_custom_command(TARGET mushgui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CMAKE_SOURCE_DIR}/platform/dialog_text"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/text"
-                COMMENT "Bundling licence + credits text (About box)")
-            # FIGlet fonts for Notepad ▸ Edit ▸ ASCII Art.  The shipped default
-            # pref is the RELATIVE path "fonts/standard.flf" (Windows uses
-            # "fonts\\standard.flf"), which resolves against the app directory
-            # there; art.cpp falls back to ../Resources/ from the executable
-            # when that relative path misses, so this is where they must land.
-            add_custom_command(TARGET mushgui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CMAKE_SOURCE_DIR}/fonts"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/fonts"
-                COMMENT "Bundling FIGlet .flf fonts into Contents/Resources/fonts")
-            # Vendored Tcl's script library (init.tcl, encodings, msgs) — the
-            # statically-linked Tcl finds it via TCL_LIBRARY=Resources/tcl8.6,
-            # set from the executable path in tcl_engine.cpp's OpenTcl.
-            if(TCL_VENDORED)
-                add_custom_command(TARGET mushgui POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_directory
-                        "${TCL_VENDORED}/lib/tcl8.6"
-                        "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/tcl8.6"
-                    COMMENT "Bundling the Tcl 8.6 script library into Resources/tcl8.6")
-            endif()
-            # Vendored Ruby: the relocatable libruby dylib + its stdlib and arch
-            # .bundle extensions, dropped at Contents/lib.  Ruby's extensions link
-            # libruby as @executable_path/../lib/libruby.<ver>.dylib and load-relative
-            # derives the stdlib prefix from libruby's own location (dladdr), so this
-            # one location makes both the host and every extension self-locating with
-            # no env vars and no per-file install-name patching.
-            if(RUBY_VENDORED)
-                # Wipe Contents/lib first so a Ruby version bump can't leave the old
-                # libruby.<ver>.dylib / lib/ruby/<ver> behind (copy_directory merges).
-                add_custom_command(TARGET mushgui POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E rm -rf
-                        "$<TARGET_BUNDLE_DIR:mushgui>/Contents/lib"
-                    COMMAND ${CMAKE_COMMAND} -E copy_directory
-                        "${RUBY_VENDORED}/lib"
-                        "$<TARGET_BUNDLE_DIR:mushgui>/Contents/lib"
-                    COMMENT "Bundling the relocatable Ruby (libruby + stdlib) into Contents/lib")
-            endif()
-            # Read-only data the engine opens at runtime: the Tip-of-the-Day
-            # text and the name-generator lists.  These go in Contents/Resources/
-            # (NOT Contents/MacOS/): code signing requires that only the
-            # executable live in MacOS/, so the lookups resolve ../Resources/ on
-            # macOS (CTipDlg, CWorldChildFrame::GenerateCharacterName).
-            add_custom_command(TARGET mushgui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy
-                    "${CMAKE_SOURCE_DIR}/tips.txt"
-                    "${CMAKE_SOURCE_DIR}/names.txt"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
-                COMMENT "Bundling tips.txt + names.txt into Contents/Resources (CTipDlg / GenerateName)")
-            # Spell checker: the engine script + the read-only dictionaries, also
-            # in Contents/Resources/ (resolved via utils.info().resource_directory).
-            # spell.sqlite is built at runtime in the writable data dir.
-            add_custom_command(TARGET mushgui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy
-                    "${CMAKE_SOURCE_DIR}/scripting/spellchecker.lua"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CMAKE_SOURCE_DIR}/spell"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/spell"
-                COMMENT "Bundling spellchecker.lua + spell/ dictionaries into Contents/Resources")
+        else()
+            # On Linux (non-bundle), runtime lookups resolve resources alongside
+            # the executable (see FindResource in wx_dialog_bridge.cpp, FindArt
+            # in wx_toolbar.cpp, lua_utils.cpp, MUSHclient.cpp, utilities_shared.cpp).
+            set(_mushgui_res_dir "$<TARGET_FILE_DIR:mushgui>")
         endif()
+
+        # Stage runtime resources into _mushgui_res_dir (Contents/Resources on
+        # macOS; alongside the executable on Linux).
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/lua"
+                "${_mushgui_res_dir}/lua"
+            COMMENT "Bundling lua/ modules")
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_SOURCE_DIR}/platform/mushclient_dialogs.rc"
+                "${CMAKE_SOURCE_DIR}/resource.h"
+                "${_mushgui_res_dir}/"
+            COMMENT "Bundling dialog resources (mushclient_dialogs.rc + resource.h)")
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/platform/dialog_art"
+                "${_mushgui_res_dir}/dialog_art"
+            COMMENT "Bundling dialog art (image statics + icons)")
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/platform/toolbar_art"
+                "${_mushgui_res_dir}/toolbar_art"
+            COMMENT "Bundling toolbar art (Standard/World/Activity bars)")
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/platform/dialog_text"
+                "${_mushgui_res_dir}/text"
+            COMMENT "Bundling licence + credits text (About box)")
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/fonts"
+                "${_mushgui_res_dir}/fonts"
+            COMMENT "Bundling FIGlet .flf fonts")
+        if(TCL_VENDORED)
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${TCL_VENDORED}/lib/tcl8.6"
+                    "${_mushgui_res_dir}/tcl8.6"
+                COMMENT "Bundling the Tcl 8.6 script library")
+        endif()
+        if(APPLE AND RUBY_VENDORED)
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E rm -rf
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/lib"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${RUBY_VENDORED}/lib"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/lib"
+                COMMENT "Bundling the relocatable Ruby (libruby + stdlib) into Contents/lib")
+        endif()
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_SOURCE_DIR}/tips.txt"
+                "${CMAKE_SOURCE_DIR}/names.txt"
+                "${_mushgui_res_dir}/"
+            COMMENT "Bundling tips.txt + names.txt (CTipDlg / GenerateName)")
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_SOURCE_DIR}/scripting/spellchecker.lua"
+                "${_mushgui_res_dir}/"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/spell"
+                "${_mushgui_res_dir}/spell"
+            COMMENT "Bundling spellchecker.lua + spell/ dictionaries")
     elseif(NOT wxWidgets_FOUND)
         message(STATUS "wxWidgets not found — mushgui target skipped")
         message(STATUS "  macOS: brew install wxwidgets")

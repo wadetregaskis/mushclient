@@ -758,10 +758,12 @@ CString strFontPath = dlg.m_strFont;
     CFileStatus status;
     if (!CFile::GetStatus (strFontPath, status))
       {
-      CString strBundled = ExtractDirectory (App.m_strMUSHclientFileName)
-                         + "../Resources/" + strFontPath;
+      CString strExeDir = ExtractDirectory (App.m_strMUSHclientFileName);
+      CString strBundled = strExeDir + "../Resources/" + strFontPath;
       if (CFile::GetStatus (strBundled, status))
         strFontPath = strBundled;
+      else if (CFile::GetStatus (strExeDir + strFontPath, status))
+        strFontPath = strExeDir + strFontPath;
       }
     }
 #endif

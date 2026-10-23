@@ -421,6 +421,16 @@ void wx_unregister_world_frame(CMUSHclientDoc* doc)
 // cannot disagree about which world is "world 1".
 CMUSHclientDoc* wx_world_in_slot(int slot);
 
+CMUSHclientDoc* wx_doc_from_frame(wxFrame* frame)
+{
+    if (!frame) return nullptr;
+    for (const auto& pair : s_docFrameMap) {
+        if (pair.second == frame)
+            return pair.first;
+    }
+    return nullptr;
+}
+
 void wx_activate_world_frame(CMUSHclientDoc* doc)
 {
     auto it = s_docFrameMap.find(doc);

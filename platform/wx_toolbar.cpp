@@ -27,6 +27,7 @@
 // included because wx_world_child.h's wx includes would be clobbered by
 // compat.h's macros in this translation unit.
 void wx_activate_world_frame(CMUSHclientDoc* doc);
+CMUSHclientDoc* wx_doc_from_frame(wxFrame* frame);
 
 // Also wx_mfc_impl.cpp, and declared here for the same reason: the one answer
 // to "may the user choose this command right now", layered canonical table ->
@@ -504,7 +505,8 @@ void CWorldToolBars::Forward (int cmdId)
 
 CMUSHclientDoc* CWorldToolBars::ActiveDoc () const
 {
-    return m_doc;
+    if (m_doc) return m_doc;
+    return wx_doc_from_frame(m_frame);
 }
 
 wxToolBar* CWorldToolBars::Build (Which which)

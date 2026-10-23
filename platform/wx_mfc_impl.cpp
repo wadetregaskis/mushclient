@@ -3334,9 +3334,14 @@ static void SeedBundledUserData()
         // wxStandardPaths resolves Contents/Resources reliably (vs. guessing the
         // exe path).  On Linux this is the install prefix's share dir.
         const std::string resDir (wxStandardPaths::Get ().GetResourcesDir ().utf8_str ());
-        const fs::path src = fs::path (resDir) / "userdata-seed";
+        fs::path src = fs::path (resDir) / "userdata-seed";
         if (!fs::is_directory (src))
-            return;   // ordinary build — nothing bundled to seed
+        {
+            const fs::path exeDir (std::string (wxFileName (wxStandardPaths::Get ().GetExecutablePath ()).GetPath ().utf8_str ()));
+            src = exeDir / "userdata-seed";
+            if (!fs::is_directory (src))
+                return;   // ordinary build — nothing bundled to seed
+        }
 
         const fs::path dstRoot (PortableUserDataDir ());
         int seeded = 0;
@@ -3421,10 +3426,15 @@ static void hook_open_default_world()
             return;
 
         const std::string resDir (wxStandardPaths::Get ().GetResourcesDir ().utf8_str ());
-        const fs::path marker = fs::path (resDir) / "default-world";
+        fs::path marker = fs::path (resDir) / "default-world";
         std::error_code ec;
         if (!fs::is_regular_file (marker, ec))
-            return;   // ordinary build — no default world bundled
+        {
+            const fs::path exeDir (std::string (wxFileName (wxStandardPaths::Get ().GetExecutablePath ()).GetPath ().utf8_str ()));
+            marker = exeDir / "default-world";
+            if (!fs::is_regular_file (marker, ec))
+                return;   // ordinary build — no default world bundled
+        }
 
         std::ifstream in (marker);
         std::string name;

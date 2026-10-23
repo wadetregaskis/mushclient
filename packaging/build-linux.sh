@@ -140,8 +140,16 @@ cp "$REPO/tips.txt"                       "$STAGE_APP/"
 cp "$REPO/names.txt"                      "$STAGE_APP/"
 cp "$REPO/scripting/spellchecker.lua"     "$STAGE_APP/"
 
-for dir in lua dialog_art toolbar_art fonts spell; do
+for dir in lua fonts spell; do
     if [ -d "$REPO/$dir" ]; then
+        cp -R "$REPO/$dir" "$STAGE_APP/"
+    fi
+done
+
+for dir in dialog_art toolbar_art; do
+    if [ -d "$REPO/platform/$dir" ]; then
+        cp -R "$REPO/platform/$dir" "$STAGE_APP/"
+    elif [ -d "$REPO/$dir" ]; then
         cp -R "$REPO/$dir" "$STAGE_APP/"
     fi
 done

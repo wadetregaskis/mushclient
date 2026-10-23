@@ -128,6 +128,12 @@ class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
     {
+        // Distro wxGTK builds ship with wxDEBUG_LEVEL=1, which pops a modal
+        // GUI dialog on internal wxASSERTs (e.g. wxMenuItemBase rejecting
+        // Win32 MFC command IDs >= 0x8000, or CaptureMouse on an unmapped
+        // test window).
+        wxDisableAsserts();
+
         // Before any control exists: opt this application out of "add full stop
         // with double-space".  It is the one macOS substitution with no
         // per-view switch, and in a MUD client the inserted period is SENT.

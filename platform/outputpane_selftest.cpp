@@ -1757,6 +1757,22 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
         return std::chrono::duration<double, std::milli>(t1 - t0).count();
     };
 
+#ifdef __WXGTK__
+    // On GTK, AutoCopySelection (wx_outputpane.cpp:3040) intentionally
+    // materialises SelectedText() on every drag release to populate the X11
+    // primary selection; m_copySelToClip gates whether the regular CLIPBOARD
+    // selection is written too.
+    SetClipboardText("SENTINEL-RELEASE-OFF");
+    h.pane->SetCopySelectionToClipboard(false);
+    releases(1);
+    const std::string afterOff = ClipboardText();
+    h.pane->SetCopySelectionToClipboard(true);
+    releases(1);
+    const std::string afterOn = ClipboardText();
+    h.pane->SetCopySelectionToClipboard(false);
+    opCheck(afterOff == "SENTINEL-RELEASE-OFF" && afterOn != "SENTINEL-RELEASE-OFF",
+            "GTK: release with option off leaves CLIPBOARD untouched while option on writes it");
+#else
     h.pane->SetCopySelectionToClipboard(false);
     releases(3);                                   // warm
     const double off = releases(30);
@@ -1780,6 +1796,7 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
            "(off*10+1 must stay under on)\n",
            ok ? "PASS" : "FAIL", off, on);
     (ok ? g_pass : g_fail)++;
+#endif
 }
 
 // ── 9. Search highlighting finds the same ranges on both paths ────────────

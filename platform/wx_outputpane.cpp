@@ -199,14 +199,118 @@ wxFontEncoding WinCharsetToEncoding(int cs)
 std::atomic<unsigned long> g_outputConvBuilds{0};
 std::atomic<unsigned long> g_outputDecodes{0};
 
+// Stateless single-byte table converter for CP1255 (Hebrew) and CP1258
+// (Vietnamese).  On Linux, glibc's gconv modules for CP1255 and CP1258 are
+// stateful NFC-composing converters that buffer base vowels/letters inside
+// iconv_t's shift state waiting for a combining mark; wxMBConv_iconv::ToWChar
+// does not flush that shift state when called with an explicit byte length,
+// which truncates trailing vowels and fails the two-pass wxString sizing call
+// with E2BIG.  Windows MultiByteToWideChar and macOS libiconv treat both as
+// stateless 256-entry single-byte codepages; these tables match that contract.
+class CSingleByteTableConv final : public wxMBConv {
+    const uint16_t* m_high; // 128 entries for 0x80..0xFF (0 = unmapped)
+public:
+    explicit CSingleByteTableConv(const uint16_t* high) : m_high(high) {}
+    wxMBConv* Clone() const override { return new CSingleByteTableConv(m_high); }
+    size_t ToWChar(wchar_t* dst, size_t dstLen,
+                   const char* src, size_t srcLen = wxNO_LEN) const override
+    {
+        if (!src) return wxCONV_FAILED;
+        const size_t n = (srcLen == wxNO_LEN) ? (std::strlen(src) + 1) : srcLen;
+        for (size_t i = 0; i < n; ++i) {
+            const unsigned char b = (unsigned char)src[i];
+            if (b >= 0x80 && m_high[b - 0x80] == 0)
+                return wxCONV_FAILED;
+        }
+        if (!dst) return n;
+        if (dstLen < n) return wxCONV_FAILED;
+        for (size_t i = 0; i < n; ++i) {
+            const unsigned char b = (unsigned char)src[i];
+            dst[i] = (b < 0x80) ? (wchar_t)b : (wchar_t)m_high[b - 0x80];
+        }
+        return n;
+    }
+    size_t FromWChar(char* dst, size_t dstLen,
+                     const wchar_t* src, size_t srcLen = wxNO_LEN) const override
+    {
+        if (!src) return wxCONV_FAILED;
+        const size_t n = (srcLen == wxNO_LEN) ? (std::wcslen(src) + 1) : srcLen;
+        for (size_t i = 0; i < n; ++i) {
+            const wchar_t wc = src[i];
+            if (wc >= 0 && wc < 0x80) continue;
+            bool found = false;
+            for (int j = 0; j < 128; ++j)
+                if (m_high[j] != 0 && (wchar_t)m_high[j] == wc) { found = true; break; }
+            if (!found) return wxCONV_FAILED;
+        }
+        if (!dst) return n;
+        if (dstLen < n) return wxCONV_FAILED;
+        for (size_t i = 0; i < n; ++i) {
+            const wchar_t wc = src[i];
+            if (wc >= 0 && wc < 0x80) { dst[i] = (char)wc; continue; }
+            for (int j = 0; j < 128; ++j)
+                if (m_high[j] != 0 && (wchar_t)m_high[j] == wc) {
+                    dst[i] = (char)(0x80 + j);
+                    break;
+                }
+        }
+        return n;
+    }
+};
+
+static const uint16_t kCp1255High[128] = {
+    0x20AC, 0x0000, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+    0x02C6, 0x2030, 0x0000, 0x2039, 0x0000, 0x0000, 0x0000, 0x0000,
+    0x0000, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+    0x02DC, 0x2122, 0x0000, 0x203A, 0x0000, 0x0000, 0x0000, 0x0000,
+    0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x20AA, 0x00A5, 0x00A6, 0x00A7,
+    0x00A8, 0x00A9, 0x00D7, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF,
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7,
+    0x00B8, 0x00B9, 0x00F7, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF,
+    0x05B0, 0x05B1, 0x05B2, 0x05B3, 0x05B4, 0x05B5, 0x05B6, 0x05B7,
+    0x05B8, 0x05B9, 0x0000, 0x05BB, 0x05BC, 0x05BD, 0x05BE, 0x05BF,
+    0x05C0, 0x05C1, 0x05C2, 0x05C3, 0x05F0, 0x05F1, 0x05F2, 0x05F3,
+    0x05F4, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+    0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7,
+    0x05D8, 0x05D9, 0x05DA, 0x05DB, 0x05DC, 0x05DD, 0x05DE, 0x05DF,
+    0x05E0, 0x05E1, 0x05E2, 0x05E3, 0x05E4, 0x05E5, 0x05E6, 0x05E7,
+    0x05E8, 0x05E9, 0x05EA, 0x0000, 0x0000, 0x200E, 0x200F, 0x0000,
+};
+
+static const uint16_t kCp1258High[128] = {
+    0x20AC, 0x0000, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+    0x02C6, 0x2030, 0x0000, 0x2039, 0x0152, 0x0000, 0x0000, 0x0000,
+    0x0000, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+    0x02DC, 0x2122, 0x0000, 0x203A, 0x0153, 0x0000, 0x0000, 0x0178,
+    0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7,
+    0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF,
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7,
+    0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF,
+    0x00C0, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x00C5, 0x00C6, 0x00C7,
+    0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x0300, 0x00CD, 0x00CE, 0x00CF,
+    0x0110, 0x00D1, 0x0309, 0x00D3, 0x00D4, 0x01A0, 0x00D6, 0x00D7,
+    0x00D8, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x01AF, 0x0303, 0x00DF,
+    0x00E0, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x00E5, 0x00E6, 0x00E7,
+    0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x0301, 0x00ED, 0x00EE, 0x00EF,
+    0x0111, 0x00F1, 0x0323, 0x00F3, 0x00F4, 0x01A1, 0x00F6, 0x00F7,
+    0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x01B0, 0x20AB, 0x00FF,
+};
+
+static wxMBConv* MakeOutputCharsetConv(wxFontEncoding enc)
+{
+    if (enc == wxFONTENCODING_CP1255) return new CSingleByteTableConv(kCp1255High);
+    if (enc == wxFONTENCODING_CP1258) return new CSingleByteTableConv(kCp1258High);
+    return new wxCSConv(enc);
+}
+
 const wxMBConv& OutputCharsetConv(int charset)
 {
     const wxFontEncoding enc = WinCharsetToEncoding(charset);
-    struct Entry { wxFontEncoding enc; wxCSConv* conv; };
+    struct Entry { wxFontEncoding enc; wxMBConv* conv; };
     static thread_local std::vector<Entry>* cache = new std::vector<Entry>();
     for (const Entry& e : *cache)
         if (e.enc == enc) return *e.conv;
-    cache->push_back(Entry{ enc, new wxCSConv(enc) });
+    cache->push_back(Entry{ enc, MakeOutputCharsetConv(enc) });
     g_outputConvBuilds.fetch_add(1, std::memory_order_relaxed);
     return *cache->back().conv;
 }

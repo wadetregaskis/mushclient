@@ -749,11 +749,18 @@ int RunNotepadSelfTest()
                                          wxEmptyString, wxDefaultPosition,
                                          wxDefaultSize, wxTE_MULTILINE);
         raw->SetValue(wxT("a\r\nb"));
+#ifdef __WXOSX__
         npCheck(raw->GetValue() == wxT("a\n\nb"),
                 "the wx control EXPANDS a CRLF into two line breaks "
                 "(the whole reason this section exists)");
         npCheck(raw->GetNumberOfLines() == 3,
                 "...three lines where the file had two");
+#else
+        npCheck(raw->GetValue() == wxT("a\r\nb"),
+                "the raw wxGTK control retains CR in GetValue() without normalisation");
+        npCheck(raw->GetNumberOfLines() == 2,
+                "...across two lines");
+#endif
         raw->Destroy();
 
         // (ii) The frame must not let that happen.  Before the fix this text

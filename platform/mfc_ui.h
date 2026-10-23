@@ -1225,19 +1225,24 @@ inline BOOL CWnd::GetWindowPlacement(WINDOWPLACEMENT* wp) const {
 // declines to write a minimised placement in the first place.
 inline BOOL CWnd::SetWindowPlacement(const WINDOWPLACEMENT* wp) {
     if (!wp) return FALSE;
+    BOOL handled = FALSE;
     if (wp->showCmd == SW_SHOWMAXIMIZED) {
-        if (g_wxhook_show_window)
+        if (g_wxhook_show_window) {
             g_wxhook_show_window(m_hWnd, 3 /*SW_MAXIMIZE*/);
-        return TRUE;
+            handled = TRUE;
+        }
     }
     if (g_wxhook_move_window) {
         const RECT& r = wp->rcNormalPosition;
         g_wxhook_move_window(m_hWnd, (int) r.left, (int) r.top,
                              (int) (r.right - r.left), (int) (r.bottom - r.top), true);
+        handled = TRUE;
     }
-    if (wp->showCmd == SW_SHOWMINIMIZED && g_wxhook_show_window)
+    if (wp->showCmd == SW_SHOWMINIMIZED && g_wxhook_show_window) {
         g_wxhook_show_window(m_hWnd, 2 /*SW_MINIMIZE*/);
-    return TRUE;
+        handled = TRUE;
+    }
+    return handled;
 }
 
 typedef CREATESTRUCT *        LPCREATESTRUCT;

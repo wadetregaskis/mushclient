@@ -298,4 +298,143 @@ void ApplyTrayItemFromPrefs()
 // therefore differ on Windows and behave alike here: the menu-bar item appears,
 // the Dock icon stays.
 
+
+#ifndef __APPLE__
+#include <wx/taskbar.h>
+#include <wx/dcmemory.h>
+#include <memory>
+
+namespace {
+
+static wxBitmap MakePlaceholderBitmap(int side)
+{
+    wxBitmap bmp(side, side, 32);
+    wxMemoryDC dc(bmp);
+    dc.SetBackground(*wxWHITE_BRUSH);
+    dc.Clear();
+    dc.SetPen(wxPen(*wxBLACK, 1));
+    dc.SetBrush(*wxTRANSPARENT_BRUSH);
+    dc.DrawRoundedRectangle(1, 1, side - 2, side - 2, 3.0);
+    dc.SetBrush(*wxBLACK_BRUSH);
+    dc.DrawCircle(side / 2, side / 2, 2);
+    dc.SelectObject(wxNullBitmap);
+    return bmp;
+}
+
+class CMcTaskBarIcon : public wxTaskBarIcon {
+public:
+    wxBitmap m_bmp;
+    std::unique_ptr<wxMenu> m_builtMenu;
+
+    wxMenu* BuildMenu()
+    {
+        wxMenu* menu = new wxMenu();
+        const int n = mc_statusitem_menu_count();
+        for (int i = 0; i < n; ++i) {
+            const int command = mc_statusitem_menu_command(i);
+            if (command == 0) {
+                menu->AppendSeparator();
+                continue;
+            }
+            const char* label = mc_statusitem_menu_label(i);
+            wxMenuItem* item = menu->Append(command, wxString::FromUTF8(label ? label : ""));
+            item->Enable(mc_statusitem_menu_enabled(i) != 0);
+        }
+        menu->Bind(wxEVT_MENU, [](wxCommandEvent& evt) {
+            mc_statusitem_menu_invoke(evt.GetId());
+        });
+        return menu;
+    }
+
+    wxMenu* CreatePopupMenu() override
+    {
+        return BuildMenu();
+    }
+};
+
+static CMcTaskBarIcon* g_taskBarIcon = nullptr;
+
+} // namespace
+
+#include <wx/evtloop.h>
+
+bool wxOSXStatusItemShow(const wxBitmap& icon, const char* tooltip)
+{
+    if (!g_taskBarIcon)
+        g_taskBarIcon = new CMcTaskBarIcon();
+    wxBitmap bmp = icon.IsOk() ? icon : MakePlaceholderBitmap(18);
+    g_taskBarIcon->m_bmp = bmp;
+    if (wxEventLoopBase::GetActive())
+        g_taskBarIcon->SetIcon(wxBitmapBundle::FromBitmap(bmp),
+                               wxString::FromUTF8(tooltip ? tooltip : ""));
+    return true;
+}
+
+void wxOSXStatusItemHide()
+{
+    if (!g_taskBarIcon)
+        return;
+    g_taskBarIcon->RemoveIcon();
+    g_taskBarIcon->Destroy();
+    g_taskBarIcon = nullptr;
+}
+
+void wxOSXActivateSelf()
+{
+    if (App.m_pMainWnd && App.m_pMainWnd->m_hWnd) {
+        if (auto* tlw = dynamic_cast<wxTopLevelWindow*>(
+                static_cast<wxWindow*>(App.m_pMainWnd->m_hWnd)))
+            tlw->Raise();
+    }
+}
+
+bool wxOSXStatusItemVisible()
+{
+    return g_taskBarIcon != nullptr && g_taskBarIcon->m_bmp.IsOk();
+}
+
+int wxOSXStatusItemImageWidth()
+{
+    return (g_taskBarIcon && g_taskBarIcon->m_bmp.IsOk())
+               ? g_taskBarIcon->m_bmp.GetWidth() : 0;
+}
+
+int wxOSXStatusItemImageHeight()
+{
+    return (g_taskBarIcon && g_taskBarIcon->m_bmp.IsOk())
+               ? g_taskBarIcon->m_bmp.GetHeight() : 0;
+}
+
+int wxOSXStatusItemRebuildMenu()
+{
+    if (!g_taskBarIcon) return -1;
+    g_taskBarIcon->m_builtMenu.reset(g_taskBarIcon->CreatePopupMenu());
+    if (!g_taskBarIcon->m_builtMenu) return -1;
+    return (int)g_taskBarIcon->m_builtMenu->GetMenuItemCount();
+}
+
+bool wxOSXStatusItemMenuItemAt(int index, char* title, int titleLen,
+                               int* tag, int* enabled, int* separator)
+{
+    if (titleLen > 0 && title)
+        title[0] = '\0';
+    if (!g_taskBarIcon || !g_taskBarIcon->m_builtMenu) return false;
+    wxMenu* menu = g_taskBarIcon->m_builtMenu.get();
+    if (index < 0 || (size_t)index >= menu->GetMenuItemCount()) return false;
+    wxMenuItem* item = menu->FindItemByPosition((size_t)index);
+    if (!item) return false;
+    if (title && titleLen > 0) {
+        const wxString label = item->GetItemLabelText();
+        const wxScopedCharBuffer utf8 = label.utf8_str();
+        const char* s = utf8.data() ? utf8.data() : "";
+        std::strncpy(title, s, (size_t)titleLen - 1);
+        title[titleLen - 1] = '\0';
+    }
+    if (tag)       *tag       = item->GetId();
+    if (enabled)   *enabled   = item->IsEnabled() ? 1 : 0;
+    if (separator) *separator = item->IsSeparator() ? 1 : 0;
+    return true;
+}
+#endif // !__APPLE__
+
 #endif // !_WIN32

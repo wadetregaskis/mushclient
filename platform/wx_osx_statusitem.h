@@ -24,7 +24,7 @@
 
 class wxBitmap;
 
-#ifdef __APPLE__
+#ifndef _WIN32
 
 // Create (or update) the menu-bar item.  `icon` is drawn at the menu bar's own
 // height; an invalid bitmap falls back to a drawn placeholder so the item is
@@ -78,15 +78,4 @@ int         mc_statusitem_menu_enabled(int index);  // 1/0
 void        mc_statusitem_menu_invoke(int command); // activate the app + run the command
 }
 
-#else
-
-inline bool wxOSXStatusItemShow(const wxBitmap&, const char*) { return false; }
-inline void wxOSXStatusItemHide() {}
-inline void wxOSXActivateSelf() {}
-inline bool wxOSXStatusItemVisible() { return false; }
-inline int  wxOSXStatusItemImageWidth() { return 0; }
-inline int  wxOSXStatusItemImageHeight() { return 0; }
-inline int  wxOSXStatusItemRebuildMenu() { return -1; }
-inline bool wxOSXStatusItemMenuItemAt(int, char*, int, int*, int*, int*) { return false; }
-
-#endif
+#endif // !_WIN32

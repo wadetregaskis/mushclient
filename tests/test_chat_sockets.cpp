@@ -46,7 +46,7 @@
 // Ports are per-test so two tests in the same binary never collide, and high
 // enough not to need privileges.  If one is somehow in use the Create() below
 // fails and the test says so rather than hanging.
-static short kPort = 45170;
+static short kPort = 25170;
 static short next_port() { return kPort++; }
 
 // A plain client socket connected to 127.0.0.1:port.  Not a CAsyncSocket — it

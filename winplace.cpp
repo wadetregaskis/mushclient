@@ -39,6 +39,14 @@ BOOL CWindowPlacement::Restore(LPCSTR lpKeyName,
                                CWnd* pWnd,
                                const bool bDesktop)
 {
+#ifndef _WIN32
+   // On macOS / Linux, the main window geometry is managed exclusively by
+   // wxConfig (preferences.cfg in hook_load_mdi_frame / SaveWindowGeometryTo).
+   // CWindowPlacement::Restore ("Main window") would overwrite the wxConfig-restored
+   // geometry with uninitialized/default placement values before the event loop runs.
+   if (lpKeyName && strcmp(lpKeyName, "Main window") == 0)
+      return FALSE;
+#endif
    GetProfileWP(lpKeyName);
 
    // Only restore if window intersets the screen.

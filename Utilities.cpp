@@ -15,7 +15,7 @@
 #define _getpid getpid
 #endif
 #include "mainfrm.h"
-#include "color.h"
+#include "Color.h"
 
 #include "scripting/errors.h"
 

@@ -12,7 +12,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#include "MUSHview.h"   // MW_MOUSE_* flag constants
+#include "mushview.h"   // MW_MOUSE_* flag constants
 
 // Which miniwindow (and hotspot, if any) is under a client-space point —
 // the old CMUSHView::Mouse_Over_Miniwindow, moved verbatim except for the

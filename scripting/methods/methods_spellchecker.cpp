@@ -7,7 +7,7 @@
 #include "../../doc.h"
 #include "../errors.h"
 #include "../../sendvw.h"
-#include "../../dmetaph.h"
+#include "../../Dmetaph.h"
 
 // Implements:
 

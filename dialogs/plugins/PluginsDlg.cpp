@@ -3,7 +3,7 @@
 
 #include "stdafx.h"
 #include "../../mainfrm.h"
-#include "../../mushclient.h"
+#include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../../TextDocument.h"
 #include "PluginsDlg.h"

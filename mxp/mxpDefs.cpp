@@ -7,7 +7,7 @@
 #include "stdafx.h"
 #include "../MUSHclient.h"
 #include "../doc.h"
-#include "../MUSHview.h"
+#include "../mushview.h"
 #include "../mainfrm.h"
 #include "mxp.h"
 #include "scripting/errors.h"

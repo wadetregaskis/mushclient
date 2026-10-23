@@ -10,7 +10,7 @@
 #include "../../childfrm.h"
 #include "../../sendvw.h"
 #include "../../dialogs/CompleteWordDlg.h"
-#include "../../MUSHview.h"
+#include "../../mushview.h"
 #ifdef _WIN32
 #include <direct.h>
 #endif

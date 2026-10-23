@@ -9,7 +9,7 @@
 #include "sendvw.h"
 #include "Color.h"
 #include "childfrm.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "TextDocument.h"
 
 #include "png/png.h"  // for version

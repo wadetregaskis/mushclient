@@ -2,7 +2,7 @@
 #include "../../MUSHclient.h"
 #include "../../mainfrm.h"
 #include "../../doc.h"
-#include "genpropertypage.h"
+#include "GenPropertyPage.h"
 #include "../EditMultiLine.h"
 
 #ifdef _DEBUG

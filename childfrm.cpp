@@ -6,7 +6,7 @@
 
 #include "doc.h"
 #include "childfrm.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "mainfrm.h"
 #include "sendvw.h"
 

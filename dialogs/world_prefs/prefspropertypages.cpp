@@ -7,7 +7,7 @@
 #include "../../doc.h"
 #include "../../Color.h"   // CColor (HLS colour operations)
 #include "../../TextDocument.h"
-#include "../../MUSHview.h"
+#include "../../mushview.h"
 #include "../../sendvw.h"
 #include "../../scripting/errors.h"
 #include "../../childfrm.h"

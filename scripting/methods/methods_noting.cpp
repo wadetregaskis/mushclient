@@ -5,7 +5,7 @@
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
-#include "../../MUSHview.h"   // NoteHr's _WIN32 view-notify fork only
+#include "../../mushview.h"   // NoteHr's _WIN32 view-notify fork only
 #include "../errors.h"
 
 // Implements:

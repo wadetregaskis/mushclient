@@ -10,7 +10,7 @@
 #include "MUSHclient.h"
 #include "mainfrm.h"            // Frame (ConnectionClosed's status/button updates)
 #include "doc.h"
-#include "MUSHview.h"           // CMUSHView (DisplayMsg/StartNewLine view-notify loops)
+#include "mushview.h"           // CMUSHView (DisplayMsg/StartNewLine view-notify loops)
 #ifdef _WIN32
 #include "sendvw.h"             // CSendView (SendTo's eSendToCommand view walk)
 #endif

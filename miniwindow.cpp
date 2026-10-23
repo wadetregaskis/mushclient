@@ -5,9 +5,9 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "scripting/errors.h"
-#include "color.h"
+#include "Color.h"
 #include "mainfrm.h"
 #include "blending.h"
 

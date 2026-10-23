@@ -39,7 +39,7 @@
 #include "flags.h"                 // eEnabled -- the nil-default battery seeds triggers
 #include "platform/mc_dispatch.h"   // MC_VariantDateToUnix
 #include "childfrm.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "resource.h"
 
 #include <cstdio>

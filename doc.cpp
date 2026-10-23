@@ -10,7 +10,7 @@
 // #define SHOW_ALL_COMMS // for debugging connecting and other obscure problems
 
 #include "doc.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "mainfrm.h"
 #include "childfrm.h"
 #include "sendvw.h"

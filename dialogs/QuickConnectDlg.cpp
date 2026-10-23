@@ -2,7 +2,7 @@
 //
 
 #include "stdafx.h"
-#include "../mushclient.h"
+#include "../MUSHclient.h"
 #include "QuickConnectDlg.h"
 
 // On non-Windows, CQuickConnectDlg uses the inherited CDialog::DoModal, which the

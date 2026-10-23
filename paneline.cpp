@@ -8,7 +8,7 @@
 /////////////////////////////////////////////////////////////////////////////
 
 #include "stdafx.h"
-#include "mushclient.h"
+#include "MUSHclient.h"
 
 // adds text to a line, adds to current style run if possible
 void CPaneLine::AddStyle (const CPaneStyle style)

@@ -25,7 +25,7 @@
 #include "OtherTypes.h"
 #include "scripting/errors.h"   // eOK / eCouldNotOpenFile
 
-#include "MUSHview.h"       // CMUSHView: the click-column tests below
+#include "mushview.h"       // CMUSHView: the click-column tests below
 #include "dialogs/plugins/PluginsDlg.h"  // CPluginsDlg -- the stale-CPlugin* row
 #include "dialogs/world_prefs/prefspropertypages.h"  // FittedLastColumnWidth,
                                                  // OutputBufferBytesNeeded, CPrefsP7/8

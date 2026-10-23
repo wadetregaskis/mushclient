@@ -2,12 +2,12 @@
 //
 
 #include "stdafx.h"
-#include "mushclient.h"
+#include "MUSHclient.h"
 #include "doc.h"
 
 #include "MySplitterWnd.h"
 #include "childfrm.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "sendvw.h"
 
 #ifdef _DEBUG

@@ -21,7 +21,7 @@
 #include "doc.h"
 #include "mainfrm.h"   // ACCELERATOR_FIRST_COMMAND / ACCELERATOR_COUNT (the id pool)
 #ifdef _WIN32
-#include "MUSHview.h"  // the view AcceleratorTo walks for -- see AccelDoc below
+#include "mushview.h"  // the view AcceleratorTo walks for -- see AccelDoc below
 #endif
 #include "scripting/errors.h"
 #include "variant_test_helpers.h"

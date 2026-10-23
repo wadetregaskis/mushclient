@@ -2,7 +2,7 @@
 //
 
 #include "stdafx.h"
-#include "../mushclient.h"
+#include "../MUSHclient.h"
 #include "../TextDocument.h"
 #include "../doc.h"
 #include "ChooseNotepadDlg.h"

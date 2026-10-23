@@ -16,7 +16,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#include "MUSHview.h"          // MXP_FIRST_MENU (the WindowMenu item id base)
+#include "mushview.h"          // MXP_FIRST_MENU (the WindowMenu item id base)
 #include "miniwindow.h"           // CMiniWindow, MouseMoveMiniWindow, MINIWINDOW_*
 #include "scripting/errors.h"
 #include "tests/fake_worldview.h" // the recording pal::IWorldView (header-only)

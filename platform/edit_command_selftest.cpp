@@ -43,7 +43,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "childfrm.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "resource.h"
 #include "platform/wx_mfc_hooks.h"
 #include "platform/extended_selftest.h"

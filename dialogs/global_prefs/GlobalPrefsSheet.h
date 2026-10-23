@@ -10,7 +10,7 @@
 #include "../../MUSHclient.h"
 #include "../../mainfrm.h"
 #include "../../doc.h"
-#include "../world_prefs/genpropertypage.h"
+#include "../world_prefs/GenPropertyPage.h"
 
 /////////////////////////////////////////////////////////////////////////////
 // CGlobalPrefsSheet

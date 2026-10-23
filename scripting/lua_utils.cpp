@@ -50,7 +50,7 @@
 #include "../dialogs/LuaChooseList.h"
 #include "../dialogs/LuaChooseListMulti.h"
 #include "../dialogs/FunctionListDlg.h"
-#include "../dmetaph.h"
+#include "../Dmetaph.h"
 #ifdef _WIN32
 #include <direct.h>
 #include <wingdi.h>

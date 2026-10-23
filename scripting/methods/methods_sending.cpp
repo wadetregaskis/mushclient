@@ -5,7 +5,7 @@
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
-#include "../../MUSHview.h"
+#include "../../mushview.h"
 #include "../../sendvw.h"
 #include "../errors.h"
 

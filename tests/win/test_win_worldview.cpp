@@ -48,7 +48,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "mainfrm.h"
-#include "MUSHview.h"       // CMUSHView: two views, one document
+#include "mushview.h"       // CMUSHView: two views, one document
 #include "pal/iworldview.h"
 #include "pal/win_worldview.h"
 

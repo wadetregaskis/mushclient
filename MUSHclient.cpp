@@ -15,7 +15,7 @@
 #include "childfrm.h"
 #include "activitychildfrm.h"
 #include "textchildfrm.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "ActivityView.h"
 #include "TextView.h"
 

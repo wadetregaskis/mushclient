@@ -37,7 +37,7 @@
 #include "doc.h"
 #include "childfrm.h"
 #include "mainfrm.h"          // CMainFrame — m_bActive / m_bFlashingWindow
-#include "MUSHview.h"
+#include "mushview.h"
 #include "resource.h"
 #include "platform/wx_world_child.h"
 #include "platform/wx_outputpane.h"   // BuildContextMenu — the second of the two

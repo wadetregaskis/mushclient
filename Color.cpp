@@ -10,7 +10,7 @@ Hinweis: (C) 1999 by Christian Rodemeyer
          - MSDN: 'Converting Colors Between RGB and HLS' 
 \****************************************************************************/
 
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "Color.h"
 #include <math.h>
 

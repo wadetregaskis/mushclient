@@ -2,7 +2,7 @@
 //
 
 #include "stdafx.h"
-#include "../mushclient.h"
+#include "../MUSHclient.h"
 #include "world_prefs/ButtonColour.h"
 #include "ColourPickerDlg.h"
 #include "../Color.h"

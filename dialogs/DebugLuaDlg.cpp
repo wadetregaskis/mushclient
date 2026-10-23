@@ -2,7 +2,7 @@
 //
 
 #include "stdafx.h"
-#include "../mushclient.h"
+#include "../MUSHclient.h"
 #include "DebugLuaDlg.h"
 #include "EditMultiLine.h"
 

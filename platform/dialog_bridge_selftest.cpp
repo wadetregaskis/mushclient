@@ -44,7 +44,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "resource.h"
-#include "dialogs/world_prefs/genpropertypage.h"
+#include "dialogs/world_prefs/GenPropertyPage.h"
 #include "dialogs/world_prefs/TreePropertySheet.h"
 #include "platform/wx_dialog_bridge.h"   // MfcDialogResources (the templates the pump walks)
 #include "platform/extended_selftest.h"  // ExtendedSelfTestCheck

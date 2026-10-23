@@ -4,7 +4,7 @@
 #include "MUSHclient.h"
 
 #include "doc.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "scripting/errors.h"
 
 #define NL "\r\n"

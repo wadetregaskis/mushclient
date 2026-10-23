@@ -19,7 +19,7 @@
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../../blending.h"
-#include "../../color.h"
+#include "../../Color.h"
 #include "../errors.h"
 
 // see also: CMiniWindow::Filter

@@ -2,7 +2,7 @@
 //
 
 #include "stdafx.h"
-#include "../mushclient.h"
+#include "../MUSHclient.h"
 #include "DebugWorldInputDlg.h"
 #include "InsertUnicodeDlg.h"
 #include "../doc.h"

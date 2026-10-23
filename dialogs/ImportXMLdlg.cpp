@@ -2,7 +2,7 @@
 //
 
 #include "stdafx.h"
-#include "../mushclient.h"
+#include "../MUSHclient.h"
 #include "plugins/PluginsDlg.h"
 #include "ImportXMLdlg.h"
 #include "../doc.h"

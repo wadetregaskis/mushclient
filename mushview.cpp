@@ -7,7 +7,7 @@
 #include "MUSHclient.h"
 
 #include "doc.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "mainfrm.h"
 #include "childfrm.h"
 #include "sendvw.h"

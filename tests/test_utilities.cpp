@@ -1311,7 +1311,7 @@ TEST(Utilities, GetLinePositionClampsOutOfRangeLineNumbers)
 // classic usage).  metaph2 is only assigned when an alternate pronunciation
 // was recorded, so a sentinel detects "no alternate".
 
-#include "dmetaph.h"
+#include "Dmetaph.h"
 
 struct DM {
     CString p, s;

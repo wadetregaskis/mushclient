@@ -9,7 +9,7 @@
 #include "stdafx.h"
 #include "../MUSHclient.h"
 #include "../doc.h"
-#include "../MUSHview.h"
+#include "../mushview.h"
 #include "../genprint.h"
 #include "../mainfrm.h"
 #include "../dialogs/ProgDlg.h"

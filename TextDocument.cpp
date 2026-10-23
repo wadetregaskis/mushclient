@@ -11,7 +11,7 @@ Copyright (c) 2000 Nick Gammon.
 #include "MUSHclient.h"
 #include "TextDocument.h"
 #include "TextView.h"
-#include "MainFrm.h"
+#include "mainfrm.h"
 #ifdef _WIN32
 #include <process.h>
 #endif

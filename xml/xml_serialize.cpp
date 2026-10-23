@@ -4,7 +4,7 @@
 #include "stdafx.h"
 #include "../MUSHclient.h"
 #include "../doc.h"
-#include "../MUSHview.h"
+#include "../mushview.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

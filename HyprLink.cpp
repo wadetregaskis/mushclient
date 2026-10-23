@@ -3,7 +3,7 @@
 // If this code works, it was written by Paul DiLascia.
 // If not, I don't know who wrote it.
 //
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "HyprLink.h"
 
 #ifdef _DEBUG

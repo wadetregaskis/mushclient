@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ButtonColour.h"
-#include "genpropertypage.h"
+#include "GenPropertyPage.h"
 #include "StatLink.h"
 #include "../ColourComboBox.h"
 

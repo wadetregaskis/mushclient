@@ -3,7 +3,7 @@
 #include "stdafx.h"
 #include "../MUSHclient.h"
 #include "../doc.h"
-#include "../MUSHview.h"
+#include "../mushview.h"
 #include "../mainfrm.h"
 #include "../Color.h"   // CColor (HLS colour operations) — not in stdafx.h on macOS
 #include "mxp.h"

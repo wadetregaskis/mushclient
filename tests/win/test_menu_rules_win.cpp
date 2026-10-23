@@ -37,7 +37,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "mainfrm.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "sendvw.h"
 #include "OtherTypes.h"
 

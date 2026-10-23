@@ -25,7 +25,7 @@
 #include "TextDocument.h"
 #include "childfrm.h"
 #include "textchildfrm.h"
-#include "MUSHview.h"
+#include "mushview.h"
 #include "mainfrm.h"   // MC_TEST_WIN_MAIN_FRAME: a constructed, uncreated frame
 #include "pal/gdi_surface.h"   // InstallGdiSurfaceBridge (MC_TEST_WIN_APP_STATE)
 #include "TextView.h"

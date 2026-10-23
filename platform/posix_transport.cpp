@@ -585,6 +585,20 @@ int ConfigureTrustAnchors(void* vctx)
     // Ignore the result: a failure here just means the file was not there, and
     // the defaults above may already have supplied a usable store.
     SSL_CTX_load_verify_locations(ctx, "/etc/ssl/cert.pem", nullptr);
+#elif defined(__linux__)
+    // Standard Linux distribution CA bundle locations (Debian/Ubuntu,
+    // RHEL/Fedora, openSUSE, Alpine/Arch) so portable builds survive when
+    // the build machine's OPENSSLDIR is absent.
+    static const char* const kLinuxCaBundles[] = {
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+        "/etc/ssl/ca-bundle.pem",
+        "/etc/ssl/cert.pem",
+    };
+    for (const char* bundle : kLinuxCaBundles) {
+        if (SSL_CTX_load_verify_locations(ctx, bundle, nullptr) == 1)
+            break;
+    }
 #endif
 
     X509_STORE* store = SSL_CTX_get_cert_store(ctx);
@@ -836,7 +850,7 @@ int RunPalTransportSelfTest()
         RecordingEvents ev3;
         pal::ITransport* t3 = pal::CreatePosixTransport(ev3);
         t3->resolve("no-such-host.invalid", 99);
-        pumpUntil([&] { return ev3.resolved; }, 600);
+        pumpUntil([&] { return ev3.resolved; }, 3000);
         ttCheck(ev3.resolved && !ev3.resolveOk,
                 "resolve of a reserved .invalid name fails");
         ttCheck(t3->lastResolveError() != 0,

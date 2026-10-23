@@ -3570,7 +3570,6 @@ void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
     // geometry when there is one — otherwise a resize is silently lost and the
     // next launch reverts to the default size.  (On real-MDI platforms the child
     // is not a top-level window, so we fall back to the parent.)
-#ifdef __WXOSX__
     wxTopLevelWindow* geomWin = frame;
     if (wxMDIParentFrame* mdi = wxDynamicCast(frame, wxMDIParentFrame)) {
         if (wxMDIChildFrame* active = mdi->GetActiveChild()) {
@@ -3579,12 +3578,13 @@ void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
                     geomWin = tlw;
         }
     }
-#else
-    wxTopLevelWindow* geomWin = frame;
-#endif
+#ifdef __WXOSX__
     const bool maximized = geomWin->IsAlwaysMaximized()
                                ? frame->IsMaximized()
                                : geomWin->IsMaximized();
+#else
+    const bool maximized = frame->IsMaximized();
+#endif
     cfg.Write(wxT("/geometry/main_maximized"), maximized);
     cfg.Write(wxT("/geometry/status_bar"), s_statusBarVisible);
     // Full screen is not a size worth restoring, and on macOS the exit is

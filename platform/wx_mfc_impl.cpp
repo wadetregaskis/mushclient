@@ -455,7 +455,7 @@ static void hook_show_window(void* h, int nCmd)
     switch (nCmd) {
     case 0:           w->Hide(); break;                                       // SW_HIDE
     case 2: case 6:   w->Show(); if (tl) tl->Iconize(true);  break;           // SW_SHOWMINIMIZED / SW_MINIMIZE
-    case 3:           w->Show(); if (tl) tl->Maximize();     break;           // SW_MAXIMIZE
+    case 3:           w->Show(); if (tl) { tl->Maximize(true); tl->CallAfter([tl]() { tl->Maximize(true); }); } break;           // SW_MAXIMIZE
     case 9:           w->Show(); if (tl) { tl->Iconize(false); tl->Maximize(false); } break; // SW_RESTORE
     default:          w->Show(); break;                                       // SW_SHOW / SW_SHOWNORMAL / …
     }
@@ -1128,6 +1128,20 @@ static void wx_quit_application()
 #endif
 }
 
+#ifdef __WXGTK__
+extern "C" unsigned long g_signal_connect_data(
+    void* instance, const char* detailed_signal,
+    void (*c_handler)(), void* data,
+    void* destroy_data, int connect_flags);
+
+static int on_gtk_frame_map(void* /*widget*/, void* /*event*/, void* user_data)
+{
+    if (wxTopLevelWindow* tl = static_cast<wxTopLevelWindow*>(user_data)) {
+        tl->Maximize(true);
+    }
+    return 0; // FALSE
+}
+#endif
 static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                                 unsigned long /*style*/, void* /*parentHwnd*/)
 {
@@ -1205,9 +1219,41 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             frame->SetSize((int)w, (int)h);
             frame->Centre();
         }
-        if (maximized)
+        if (maximized) {
             frame->Maximize(true);
+            App.m_nCmdShow = SW_SHOWMAXIMIZED;
+#ifdef __WXGTK__
+            if (frame->GetHandle()) {
+                g_signal_connect_data(
+                    frame->GetHandle(), "map-event",
+                    reinterpret_cast<void(*)()>(on_gtk_frame_map),
+                    frame, nullptr, 0);
+            }
+#endif
+        }
     }
+
+#ifdef __WXGTK__
+    // On wxGTK, MDI child frames are hosted in wxMDIClientWindow (GtkNotebook).
+    // wxWidgets does not resize child frames automatically when wxMDIClientWindow resizes,
+    // so dynamically resize all child frames to fit the notebook client area.
+    if (wxWindow* client = frame->GetClientWindow()) {
+        client->Bind(wxEVT_SIZE, [client](wxSizeEvent& evt) {
+            const wxSize sz = client->GetClientSize();
+            if (sz.x > 0 && sz.y > 0) {
+                for (wxWindow* c : client->GetChildren()) {
+                    c->SetSize(0, 0, sz.x, sz.y);
+                }
+                for (const auto& pair : s_docFrameMap) {
+                    if (CWorldChildFrame* child = pair.second) {
+                        child->SetSize(0, 0, sz.x, sz.y);
+                    }
+                }
+            }
+            evt.Skip();
+        });
+    }
+#endif
 
     // View ▸ Always On Top, restored at startup.  Windows does this at
     // MUSHclient.cpp:759-761 with SetWindowPos(&wndTopMost), a shim that is
@@ -1954,11 +2000,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 auto* active = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
                 show = active ? !active->AreToolBarsVisible(which) : true;
             }
-            for (wxWindow* w : frame->GetChildren())
-                if (auto* child = dynamic_cast<CWorldChildFrame*>(w)) {
+            for (const auto& pair : s_docFrameMap) {
+                if (CWorldChildFrame* child = pair.second) {
                     if (id == ID_VIEW_RESET_TOOLBARS) child->ResetToolBars();
                     else                              child->ShowToolBar(which, show);
                 }
+            }
             return;
         }
 
@@ -2754,10 +2801,19 @@ static void* hook_open_world_file(const char* path)
     // NOT Maximize() (which zooms to the full screen, defeating the ~200-column
     // width) and NOT the client size at (0,0) (which would move the window to
     // the screen corner and lose the title-bar height).
+#ifdef __WXGTK__
+    child->Show();
+    if (wxWindow* client = mdiParent->GetClientWindow()) {
+        const wxSize sz = client->GetClientSize();
+        if (sz.x > 0 && sz.y > 0)
+            child->SetSize(0, 0, sz.x, sz.y);
+    }
+#else
     const wxRect want = mdiParent->GetScreenRect();
     child->Show();
     if (App.m_bOpenWorldsMaximised && want.width > 100 && want.height > 100)
         child->SetSize(want);
+#endif
 
     // All output plumbing (the IWorldView seam) and initial pane state (font, scrollback,
     // background) are applied inside CWorldChildFrame's constructor.
@@ -3298,10 +3354,19 @@ static void* hook_new_world()
     wx_register_world_frame(doc, child);  // keep the registry up-to-date
     child->UpdateTitle();   // set title from m_mush_name
     {   // fill the main window, but only if asked (see hook_open_world_file)
+#ifdef __WXGTK__
+        child->Show();
+        if (wxWindow* client = mdiParent->GetClientWindow()) {
+            const wxSize sz = client->GetClientSize();
+            if (sz.x > 0 && sz.y > 0)
+                child->SetSize(0, 0, sz.x, sz.y);
+        }
+#else
         const wxRect want = mdiParent->GetScreenRect();
         child->Show();
         if (App.m_bOpenWorldsMaximised && want.width > 100 && want.height > 100)
             child->SetSize(want);
+#endif
     }
 
     // All output plumbing (the IWorldView seam) and initial pane state (font, scrollback,
@@ -3505,6 +3570,7 @@ void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
     // geometry when there is one — otherwise a resize is silently lost and the
     // next launch reverts to the default size.  (On real-MDI platforms the child
     // is not a top-level window, so we fall back to the parent.)
+#ifdef __WXOSX__
     wxTopLevelWindow* geomWin = frame;
     if (wxMDIParentFrame* mdi = wxDynamicCast(frame, wxMDIParentFrame)) {
         if (wxMDIChildFrame* active = mdi->GetActiveChild()) {
@@ -3513,6 +3579,9 @@ void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
                     geomWin = tlw;
         }
     }
+#else
+    wxTopLevelWindow* geomWin = frame;
+#endif
     const bool maximized = geomWin->IsAlwaysMaximized()
                                ? frame->IsMaximized()
                                : geomWin->IsMaximized();
@@ -6565,6 +6634,14 @@ static void hook_get_placement_rect(const void* h, RECT* r)
         r->left = r->top = r->right = r->bottom = 0;
     }
 }
+static bool hook_is_window_maximized(const void* h)
+{
+    if (auto* w = toWxC(h)) {
+        if (const auto* tl = wxDynamicCast(w, wxTopLevelWindow))
+            return tl->IsMaximized();
+    }
+    return false;
+}
 // CWnd::SetWindowPos.  Deliberately not expressed as a GetWindowRect + MoveWindow
 // pair: GetWindowRect always answers in SCREEN coordinates, while the x/y this
 // call takes are screen coordinates for a top-level window and parent-client
@@ -6685,6 +6762,7 @@ void wx_mfc_install_hooks()
     g_wxhook_hotkey_get               = hook_hotkey_get;
     g_wxhook_get_window_rect          = hook_get_window_rect;
     g_wxhook_get_placement_rect       = hook_get_placement_rect;
+    g_wxhook_is_maximized             = hook_is_window_maximized;
     g_wxhook_client_to_screen         = hook_client_to_screen;
     g_wxhook_screen_to_client         = hook_screen_to_client;
     g_wxhook_get_cursor_pos           = hook_get_cursor_pos;

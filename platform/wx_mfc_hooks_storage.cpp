@@ -167,6 +167,7 @@ void* (*g_wxhook_make_hotkey)(void*, int, int, int, int, int)    = nullptr;
 void  (*g_wxhook_hotkey_get)(void*, unsigned short*, unsigned short*) = nullptr;
 void (*g_wxhook_get_window_rect)(const void*, RECT*)             = nullptr;
 void (*g_wxhook_get_placement_rect)(const void*, RECT*)          = nullptr;
+bool (*g_wxhook_is_maximized)(const void*)                              = nullptr;
 void (*g_wxhook_client_to_screen)(const void*, int*, int*)       = nullptr;
 void (*g_wxhook_screen_to_client)(const void*, int*, int*)       = nullptr;
 int  (*g_wxhook_get_cursor_pos)(int*, int*)                      = nullptr;

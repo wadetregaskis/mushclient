@@ -781,6 +781,7 @@ extern void (*g_wxhook_get_window_rect)(const void* hwnd, RECT* r);
 // to just above the Cancel button's top), so it must NOT be the {0,0,w,h}
 // client box: a control's top would always be 0.
 extern void (*g_wxhook_get_placement_rect)(const void* hwnd, RECT* r);
+extern bool (*g_wxhook_is_maximized)(const void* hwnd);
 extern void (*g_wxhook_client_to_screen)(const void* hwnd, int* x, int* y);
 extern void (*g_wxhook_screen_to_client)(const void* hwnd, int* x, int* y);
 

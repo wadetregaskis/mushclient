@@ -1206,7 +1206,7 @@ inline BOOL CWnd::GetWindowPlacement(WINDOWPLACEMENT* wp) const {
     if (!wp) return FALSE;
     wp->length  = sizeof(WINDOWPLACEMENT);
     wp->flags   = 0;
-    wp->showCmd = 1;   // SW_SHOWNORMAL
+    wp->showCmd = (g_wxhook_is_maximized && g_wxhook_is_maximized(m_hWnd)) ? 3 : 1;
     wp->ptMinPosition.x = wp->ptMinPosition.y = 0;
     wp->ptMaxPosition.x = wp->ptMaxPosition.y = 0;
     wp->rcNormalPosition.left = wp->rcNormalPosition.top = 0;
@@ -1224,10 +1224,19 @@ inline BOOL CWnd::GetWindowPlacement(WINDOWPLACEMENT* wp) const {
 // showCmd (minimised / maximised) has no MoveWindow equivalent, and Save()
 // declines to write a minimised placement in the first place.
 inline BOOL CWnd::SetWindowPlacement(const WINDOWPLACEMENT* wp) {
-    if (!wp || !g_wxhook_move_window) return FALSE;
-    const RECT& r = wp->rcNormalPosition;
-    g_wxhook_move_window(m_hWnd, (int) r.left, (int) r.top,
-                         (int) (r.right - r.left), (int) (r.bottom - r.top), true);
+    if (!wp) return FALSE;
+    if (wp->showCmd == SW_SHOWMAXIMIZED) {
+        if (g_wxhook_show_window)
+            g_wxhook_show_window(m_hWnd, 3 /*SW_MAXIMIZE*/);
+        return TRUE;
+    }
+    if (g_wxhook_move_window) {
+        const RECT& r = wp->rcNormalPosition;
+        g_wxhook_move_window(m_hWnd, (int) r.left, (int) r.top,
+                             (int) (r.right - r.left), (int) (r.bottom - r.top), true);
+    }
+    if (wp->showCmd == SW_SHOWMINIMIZED && g_wxhook_show_window)
+        g_wxhook_show_window(m_hWnd, 2 /*SW_MINIMIZE*/);
     return TRUE;
 }
 

@@ -78,6 +78,11 @@ Options
 EOF
 }
 
+# ── Linux delegate ─────────────────────────────────────────────────────────
+if [ "$(uname -s)" = "Linux" ]; then
+    exec "$SCRIPT_DIR/build-linux.sh" "$@"
+fi
+
 # ── parse args ──────────────────────────────────────────────────────────────
 while [ $# -gt 0 ]; do
     case "$1" in

@@ -1,4 +1,46 @@
-# Packaging MUSHclient for macOS
+# Packaging MUSHclient
+
+The packaging scripts build self-contained, distributable MUSHclient releases for macOS and Linux.
+
+---
+
+## Packaging for Linux
+
+| Script | What it does |
+|--------|--------------|
+| [`build-linux.sh`](build-linux.sh) | Build Release, relocate shared libraries, package standalone `.tar.gz` and Debian `.deb`. |
+
+Running `packaging/build-app.sh` on Linux also automatically delegates to `build-linux.sh`.
+
+### Quick start (Linux)
+
+```bash
+packaging/build-linux.sh
+```
+
+This builds Release mode with CMake, vendors/relocates dynamic libraries, stages runtime resources (dialog templates, dialog art, toolbar strips, FIGlet fonts, spell checker dictionaries, and Lua modules), and produces in `dist/`:
+- `dist/mushclient/`: standalone relocatable application bundle with launcher script `mushclient.sh`
+- `dist/mushclient-5.07-linux-<arch>.tar.gz`: self-contained relocatable tarball archive
+- `dist/mushclient_5.07_<arch>.deb`: standard Debian/Ubuntu package for system installation
+
+To include Quow's Discworld plugins and maps:
+```bash
+packaging/fetch-discworld-plugins.sh
+packaging/build-linux.sh --with-discworld
+```
+
+### Linux Prerequisites
+
+- CMake 3.14+ (`apt install cmake ninja-build`)
+- C++14 compiler (`g++` or `clang++`)
+- wxWidgets 3.2+ GTK3 development headers (`apt install libwxgtk3.2-dev` or `libwxgtk3.0-gtk3-dev`)
+- Lua 5.1 development library (`apt install liblua5.1-0-dev`)
+- Optional scripting runtimes: Python 3, Perl (`libperl-dev`), JavaScriptCore (`libjavascriptcoregtk-4.1-dev`), Tcl (`tcl-dev`), Ruby (`ruby-dev`)
+- For `.deb` creation: `dpkg-deb` (standard on Debian/Ubuntu)
+
+---
+
+## Packaging for macOS
 
 The scripts here build a complete, self-contained, signed `MUSHclient.app`:
 

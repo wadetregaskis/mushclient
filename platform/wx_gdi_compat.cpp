@@ -85,7 +85,7 @@ struct DIBSectionData {
     void SyncBitmapToPixels() {
         if (!bmp || !bmp->IsOk()) return;
         const int bpp = bytesPerPixel;
-        wxImage img = bmp->ConvertToImage();
+        wxImage img = bmp->GetSubBitmap(wxRect(0, 0, bmp->GetLogicalWidth(), bmp->GetLogicalHeight())).ConvertToImage();
         const bool srcAlpha = (bpp == 4) && img.HasAlpha();
         for (int y = 0; y < height; ++y) {
             // img is always top-down; pixels buffer may be bottom-up
@@ -681,8 +681,17 @@ double wx_canvas_scale()
 {
     const int ppi = wxGetDisplayPPI().y;
     if (ppi <= 0) return 1.0;
+#ifdef __WXOSX__
     const double s = ppi / 72.0;
     return (s < 1.0) ? 1.0 : s;
+#else
+    // On X11/GTK, standard 1x displays report 96 PPI (not CoreGraphics' 72),
+    // and wxgdi_read_bgra / wxgdi_write_bgra index the physical bitmap by
+    // integer scale isc = (int)(sc + 0.5).  Rounding ppi / 96.0 to an integer
+    // scale keeps 1x displays at 1.0 and 2x HiDPI displays at 2.0.
+    const int isc = (int)(ppi / 96.0 + 0.5);
+    return (isc < 1) ? 1.0 : (double)isc;
+#endif
 }
 
 bool CBitmap::CreateCanvasBitmap(int nWidth, int nHeight) {
@@ -1516,6 +1525,20 @@ bool CDC::Rectangle(int x1, int y1, int x2, int y2) {
         if (w > 0 && h > 0) p->dc.DrawRectangle(x1, y1, w, h);
         return true;
     }
+#ifdef __WXGTK__
+    // On wxGTK Cairo, a 1px rectangle with default wxJOIN_ROUND rounds the 90°
+    // outer corner and blends the fill colour into the corner pixel.  Win32
+    // GDI ::Rectangle always has square (mitered) corners.
+    wxPen pen = p->dc.GetPen();
+    if (pen.IsOk() && pen.GetWidth() <= 1 && pen.GetJoin() == wxJOIN_ROUND) {
+        wxPen miterPen = pen;
+        miterPen.SetJoin(wxJOIN_MITER);
+        p->dc.SetPen(miterPen);
+        p->dc.DrawRectangle(x1, y1, x2 - x1, y2 - y1);
+        p->dc.SetPen(pen);
+        return true;
+    }
+#endif
     p->dc.DrawRectangle(x1, y1, x2 - x1, y2 - y1);
     return true;
 }
@@ -1702,6 +1725,17 @@ bool CDC::LineTo(int x, int y) {
     if (!p) return false;
     p->ApplyPen();
     p->dc.DrawLine(p->curX, p->curY, x, y);
+#ifdef __WXGTK__
+    // On wxGTK, wxGTKCairoDCImpl::DoDrawLine translates by (0.5, 0.5) for 1px
+    // pens so the path runs from the start pixel centre to the end pixel
+    // centre, and Cairo omits the final pixel of a 1px sub-pixel-centred stroke
+    // unless cap is projecting/round and extends past the centre.  Because the
+    // port contract is endpoint-inclusive (wx_surface.cpp line()), explicitly
+    // ink the endpoint pixel for 1px solid pens.
+    const wxPen& pen = p->dc.GetPen();
+    if (pen.IsOk() && pen.GetStyle() != wxPENSTYLE_TRANSPARENT && pen.GetWidth() <= 1)
+        p->dc.DrawPoint(x, y);
+#endif
     p->curX = x; p->curY = y;
     return true;
 }
@@ -1934,9 +1968,19 @@ bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
     // conversion per icon per redraw.  A 1x1 read now converts 1x1.
     // (Windows never had the problem: GetPixel on a DIB is a pointer add, which
     // is also what the DIBSection fast path above does.)
+#ifdef __WXGTK__
+    // On wxGTK, calling ConvertToImage() directly on a wxBitmap that is still
+    // selected into a wxMemoryDC caches M_BMPDATA->m_pixbuf on the live
+    // bitmap; subsequent GetSubBitmap/ConvertToImage calls then read the stale
+    // cached pixbuf instead of the Cairo m_surface the DC keeps drawing to.
+    // GetSubBitmap copies from m_surface into a temporary bitmap first,
+    // leaving the selected bitmap's m_pixbuf unpopulated.
+    wxImage img = bmp.GetSubBitmap(wxRect(lx0, ly0, lwid, lhgt)).ConvertToImage();
+#else
     wxImage img = (lx0 == 0 && ly0 == 0 && lwid == lw && lhgt == lh)
                   ? bmp.ConvertToImage()          // whole thing: skip the copy
                   : bmp.GetSubBitmap(wxRect(lx0, ly0, lwid, lhgt)).ConvertToImage();
+#endif
     if (!img.IsOk()) return false;
     const bool hasA = img.HasAlpha();
     const int  iw   = img.GetWidth(), ih = img.GetHeight();

@@ -952,8 +952,16 @@ FontId WxSurface::createFont(const FontSpec& spec) {
     // Measured in D-21; before this the miniwindow path ran 1.30-1.33x oversize.
     const int px     = spec.pixelHeight > 0 ? spec.pixelHeight : 10;
     const int dev    = dpi();
+#ifdef __WXOSX__
     const int points = dev > 0 ? MulDiv(px, 96, dev) : px;
     const int h      = dev > 0 ? MulDiv(points > 0 ? points : 1, dev, 72) : px;
+#else
+    // On wxGTK, Pango already realizes point sizes at 96 logical DPI (matching
+    // Windows), so a 10pt font naturally has a 13px em without the 96/72 boost
+    // needed on CoreGraphics' 72-DPI point grid.
+    (void) dev;
+    const int h      = px;
+#endif
     if (f.font->CreateFont(-h, 0, 0, 0,
                            spec.weight >= 700 ? FW_BOLD : FW_NORMAL,
                            spec.italic, spec.underline, spec.strikeout,

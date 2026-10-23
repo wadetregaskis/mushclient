@@ -3476,12 +3476,6 @@ wxRect wx_geometry_rect_for_save(wxTopLevelWindow* win)
             r.x = win->m_x;
             r.y = win->m_y;
         }
-    } else {
-        // On GTK3/Wayland, showing a top-level frame adds client-side
-        // decoration extents (m_decorSize) into m_width/m_height; GTKDoGetSize
-        // subtracts m_decorSize so a SetSize(w, h) -> Show() -> save round-trip
-        // preserves (w, h).
-        win->GTKDoGetSize(&r.width, &r.height);
     }
 #endif
     return r;
@@ -5211,6 +5205,33 @@ static intptr_t hook_run_property_sheet(void* self)
 // OnInitDialog/DDX.  Validate-on-leave + validate-active-on-OK mirror MFC's
 // OnKillActive; unvisited pages keep their loaded values, which the caller
 // (DoGlobalPrefs) then writes back unchanged.  Returns IDOK/IDCANCEL.
+#ifdef __WXGTK__
+// On wxGTK, wxNotebook wraps GtkNotebook whose GTK3 switch-page signal cannot
+// be vetoed synchronously after gtk_notebook_set_current_page has run.
+// CFlatSheetNotebook dispatches wxEVT_NOTEBOOK_PAGE_CHANGING prior to changing
+// the GTK page; on veto it aborts the switch, preserving the current selection.
+class CFlatSheetNotebook : public wxNotebook {
+public:
+    using wxNotebook::wxNotebook;
+protected:
+    int DoSetSelection(size_t nPage, int flags = 0) override
+    {
+        if (flags & SetSelection_SendEvent) {
+            wxBookCtrlEvent event(wxEVT_NOTEBOOK_PAGE_CHANGING, GetId(), nPage, GetSelection());
+            event.SetEventObject(this);
+            if (ProcessWindowEvent(event) && !event.IsAllowed())
+                return GetSelection();
+            wxNotebook::ChangeSelection(nPage);
+            wxBookCtrlEvent eventChanged(wxEVT_NOTEBOOK_PAGE_CHANGED, GetId(), nPage, GetSelection());
+            eventChanged.SetEventObject(this);
+            ProcessWindowEvent(eventChanged);
+            return (int)nPage;
+        }
+        return wxNotebook::DoSetSelection(nPage, flags);
+    }
+};
+#endif
+
 static intptr_t hook_run_property_sheet_flat(void* self)
 {
     CPropertySheet* sheet = static_cast<CPropertySheet*>(self);
@@ -5230,7 +5251,11 @@ static intptr_t hook_run_property_sheet_flat(void* self)
                  wxDefaultPosition, wxDefaultSize,
                  wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
 
+#ifdef __WXGTK__
+    wxNotebook* nb = new CFlatSheetNotebook(&dlg, wxID_ANY);
+#else
     wxNotebook* nb = new wxNotebook(&dlg, wxID_ANY);
+#endif
 
     std::vector<CPropertyPage*> pages;
     pages.reserve(sheet->m_flatPages.size());

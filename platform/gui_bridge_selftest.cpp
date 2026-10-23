@@ -119,6 +119,12 @@ void TestGeometry()
     wxMDIChildFrame* child = new wxMDIChildFrame(
         parent, wxID_ANY, wxT("selftest-child"),
         wxDefaultPosition, wxSize(640, 480));
+#ifdef __WXGTK__
+    // wxMDIChildFrame on wxGTK derives from wxTopLevelWindow (m_isShown=false)
+    // while using wxWindow::Create (m_showOnIdle=true); wxWindow::Show(true)
+    // shows the notebook page widget so gtk_notebook_set_current_page succeeds.
+    child->wxWindow::Show(true);
+#endif
     child->Activate();                       // make it the frame's active child
     // A position distinct from (0,0) and from the parent's own origin: a fix
     // that quietly wrote the parent's position (or just left the field zero)
@@ -1600,7 +1606,7 @@ void TestCaretAnchorChain()
                                 wxPoint(60, 70), wxSize(500, 300));
 
     wxTextCtrl* tc = new wxTextCtrl(host, wxID_ANY, wxEmptyString,
-                                    wxPoint(0, 0), wxSize(400, 200),
+                                    wxPoint(10, 15), wxSize(400, 200),
                                     wxTE_MULTILINE | wxTE_DONTWRAP);
     tc->SetValue(wxT("first line\nsecond line\nthird line"));
 

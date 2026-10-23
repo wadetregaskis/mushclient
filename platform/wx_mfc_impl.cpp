@@ -252,7 +252,7 @@ void wx_toggle_full_screen(wxTopLevelWindow* target)
 {
     const bool goingFull = !target->IsFullScreen();
     if (goingFull)
-        s_preFullScreenRects[target] = target->GetRect();
+        s_preFullScreenRects[target] = wx_geometry_rect_for_save(target);
     else
         s_preFullScreenRects.erase(target);
     target->ShowFullScreen(goingFull);
@@ -1171,8 +1171,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // unnoticed.  A fixed width rather than a column count because measuring
         // the font at app-init proved unreliable.
         int di = wxDisplay::GetFromWindow(frame);
-        if (di < 0) di = 0;
-        const wxRect scr = wxDisplay(di).GetClientArea();
+        if (di < 0 || (unsigned)di >= wxDisplay::GetCount()) di = 0;
+        wxRect scr = (wxDisplay::GetCount() > 0)
+                         ? wxDisplay(di).GetClientArea()
+                         : wxRect();
+        if (scr.width <= 0 || scr.height <= 0)
+            scr = wxRect(0, 0, 1920, 1080);
         const long defW = std::min<long>(
             scr.width,
             frame->FromDIP((int) CWorldChildFrame::kMaxDefaultWidthDIP));
@@ -3462,7 +3466,25 @@ wxRect wx_geometry_rect_for_save(wxTopLevelWindow* win)
     auto it = s_preFullScreenRects.find(win);
     if (win->IsFullScreen() && it != s_preFullScreenRects.end())
         return it->second;
-    return win->GetRect();
+    wxRect r = win->GetRect();
+#ifdef __WXGTK__
+    if (wxDynamicCast(win, wxMDIChildFrame)) {
+        // wxMDIChildFrame::DoGetPosition on wxGTK is hardcoded to (0, 0),
+        // while SetSize/DoSetSize stores the requested position in m_x/m_y
+        // (or on CWorldChildFrame via its DoGetPosition override).
+        if (r.x == 0 && r.y == 0) {
+            r.x = win->m_x;
+            r.y = win->m_y;
+        }
+    } else {
+        // On GTK3/Wayland, showing a top-level frame adds client-side
+        // decoration extents (m_decorSize) into m_width/m_height; GTKDoGetSize
+        // subtracts m_decorSize so a SetSize(w, h) -> Show() -> save round-trip
+        // preserves (w, h).
+        win->GTKDoGetSize(&r.width, &r.height);
+    }
+#endif
+    return r;
 }
 
 // ── SaveWindowGeometryTo ──────────────────────────────────────────────────
@@ -3487,7 +3509,9 @@ void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
                     geomWin = tlw;
         }
     }
-    const bool maximized = geomWin->IsMaximized();
+    const bool maximized = geomWin->IsAlwaysMaximized()
+                               ? frame->IsMaximized()
+                               : geomWin->IsMaximized();
     cfg.Write(wxT("/geometry/main_maximized"), maximized);
     cfg.Write(wxT("/geometry/status_bar"), s_statusBarVisible);
     // Full screen is not a size worth restoring, and on macOS the exit is
@@ -5500,8 +5524,11 @@ static void hook_edit_set_sel(void* hwnd, int s, int e) {
     if (!t) return;
     if (s < 0) { long ip = t->GetInsertionPoint(); t->SetSelection(ip, ip); return; }  // SetSel(-1,..) deselects
     long end = (e < 0) ? t->GetLastPosition() : edit_byte_to_char(t, e);               // SetSel(s,-1) → to end
-    t->SetSelection(edit_byte_to_char(t, s), end);
+    // ShowPosition before SetSelection: on wxGTK a single-line wxTextCtrl is a
+    // GtkEntry whose ShowPosition calls gtk_editable_set_position, which clears
+    // any active selection on the entry.
     t->ShowPosition(end);
+    t->SetSelection(edit_byte_to_char(t, s), end);
 }
 static void hook_edit_replace_sel(void* hwnd, const char* text) {
     auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl);
@@ -5572,8 +5599,14 @@ static void hook_edit_pos_from_char(const void* hwnd, int nChar, int* x, int* y)
     if (!t || !x || !y) return;
     const long pos = nChar <= 0 ? 0 : edit_byte_to_char(t, nChar);
 
+#ifndef __WXGTK__
+    // On wxGTK PositionToCoords queries the unrealized GtkTextView layout,
+    // which returns unlaid-out zero Y coordinates for hidden/unmapped controls
+    // instead of wxDefaultPosition.  Use the font-metric calculation below so
+    // unshown controls report consistent row/column coordinates.
     const wxPoint p = t->PositionToCoords(pos);
     if (p != wxDefaultPosition) { *x = p.x; *y = p.y; return; }
+#endif
 
     long col = 0, line = 0;
     if (!t->PositionToXY(pos, &col, &line)) return;

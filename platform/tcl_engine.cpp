@@ -41,7 +41,11 @@
 #include <vector>
 #include <cstdlib>          // setenv, realpath
 #include <sys/stat.h>       // stat
+#ifdef __APPLE__
 #include <mach-o/dyld.h>    // _NSGetExecutablePath
+#else
+#include <unistd.h>         // readlink
+#endif
 #include <limits.h>         // PATH_MAX
 
 #ifndef VT_ERROR
@@ -254,9 +258,16 @@ void CScriptEngine::OpenTcl ()
   if (!s_platformInited)
     {
     s_platformInited = true;
-    char exe[PATH_MAX]; uint32_t sz = sizeof (exe); char real[PATH_MAX];
+    char real[PATH_MAX];
+#ifdef __APPLE__
+    char exe[PATH_MAX]; uint32_t sz = sizeof (exe);
     const bool haveExe =
         _NSGetExecutablePath (exe, &sz) == 0 && realpath (exe, real) != NULL;
+#else
+    const ssize_t n = readlink ("/proc/self/exe", real, sizeof (real) - 1);
+    if (n > 0) real[n] = '\0';
+    const bool haveExe = n > 0;
+#endif
     Tcl_FindExecutable (haveExe ? real : NULL);   // copies the name; `real` need not outlive this
     if (haveExe)
       {
@@ -264,10 +275,18 @@ void CScriptEngine::OpenTcl ()
       size_t slash = p.find_last_of ('/');
       if (slash != std::string::npos)
         {
-        std::string lib = p.substr (0, slash) + "/../Resources/tcl8.6";
-        struct stat st;
-        if (stat ((lib + "/init.tcl").c_str (), &st) == 0)
-          setenv ("TCL_LIBRARY", lib.c_str (), 1);
+        const std::string dir = p.substr (0, slash);
+        static const char* const kRelCandidates[] = { "/../Resources/tcl8.6", "/tcl8.6" };
+        for (const char* rel : kRelCandidates)
+          {
+          std::string lib = dir + rel;
+          struct stat st;
+          if (stat ((lib + "/init.tcl").c_str (), &st) == 0)
+            {
+            setenv ("TCL_LIBRARY", lib.c_str (), 1);
+            break;
+            }
+          }
         }
       }
     }

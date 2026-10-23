@@ -293,7 +293,21 @@ void ensure_started ()
   int    argc_   = 2;
   char** pargv   = argv_;
   ruby_sysinit (&argc_, &pargv);
+#ifdef __APPLE__
   ruby_init_stack ((VALUE*) pthread_get_stackaddr_np (pthread_self ()));
+#else
+  {
+  pthread_attr_t attr;
+  void* stackaddr = nullptr;
+  size_t stacksize = 0;
+  if (pthread_getattr_np (pthread_self (), &attr) == 0)
+    {
+    if (pthread_attr_getstack (&attr, &stackaddr, &stacksize) == 0 && stackaddr)
+      ruby_init_stack ((VALUE*) ((char*) stackaddr + stacksize));
+    pthread_attr_destroy (&attr);
+    }
+  }
+#endif
   ruby_init ();
   ruby_options (argc_, pargv);                // full runtime: parser, prelude, encodings
   ruby_init_loadpath ();

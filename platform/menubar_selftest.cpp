@@ -412,8 +412,13 @@ int RunMenuBarSelfTest()
               wxACCEL_CTRL,                   'L' },
             { "Clear Scrollback",        CWorldChildFrame::kAccelClearScrollback,
               wxACCEL_ALT | wxACCEL_CTRL,     'K' },
+#ifdef __WXOSX__
             { "Clear Screen",            CWorldChildFrame::kAccelClearScreen,
               wxACCEL_RAW_CTRL | wxACCEL_CTRL, 'L' },
+#else
+            { "Clear Screen",            CWorldChildFrame::kAccelClearScreen,
+              wxACCEL_ALT | wxACCEL_CTRL,      'L' },
+#endif
         };
 
         for (const Expect& e : kExpect) {

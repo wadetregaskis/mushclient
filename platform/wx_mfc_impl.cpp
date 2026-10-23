@@ -179,7 +179,11 @@ static const int ID_MENU_PRINT_SELECTION          = wxID_HIGHEST + 435;
 const char* const CWorldChildFrame::kAccelClearToStart    = "Ctrl+K";
 const char* const CWorldChildFrame::kAccelClearToMark     = "Ctrl+L";
 const char* const CWorldChildFrame::kAccelClearScrollback = "Alt+Ctrl+K";
+#ifdef __WXOSX__
 const char* const CWorldChildFrame::kAccelClearScreen     = "RawCtrl+Ctrl+L";
+#else
+const char* const CWorldChildFrame::kAccelClearScreen     = "Alt+Ctrl+L";
+#endif
 // The Display menu's scroll commands.  "RawCtrl" is the physical Control key,
 // which is what Windows means by Ctrl here and what the command bar's own
 // handlers already test with RawControlDown(); "Ctrl" would be Command and

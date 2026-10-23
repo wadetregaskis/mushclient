@@ -4435,7 +4435,7 @@ void CWorldChildFrame::MinimizeWorldWindow()
 // "Open worlds Maximized" already means (wx_mfc_impl.cpp).
 void CWorldChildFrame::MaximizeWorldWindow()
 {
-    wxWindow* parent = GetParent();
+    wxWindow* parent = GetMDIParent() ? static_cast<wxWindow*>(GetMDIParent()) : GetParent();
     if (!parent) return;
     const wxRect want = parent->GetScreenRect();
     if (want.width > 100 && want.height > 100)

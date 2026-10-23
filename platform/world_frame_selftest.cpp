@@ -1387,8 +1387,13 @@ int RunWorldFrameSelfTest()
               'L', "Clear to Previous Mark is Cmd-L" },
             { CWorldChildFrame::kAccelClearScrollback, wxACCEL_ALT | wxACCEL_CTRL,
               'K', "Clear Scrollback is Alt-Cmd-K" },
+#ifdef __WXOSX__
             { CWorldChildFrame::kAccelClearScreen,     wxACCEL_RAW_CTRL | wxACCEL_CTRL,
               'L', "Clear Screen is Ctrl-Cmd-L" },
+#else
+            { CWorldChildFrame::kAccelClearScreen,     wxACCEL_ALT | wxACCEL_CTRL,
+              'L', "Clear Screen is Alt-Ctrl-L" },
+#endif
         };
         for (const auto& a : kAccels) {
             wxAcceleratorEntry e;

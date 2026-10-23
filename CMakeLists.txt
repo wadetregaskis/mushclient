@@ -783,7 +783,7 @@ if(NOT WIN32)
             -Wno-unused-variable
             -Wno-sign-compare
             -Wno-missing-field-initializers
-            -Werror=non-pod-varargs
+            $<$<OR:$<C_COMPILER_ID:Clang,AppleClang>,$<CXX_COMPILER_ID:Clang,AppleClang>>:-Werror=non-pod-varargs>
             -Wno-narrowing
             -Wno-unused-function
         )
@@ -1054,7 +1054,11 @@ if(NOT WIN32)
         # linker sees the full mushcore↔adapters symbol cycle (ld64 resolves it by
         # iterative archive rescan).  wx_mfc_impl.cpp bridges the MFC compatibility
         # layer to real wxWidgets.
-        target_link_libraries(mushgui PRIVATE mushgui_adapters mushcore ${wxWidgets_LIBRARIES})
+        if(APPLE)
+            target_link_libraries(mushgui PRIVATE mushgui_adapters mushcore ${wxWidgets_LIBRARIES})
+        else()
+            target_link_libraries(mushgui PRIVATE -Wl,--start-group mushgui_adapters mushcore -Wl,--end-group ${wxWidgets_LIBRARIES})
+        endif()
         # so @rpath/Python.framework (the embedded libpython) resolves at dev
         # runtime; build-app.sh strips this absolute rpath and bundles the
         # framework under Contents/Frameworks for the released app.
@@ -1097,7 +1101,7 @@ if(NOT WIN32)
             ${wxWidgets_CXX_FLAGS}
             -Wall
             -Wno-deprecated-declarations
-            -Werror=non-pod-varargs
+            $<$<OR:$<C_COMPILER_ID:Clang,AppleClang>,$<CXX_COMPILER_ID:Clang,AppleClang>>:-Werror=non-pod-varargs>
             -Wno-unused-variable
             -Wno-sign-compare
             -Wno-missing-field-initializers

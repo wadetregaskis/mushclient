@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.14)
 # Shared compile options for all tests
 set(MC_TEST_COMPILE_OPTIONS
     -Wall -Wno-sign-compare -Wno-unused-variable -Wno-deprecated-declarations
-    -Wno-non-pod-varargs -Wno-narrowing
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-non-pod-varargs> -Wno-narrowing
 )
 
 # Helper macro: create a self-contained test executable
@@ -41,7 +41,11 @@ macro(mc_test name)
     # listed so ld64 resolves the mushcore↔testsupport symbol cycle by rescan.
     # (mushgui_adapters — the wx/GUI + engine set — is deliberately NOT linked, so
     # no view/dialog/embedded-engine weight enters the test executables.)
-    target_link_libraries(${name} PRIVATE mushcore_testsupport mushcore)
+    if(APPLE)
+        target_link_libraries(${name} PRIVATE mushcore_testsupport mushcore)
+    else()
+        target_link_libraries(${name} PRIVATE -Wl,--start-group mushcore_testsupport mushcore -Wl,--end-group)
+    endif()
     add_test(NAME ${name} COMMAND ${name})
 endmacro()
 

@@ -1764,6 +1764,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // them above everything already added, and before SetSizer so the frame
     // lays out once with them present.
     m_toolbars.reset(new CWorldToolBars(this, sizer));
+    if (m_doc)
+        m_toolbars->UpdateState(m_doc);
 
     SetSizer(sizer);
 
@@ -3219,8 +3221,7 @@ bool CWorldChildFrame::PollNoEcho()
 // status text for the world the user is currently looking at.
 bool CWorldChildFrame::IsActiveWorld() const
 {
-    wxMDIParentFrame* parent =
-        dynamic_cast<wxMDIParentFrame*>(GetParent());
+    wxMDIParentFrame* parent = GetMDIParent();
     return parent && (parent->GetActiveChild() == this);
 }
 
@@ -6827,7 +6828,7 @@ void CWorldChildFrame::setWindowStatus(int status)
 // world.ActivateClient(): restore the main frame if iconized and raise it.
 void CWorldChildFrame::activateClient()
 {
-    wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
+    wxMDIParentFrame* parent = GetMDIParent();
     if (parent) {
         if (parent->IsIconized()) parent->Restore();
         parent->Raise();

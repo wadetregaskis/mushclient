@@ -1543,7 +1543,7 @@ BSTR CMUSHclientDoc::GetHostName(LPCTSTR IPaddress)
 
   if (strlen (IPaddress) > 0)
     {
-    unsigned long ulAddress = inet_addr (IPaddress);
+    DWORD ulAddress = inet_addr (IPaddress);
     if (ulAddress != INADDR_NONE)
       {
       LPHOSTENT lpHostEntry = gethostbyaddr ((const char *) &ulAddress, 

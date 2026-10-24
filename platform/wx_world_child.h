@@ -824,6 +824,7 @@ private:
     int    m_gtkHeight     = 600;
     wxSize m_gtkParentSize;
     bool   m_gtkFullScreen = false;
+    bool   m_gtkManualSize = false;
 #endif
 
     wxDECLARE_EVENT_TABLE();

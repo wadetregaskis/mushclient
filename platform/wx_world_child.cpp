@@ -6824,6 +6824,9 @@ void CWorldChildFrame::setMainTitle(const char* title)
 // Coordinates are in pixels relative to the MDI parent client area.
 void CWorldChildFrame::moveWorldWindow(long l, long t, long w, long h)
 {
+#ifdef __WXGTK__
+    m_gtkManualSize = true;
+#endif
     SetSize((int)l, (int)t, (int)w, (int)h);
 }
 
@@ -7327,6 +7330,15 @@ void CWorldChildFrame::DoGetSize(int* width, int* height) const
 
 void CWorldChildFrame::DoGetClientSize(int* width, int* height) const
 {
+    if (!m_gtkManualSize) {
+        int bw = 0, bh = 0;
+        wxMDIChildFrame::DoGetClientSize(&bw, &bh);
+        if (bw > 0 && bh > 0) {
+            if (width)  *width  = bw;
+            if (height) *height = bh;
+            return;
+        }
+    }
     if (width)  *width  = m_gtkWidth;
     if (height) *height = std::max(0, m_gtkHeight - 28);
 }
@@ -7342,6 +7354,10 @@ void CWorldChildFrame::DoSetSize(int x, int y, int width, int height,
         m_gtkWidth = width;
     if (height > 0)
         m_gtkHeight = height;
+    if (x > 0 || y > 0)
+        m_gtkManualSize = true;
+    else if (x == 0 && y == 0)
+        m_gtkManualSize = false;
     if (wxMDIParentFrame* parent = GetMDIParent())
         m_gtkParentSize = parent->GetSize();
     wxMDIChildFrame::DoSetSize(x, y, m_gtkWidth, m_gtkHeight, sizeFlags);

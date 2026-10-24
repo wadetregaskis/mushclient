@@ -9,6 +9,10 @@ The packaging scripts build self-contained, distributable MUSHclient releases fo
 | Script | What it does |
 |--------|--------------|
 | [`build-linux.sh`](build-linux.sh) | Build Release, relocate shared libraries, package standalone `.tar.gz` and Debian `.deb`. |
+| [`fetch-python.sh`](fetch-python.sh) | Vendor a standalone CPython 3 embed environment (Python engine). |
+| [`fetch-tcl.sh`](fetch-tcl.sh) | Build a self-contained static **Tcl 8.6** from source (Tcl engine). |
+| [`fetch-ruby.sh`](fetch-ruby.sh) | Build a relocatable **Ruby 4.0** from source, with load-relative stdlib (Ruby engine). |
+| [`fetch-discworld-plugins.sh`](fetch-discworld-plugins.sh) | Stage Quow's Discworld plugins so they can be pre-bundled. |
 
 Running `packaging/build-app.sh` on Linux also automatically delegates to `build-linux.sh`.
 

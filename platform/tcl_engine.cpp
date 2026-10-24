@@ -276,7 +276,7 @@ void CScriptEngine::OpenTcl ()
       if (slash != std::string::npos)
         {
         const std::string dir = p.substr (0, slash);
-        static const char* const kRelCandidates[] = { "/../Resources/tcl8.6", "/tcl8.6" };
+        static const char* const kRelCandidates[] = { "/../Resources/tcl8.6", "/tcl8.6", "/../share/mushclient/tcl8.6" };
         for (const char* rel : kRelCandidates)
           {
           std::string lib = dir + rel;

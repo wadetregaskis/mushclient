@@ -85,8 +85,10 @@ done
 
 # Source environment script if present (e.g. non-root sysroot or development env)
 if [ -f "/tmp/env.sh" ]; then
+    set +u
     # shellcheck disable=SC1091
     . /tmp/env.sh
+    set -u
 fi
 
 command -v cmake >/dev/null 2>&1 || die "cmake not found; please install cmake"
@@ -166,6 +168,46 @@ fi
 if [ -f "$REPO/platform/dialog_art/MUSHclient.png" ]; then
     cp "$REPO/platform/dialog_art/MUSHclient.png" "$STAGE_APP/mushclient.png"
 fi
+
+# Bundle scripting runtime libraries and stdlibs if present
+# 1. Tcl script library
+for tcldir in "$REPO/packaging/tcl/install/lib/tcl8.6" "$BUILD_DIR/tcl8.6" "/tmp/sysroot/usr/share/tcltk/tcl8.6" "/usr/share/tcltk/tcl8.6"; do
+    if [ -d "$tcldir" ] && [ -f "$tcldir/init.tcl" ]; then
+        cp -R "$tcldir" "$STAGE_APP/"
+        note "  bundled Tcl 8.6 script library"
+        break
+    fi
+done
+
+# 2. Ruby standard library and shared library
+for rbdir in "$REPO/packaging/ruby/install/lib/ruby" "$BUILD_DIR/lib/ruby"; do
+    if [ -d "$rbdir" ]; then
+        mkdir -p "$STAGE_APP/lib"
+        cp -R "$rbdir" "$STAGE_APP/lib/"
+        note "  bundled Ruby standard library"
+        break
+    fi
+done
+for rbso in "$REPO/packaging/ruby/install/lib"/libruby*.so*; do
+    if [ -e "$rbso" ]; then
+        cp -P "$rbso" "$STAGE_APP/lib/" 2>/dev/null || true
+    fi
+done
+
+# 3. Python standard library and shared library
+for pydir in "$REPO/packaging/python/install/lib"/python3*; do
+    if [ -d "$pydir" ]; then
+        mkdir -p "$STAGE_APP/lib"
+        cp -R "$pydir" "$STAGE_APP/lib/"
+        note "  bundled Python $(basename "$pydir") library"
+        break
+    fi
+done
+for pyso in "$REPO/packaging/python/install/lib"/libpython3*.so*; do
+    if [ -e "$pyso" ]; then
+        cp -P "$pyso" "$STAGE_APP/lib/" 2>/dev/null || true
+    fi
+done
 
 # ════════════════════════════════════════════════════════════════════════════
 # 3. bundle Discworld plugins (optional)
@@ -377,7 +419,7 @@ EOF
         for item in mushclient_dialogs.rc resource.h tips.txt names.txt spellchecker.lua; do
             [ -f "$STAGE_APP/$item" ] && cp "$STAGE_APP/$item" "$INSTALL_SHARE/"
         done
-        for dir in lua dialog_art toolbar_art text fonts spell worlds userdata-seed; do
+        for dir in lua dialog_art toolbar_art text fonts spell worlds userdata-seed tcl8.6; do
             [ -d "$STAGE_APP/$dir" ] && cp -R "$STAGE_APP/$dir" "$INSTALL_SHARE/"
         done
         [ -f "$STAGE_APP/default-world" ] && cp "$STAGE_APP/default-world" "$INSTALL_SHARE/"

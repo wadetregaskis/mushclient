@@ -1,6 +1,7 @@
 .*
 !.gitignore
 !.gitattributes
+!packaging/.build-*.sh
 
 #
 #  Help file is generated from database

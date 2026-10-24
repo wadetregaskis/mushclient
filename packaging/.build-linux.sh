@@ -48,7 +48,7 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
     cat <<EOF
-Usage: packaging/build-linux.sh [OPTIONS]
+Usage: packaging/build-app.sh [OPTIONS]
 
 Options:
   -t, --build-type TYPE     CMake build type (default: Release)

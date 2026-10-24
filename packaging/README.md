@@ -8,18 +8,18 @@ The packaging scripts build self-contained, distributable MUSHclient releases fo
 
 | Script | What it does |
 |--------|--------------|
-| [`build-linux.sh`](build-linux.sh) | Build Release, relocate shared libraries, package standalone `.tar.gz` and Debian `.deb`. |
+| [`build-app.sh`](build-app.sh) | Build Release, relocate shared libraries, package standalone `.tar.gz` and Debian `.deb`. |
 | [`fetch-python.sh`](fetch-python.sh) | Vendor a standalone CPython 3 embed environment (Python engine). |
 | [`fetch-tcl.sh`](fetch-tcl.sh) | Build a self-contained static **Tcl 8.6** from source (Tcl engine). |
 | [`fetch-ruby.sh`](fetch-ruby.sh) | Build a relocatable **Ruby 4.0** from source, with load-relative stdlib (Ruby engine). |
 | [`fetch-discworld-plugins.sh`](fetch-discworld-plugins.sh) | Stage Quow's Discworld plugins so they can be pre-bundled. |
 
-Running `packaging/build-app.sh` on Linux also automatically delegates to `build-linux.sh`.
+`packaging/build-app.sh` is the single build script across both macOS and Linux, automatically delegating to `.build-mac.sh` on macOS and `.build-linux.sh` on Linux.
 
 ### Quick start (Linux)
 
 ```bash
-packaging/build-linux.sh
+packaging/build-app.sh
 ```
 
 This builds Release mode with CMake, vendors/relocates dynamic libraries, stages runtime resources (dialog templates, dialog art, toolbar strips, FIGlet fonts, spell checker dictionaries, and Lua modules), and produces in `dist/`:
@@ -30,7 +30,7 @@ This builds Release mode with CMake, vendors/relocates dynamic libraries, stages
 To include Quow's Discworld plugins and maps:
 ```bash
 packaging/fetch-discworld-plugins.sh
-packaging/build-linux.sh --with-discworld
+packaging/build-app.sh --with-discworld
 ```
 
 ### Linux Prerequisites

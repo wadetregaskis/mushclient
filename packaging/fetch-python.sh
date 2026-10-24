@@ -184,4 +184,4 @@ fi
 
 [ -d "$INSTALL/include" ] || die "staging failed: $INSTALL/include missing"
 note "staged Python into $INSTALL ($ARCH)"
-note "build with:  packaging/build-app.sh   (or packaging/build-linux.sh; auto-detects this)"
+note "build with:  packaging/build-app.sh   (auto-detects this)"

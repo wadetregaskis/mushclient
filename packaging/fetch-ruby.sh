@@ -138,8 +138,13 @@ if [ "$OS" = "Linux" ]; then
     fi
 fi
 
+# Build self-contained from source tarball without probing host ruby
+# (prevents configure from probing incomplete host rubies and spewing missing-baseruby errors).
+BASERUBY_OPT="--without-baseruby"
+
 (
     cd "$SRC/ruby"
+    note "configuring Ruby $RUBY_VERSION..."
     ./configure \
         --prefix="$INSTALL" \
         --enable-shared --disable-static \
@@ -148,11 +153,16 @@ fi
         --without-gmp \
         --with-openssl-dir="$OPENSSL_PREFIX" \
         --with-libyaml-dir="$DEPS" \
+        $BASERUBY_OPT \
         PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig${EXTRA_PKG_CONFIG}" \
         CFLAGS="$RB_CFLAGS" \
         LDFLAGS="$RB_LDFLAGS" \
         optflags="-O2" >/dev/null
+
+    note "compiling Ruby $RUBY_VERSION (using $JOBS parallel jobs)..."
     make -j"$JOBS" >/dev/null
+
+    note "installing Ruby $RUBY_VERSION to staging..."
     make install >/dev/null
 ) || die "Ruby build failed"
 

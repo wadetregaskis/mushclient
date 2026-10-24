@@ -261,9 +261,17 @@ void wx_toggle_full_screen(wxTopLevelWindow* target)
 static void apply_status_bar_visibility(wxMDIParentFrame* frame)
 {
     if (!frame) return;
-    for (wxWindow* w : frame->GetChildren())
-        if (auto* child = dynamic_cast<CWorldChildFrame*>(w))
+    if (s_statusBar) {
+        bool showParent = s_statusBarVisible && s_docFrameMap.empty();
+        if (s_statusBar->IsShown() != showParent) {
+            s_statusBar->Show(showParent);
+            frame->SendSizeEvent();
+        }
+    }
+    for (const auto& pair : s_docFrameMap) {
+        if (CWorldChildFrame* child = pair.second)
             child->ShowStatusBarStrip(s_statusBarVisible);
+    }
 }
 static const int ID_MENU_VIEW_STATUSBAR   = 0xE801;
 
@@ -403,11 +411,19 @@ static void recent_worlds_add(const std::string& path)
 void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame)
 {
     if (doc) s_docFrameMap[doc] = frame;
+    if (wxTheApp) {
+        if (auto* mdi = wxDynamicCast(wxTheApp->GetTopWindow(), wxMDIParentFrame))
+            apply_status_bar_visibility(mdi);
+    }
 }
 
 void wx_unregister_world_frame(CMUSHclientDoc* doc)
 {
     if (doc) s_docFrameMap.erase(doc);
+    if (wxTheApp) {
+        if (auto* mdi = wxDynamicCast(wxTheApp->GetTopWindow(), wxMDIParentFrame))
+            apply_status_bar_visibility(mdi);
+    }
     // Re-densify the world slot numbers NOW (2026-08-12): Windows does this
     // from OnIdle (CMUSHclientApp::UpdateWorldCounts), which the port never
     // pumps, so closing world B of three left a dead slot and a later world
@@ -1585,8 +1601,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // name, duration, line counts, log) lives on each CWorldChildFrame's own
     // status bar instead — see CWorldChildFrame::UpdateStatusBar.
     s_statusBar = frame->CreateStatusBar(1);
-    if (s_statusBar)
+    if (s_statusBar) {
         s_statusBar->SetStatusText(wxT("Ready"), 0);
+        if (!s_statusBarVisible)
+            s_statusBar->Show(false);
+    }
 
     // ── Drag-and-drop world files ─────────────────────────────────────────
     // Ownership of the drop target transfers to the window.
@@ -4551,7 +4570,19 @@ static wxSize wx_estimate_popup_size(wxWindow* ref, CMenu* menu)
 static int hook_popup_menu(CMenu* menu, int x, int y, unsigned flags)
 {
     if (!menu) return 0;
-    wxWindow* win = wxGetActiveWindow();
+    wxPoint anchor(x, y);
+
+    wxWindow* win = wxFindWindowAtPoint(anchor);
+    if (auto* child = dynamic_cast<CWorldChildFrame*>(win)) {
+        win = child->OutputPane();
+    } else if (!win || win == wxTheApp->GetTopWindow()) {
+        if (auto* frame = dynamic_cast<wxMDIParentFrame*>(wxTheApp ? wxTheApp->GetTopWindow() : nullptr)) {
+            if (auto* activeChild = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
+                win = activeChild->OutputPane();
+            }
+        }
+    }
+    if (!win) win = wxGetActiveWindow();
     if (!win) win = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
     if (!win) return 0;
 
@@ -4579,7 +4610,6 @@ static int hook_popup_menu(CMenu* menu, int x, int y, unsigned flags)
     // origin is there — the top-left corner of the primary screen is an
     // ordinary place to dock one — and a plugin asking for its menu at (0, 0)
     // would have it silently relocated to wherever the mouse happened to be.
-    wxPoint anchor(x, y);
     if (flags & (TPM_CENTERALIGN | TPM_RIGHTALIGN |
                  TPM_VCENTERALIGN | TPM_BOTTOMALIGN)) {
         // The alignment bits name which edge of the MENU sits on the anchor;

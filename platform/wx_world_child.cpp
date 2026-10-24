@@ -602,10 +602,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                      wxDefaultPosition, wxSize(220, -1),
                                      wxTE_PROCESS_ENTER);
         fs->Add(m_findInput, 0, wxALIGN_CENTER_VERTICAL);
-        wxButton* btnNext = new wxButton(m_findBar, ID_FIND_NEXT, wxT("▼"),
-                                         wxDefaultPosition, wxSize(28, -1));
-        wxButton* btnPrev = new wxButton(m_findBar, ID_FIND_PREV, wxT("▲"),
-                                         wxDefaultPosition, wxSize(28, -1));
+        wxButton* btnNext = new wxButton(m_findBar, ID_FIND_NEXT,
+                                         wxString::FromUTF8("\xe2\x96\xbc"),
+                                         wxDefaultPosition, wxDefaultSize,
+                                         wxBU_EXACTFIT);
+        wxButton* btnPrev = new wxButton(m_findBar, ID_FIND_PREV,
+                                         wxString::FromUTF8("\xe2\x96\xb2"),
+                                         wxDefaultPosition, wxDefaultSize,
+                                         wxBU_EXACTFIT);
+        btnNext->SetToolTip(wxT("Find Next"));
+        btnPrev->SetToolTip(wxT("Find Previous"));
         fs->Add(btnNext, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4);
         fs->Add(btnPrev, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
         // Case-sensitive toggle ("Aa").  Restore the last user preference.
@@ -624,8 +630,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                        wxDefaultPosition, wxSize(90, -1));
         fs->Add(m_findLabel, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
         int idFindClose = wxID_HIGHEST + 205;
-        wxButton* btnClose = new wxButton(m_findBar, idFindClose, wxT("✕"),
-                                          wxDefaultPosition, wxSize(28, -1));
+        wxButton* btnClose = new wxButton(m_findBar, idFindClose,
+                                          wxString::FromUTF8("\xe2\x9c\x95"),
+                                          wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT);
+        btnClose->SetToolTip(wxT("Close"));
         fs->Add(btnClose, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, 4);
         m_findBar->SetSizer(fs);
 
@@ -3194,6 +3203,10 @@ void CWorldChildFrame::ApplyNoEcho(bool noEcho)
             m_input->SetFocus();
         }
     }
+    if (GetSizer()) {
+        if (m_input) GetSizer()->Show(m_input, !noEcho);
+        if (m_inputPassword) GetSizer()->Show(m_inputPassword, noEcho);
+    }
     Layout();
     m_lastNoEcho = noEcho;
 }
@@ -3504,6 +3517,8 @@ void CWorldChildFrame::ShowStatusBarStrip(bool show)
 {
     if (m_statusBar && m_statusBar->IsShown() != show) {
         m_statusBar->Show(show);
+        if (GetSizer())
+            GetSizer()->Show(m_statusBar, show);
         Layout();   // reclaim/yield the strip's height
     }
 }
@@ -6930,7 +6945,12 @@ bool CWorldChildFrame::mouseCaptured() const
 
 void CWorldChildFrame::infobarShow(bool visible)
 {
-    if (m_infobar->IsShown() != visible) { m_infobar->Show(visible); Layout(); }
+    if (m_infobar->IsShown() != visible) {
+        m_infobar->Show(visible);
+        if (GetSizer())
+            GetSizer()->Show(m_infobar, visible);
+        Layout();
+    }
 }
 
 void CWorldChildFrame::infobarClear()

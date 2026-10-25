@@ -37,7 +37,7 @@ function load_file (name, stats)
   
 end -- load_file
 
-target_dir = arg[1] or ".."
+target_dir = arg[1] or "."
 scan_dir (target_dir, load_file)
 
 

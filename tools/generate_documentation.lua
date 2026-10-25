@@ -43,7 +43,8 @@ function FixupEscapeSequences (s)
 return s
 end -- function FixupEscapeSequences
  
-fi = assert (io.open ("\\\\10.0.0.2\\general\\documentation.sql", "r"))
+local input_file = arg[1] or "documentation.sql"
+fi = assert (io.open (input_file, "r"), "Could not open " .. input_file)
 
 fo = assert (io.open ("documentation_fixed.sql", "w"))
 

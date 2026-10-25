@@ -10,7 +10,7 @@
 #include "../../childfrm.h"
 #include "../../sendvw.h"
 #include "../../winplace.h"
-#include "../../png/png.h"
+#include "png/png.h"
 #include "../errors.h"
 #ifdef _WIN32
 #include <direct.h>

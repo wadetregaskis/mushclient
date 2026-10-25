@@ -333,7 +333,7 @@ not "reproduce the Windows DLL".
 1. **Build** the Release `mushgui` target into `build-release/`. The CMake build
    already drops the vendored Ruby (libruby + stdlib) into `Contents/lib` and the
    Tcl script library into `Contents/Resources/tcl8.6`.
-2. **Bundle plugins** (`--with-discworld` only) into `Contents/Resources/plugins/`.
+2. **Bundle plugins**: stage into `Contents/Resources/userdata-seed/` (standard plugins + optional `--with-discworld` maps and triggers) for first-launch user data seeding.
 3. **Relocate dependencies**: BFS over the app's Mach-O dependencies; copy every
    non-system `.dylib` (e.g. Homebrew's `openssl@3`) into `Contents/Frameworks/`
    (id → `@rpath/...`), copy linked `.framework`s in whole (e.g. the vendored

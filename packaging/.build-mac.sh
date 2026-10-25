@@ -451,6 +451,18 @@ $PB -c "Set :LSMinimumSystemVersion $MIN_MACOS" "$plist" 2>/dev/null || \
     $PB -c "Add :LSMinimumSystemVersion string $MIN_MACOS" "$plist"
 $PB -c "Set :NSHighResolutionCapable true" "$plist" 2>/dev/null || \
     $PB -c "Add :NSHighResolutionCapable bool true" "$plist"
+if ! $PB -c "Print :CFBundleDocumentTypes" "$plist" >/dev/null 2>&1; then
+    $PB -c "Add :CFBundleDocumentTypes array" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0 dict" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string \"MUSHclient World\"" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Editor" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions array" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:0 string mcl" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:1 string mck" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:2 string mcp" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0:CFBundleTypeIconFile string MUSHclient.icns" "$plist"
+    $PB -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string Owner" "$plist"
+fi
 
 # ════════════════════════════════════════════════════════════════════════════
 # 5. code sign (inside-out)

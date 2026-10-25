@@ -11,7 +11,7 @@
 #
 # Windows loads en.dll at runtime.  The macOS port has no DLL resource loader,
 # so it needs the underlying files.  Historically they were extracted by hand —
-# platform/dialog_art/ is 13 bitmaps and icons copied out once, with the
+# src/platform/dialog_art/ is 13 bitmaps and icons copied out once, with the
 # provenance recorded only in a commit message, and getting one more meant
 # repeating the archaeology.  This script replaces that with a pinned checkout.
 #
@@ -22,12 +22,12 @@
 #
 # NOT REQUIRED TO BUILD.  Unlike the language runtimes, dialog art is not
 # optional at runtime — the About box and the Tray/Taskbar page need it — so
-# the files this project actually uses stay committed under platform/dialog_art/
+# the files this project actually uses stay committed under src/platform/dialog_art/
 # and CMake falls back to them.  Running this script is how you obtain art the
 # port does not bundle yet; it is not a precondition for `cmake && make`.
 # A plain clone with no network must keep building.
 #
-# LONGER TERM, and deliberately not done here: platform/mushclient_dialogs.rc is
+# LONGER TERM, and deliberately not done here: src/platform/mushclient_dialogs.rc is
 # decompiled from a shipped en.dll by tools/decompile_dialogs.py, with numeric
 # ids mapped back to resource.h symbols by inference.  The MUSHclient.rc in THIS
 # checkout is the real source of those same templates — true symbol names, real
@@ -74,7 +74,7 @@ fi
 # Sanity-check the two things the port cares about, so a moved or renamed
 # upstream fails here with a clear message rather than silently later.
 missing=0
-for f in "MUSHclient.rc" "resource.h" "res"; do
+for f in "src/MUSHclient.rc" "src/resource.h" "res"; do
     if [ ! -e "$DEST/$f" ]; then
         echo "resources: MISSING $f — upstream layout changed?" >&2
         missing=1
@@ -87,5 +87,5 @@ echo
 echo "  res/ bitmaps + icons:  $(ls "$DEST/res" | wc -l | tr -d ' ') files"
 echo "  canonical .rc:         $(wc -l < "$DEST/MUSHclient.rc" | tr -d ' ') lines"
 echo
-echo "The build does NOT require this; platform/dialog_art/ is the committed"
+echo "The build does NOT require this; src/platform/dialog_art/ is the committed"
 echo "fallback.  See packaging/README.md."

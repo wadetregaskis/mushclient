@@ -173,7 +173,7 @@ When present, `packaging/build-app.sh` automatically incorporates them into the 
 * **Nick Gammon** ([Gammon Software Solutions](http://www.gammon.com.au/)): Original author and creator of MUSHclient.
 * **Wade Tregaskis**: Cross-platform port (Linux & macOS), 64-bit modernization, bug fixes, and maintenance.
 
-See [credits.txt](platform/dialog_text/credits.txt) for a complete list of contributors and component acknowledgments.
+See [credits.txt](src/platform/dialog_text/credits.txt) for a complete list of contributors and component acknowledgments.
 
 ---
 

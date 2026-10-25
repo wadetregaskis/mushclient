@@ -32,8 +32,8 @@ import sys
 # The project's own code.  Vendored trees (lua, pcre, sqlite3, zlib, png,
 # openssl, spell, miniaudio…) are excluded: they are not ours to reformat, and
 # none of them writes to the world output window.
-INCLUDE_DIRS = ("dialogs", "mxp", "pal", "platform", "scripting", "xml")
-EXCLUDE_DIRS = ("platform/miniaudio",)
+INCLUDE_DIRS = ("src",)
+EXCLUDE_DIRS = ("src/platform/miniaudio",)
 EXTENSIONS = (".cpp", ".h", ".c", ".mm")
 
 # A narrow literal is exempt when it is the argument of one of these.  wxT/_T

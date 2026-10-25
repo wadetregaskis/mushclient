@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.14)
 # the macOS bundle's CFBundleShortVersionString/CFBundleVersion) derives from
 # it so a release bump only touches one file. Re-run configure automatically
 # if version.h changes without CMakeLists.txt also changing.
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/version.h" _mushclient_version_line
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h" _mushclient_version_line
      REGEX "^#define VERSION_STRING")
 # The capture takes only the leading numeric part: version.h documents that
 # pre-release builds append "-pre" to VERSION_STRING, and project() accepts
@@ -18,7 +18,7 @@ if(NOT MUSHCLIENT_VERSION MATCHES "^[0-9]+(\\.[0-9]+)*$")
             "VERSION_STRING line: '${_mushclient_version_line}'")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-             "${CMAKE_CURRENT_SOURCE_DIR}/version.h")
+             "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h")
 
 project(MUSHclient VERSION ${MUSHCLIENT_VERSION} LANGUAGES C CXX)
 
@@ -125,7 +125,7 @@ if(NOT WIN32)
         # — deliberately OUTSIDE the default platform/ search path so they can NEVER
         # shadow real <openssl/*.h> when OpenSSL IS present (which previously left
         # TLS permanently stubbed out even on systems with OpenSSL installed).
-        include_directories(${CMAKE_SOURCE_DIR}/platform/openssl_fallback)
+        include_directories(${CMAKE_SOURCE_DIR}/src/platform/openssl_fallback)
         message(STATUS "OpenSSL not found — using compile-only stub headers (TLS disabled)")
     else()
         message(STATUS "OpenSSL found — TLS enabled (real headers, not the stub)")
@@ -257,7 +257,7 @@ if(NOT WIN32)
 
     # ── Python 3 (embedded alternate scripting engine — mushgui only) ──────
     # Optional: when present, a world whose language is "Python" runs on real
-    # CPython via platform/py_engine.cpp.  Absent → scriptengine.cpp link stubs.
+    # CPython via src/platform/py_engine.cpp.  Absent → scriptengine.cpp link stubs.
     #
     # Prefer a vendored, redistributable python.org framework (staged by
     # packaging/fetch-python.sh) over the system/Xcode framework, so the dev build
@@ -531,19 +531,19 @@ if(NOT WIN32)
 
     # Shared engine — compiled once; the sole CMUSHclientDoc/engine provider.
     set(CORE_SOURCES
-        mcdatetime.cpp
-        regexp.cpp
-        Color.cpp
-        Replace.cpp
-        Dmetaph.cpp
-        scripting/md5.c
-        scripting/sha256.c
-        scripting/shs.c
-        ansi.cpp
-        doc_aliasmenu_shared.cpp
-        doc_shared.cpp
-        utilities_shared.cpp
-        notepad_convert_shared.cpp
+        src/mcdatetime.cpp
+        src/regexp.cpp
+        src/Color.cpp
+        src/Replace.cpp
+        src/Dmetaph.cpp
+        src/scripting/md5.c
+        src/scripting/sha256.c
+        src/scripting/shs.c
+        src/ansi.cpp
+        src/doc_aliasmenu_shared.cpp
+        src/doc_shared.cpp
+        src/utilities_shared.cpp
+        src/notepad_convert_shared.cpp
         # Notepad family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 1).
         # These were mushgui_adapters-only and the headless build faked the whole
         # family through g_wxhook_*_notepad function pointers — a second twin
@@ -552,9 +552,9 @@ if(NOT WIN32)
         # had drifted in several observable ways.  The real TU is already fully
         # ported: methods_notepad.cpp's non-Windows arms go through
         # CTextDocument's std::function m_fn_* members, which need no wx.
-        TextDocument.cpp
-        scripting/methods/methods_notepad.cpp
-        notepad_app_shared.cpp
+        src/TextDocument.cpp
+        src/scripting/methods/methods_notepad.cpp
+        src/notepad_app_shared.cpp
         # Chat family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 2).
         # CChatSocket / CChatListenSocket derive from the port's own fully
         # implemented CAsyncSocket (platform/posix_socket.h), and mushcore
@@ -562,9 +562,9 @@ if(NOT WIN32)
         # SendChatMessageToAll are real bodies in doc.cpp walking m_ChatList,
         # which was calling into stubbed sockets.  None of the three TUs forks
         # on a compile flag, so they compile once for both consumers.
-        chatlistensock.cpp
-        chatsock.cpp
-        scripting/methods/methods_chat.cpp
+        src/chatlistensock.cpp
+        src/chatsock.cpp
+        src/scripting/methods/methods_chat.cpp
         # Miniwindow family adoption, stage 1
         # (docs/STUB-ADOPTION-2026-08.md §5 step 3).
         # CMiniWindow does not need wx — it needs a SURFACE.  These TUs include
@@ -574,240 +574,240 @@ if(NOT WIN32)
         # stays null and those guarded arms run, so miniwindow geometry, z-order,
         # hotspots, fonts, info and the menu are all REAL headless; only the
         # pixels wait for stage 2's headless rasteriser.
-        miniwindow.cpp
-        miniwindow_compose.cpp
-        surface_bridge.cpp
-        scripting/methods/methods_miniwindows.cpp
-        png_load_shared.cpp
-        bmp_load_shared.cpp
+        src/miniwindow.cpp
+        src/miniwindow_compose.cpp
+        src/surface_bridge.cpp
+        src/scripting/methods/methods_miniwindows.cpp
+        src/png_load_shared.cpp
+        src/bmp_load_shared.cpp
         # Output/view family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 4).
         # Its two recorded blockers are gone: ValidateBrushStyle came with
         # miniwindow.cpp, and CMUSHView::AutoWrapWindowWidth is address-only
         # (the CMUSHView walk that reaches it never yields headless).
         # MakeWindowTransparent.cpp comes along because Transparency calls it.
-        MakeWindowTransparent.cpp
-        scripting/methods/methods_output.cpp
-        scripting/errors.cpp
-        doc_scripting_shared.cpp
-        doc_tabcomplete_shared.cpp
-        doc_commandbar_shared.cpp
-        doc_hyperlink_shared.cpp
-        doc_dblclick_shared.cpp
-        doc_editcopy_shared.cpp
-        platform/menu_ui_rules.cpp
-        scripting/methods/methods_accelerators.cpp
-        scripting/methods/methods_noting.cpp
-        scripting/methods/methods_tracing.cpp
-        scripting/methods/methods_variables.cpp
-        scripting/methods/methods_database.cpp
-        scripting/methods/methods_clipboard.cpp
-        scripting/methods/methods_infobar.cpp
-        scripting/methods/methods_logging.cpp
-        scripting/methods/methods_sending.cpp
-        scripting/methods/methods_worlds.cpp
-        scripting/methods/methods_timers.cpp
-        scripting/methods/methods_aliases.cpp
-        scripting/methods/methods_triggers.cpp
-        scripting/methods/methods_speedwalks.cpp
-        scripting/methods/methods_mapping.cpp
-        scripting/methods/methods_arrays.cpp
-        scripting/methods/methods_colours.cpp
+        src/MakeWindowTransparent.cpp
+        src/scripting/methods/methods_output.cpp
+        src/scripting/errors.cpp
+        src/doc_scripting_shared.cpp
+        src/doc_tabcomplete_shared.cpp
+        src/doc_commandbar_shared.cpp
+        src/doc_hyperlink_shared.cpp
+        src/doc_dblclick_shared.cpp
+        src/doc_editcopy_shared.cpp
+        src/platform/menu_ui_rules.cpp
+        src/scripting/methods/methods_accelerators.cpp
+        src/scripting/methods/methods_noting.cpp
+        src/scripting/methods/methods_tracing.cpp
+        src/scripting/methods/methods_variables.cpp
+        src/scripting/methods/methods_database.cpp
+        src/scripting/methods/methods_clipboard.cpp
+        src/scripting/methods/methods_infobar.cpp
+        src/scripting/methods/methods_logging.cpp
+        src/scripting/methods/methods_sending.cpp
+        src/scripting/methods/methods_worlds.cpp
+        src/scripting/methods/methods_timers.cpp
+        src/scripting/methods/methods_aliases.cpp
+        src/scripting/methods/methods_triggers.cpp
+        src/scripting/methods/methods_speedwalks.cpp
+        src/scripting/methods/methods_mapping.cpp
+        src/scripting/methods/methods_arrays.cpp
+        src/scripting/methods/methods_colours.cpp
         # BlendPixel / FilterPixel: pure colour arithmetic, moved out of the
         # mushgui-only miniwindow TU so the headless engine runs the real bodies.
-        scripting/methods/methods_pixel_shared.cpp
+        src/scripting/methods/methods_pixel_shared.cpp
         # SetUnseenLines / SetMainTitle / SetBackgroundColour: document state,
         # not view state — moved out of the mushgui-only output TU.
-        scripting/methods/methods_output_shared.cpp
-        scripting/methods/methods_defaults.cpp
-        scripting/methods/methods_sounds.cpp
-        scripting/methods/methods_commands.cpp
-        scripting/methods/methods_spellchecker.cpp
-        scripting/methods/methods_utilities.cpp
-        scripting/methods/methods_info.cpp
-        accelerators.cpp
-        doc_display_shared.cpp
-        doc.cpp
-        telnet_phases.cpp
-        mxp/mxp.cpp
-        mxp/mxp_phases.cpp
-        mxp/mxpMode.cpp
-        mxp/mxpError.cpp
-        mxp/mxpOnOff.cpp
-        mxp/mxpinit.cpp
-        mxp/mxputils.cpp
-        mxp/mxpStart.cpp
-        mxp/mxpEnd.cpp
-        mxp/mxpClose.cpp
-        mxp/mxpCloseAtomic.cpp
-        mxp/mxpOpenAtomic.cpp
-        mxp/mxpDefs.cpp
-        mxp/mxpEntities.cpp
-        platform/posix_transport.cpp
-        Line.cpp
-        ProcessPreviousLine.cpp
-        evaluate.cpp
-        speedwalk.cpp
-        timers.cpp
-        serialize.cpp
-        paneline.cpp
-        plugins.cpp
-        scripting/methods/methods_plugins.cpp
-        scripting/methods/methods_udp.cpp
-        UDPsocket.cpp
-        dialogs/plugins/PluginWizardSheet.cpp
-        dialogs/plugins/PluginWizard.cpp
+        src/scripting/methods/methods_output_shared.cpp
+        src/scripting/methods/methods_defaults.cpp
+        src/scripting/methods/methods_sounds.cpp
+        src/scripting/methods/methods_commands.cpp
+        src/scripting/methods/methods_spellchecker.cpp
+        src/scripting/methods/methods_utilities.cpp
+        src/scripting/methods/methods_info.cpp
+        src/accelerators.cpp
+        src/doc_display_shared.cpp
+        src/doc.cpp
+        src/telnet_phases.cpp
+        src/mxp/mxp.cpp
+        src/mxp/mxp_phases.cpp
+        src/mxp/mxpMode.cpp
+        src/mxp/mxpError.cpp
+        src/mxp/mxpOnOff.cpp
+        src/mxp/mxpinit.cpp
+        src/mxp/mxputils.cpp
+        src/mxp/mxpStart.cpp
+        src/mxp/mxpEnd.cpp
+        src/mxp/mxpClose.cpp
+        src/mxp/mxpCloseAtomic.cpp
+        src/mxp/mxpOpenAtomic.cpp
+        src/mxp/mxpDefs.cpp
+        src/mxp/mxpEntities.cpp
+        src/platform/posix_transport.cpp
+        src/Line.cpp
+        src/ProcessPreviousLine.cpp
+        src/evaluate.cpp
+        src/speedwalk.cpp
+        src/timers.cpp
+        src/serialize.cpp
+        src/paneline.cpp
+        src/plugins.cpp
+        src/scripting/methods/methods_plugins.cpp
+        src/scripting/methods/methods_udp.cpp
+        src/UDPsocket.cpp
+        src/dialogs/plugins/PluginWizardSheet.cpp
+        src/dialogs/plugins/PluginWizard.cpp
         # The app's ONLY modeless dialog, and the one whose non-virtual drivers
         # (SetRange/SetPos/SetStep/StepIt/OffsetPos/CheckCancelButton) carry
         # real port-side logic rather than being ctor/DDX boilerplate.
-        dialogs/ProgDlg.cpp
+        src/dialogs/ProgDlg.cpp
         # The canonical scripting front end (CreateScriptEngine / FindAllEntryPoints
         # / DisableScripting / OnScriptFileChanged).  mushgui has always run these;
         # adopting them retires the headless twins that had drifted from them.
         # The two dialogs come with it: it constructs both, and both are inert
         # headless through the null DoModal hook.
-        scripting/scripting.cpp
-        dialogs/ImmediateDlg.cpp
-        dialogs/world_prefs/MissingEntryPoints.cpp
-        DDV_validation.cpp
-        platform/wx_mfc_hooks_storage.cpp
-        scriptingoptions.cpp
-        globalregistryoptions.cpp
-        xml/xmlparse.cpp
-        exceptions.cpp
-        xml/xml_save_world.cpp
-        xml/xml_serialize.cpp
-        scripting/methods/methods_xml.cpp
-        platform/mc_dispatch.cpp
-        scripting/mt19937ar.c
+        src/scripting/scripting.cpp
+        src/dialogs/ImmediateDlg.cpp
+        src/dialogs/world_prefs/MissingEntryPoints.cpp
+        src/DDV_validation.cpp
+        src/platform/wx_mfc_hooks_storage.cpp
+        src/scriptingoptions.cpp
+        src/globalregistryoptions.cpp
+        src/xml/xmlparse.cpp
+        src/exceptions.cpp
+        src/xml/xml_save_world.cpp
+        src/xml/xml_serialize.cpp
+        src/scripting/methods/methods_xml.cpp
+        src/platform/mc_dispatch.cpp
+        src/scripting/mt19937ar.c
     )
 
     # Headless test fakes, the portable twins (utilities/lua_utils/world_debug), and
     # the HEADLESS variant of the three forked TUs.  Test link only — never mushgui.
     set(MUSHCORE_TESTSUPPORT_SOURCES
-        utilities_portable.cpp
-        pal/cpu_raster.cpp
-        platform/doc_flip_gui_stubs.cpp
-        platform/doc_headless_stubs.cpp
-        platform/doc_port_glue.cpp
-        platform/gdi_headless.cpp
-        platform/headless_surface.cpp
-        platform/headless_app.cpp
-        platform/windows_stubs.cpp
-        doc_construct.cpp
-        scripting/scriptengine.cpp
-        xml/xml_load_world.cpp
+        src/utilities_portable.cpp
+        src/pal/cpu_raster.cpp
+        src/platform/doc_flip_gui_stubs.cpp
+        src/platform/doc_headless_stubs.cpp
+        src/platform/doc_port_glue.cpp
+        src/platform/gdi_headless.cpp
+        src/platform/headless_surface.cpp
+        src/platform/headless_app.cpp
+        src/platform/windows_stubs.cpp
+        src/doc_construct.cpp
+        src/scripting/scriptengine.cpp
+        src/xml/xml_load_world.cpp
     )
 
     # wx views/frames/dialogs, the real twins (Utilities/lua_utils/world_debug), the
     # scripting infra (scripting.cpp/functionlist.cpp), and the GUI variant of the
     # three forked TUs.  mushgui link only — MUST NOT enter the test executables.
     set(MUSHGUI_ADAPTERS_SOURCES
-        platform/mushapp_globals.cpp
-        platform/mushapp_stubs.cpp
-        platform/wx_tree_property_sheet.cpp
-        Utilities.cpp
-        scripting/functionlist.cpp
-        ActivityDoc.cpp
-        ActivityView.cpp
-        Finding.cpp
-        HyprLink.cpp
-        MDIClientWnd.cpp
-        MDITabs.cpp
-        MUSHclient.cpp
-        Mapping.cpp
-        MySplitterWnd.cpp
-        MyStatusBar.cpp
-        NameGeneration.cpp
-        StatLink.cpp
-        TextView.cpp
-        TimerWnd.cpp
-        activitychildfrm.cpp
-        art.cpp
-        childfrm.cpp
-        format.cpp
-        genprint.cpp
-        mainfrm.cpp
-        platform/miniwindow_selftest.cpp
-        platform/engines_selftest.cpp
-        mushview.cpp
-        sendvw.cpp
-        textchildfrm.cpp
-        winplace.cpp
-        world_debug.cpp
-        scripting/methods/methods.cpp
-        scripting/methods/methods_panes.cpp
-        dialogs/world_prefs/ButtonColour.cpp
-        dialogs/world_prefs/CommandOptionsDlg.cpp
-        dialogs/world_prefs/EditVariable.cpp
-        dialogs/world_prefs/PrefsPropertySheet.cpp
-        dialogs/world_prefs/TabDefaultsDlg.cpp
-        dialogs/world_prefs/TimerDlg.cpp
-        dialogs/world_prefs/aliasdlg.cpp
-        dialogs/world_prefs/configuration.cpp
-        dialogs/world_prefs/editmac.cpp
-        dialogs/world_prefs/genpropertypage.cpp
-        dialogs/world_prefs/prefspropertypages.cpp
-        dialogs/world_prefs/triggdlg.cpp
-        dialogs/global_prefs/GlobalPrefs.cpp
-        dialogs/global_prefs/GlobalPrefsSheet.cpp
-        dialogs/plugins/PluginsDlg.cpp
-        dialogs/chat/ChatCallDlg.cpp
-        dialogs/chat/ChatDetailsDlg.cpp
-        dialogs/chat/ChatListDlg.cpp
-        dialogs/chat/ChatToAllDlg.cpp
-        dialogs/chat/EmoteToAllDlg.cpp
-        dialogs/AsciiArtDlg.cpp
-        dialogs/ChooseNotepadDlg.cpp
-        dialogs/ColourComboBox.cpp
-        dialogs/ColourPickerDlg.cpp
-        dialogs/CompleteWordDlg.cpp
-        dialogs/ConfirmPreamble.cpp
-        dialogs/CreditsDlg.cpp
-        dialogs/DebugLuaDlg.cpp
-        dialogs/DebugWorldInputDlg.cpp
-        dialogs/EditDlg.cpp
-        dialogs/EditMultiLine.cpp
-        dialogs/FindDlg.cpp
-        dialogs/FunctionListDlg.cpp
-        dialogs/GeneratedNameDlg.cpp
-        dialogs/GlobalChangeDlg.cpp
-        dialogs/GoToLineDlg.cpp
-        dialogs/HighlightPhraseDlg.cpp
-        dialogs/ImportXMLdlg.cpp
-        dialogs/InsertUnicodeDlg.cpp
-        dialogs/KeyNameDlg.cpp
-        dialogs/LuaChooseBox.cpp
-        dialogs/LuaChooseList.cpp
-        dialogs/LuaChooseListMulti.cpp
-        dialogs/LuaGsubDlg.cpp
-        dialogs/LuaInputBox.cpp
-        dialogs/LuaInputEditDlg.cpp
-        dialogs/MXPscriptRoutinesDlg.cpp
-        dialogs/MapCommentDlg.cpp
-        dialogs/MapDlg.cpp
-        dialogs/MapMoveDlg.cpp
-        dialogs/MultiLineTriggerDlg.cpp
+        src/platform/mushapp_globals.cpp
+        src/platform/mushapp_stubs.cpp
+        src/platform/wx_tree_property_sheet.cpp
+        src/Utilities.cpp
+        src/scripting/functionlist.cpp
+        src/ActivityDoc.cpp
+        src/ActivityView.cpp
+        src/Finding.cpp
+        src/HyprLink.cpp
+        src/MDIClientWnd.cpp
+        src/MDITabs.cpp
+        src/MUSHclient.cpp
+        src/Mapping.cpp
+        src/MySplitterWnd.cpp
+        src/MyStatusBar.cpp
+        src/NameGeneration.cpp
+        src/StatLink.cpp
+        src/TextView.cpp
+        src/TimerWnd.cpp
+        src/activitychildfrm.cpp
+        src/art.cpp
+        src/childfrm.cpp
+        src/format.cpp
+        src/genprint.cpp
+        src/mainfrm.cpp
+        src/platform/miniwindow_selftest.cpp
+        src/platform/engines_selftest.cpp
+        src/mushview.cpp
+        src/sendvw.cpp
+        src/textchildfrm.cpp
+        src/winplace.cpp
+        src/world_debug.cpp
+        src/scripting/methods/methods.cpp
+        src/scripting/methods/methods_panes.cpp
+        src/dialogs/world_prefs/ButtonColour.cpp
+        src/dialogs/world_prefs/CommandOptionsDlg.cpp
+        src/dialogs/world_prefs/EditVariable.cpp
+        src/dialogs/world_prefs/PrefsPropertySheet.cpp
+        src/dialogs/world_prefs/TabDefaultsDlg.cpp
+        src/dialogs/world_prefs/TimerDlg.cpp
+        src/dialogs/world_prefs/aliasdlg.cpp
+        src/dialogs/world_prefs/configuration.cpp
+        src/dialogs/world_prefs/editmac.cpp
+        src/dialogs/world_prefs/genpropertypage.cpp
+        src/dialogs/world_prefs/prefspropertypages.cpp
+        src/dialogs/world_prefs/triggdlg.cpp
+        src/dialogs/global_prefs/GlobalPrefs.cpp
+        src/dialogs/global_prefs/GlobalPrefsSheet.cpp
+        src/dialogs/plugins/PluginsDlg.cpp
+        src/dialogs/chat/ChatCallDlg.cpp
+        src/dialogs/chat/ChatDetailsDlg.cpp
+        src/dialogs/chat/ChatListDlg.cpp
+        src/dialogs/chat/ChatToAllDlg.cpp
+        src/dialogs/chat/EmoteToAllDlg.cpp
+        src/dialogs/AsciiArtDlg.cpp
+        src/dialogs/ChooseNotepadDlg.cpp
+        src/dialogs/ColourComboBox.cpp
+        src/dialogs/ColourPickerDlg.cpp
+        src/dialogs/CompleteWordDlg.cpp
+        src/dialogs/ConfirmPreamble.cpp
+        src/dialogs/CreditsDlg.cpp
+        src/dialogs/DebugLuaDlg.cpp
+        src/dialogs/DebugWorldInputDlg.cpp
+        src/dialogs/EditDlg.cpp
+        src/dialogs/EditMultiLine.cpp
+        src/dialogs/FindDlg.cpp
+        src/dialogs/FunctionListDlg.cpp
+        src/dialogs/GeneratedNameDlg.cpp
+        src/dialogs/GlobalChangeDlg.cpp
+        src/dialogs/GoToLineDlg.cpp
+        src/dialogs/HighlightPhraseDlg.cpp
+        src/dialogs/ImportXMLdlg.cpp
+        src/dialogs/InsertUnicodeDlg.cpp
+        src/dialogs/KeyNameDlg.cpp
+        src/dialogs/LuaChooseBox.cpp
+        src/dialogs/LuaChooseList.cpp
+        src/dialogs/LuaChooseListMulti.cpp
+        src/dialogs/LuaGsubDlg.cpp
+        src/dialogs/LuaInputBox.cpp
+        src/dialogs/LuaInputEditDlg.cpp
+        src/dialogs/MXPscriptRoutinesDlg.cpp
+        src/dialogs/MapCommentDlg.cpp
+        src/dialogs/MapDlg.cpp
+        src/dialogs/MapMoveDlg.cpp
+        src/dialogs/MultiLineTriggerDlg.cpp
         # dialogs/ProgDlg.cpp is in CORE_SOURCES — adopted 2026-08-07
-        dialogs/ProxyServerPasswordDlg.cpp
-        dialogs/QuickConnectDlg.cpp
-        dialogs/RecallSearchDlg.cpp
-        dialogs/RegexpProblemDlg.cpp
-        dialogs/ScriptErrorDlg.cpp
-        dialogs/SendToAllDlg.cpp
-        dialogs/SpellCheckDlg.cpp
-        dialogs/Splash.cpp
-        dialogs/TextAttributesDlg.cpp
-        dialogs/TipDlg.cpp
-        dialogs/UniqueIDDlg.cpp
-        dialogs/WinsockInfoDlg.cpp
-        dialogs/cmdhist.cpp
-        dialogs/logdlg.cpp
-        dialogs/password.cpp
-        dialogs/welcome.cpp
-        dialogs/welcome1.cpp
-        doc_construct.cpp
-        scripting/scriptengine.cpp
-        xml/xml_load_world.cpp
+        src/dialogs/ProxyServerPasswordDlg.cpp
+        src/dialogs/QuickConnectDlg.cpp
+        src/dialogs/RecallSearchDlg.cpp
+        src/dialogs/RegexpProblemDlg.cpp
+        src/dialogs/ScriptErrorDlg.cpp
+        src/dialogs/SendToAllDlg.cpp
+        src/dialogs/SpellCheckDlg.cpp
+        src/dialogs/Splash.cpp
+        src/dialogs/TextAttributesDlg.cpp
+        src/dialogs/TipDlg.cpp
+        src/dialogs/UniqueIDDlg.cpp
+        src/dialogs/WinsockInfoDlg.cpp
+        src/dialogs/cmdhist.cpp
+        src/dialogs/logdlg.cpp
+        src/dialogs/password.cpp
+        src/dialogs/welcome.cpp
+        src/dialogs/welcome1.cpp
+        src/doc_construct.cpp
+        src/scripting/scriptengine.cpp
+        src/xml/xml_load_world.cpp
     )
 
     # ── Coverage instrumentation (opt-in) ─────────────────────────────────────
@@ -827,14 +827,14 @@ if(NOT WIN32)
     # (HEADLESS_APP, engine-language defs) are added afterwards.
     macro(mc_engine_common tgt)
         target_include_directories(${tgt} PUBLIC
-            ${CMAKE_SOURCE_DIR}
-            ${CMAKE_SOURCE_DIR}/platform
+            ${CMAKE_SOURCE_DIR}/src
+            ${CMAKE_SOURCE_DIR}/src/platform
+            ${CMAKE_SOURCE_DIR}/src/scripting
+            ${CMAKE_SOURCE_DIR}/src/scripting/lpeg
+            ${CMAKE_SOURCE_DIR}/src/dialogs
             ${CMAKE_SOURCE_DIR}/pcre
-            ${CMAKE_SOURCE_DIR}/scripting
-            ${CMAKE_SOURCE_DIR}/scripting/lpeg
             ${CMAKE_SOURCE_DIR}/sqlite3
             ${CMAKE_SOURCE_DIR}/lsqlite
-            ${CMAKE_SOURCE_DIR}/dialogs
         )
         target_compile_definitions(${tgt} PRIVATE _NOSOUND WIN32 MUSHCLIENT_FULL_BUILD)
         target_compile_options(${tgt} PRIVATE
@@ -906,34 +906,34 @@ if(NOT WIN32)
     if(LUA_FOUND)
         # Vendored Lua C extensions + LPeg + lsqlite3 + the real world library.
         target_sources(mushcore PRIVATE
-            scripting/bits.c
-            scripting/lrexlib.c
-            scripting/lua_compress.c
-            scripting/lbc.c
-            scripting/number.c
-            scripting/lua_scripting.cpp
-            scripting/lpeg/lptree.c
-            scripting/lpeg/lpvm.c
-            scripting/lpeg/lpcap.c
-            scripting/lpeg/lpcode.c
+            src/scripting/bits.c
+            src/scripting/lrexlib.c
+            src/scripting/lua_compress.c
+            src/scripting/lbc.c
+            src/scripting/number.c
+            src/scripting/lua_scripting.cpp
+            src/scripting/lpeg/lptree.c
+            src/scripting/lpeg/lpvm.c
+            src/scripting/lpeg/lpcap.c
+            src/scripting/lpeg/lpcode.c
             lsqlite/lsqlite3.c
-            scripting/lua_methods.cpp
+            src/scripting/lua_methods.cpp
             # The Lua `progress` library (2026-08-12: was adapter-side, and its
             # registration was #ifdef _WIN32 — so no world/plugin script on the
             # port could ever reach it).  Its backing CProgressDlg and the
             # g_wxhook_progress_* storage are both already in CORE_SOURCES, so
             # it links headless with an inert dialog, exactly like ProgDlg's
             # other five users.
-            scripting/lua_progressdlg.cpp
+            src/scripting/lua_progressdlg.cpp
         )
         # Portable Lua utils + portable world.Debug (the GUI twins live adapter-side).
         target_sources(mushcore_testsupport PRIVATE
-            scripting/lua_utils_portable.cpp
-            scripting/world_debug_portable.cpp
+            src/scripting/lua_utils_portable.cpp
+            src/scripting/world_debug_portable.cpp
         )
         # Real Lua utils (the GUI twin of lua_utils_portable.cpp).
         target_sources(mushgui_adapters PRIVATE
-            scripting/lua_utils.cpp
+            src/scripting/lua_utils.cpp
         )
     endif()
 
@@ -941,7 +941,7 @@ if(NOT WIN32)
     #    18 test executables).  Each routes the world API through the portable
     #    dispatch-map Invoke in platform/mc_dispatch.cpp (now a mushcore TU). ──────
     if(Python3_FOUND)
-        target_sources(mushgui_adapters PRIVATE platform/py_engine.cpp)
+        target_sources(mushgui_adapters PRIVATE src/platform/py_engine.cpp)
         target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_PYTHON_SCRIPTING)
         target_link_libraries(mushgui_adapters PUBLIC Python3::Python)
     endif()
@@ -949,21 +949,21 @@ if(NOT WIN32)
     if(PERL_EMBED_FOUND)
         # The perl CORE headers come via -iwithsysroot in PERL_CCOPTS, applied to
         # just this source file; link the libperl ldopts.
-        target_sources(mushgui_adapters PRIVATE platform/perl_engine.cpp)
+        target_sources(mushgui_adapters PRIVATE src/platform/perl_engine.cpp)
         target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_PERL_SCRIPTING)
-        set_source_files_properties(platform/perl_engine.cpp PROPERTIES
+        set_source_files_properties(src/platform/perl_engine.cpp PROPERTIES
                                     COMPILE_FLAGS "${PERL_CCOPTS}")
         separate_arguments(PERL_LDOPTS_LIST UNIX_COMMAND "${PERL_LDOPTS}")
         target_link_libraries(mushgui_adapters PUBLIC ${PERL_LDOPTS_LIST})
     endif()
 
     if(JS_ENGINE_FOUND)
-        target_sources(mushgui_adapters PRIVATE platform/js_engine.cpp)
+        target_sources(mushgui_adapters PRIVATE src/platform/js_engine.cpp)
         target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_JS_SCRIPTING)
         if(APPLE)
             target_link_libraries(mushgui_adapters PUBLIC ${JAVASCRIPTCORE_FRAMEWORK})
         else()
-            set_source_files_properties(platform/js_engine.cpp PROPERTIES
+            set_source_files_properties(src/platform/js_engine.cpp PROPERTIES
                                         INCLUDE_DIRECTORIES "${JSC_INCLUDE_DIRS}")
             target_link_directories(mushgui_adapters PUBLIC ${JSC_LIBRARY_DIRS})
             target_link_libraries(mushgui_adapters PUBLIC ${JSC_LIBRARIES})
@@ -971,10 +971,10 @@ if(NOT WIN32)
     endif()
 
     if(TCL_ENGINE_FOUND)
-        target_sources(mushgui_adapters PRIVATE platform/tcl_engine.cpp)
+        target_sources(mushgui_adapters PRIVATE src/platform/tcl_engine.cpp)
         target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_TCL_SCRIPTING)
         if(TCL_VENDORED)
-            set_source_files_properties(platform/tcl_engine.cpp PROPERTIES
+            set_source_files_properties(src/platform/tcl_engine.cpp PROPERTIES
                                         INCLUDE_DIRECTORIES "${TCL_VENDORED}/include")
             if(APPLE)
                 target_link_libraries(mushgui_adapters PUBLIC
@@ -986,7 +986,7 @@ if(NOT WIN32)
         elseif(APPLE)
             target_link_libraries(mushgui_adapters PUBLIC ${TCL_FRAMEWORK})
         else()
-            set_source_files_properties(platform/tcl_engine.cpp PROPERTIES
+            set_source_files_properties(src/platform/tcl_engine.cpp PROPERTIES
                                         INCLUDE_DIRECTORIES "${TCL_PKG_INCLUDE_DIRS}")
             target_link_directories(mushgui_adapters PUBLIC ${TCL_PKG_LIBRARY_DIRS})
             target_link_libraries(mushgui_adapters PUBLIC ${TCL_PKG_LIBRARIES})
@@ -995,9 +995,9 @@ if(NOT WIN32)
 
     if(RUBY_ENGINE_FOUND)
         # ruby.h's headers are applied only to this TU (its macros must not leak).
-        target_sources(mushgui_adapters PRIVATE platform/ruby_engine.cpp)
+        target_sources(mushgui_adapters PRIVATE src/platform/ruby_engine.cpp)
         target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_RUBY_SCRIPTING)
-        set_source_files_properties(platform/ruby_engine.cpp PROPERTIES
+        set_source_files_properties(src/platform/ruby_engine.cpp PROPERTIES
                                     INCLUDE_DIRECTORIES "${RUBY_INCLUDE_DIRS}"
                                     COMPILE_FLAGS "-Wno-register")
         if(RUBY_VENDORED)
@@ -1053,78 +1053,78 @@ if(NOT WIN32)
 
         add_executable(mushgui MACOSX_BUNDLE
             # wx entry point (wx headers only — no MFC/MUSHclient headers)
-            platform/wx_app.cpp
+            src/platform/wx_app.cpp
             # bridge: includes BOTH wx and MUSHclient headers; implements hooks
-            platform/wx_mfc_impl.cpp
+            src/platform/wx_mfc_impl.cpp
             # GDI compatibility layer: wx-backed CDC/CBitmap/CPen/CBrush/CFont
             # Resolves the GDI symbols left undefined by mushcore's miniwindow.cpp
             # (it moved there in the stage-1 miniwindow adoption)
-            platform/wx_gdi_compat.cpp
+            src/platform/wx_gdi_compat.cpp
             # PAL: wx adapter for pal::ISurface + conformance selftest (S2)
-            platform/wx_surface.cpp
+            src/platform/wx_surface.cpp
             # GUI widgets (wx headers first, then MUSHclient headers)
-            platform/wx_outputpane.cpp
+            src/platform/wx_outputpane.cpp
             # In-app conformance harness for the pane (--outputpane-selftest);
             # here, not in mushgui_adapters, because it includes wx headers.
-            platform/outputpane_selftest.cpp
-            platform/wx_world_child.cpp
+            src/platform/outputpane_selftest.cpp
+            src/platform/wx_world_child.cpp
             # In-app conformance harness for the command-input bar
             # (--input-selftest).  Lives here, not in mushgui_adapters, because
             # it drives a real CWorldChildFrame and so needs the wx headers.
-            platform/input_selftest.cpp
+            src/platform/input_selftest.cpp
             # PAL: conformance selftest for the wx miniwindow compositor +
             # tooltip gate (both live in wx_world_child.cpp, so this must be
             # an exe TU — mushcore cannot see wxDC)
-            platform/wx_composite_selftest.cpp
+            src/platform/wx_composite_selftest.cpp
             # In-app conformance harness for the world window adapter
             # (--world-frame-selftest): needs the real frame + pane, so it lives
             # with them rather than in mushgui_adapters.
-            platform/world_frame_selftest.cpp
-            platform/menubar_selftest.cpp
+            src/platform/world_frame_selftest.cpp
+            src/platform/menubar_selftest.cpp
             # The macOS menu-bar ("system tray") item: the portable half decides
             # what to show, the Obj-C++ half below owns the NSStatusItem.  Here
             # rather than in mushgui_adapters because it includes wx headers.
-            platform/wx_statusitem.cpp
+            src/platform/wx_statusitem.cpp
             # In-app conformance harness for it (--statusitem-selftest).
-            platform/statusitem_selftest.cpp
-            platform/app_config.cpp
-            platform/extended_selftest.cpp
+            src/platform/statusitem_selftest.cpp
+            src/platform/app_config.cpp
+            src/platform/extended_selftest.cpp
             # The MFC->wx dialog + property-sheet bridges, which only the
             # loop-running mode can reach (everything there is behind a
             # ShowModal).  Always compiled -- the harness costs nothing until
             # --extended-selftest=dialog-bridge names it.
-            platform/dialog_bridge_selftest.cpp
+            src/platform/dialog_bridge_selftest.cpp
             # Edit > Cut/Paste/Undo must not recurse: the arm branches on
             # wxWindow::FindFocus(), which a loop-free harness cannot place, so
             # this one needs the loop-running mode too.  Own TU for the same
             # reason as the dialog bridge -- it builds the real MDI frame.
-            platform/edit_command_selftest.cpp
+            src/platform/edit_command_selftest.cpp
             # The three canonical toolbars (Standard/World/Activity) over
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.
-            platform/wx_toolbar.cpp
-            platform/wx_notepad.cpp
+            src/platform/wx_toolbar.cpp
+            src/platform/wx_notepad.cpp
             # In-app conformance harness for the notepad windows
             # (--notepad-selftest).  Lives here, not in mushgui_adapters, because
             # it drives the real CWxNotepadFrame and so includes wx headers.
-            platform/notepad_selftest.cpp
+            src/platform/notepad_selftest.cpp
             # MFC dialog bridge: parses the recovered dialog/menu resources so the
             # canonical dialogs/**/*.cpp render natively (vs hand-rebuilt in wx)
-            platform/wx_dialog_resource.cpp
-            platform/wx_dialog_bridge.cpp
+            src/platform/wx_dialog_resource.cpp
+            src/platform/wx_dialog_bridge.cpp
             # In-app selftest for the wx-only bridge layers (--gui-bridge-selftest):
             # window geometry, dialog control mapping, world-creation defaults.
             # Here rather than in mushgui_adapters because it includes wx headers.
-            platform/gui_bridge_selftest.cpp
-            platform/wx_activity.cpp
-            platform/wx_print.cpp
+            src/platform/gui_bridge_selftest.cpp
+            src/platform/wx_activity.cpp
+            src/platform/wx_print.cpp
             # miniaudio sound engine: concurrent buffers + volume/pan/loop
             # (backs world.PlaySound / MSP / trigger sounds)
-            platform/ma_sound.cpp
+            src/platform/ma_sound.cpp
             # In-app conformance harness for it (--sound-selftest).  Here for
             # the same reason ma_sound.cpp is: miniaudio's implementation is
             # compiled into the executable and nothing headless can link it.
-            platform/sound_selftest.cpp
+            src/platform/sound_selftest.cpp
         )
         # mushgui links the shared engine (mushcore) + the wx/GUI adapter set
         # (mushgui_adapters, which PUBLIC-links mushcore).  Both are listed so the
@@ -1166,8 +1166,8 @@ if(NOT WIN32)
             target_link_libraries(mushgui PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
         endif()
         target_include_directories(mushgui PRIVATE
-            ${CMAKE_SOURCE_DIR}
-            ${CMAKE_SOURCE_DIR}/platform
+            ${CMAKE_SOURCE_DIR}/src
+            ${CMAKE_SOURCE_DIR}/src/platform
             ${wxWidgets_INCLUDE_DIRS}
         )
         target_compile_definitions(mushgui PRIVATE
@@ -1200,12 +1200,12 @@ if(NOT WIN32)
         if(APPLE)
             # macOS-only Obj-C++ helper (AppKit): disable NSTextView smart-quote
             # substitution so typed/pasted Lua isn't corrupted in script edits.
-            target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/platform/wx_osx_text.mm)
+            target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/src/platform/wx_osx_text.mm)
             # The NSStatusItem behind Global Preferences > "Icon Placement:
             # System tray" -- macOS's nearest equivalent of the Windows system
             # tray.  Obj-C++ for the same reason wx_osx_text.mm is: AppKit types
             # must not reach the TUs that include the MFC headers.
-            target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/platform/wx_osx_statusitem.mm)
+            target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/src/platform/wx_osx_statusitem.mm)
             set_target_properties(mushgui PROPERTIES
                 MACOSX_BUNDLE_GUI_IDENTIFIER  "au.com.gammon.MUSHclient"
                 MACOSX_BUNDLE_BUNDLE_NAME     "MUSHclient"
@@ -1226,7 +1226,7 @@ if(NOT WIN32)
                 COMMAND ${CMAKE_COMMAND} -E make_directory
                     "${_mushgui_res_dir}"
                 COMMAND ${CMAKE_COMMAND} -E copy
-                    "${CMAKE_SOURCE_DIR}/platform/macos/MUSHclient.icns"
+                    "${CMAKE_SOURCE_DIR}/src/platform/macos/MUSHclient.icns"
                     "${_mushgui_res_dir}/"
                 COMMENT "Bundling the app icon (MUSHclient.icns)")
         else()
@@ -1245,23 +1245,23 @@ if(NOT WIN32)
             COMMENT "Bundling lua/ modules")
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
-                "${CMAKE_SOURCE_DIR}/platform/mushclient_dialogs.rc"
-                "${CMAKE_SOURCE_DIR}/resource.h"
+                "${CMAKE_SOURCE_DIR}/src/platform/mushclient_dialogs.rc"
+                "${CMAKE_SOURCE_DIR}/src/resource.h"
                 "${_mushgui_res_dir}/"
             COMMENT "Bundling dialog resources (mushclient_dialogs.rc + resource.h)")
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/platform/dialog_art"
+                "${CMAKE_SOURCE_DIR}/src/platform/dialog_art"
                 "${_mushgui_res_dir}/dialog_art"
             COMMENT "Bundling dialog art (image statics + icons)")
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/platform/toolbar_art"
+                "${CMAKE_SOURCE_DIR}/src/platform/toolbar_art"
                 "${_mushgui_res_dir}/toolbar_art"
             COMMENT "Bundling toolbar art (Standard/World/Activity bars)")
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/platform/dialog_text"
+                "${CMAKE_SOURCE_DIR}/src/platform/dialog_text"
                 "${_mushgui_res_dir}/text"
             COMMENT "Bundling licence + credits text (About box)")
         add_custom_command(TARGET mushgui POST_BUILD
@@ -1293,13 +1293,13 @@ if(NOT WIN32)
         endif()
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
-                "${CMAKE_SOURCE_DIR}/tips.txt"
-                "${CMAKE_SOURCE_DIR}/names.txt"
+                "${CMAKE_SOURCE_DIR}/res/tips.txt"
+                "${CMAKE_SOURCE_DIR}/res/names.txt"
                 "${_mushgui_res_dir}/"
             COMMENT "Bundling tips.txt + names.txt (CTipDlg / GenerateName)")
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
-                "${CMAKE_SOURCE_DIR}/scripting/spellchecker.lua"
+                "${CMAKE_SOURCE_DIR}/src/scripting/spellchecker.lua"
                 "${_mushgui_res_dir}/"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/spell"

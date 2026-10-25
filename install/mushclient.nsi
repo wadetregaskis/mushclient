@@ -8,7 +8,7 @@
 ;  !system "copy ..\WinRel\mushclient.exe mushclient.exe" = 0
 ;  !system "upx mushclient.exe" = 0
 
-!system "..\localize.bat" = 0
+!system "..\tools\localize.bat" = 0
 
 ; The name of the installer
 Name "MUSHclient"
@@ -106,14 +106,14 @@ Section "-MUSHclient program (required)"
   ; File "..\MUSHclient.exe.manifest"
 
   File "..\WinRel\lua5.1.dll"
-  File "..\lua5.1.lib"
+  File "..\src\lua5.1.lib"
   File "..\mushclient.HLP"
   File "..\help.db"
-  File "..\mushclient.cnt"
+  File "..\docs\mushclient.cnt"
   File "..\install\mushclient.ico"
-  File "..\tips.txt"
-  File "..\Example_Filters.lua"
-  File "..\names.txt"
+  File "..\res\tips.txt"
+  File "..\lua\Example_Filters.lua"
+  File "..\res\names.txt"
   File /oname=license.txt "..\LICENSE"
   File "..\Dina.fon"
 
@@ -172,9 +172,9 @@ Section "-MUSHclient program (required)"
   File "..\Localize_template.lua"
   File "..\WinRel\locale\en.dll"
   File "..\WinRel\locale\en_small.dll"
-  File "..\count_locale_usage.lua"
-  File "..\detect_locale_changes.lua"
-  File "..\locale_notes.txt"
+  File "..\tools\count_locale_usage.lua"
+  File "..\tools\detect_locale_changes.lua"
+  File "..\docs\locale_notes.txt"
 
   SetOutPath $INSTDIR
 

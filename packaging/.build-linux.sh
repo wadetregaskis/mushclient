@@ -30,7 +30,7 @@ REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── defaults (overridable by flags / env) ───────────────────────────────────
 APP_NAME="MUSHclient"
-DEFAULT_VERSION="$(sed -n 's/^[[:space:]]*#define[[:space:]]*VERSION_STRING[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO/version.h" 2>/dev/null || echo "6.0.0")"
+DEFAULT_VERSION="$(sed -n 's/^[[:space:]]*#define[[:space:]]*VERSION_STRING[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO/src/version.h" 2>/dev/null || echo "6.0.0")"
 VERSION="${VERSION:-${DEFAULT_VERSION:-6.0.0}}"
 BUILD_TYPE="Release"
 BUILD_DIR="$REPO/build-linux-release"
@@ -137,11 +137,11 @@ if command -v strip >/dev/null 2>&1; then
 fi
 
 # Copy runtime resource files and directories alongside the binary
-cp "$REPO/platform/mushclient_dialogs.rc" "$STAGE_APP/"
-cp "$REPO/resource.h"                     "$STAGE_APP/"
-cp "$REPO/tips.txt"                       "$STAGE_APP/"
-cp "$REPO/names.txt"                      "$STAGE_APP/"
-cp "$REPO/scripting/spellchecker.lua"     "$STAGE_APP/"
+cp "$REPO/src/platform/mushclient_dialogs.rc" "$STAGE_APP/"
+cp "$REPO/src/resource.h"                     "$STAGE_APP/"
+cp "$REPO/res/tips.txt"                       "$STAGE_APP/"
+cp "$REPO/res/names.txt"                      "$STAGE_APP/"
+cp "$REPO/src/scripting/spellchecker.lua"     "$STAGE_APP/"
 
 for dir in lua fonts spell; do
     if [ -d "$REPO/$dir" ]; then
@@ -150,15 +150,15 @@ for dir in lua fonts spell; do
 done
 
 for dir in dialog_art toolbar_art; do
-    if [ -d "$REPO/platform/$dir" ]; then
-        cp -R "$REPO/platform/$dir" "$STAGE_APP/"
+    if [ -d "$REPO/src/platform/$dir" ]; then
+        cp -R "$REPO/src/platform/$dir" "$STAGE_APP/"
     elif [ -d "$REPO/$dir" ]; then
         cp -R "$REPO/$dir" "$STAGE_APP/"
     fi
 done
 
-if [ -d "$REPO/platform/dialog_text" ]; then
-    cp -R "$REPO/platform/dialog_text" "$STAGE_APP/text"
+if [ -d "$REPO/src/platform/dialog_text" ]; then
+    cp -R "$REPO/src/platform/dialog_text" "$STAGE_APP/text"
 fi
 
 if [ -d "$REPO/worlds" ]; then
@@ -166,8 +166,8 @@ if [ -d "$REPO/worlds" ]; then
 fi
 
 # Application icon
-if [ -f "$REPO/platform/dialog_art/MUSHclient.png" ]; then
-    cp "$REPO/platform/dialog_art/MUSHclient.png" "$STAGE_APP/mushclient.png"
+if [ -f "$REPO/src/platform/dialog_art/MUSHclient.png" ]; then
+    cp "$REPO/src/platform/dialog_art/MUSHclient.png" "$STAGE_APP/mushclient.png"
 fi
 
 # Bundle scripting runtime libraries and stdlibs if present

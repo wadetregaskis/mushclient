@@ -136,7 +136,7 @@ foreach ($cfg in @('Debug','Release')) {
   # a header that masks a CRT or SDK one, and platform\direct.h masking
   # <direct.h> is what once turned a 36-error build into 36,810
   # (docs/WINDOWS-VALIDATION.md section 10j).
-  W '      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)luacom\;$(SolutionDir)openssl\include\;$(SolutionDir)tests\;$(SolutionDir)zlib\;$(SolutionDir)png\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>'
+  W '      <AdditionalIncludeDirectories>$(SolutionDir)src\;$(SolutionDir);$(SolutionDir)luacom\;$(SolutionDir)openssl\include\;$(SolutionDir)tests\;$(SolutionDir)zlib\;$(SolutionDir)png\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>'
   # _HAS_AUTO_PTR_ETC=1 goes with LanguageStandard stdcpp17 below: C++17
   # removed std::unary_function / std::binary_function / std::auto_ptr, and
   # stdafx.h derives a comparator from std::binary_function.  The app never
@@ -255,7 +255,7 @@ W '    <ClCompile Include="tests\win\test_win_worldview.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'
-W '    <ResourceCompile Include="MUSHclient.rc" />'
+W '    <ResourceCompile Include="src\MUSHclient.rc" />'
 W '  </ItemGroup>'
 W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />'
 W '</Project>'

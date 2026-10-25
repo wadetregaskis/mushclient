@@ -269,7 +269,7 @@ MC_RESOURCES_REV=master packaging/fetch-resources.sh
 
 **This is not required to build.** Unlike the language runtimes, dialog art is
 not optional at runtime — the About box and the Tray/Taskbar page need it — so
-the files the port actually uses stay committed under `platform/dialog_art/`,
+the files the port actually uses stay committed under `src/src/platform/dialog_art/`,
 and that is what CMake bundles. A plain `git clone && cmake && make` with no
 network must keep working. Run this script when you need art the port does not
 bundle yet.
@@ -311,9 +311,9 @@ increasing order of effort:
    Tracked as settings-audit item 54 — "Activity button bar style (Style 1..6)"
    — which cannot be honoured while there is no bar to style.
 
-2. **The canonical `.rc` itself.** `platform/mushclient_dialogs.rc` is
+2. **The canonical `.rc` itself.** `src/src/platform/mushclient_dialogs.rc` is
    *decompiled* from a shipped `en.dll` by `tools/decompile_dialogs.py`, with
-   numeric ids mapped back to `resource.h` symbols by inference. The
+   numeric ids mapped back to `src/resource.h` symbols by inference. The
    `MUSHclient.rc` in this checkout is the real source of those same templates —
    true symbol names, real `DLGINIT`, no decompiler heuristics. Sourcing the
    port from it directly is the long-term goal and would be strictly better

@@ -91,7 +91,7 @@ mc_test(test_mfc_ui)
 # MUSHGUI_ADAPTERS_SOURCES for the shipping app; this is a second, test-only
 # compile of the same TU into a binary that never links mushgui_adapters, so
 # there is no ODR clash.
-target_sources(test_mfc_ui PRIVATE ${CMAKE_SOURCE_DIR}/dialogs/InsertUnicodeDlg.cpp)
+target_sources(test_mfc_ui PRIVATE ${CMAKE_SOURCE_DIR}/src/dialogs/InsertUnicodeDlg.cpp)
 mc_test(test_connection)
 mc_test(test_accelerators)
 mc_test(test_menu_rules)
@@ -132,13 +132,13 @@ mc_test(test_mc_test_framework)
 # that same harness (now asserting, not just printing) as an ordinary ctest so
 # a future decompiler regen or hand-edit of the .rc that drops/mislabels a
 # dialog fails ctest instead of shipping silently.
-add_executable(test_wx_dialog_resource ../platform/wx_dialog_resource.cpp)
+add_executable(test_wx_dialog_resource ../src/platform/wx_dialog_resource.cpp)
 target_compile_definitions(test_wx_dialog_resource PRIVATE WX_DIALOG_RESOURCE_TEST)
 target_compile_options(test_wx_dialog_resource PRIVATE ${MC_TEST_COMPILE_OPTIONS})
 add_test(NAME test_wx_dialog_resource
          COMMAND test_wx_dialog_resource
-                 ${CMAKE_SOURCE_DIR}/resource.h
-                 ${CMAKE_SOURCE_DIR}/platform/mushclient_dialogs.rc)
+                 ${CMAKE_SOURCE_DIR}/src/resource.h
+                 ${CMAKE_SOURCE_DIR}/src/platform/mushclient_dialogs.rc)
 
 # ── Source lint: no non-ASCII in narrow string literals ─────────────────────
 # Note()/Tell()/DisplayMsg() take BYTES, decoded with the world's encoding — so

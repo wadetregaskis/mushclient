@@ -39,15 +39,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/ruby"
 RUBY_VERSION="${RUBY_VERSION:-4.0.5}"
 YAML_VERSION="${YAML_VERSION:-0.2.5}"
+OPENSSL_PREFIX="${OPENSSL_PREFIX:-}"
 
 note() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --ruby-version)  RUBY_VERSION="$2"; shift 2;;
-        --yaml-version)  YAML_VERSION="$2"; shift 2;;
-        -h|--help)       sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+        --ruby-version)    RUBY_VERSION="$2"; shift 2;;
+        --yaml-version)    YAML_VERSION="$2"; shift 2;;
+        --openssl-prefix)  OPENSSL_PREFIX="$2"; shift 2;;
+        -h|--help)         sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
         *) die "unknown option: $1 (try --help)";;
     esac
 done
@@ -57,20 +59,42 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"                                   # arm64 / aarch64 | x86_64
 
 if [ "$OS" = "Darwin" ]; then
-    OPENSSL_PREFIX="${OPENSSL_PREFIX:-$(brew --prefix openssl@3 2>/dev/null || true)}"
-    [ -n "$OPENSSL_PREFIX" ] && [ -d "$OPENSSL_PREFIX/include/openssl" ] \
+    candidates=(
+        "$OPENSSL_PREFIX"
+        "$(brew --prefix openssl@3 2>/dev/null || true)"
+        "$(brew --prefix openssl 2>/dev/null || true)"
+        "/opt/homebrew/opt/openssl@3"
+        "/usr/local/opt/openssl@3"
+        "/opt/homebrew"
+        "/usr/local"
+    )
+    OPENSSL_PREFIX=""
+    for d in "${candidates[@]}"; do
+        if [ -n "$d" ] && [ -d "$d/include/openssl" ]; then
+            OPENSSL_PREFIX="$d"
+            break
+        fi
+    done
+    [ -n "$OPENSSL_PREFIX" ] \
         || die "Homebrew openssl@3 not found — 'brew install openssl@3' (shared with the app)"
 else
-    OPENSSL_PREFIX="${OPENSSL_PREFIX:-$(pkg-config --variable=prefix openssl 2>/dev/null || true)}"
-    if [ -z "$OPENSSL_PREFIX" ]; then
-        for d in /usr /usr/local /tmp/sysroot/usr; do
-            if [ -d "$d/include/openssl" ]; then
-                OPENSSL_PREFIX="$d"
-                break
-            fi
-        done
-    fi
-    [ -n "$OPENSSL_PREFIX" ] && [ -d "$OPENSSL_PREFIX/include/openssl" ] \
+    candidates=(
+        "$OPENSSL_PREFIX"
+        "$(pkg-config --variable=prefix openssl 2>/dev/null || true)"
+        "$(PKG_CONFIG_SYSROOT_DIR="" pkg-config --variable=prefix openssl 2>/dev/null || true)"
+        "${PKG_CONFIG_SYSROOT_DIR:-}/usr"
+        "/usr"
+        "/usr/local"
+        "/tmp/sysroot/usr"
+    )
+    OPENSSL_PREFIX=""
+    for d in "${candidates[@]}"; do
+        if [ -n "$d" ] && [ -d "$d/include/openssl" ]; then
+            OPENSSL_PREFIX="$d"
+            break
+        fi
+    done
+    [ -n "$OPENSSL_PREFIX" ] \
         || die "OpenSSL headers not found — please install libssl-dev"
 fi
 
@@ -130,12 +154,19 @@ EXTRA_PKG_CONFIG=""
 
 if [ "$OS" = "Linux" ]; then
     RB_CFLAGS="$RB_CFLAGS -fPIC"
-    if [ -d "$OPENSSL_PREFIX/lib/$ARCH-linux-gnu" ]; then
-        RB_LDFLAGS="$RB_LDFLAGS -L$OPENSSL_PREFIX/lib/$ARCH-linux-gnu"
-    fi
-    if [ -d "$OPENSSL_PREFIX/lib/$ARCH-linux-gnu/pkgconfig" ]; then
-        EXTRA_PKG_CONFIG=":$OPENSSL_PREFIX/lib/$ARCH-linux-gnu/pkgconfig"
-    fi
+    for mdir in "$OPENSSL_PREFIX/lib/$ARCH-linux-gnu" \
+                "$OPENSSL_PREFIX/lib/aarch64-linux-gnu" \
+                "$OPENSSL_PREFIX/lib/x86_64-linux-gnu" \
+                "$OPENSSL_PREFIX/lib64" \
+                "$OPENSSL_PREFIX/lib"; do
+        if [ -d "$mdir" ]; then
+            RB_LDFLAGS="$RB_LDFLAGS -L$mdir"
+            if [ -d "$mdir/pkgconfig" ]; then
+                EXTRA_PKG_CONFIG=":$mdir/pkgconfig"
+            fi
+            break
+        fi
+    done
 fi
 
 # Build self-contained from source tarball without probing host ruby
@@ -145,6 +176,22 @@ BASERUBY_OPT="--without-baseruby"
 (
     cd "$SRC/ruby"
     note "configuring Ruby $RUBY_VERSION..."
+
+    # If OPENSSL_PREFIX is outside PKG_CONFIG_SYSROOT_DIR, do not let pkg-config
+    # prepend PKG_CONFIG_SYSROOT_DIR to OpenSSL paths.
+    CLEAN_SYSROOT="${PKG_CONFIG_SYSROOT_DIR:-}"
+    if [ -n "$CLEAN_SYSROOT" ]; then
+        case "$OPENSSL_PREFIX" in
+            "$CLEAN_SYSROOT"*) ;;
+            *) CLEAN_SYSROOT="" ;;
+        esac
+    fi
+
+    PKG_CONFIG_SYSROOT_DIR="$CLEAN_SYSROOT" \
+    PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig${EXTRA_PKG_CONFIG}${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
+    CFLAGS="$RB_CFLAGS" \
+    LDFLAGS="$RB_LDFLAGS" \
+    optflags="-O2" \
     ./configure \
         --prefix="$INSTALL" \
         --enable-shared --disable-static \
@@ -153,11 +200,7 @@ BASERUBY_OPT="--without-baseruby"
         --without-gmp \
         --with-openssl-dir="$OPENSSL_PREFIX" \
         --with-libyaml-dir="$DEPS" \
-        $BASERUBY_OPT \
-        PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig${EXTRA_PKG_CONFIG}" \
-        CFLAGS="$RB_CFLAGS" \
-        LDFLAGS="$RB_LDFLAGS" \
-        optflags="-O2" >/dev/null
+        $BASERUBY_OPT >/dev/null
 
     note "compiling Ruby $RUBY_VERSION (using $JOBS parallel jobs)..."
     make -j"$JOBS" >/dev/null

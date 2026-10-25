@@ -258,7 +258,7 @@ Notes:
 MUSHclient's dialog layouts, menus, bitmaps, icons and cursors are not in the
 main source tree. They live in a separate project that Visual Studio compiles
 into `locale/en.dll` — <https://github.com/nickgammon/mushclient_resources>,
-which this repo's `readme.md` points at under "Resources". Windows loads that
+which this repo's `README.md` points at under "Resources". Windows loads that
 DLL at runtime; the macOS port has no DLL resource loader, so it needs the
 underlying files.
 

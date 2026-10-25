@@ -7,7 +7,7 @@
 #
 #   https://github.com/nickgammon/mushclient_resources
 #
-# (This repo's readme.md points at it under "Resources".)
+# (This repo's README.md points at it under "Resources".)
 #
 # Windows loads en.dll at runtime.  The macOS port has no DLL resource loader,
 # so it needs the underlying files.  Historically they were extracted by hand —

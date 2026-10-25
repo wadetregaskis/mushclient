@@ -31,7 +31,7 @@ OutFile mushclient50x.exe
 !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall-colorful.ico"
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "..\docs\agreement.txt"
+!insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -114,7 +114,7 @@ Section "-MUSHclient program (required)"
   File "..\tips.txt"
   File "..\Example_Filters.lua"
   File "..\names.txt"
-  File /oname=license.txt "..\docs\agreement.txt"
+  File /oname=license.txt "..\LICENSE"
   File "..\Dina.fon"
 
   ; Write the installation path into the registry

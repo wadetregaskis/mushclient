@@ -62,7 +62,7 @@ MUSHclient.vcproj.*
 #
 # VS2010 user-specific project data
 #
-MUSHclient.vcxproj.*
+*.vcxproj.user
 MUSHclient.sdf
 MUSHclient.opensdf
 ipch

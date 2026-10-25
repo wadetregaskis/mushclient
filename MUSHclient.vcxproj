@@ -1515,8 +1515,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="res\cursor1.cur" />
-    <None Include="res\doc.ico" />
-    <None Include="res\idr_main.ico" />
     <None Include="res\MUSHclient.ico" />
     <None Include="zlib\readme.txt" />
     <None Include="pcre\readme.txt" />

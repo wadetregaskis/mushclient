@@ -115,7 +115,7 @@ Section "-MUSHclient program (required)"
   File "..\lua\Example_filters.lua"
   File "..\res\names.txt"
   File /oname=license.txt "..\LICENSE"
-  File "..\Dina.fon"
+  File /nonfatal "..\Dina.fon"
 
   ; Write the installation path into the registry
   WriteRegStr HKCU "Software\Gammon Software Solutions\MUSHclient\General Options" "InstallDir" $INSTDIR
@@ -566,7 +566,6 @@ Section Uninstall
   ; program
   Delete "$INSTDIR\MUSHclient.exe"
   ; Delete "$INSTDIR\MUSHclient.exe.manifest"
-  Delete "$INSTDIR\StatusBar.exe"
   Delete "$INSTDIR\lua5.1.dll"
   Delete "$INSTDIR\lua5.1.lib"
   Delete "$INSTDIR\MUSHclient.ico"
@@ -647,7 +646,7 @@ Section Uninstall
   Delete "$INSTDIR\lua\json.lua"
   Delete "$INSTDIR\lua\json\encode.lua"
   Delete "$INSTDIR\lua\json\decode.lua"
-  Delete "$INSTDIR\lua\json\encode.lua"
+  Delete "$INSTDIR\lua\json\util.lua"
   Delete "$INSTDIR\lua\json\encode\array.lua"
   Delete "$INSTDIR\lua\json\encode\calls.lua"
   Delete "$INSTDIR\lua\json\encode\number.lua"
@@ -658,9 +657,11 @@ Section Uninstall
   Delete "$INSTDIR\lua\json\encode\strings.lua"
   Delete "$INSTDIR\lua\json\decode\array.lua"
   Delete "$INSTDIR\lua\json\decode\calls.lua"
+  Delete "$INSTDIR\lua\json\decode\composite.lua"
   Delete "$INSTDIR\lua\json\decode\number.lua"
   Delete "$INSTDIR\lua\json\decode\object.lua"
   Delete "$INSTDIR\lua\json\decode\others.lua"
+  Delete "$INSTDIR\lua\json\decode\state.lua"
   Delete "$INSTDIR\lua\json\decode\strings.lua"
   Delete "$INSTDIR\lua\json\decode\util.lua"
 

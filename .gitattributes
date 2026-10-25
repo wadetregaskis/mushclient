@@ -1,7 +1,24 @@
 # Force Windows line endings (CRLF) for all text files
 * text=auto eol=crlf encoding=UTF-8
-*.lib binary
 
-# Shell scripts must keep LF — CRLF in the shebang line breaks execution on
-# macOS and Linux ("bad interpreter: /usr/bin/env bash^M").
+# Binary files
+*.lib binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.a binary
+*.exe binary
+*.ico binary
+*.cur binary
+*.bmp binary
+*.png binary
+*.gif binary
+*.icns binary
+*.pdf binary
+*.db binary
+*.sqlite binary
+
+# Scripts with POSIX shebangs must keep LF — CRLF breaks execution on
+# macOS and Linux ("bad interpreter: /usr/bin/env ...^M").
 *.sh text eol=lf
+*.py text eol=lf

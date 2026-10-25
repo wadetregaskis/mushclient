@@ -125,6 +125,12 @@ cmake --build "$BUILD_DIR" --target mushgui -j"$JOBS"
 # ════════════════════════════════════════════════════════════════════════════
 # 2. bundle Discworld plugins (optional) — done before signing so they're sealed
 # ════════════════════════════════════════════════════════════════════════════
+SEED="$APP/Contents/Resources/userdata-seed"
+mkdir -p "$SEED/worlds/plugins"
+if [ -d "$REPO/plugins" ]; then
+    cp -R "$REPO/plugins"/* "$SEED/worlds/plugins/"
+fi
+
 if [ "$WITH_DISCWORLD" = 1 ]; then
     [ -d "$DISCWORLD_DIR" ] || die "no Discworld staging dir: $DISCWORLD_DIR
   Stage Quow's plugins + maps first:  packaging/fetch-discworld-plugins.sh"
@@ -133,8 +139,6 @@ if [ "$WITH_DISCWORLD" = 1 ]; then
     # on first launch (see SeedBundledUserData).  The staging dir mirrors that
     # tree: worlds/plugins/Quow*.xml (the plugins) + quow_plugins/maps/ (the room
     # database, map images and sounds the Cow Bar mapper loads at runtime).
-    SEED="$APP/Contents/Resources/userdata-seed"
-    rm -rf "$SEED"; mkdir -p "$SEED"
 
     if [ -d "$DISCWORLD_DIR/worlds" ] || [ -d "$DISCWORLD_DIR/quow_plugins" ]; then
         # current mirror layout (what fetch-discworld-plugins.sh produces)

@@ -217,12 +217,15 @@ done
 # ════════════════════════════════════════════════════════════════════════════
 # 3. bundle Discworld plugins (optional)
 # ════════════════════════════════════════════════════════════════════════════
+SEED="$STAGE_APP/userdata-seed"
+mkdir -p "$SEED/worlds/plugins"
+if [ -d "$REPO/plugins" ]; then
+    cp -R "$REPO/plugins"/* "$SEED/worlds/plugins/"
+fi
+
 if [ "$WITH_DISCWORLD" = 1 ]; then
     [ -d "$DISCWORLD_DIR" ] || die "no Discworld staging dir: $DISCWORLD_DIR
   Stage Quow's plugins + maps first:  packaging/fetch-discworld-plugins.sh"
-
-    SEED="$STAGE_APP/userdata-seed"
-    rm -rf "$SEED"; mkdir -p "$SEED"
 
     if [ -d "$DISCWORLD_DIR/worlds" ] || [ -d "$DISCWORLD_DIR/quow_plugins" ]; then
         for sub in worlds quow_plugins; do

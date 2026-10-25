@@ -1324,6 +1324,13 @@ if(NOT WIN32)
                 "${CMAKE_SOURCE_DIR}/names"
                 "${_mushgui_res_dir}/names"
             COMMENT "Bundling names/ generator files")
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${_mushgui_res_dir}/userdata-seed/worlds/plugins"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/plugins"
+                "${_mushgui_res_dir}/userdata-seed/worlds/plugins"
+            COMMENT "Bundling standard plugins into userdata-seed/worlds/plugins")
         if(NOT APPLE)
             add_custom_command(TARGET mushgui POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E create_symlink

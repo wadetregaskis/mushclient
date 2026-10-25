@@ -34,7 +34,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#include "scripting.h"
+#include "scripting/scripting.h"
 #include "scripting/errors.h"
 #include "flags.h"                 // eEnabled -- the nil-default battery seeds triggers
 #include "platform/mc_dispatch.h"   // MC_VariantDateToUnix

@@ -344,7 +344,7 @@ not "reproduce the Windows DLL".
    `/usr/lib`, `/System`, and `@`-relative paths.
 4. **Info.plist**: set `LSMinimumSystemVersion`, `NSHighResolutionCapable`.
    (`CFBundleShortVersionString`/`CFBundleVersion` are already set by CMake,
-   sourced from `../version.h`'s `VERSION_STRING` — the app's version is
+   sourced from `src/version.h`'s `VERSION_STRING` — the app's version is
    edited in exactly one place.)
 5. **Code sign** inside-out — nested Mach-O first (everything in
    `Contents/Frameworks` *and* `Contents/lib`, i.e. libruby + its `.bundle`

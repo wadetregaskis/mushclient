@@ -18,7 +18,7 @@
 #
 # Usage:
 #   pip install pefile
-#   python3 tools/decompile_dialogs.py /tmp/mc/locale/en.dll resource.h \
+#   python3 tools/decompile_dialogs.py /tmp/mc/locale/en.dll src/resource.h \
 #           src/platform/mushclient_dialogs.rc
 #
 # Output is NOT compiled by the Windows resource compiler (Windows uses en.dll);

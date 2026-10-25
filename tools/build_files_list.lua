@@ -37,14 +37,14 @@ function load_file (name, stats)
   
 end -- load_file
 
-scan_dir ("C:\\source\\mushclient", load_file)
+target_dir = arg[1] or ".."
+scan_dir (target_dir, load_file)
 
 
 table.sort (files)
 
 fo = assert (io.open ("all_files_list.txt", "w"))
 for _, name in ipairs (files) do
-  name = string.gsub (name, "^C:\\source\\mushclient\\", "/cygdrive/c/source/mushclient/")
   name = string.gsub (name, "\\", "/")
   fo:write (name .. "\n")
 end -- for

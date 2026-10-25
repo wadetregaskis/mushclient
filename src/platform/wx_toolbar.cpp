@@ -195,7 +195,7 @@ namespace {
 wxString FindArt (const wxString& file)
 {
     const wxString rel = wxString(wxT("toolbar_art")) + wxFILE_SEP_PATH + file;
-    const wxString relPlat = wxString(wxT("platform")) + wxFILE_SEP_PATH + rel;
+    const wxString relPlat = wxString(wxT("src")) + wxFILE_SEP_PATH + wxT("platform") + wxFILE_SEP_PATH + rel;
     const wxString exeDir = wxFileName(wxStandardPaths::Get().GetExecutablePath()).GetPath();
     wxString candidates[] = {
         wxStandardPaths::Get().GetResourcesDir() + wxFILE_SEP_PATH + rel,

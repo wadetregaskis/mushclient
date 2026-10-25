@@ -775,9 +775,9 @@ BEGIN
     CONTROL "I notice that this is the first time you have used MUSHclient Version %% on this PC.", IDC_MESSAGE, "Static", 0x50020000, 10, 35, 280, 15
     CONTROL "You can obtain help on how to use the various parts of the program at any time by pressing the F1 key, or clicking on the ""Help"" button in the various dialog boxes.", IDC_STATIC, "Static", 0x50020000, 10, 50, 285, 20
     CONTROL "This screen will not appear again.", IDC_STATIC, "Static", 0x50020000, 10, 105, 130, 8
-    CONTROL "- Nick Gammon", IDC_STATIC, "Static", 0x50020000, 240, 130, 55, 8
-    CONTROL "Changes in this version:", IDC_STATIC, "Static", 0x50020000, 10, 75, 76, 8
-    CONTROL "MUSHclient change history", IDC_CHANGES_ADDRESS, "Static", 0x50020000, 90, 75, 189, 12
+    CONTROL "- Nick Gammon (primary author)\n- Wade Tregaskis (fork author)", IDC_STATIC, "Static", 0x50020000, 160, 125, 136, 18
+    CONTROL "Release notes:", IDC_STATIC, "Static", 0x50020000, 10, 75, 55, 8
+    CONTROL "MUSHclient change history", IDC_CHANGES_ADDRESS, "Static", 0x50020000, 68, 75, 228, 12
 END
 
 IDD_PREFS_P12 DIALOGEX 0, 0, 520, 350
@@ -1554,9 +1554,9 @@ BEGIN
     CONTROL "Thank you for upgrading MUSHclient to version %%", IDC_MESSAGE2, "Static", 0x50020000, 10, 35, 280, 15
     CONTROL "This version has various bug fixes and enhancements. You can find what these are by visiting the MUSHclient release notes web page, see link below:", IDC_STATIC, "Static", 0x50020000, 10, 54, 285, 20
     CONTROL "This screen will not appear again for this version.", IDC_STATIC, "Static", 0x50020000, 10, 98, 171, 8
-    CONTROL "- Nick Gammon", IDC_STATIC, "Static", 0x50020000, 239, 124, 55, 8
-    CONTROL "MUSHclient release notes:", IDC_STATIC, "Static", 0x50020000, 10, 80, 85, 8
-    CONTROL "MUSHclient change history", IDC_CHANGES_ADDRESS, "Static", 0x50020000, 103, 80, 189, 12
+    CONTROL "- Nick Gammon (primary author)\n- Wade Tregaskis (fork author)", IDC_STATIC, "Static", 0x50020000, 160, 118, 136, 18
+    CONTROL "Release notes:", IDC_STATIC, "Static", 0x50020000, 10, 80, 55, 8
+    CONTROL "MUSHclient change history", IDC_CHANGES_ADDRESS, "Static", 0x50020000, 68, 80, 228, 12
 END
 
 IDD_PREFS_P16 DIALOGEX 0, 0, 520, 350

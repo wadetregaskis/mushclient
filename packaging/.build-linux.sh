@@ -444,7 +444,8 @@ EOF
         done
 
         # Desktop entry and icon
-        cp "$STAGE_APP/mushclient.desktop" "$INSTALL_DESKTOP/"
+        sed "s|^Exec=.*|Exec=mushclient %F|" "$STAGE_APP/mushclient.desktop" > "$INSTALL_DESKTOP/mushclient.desktop"
+        chmod 644 "$INSTALL_DESKTOP/mushclient.desktop"
         if [ -f "$STAGE_APP/mushclient.png" ]; then
             cp "$STAGE_APP/mushclient.png" "$INSTALL_ICON/mushclient.png"
             cp "$STAGE_APP/mushclient.png" "$INSTALL_PIXMAP/mushclient.png"

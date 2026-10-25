@@ -341,6 +341,14 @@ public:
         return true;
     }
 
+#ifdef __APPLE__
+    void MacOpenFile(const wxString& fileName) override
+    {
+        if (g_wxhook_open_world_file && !fileName.empty())
+            g_wxhook_open_world_file(fileName.utf8_str());
+    }
+#endif
+
     // The EXTENDED selftests are the only mode that reaches OnRun: everything
     // else exits from OnInit.  OnRun's return value is the process exit code,
     // so it is what carries their verdict out of the event loop.

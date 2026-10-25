@@ -59,7 +59,7 @@ mkdir -p "$DEST"
 # macOS: python.org universal2 framework
 # ════════════════════════════════════════════════════════════════════════════
 if [ "$OS" = "Darwin" ]; then
-    MACOS_VERSION="${PYTHON_VERSION:-3.14.6}"
+    MACOS_VERSION="${VERSION:-${PYTHON_VERSION:-3.14.6}}"
     SHORT="${MACOS_VERSION%.*}"                       # 3.14.6 -> 3.14
     PKG="python-$MACOS_VERSION-macos11.pkg"           # universal2 installer
     URL="https://www.python.org/ftp/python/$MACOS_VERSION/$PKG"

@@ -311,7 +311,14 @@ if [ "$DO_RELOCATE" = 1 ]; then
     # dir, …) from the exe AND every bundled dylib, so nothing leaks the build
     # machine; @loader_path / @executable_path rpaths keep everything resolvable
     # inside Contents/Frameworks.
-    for b in "$EXE" "$FRAMEWORKS"/*.dylib; do
+    rpath_targets=("$EXE")
+    if [ -d "$FRAMEWORKS" ]; then
+        while IFS= read -r f; do [ -n "$f" ] && rpath_targets+=("$f"); done < <(find "$FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -0111 \) 2>/dev/null)
+    fi
+    if [ -d "$APP/Contents/lib" ]; then
+        while IFS= read -r f; do [ -n "$f" ] && rpath_targets+=("$f"); done < <(find "$APP/Contents/lib" -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.bundle" -o -perm -0111 \) 2>/dev/null)
+    fi
+    for b in "${rpath_targets[@]}"; do
         [ -f "$b" ] || continue
         while IFS= read -r rp; do
             case "$rp" in /*)

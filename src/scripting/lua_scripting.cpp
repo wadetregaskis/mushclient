@@ -248,7 +248,7 @@ void CScriptEngine::OpenLuaDelayed ()
       {
       CString strCmd;
       strCmd.Format (
-        "do local bases = { [[%slua/]], [[%s../Resources/lua/]] }\n"
+        "do local bases = { [[%slua/]], [[%s../Resources/lua/]], [[/usr/share/mushclient/lua/]] }\n"
         "for _, b in ipairs (bases) do\n"
         "  package.path = b .. [[?.lua;]] .. b .. [[?/init.lua;]] .. package.path\n"
         "end end",

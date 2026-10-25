@@ -136,7 +136,7 @@ foreach ($cfg in @('Debug','Release')) {
   # a header that masks a CRT or SDK one, and platform\direct.h masking
   # <direct.h> is what once turned a 36-error build into 36,810
   # (docs/WINDOWS-VALIDATION.md section 10j).
-  W '      <AdditionalIncludeDirectories>$(SolutionDir)src\;$(SolutionDir);$(SolutionDir)luacom\;$(SolutionDir)openssl\include\;$(SolutionDir)tests\;$(SolutionDir)zlib\;$(SolutionDir)png\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>'
+  W '      <AdditionalIncludeDirectories>$(SolutionDir)src\;$(SolutionDir);$(SolutionDir)luacom\;$(SolutionDir)openssl\include\;$(SolutionDir)tests\;$(SolutionDir)pcre\;$(SolutionDir)zlib\;$(SolutionDir)png\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>'
   # _HAS_AUTO_PTR_ETC=1 goes with LanguageStandard stdcpp17 below: C++17
   # removed std::unary_function / std::binary_function / std::auto_ptr, and
   # stdafx.h derives a comparator from std::binary_function.  The app never
@@ -173,7 +173,7 @@ foreach ($cfg in @('Debug','Release')) {
   W '    </ClCompile>'
   W '    <Link>'
   W '      <SubSystem>Console</SubSystem>'
-  W '      <AdditionalLibraryDirectories>$(SolutionDir)openssl\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>'
+  W '      <AdditionalLibraryDirectories>$(SolutionDir)src\;$(SolutionDir)openssl\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>'
   W '      <AdditionalDependencies>lua5.1.lib;dbghelp.lib;winmm.lib;dsound.lib;Shlwapi.lib;libssl.lib;libcrypto.lib;Crypt32.lib;%(AdditionalDependencies)</AdditionalDependencies>'
   W '      <GenerateDebugInformation>true</GenerateDebugInformation>'
   W '    </Link>'

@@ -369,11 +369,7 @@ static const luaL_Reg posixmeta[] = {
 
 #define PCRE_EXP_DECL extern
 
-#ifdef _WIN32
-    #include "..\pcre\pcre.h"
-#else
-    #include "pcre.h"
-#endif
+#include "pcre.h"
 
 const char pcre_handle[] = "pcre_regex_handle";
 const char pcre_typename[] = "pcre_regex";

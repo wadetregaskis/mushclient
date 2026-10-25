@@ -28,7 +28,7 @@
 #endif
 
 #ifdef _WIN32
-    #include "..\zlib\zlib.h"
+    #include "zlib.h"
 #else
     #include <zlib.h>
 #endif

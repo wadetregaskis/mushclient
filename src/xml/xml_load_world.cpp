@@ -637,7 +637,14 @@ void CMUSHclientDoc::LoadError (const char * sType, const char * sMessage, UINT 
     // box, which the user must acknowledge before the world finishes loading.
     // Windows keeps that exactly -- a mis-edited world file should not be
     // something you can scroll past.
-    ::AfxMessageBox (str);
+    //
+    // Divergence (docs/UPSTREAM-DIVERGENCES.md): upstream shows only `str`,
+    // which names no file -- and a world load reads the world AND every
+    // plugin it includes, so "Line 18: Error parsing script" cannot be
+    // traced.  The note below carries the file in its [WARNING] title; the
+    // box gets the same context here.
+    ::AfxMessageBox (TFormat ("Error loading %s\n\n%s",
+                              (LPCTSTR) strFileName, (LPCTSTR) str));
 #ifndef _WIN32
     // ...but the port's AfxMessageBox (platform/mfc_ui.h) is a stderr stub, so
     // on this side the box shows nothing at all.  Queue the detail as a note

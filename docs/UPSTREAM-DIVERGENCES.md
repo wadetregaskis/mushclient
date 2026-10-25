@@ -1047,3 +1047,25 @@ writes `&hBBGGRR` and choosing *Paste* really changes `m_colour`, that the
 keyboard `(-1, -1)` route works, and that a plain owner-draw button raises
 nothing. Every assertion was confirmed to fail with its half of the fix
 reverted.
+
+## 24 — A world-load error box names the file it is about
+
+**Where:** `xml/xml_load_world.cpp`, `CMUSHclientDoc::LoadError` — the
+`::AfxMessageBox` raised when an error happens before the output buffer exists.
+
+**Was (upstream):** the box shows only `Line %4i: %s (%s)`, e.g.
+`Line   18: Error parsing script (Cannot load)`. A world load reads the world
+file **and every plugin it includes**, so the line number cannot be traced to a
+file from the box alone. The file *is* named in the `[WARNING] <file>` note the
+same function writes to the output window, but the box comes first and is modal.
+
+**Now:** the box reads `Error loading <full path>` followed by a blank line and
+the upstream text unchanged. The output-window note is unchanged.
+
+**Why it matters:** this was the whole of what a user saw when a bundled
+plugin failed on first launch, with no way to tell which of the world's six
+plugins the line belonged to.
+
+**Verification:** a message-text change in shared code. It is compiled on both
+platforms and exercised on the port, but on Windows it is only type-checked, so
+it needs a Windows run to see the box.

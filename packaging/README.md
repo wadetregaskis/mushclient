@@ -8,7 +8,7 @@ The packaging scripts build self-contained, distributable MUSHclient releases fo
 
 | Script | What it does |
 |--------|--------------|
-| [`build-app.sh`](build-app.sh) | Build Release, relocate shared libraries, package standalone `.tar.gz` and Debian `.deb`. |
+| [`build-app.sh`](build-app.sh) | Build Release, relocate shared libraries, package standalone `.tar.xz` and Debian `.deb`. |
 | [`fetch-python.sh`](fetch-python.sh) | Vendor a standalone CPython 3 embed environment (Python engine). |
 | [`fetch-tcl.sh`](fetch-tcl.sh) | Build a self-contained static **Tcl 8.6** from source (Tcl engine). |
 | [`fetch-ruby.sh`](fetch-ruby.sh) | Build a relocatable **Ruby 4.0** from source, with load-relative stdlib (Ruby engine). |
@@ -24,8 +24,8 @@ packaging/build-app.sh
 
 This builds Release mode with CMake, vendors/relocates dynamic libraries, stages runtime resources (dialog templates, dialog art, toolbar strips, FIGlet fonts, spell checker dictionaries, and Lua modules), and produces in `dist/`:
 - `dist/mushclient/`: standalone relocatable application bundle with launcher script `mushclient.sh`
-- `dist/mushclient-5.07-linux-<arch>.tar.gz`: self-contained relocatable tarball archive
-- `dist/mushclient_5.07_<arch>.deb`: standard Debian/Ubuntu package for system installation
+- `dist/mushclient-6.0.0-linux-<arch>.tar.xz`: self-contained relocatable tarball archive
+- `dist/mushclient_6.0.0_<arch>.deb`: standard Debian/Ubuntu package for system installation
 
 To include Quow's Discworld plugins and maps:
 ```bash

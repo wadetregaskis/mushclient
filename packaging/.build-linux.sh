@@ -8,19 +8,19 @@
 #      dialog/toolbar art, fonts, spell checker, and Lua scripting modules)
 #   3. (optional) bundle Quow's Discworld plugins inside the application
 #   4. bundle non-system dynamic shared libraries into lib/ with relocatable RPATH
-#   5. produce a standalone relocatable .tar.gz archive
+#   5. produce a standalone relocatable .tar.xz archive (compressed with xz -9 -e)
 #   6. produce a standard Debian .deb package
 #
 # Examples:
 #   # local self-contained build, tarball + deb in dist/
-#   packaging/build-linux.sh
+#   packaging/build-app.sh
 #
 #   # Discworld edition with Quow's plugins pre-bundled
 #   packaging/fetch-discworld-plugins.sh
-#   packaging/build-linux.sh --with-discworld
+#   packaging/build-app.sh --with-discworld
 #
 #   # Clean build with custom output directory
-#   packaging/build-linux.sh --clean --output my-dist/
+#   packaging/build-app.sh --clean --output my-dist/
 #
 set -euo pipefail
 
@@ -30,7 +30,8 @@ REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── defaults (overridable by flags / env) ───────────────────────────────────
 APP_NAME="MUSHclient"
-VERSION="5.07"
+DEFAULT_VERSION="$(sed -n 's/^[[:space:]]*#define[[:space:]]*VERSION_STRING[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO/version.h" 2>/dev/null || echo "6.0.0")"
+VERSION="${VERSION:-${DEFAULT_VERSION:-6.0.0}}"
 BUILD_TYPE="Release"
 BUILD_DIR="$REPO/build-linux-release"
 OUTPUT_DIR="$REPO/dist"
@@ -56,7 +57,7 @@ Options:
   -j, --jobs N              parallel build jobs (default: nproc)
   -d, --with-discworld      bundle Quow's Discworld plugins from staging dir
       --discworld-dir DIR   staging dir (default: packaging/discworld-plugins)
-      --no-tar              skip .tar.gz creation
+      --no-tar              skip .tar.xz creation
       --no-deb              skip .deb creation
       --no-relocate         skip library bundling into lib/
       --clean               wipe the build dir first
@@ -364,15 +365,16 @@ EOF
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
-# 6. package .tar.gz archive
+# 6. package .tar.xz archive
 # ════════════════════════════════════════════════════════════════════════════
 mkdir -p "$OUTPUT_DIR"
 
 if [ "$MAKE_TAR" = 1 ]; then
-    TAR_NAME="mushclient-${VERSION}-linux-${ARCH_TAG}.tar.gz"
+    command -v xz >/dev/null 2>&1 || die "xz command not found (install xz-utils)"
+    TAR_NAME="mushclient-${VERSION}-linux-${ARCH_TAG}.tar.xz"
     TAR_PATH="$OUTPUT_DIR/$TAR_NAME"
-    note "packaging tarball -> $TAR_PATH"
-    tar -czf "$TAR_PATH" -C "$OUTPUT_DIR" mushclient
+    note "packaging tarball (xz -9 -e) -> $TAR_PATH"
+    tar -C "$OUTPUT_DIR" -cf - mushclient | xz -9 -e > "$TAR_PATH"
     note "  wrote $TAR_PATH ($(du -sh "$TAR_PATH" | cut -f1))"
 fi
 
@@ -462,6 +464,6 @@ fi
 note "Linux packaging complete."
 echo
 echo "  bundle : $STAGE_APP"
-[ "$MAKE_TAR" = 1 ] && echo "  tar.gz : $OUTPUT_DIR/mushclient-${VERSION}-linux-${ARCH_TAG}.tar.gz"
+[ "$MAKE_TAR" = 1 ] && echo "  tar.xz : $OUTPUT_DIR/mushclient-${VERSION}-linux-${ARCH_TAG}.tar.xz"
 [ "$MAKE_DEB" = 1 ] && [ -f "$OUTPUT_DIR/mushclient_${VERSION}_${DEB_ARCH}.deb" ] && \
     echo "  deb    : $OUTPUT_DIR/mushclient_${VERSION}_${DEB_ARCH}.deb"

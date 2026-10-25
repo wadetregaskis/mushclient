@@ -1,4 +1,4 @@
-MUSHclient version 5.07
+MUSHclient version 6.0.0
 =======================
 
 Friday, 29 March 2019

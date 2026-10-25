@@ -14,7 +14,7 @@
 #
 # Platform packaging pipelines (internal helpers):
 #   macOS -> packaging/.build-mac.sh   (builds MUSHclient.app, relocates dylibs, codesigns, notarizes, DMG)
-#   Linux -> packaging/.build-linux.sh (builds MUSHclient, relocates shared libs, packages .tar.gz and .deb)
+#   Linux -> packaging/.build-linux.sh (builds MUSHclient, relocates shared libs, packages .tar.xz and .deb)
 #
 set -euo pipefail
 

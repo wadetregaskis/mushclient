@@ -68,7 +68,7 @@ TEST(LuaScripting, WorldVersion)
     EXPECT_EQ(1, n);
     EXPECT_TRUE(lua_isstring(L, -1));
     const char* ver = lua_tostring(L, -1);
-    // Version should look like "5.07" or similar
+    // Version should look like "6.0.0" or similar
     EXPECT_TRUE(ver && strlen(ver) >= 4);
     lua_settop(L, 0);
 

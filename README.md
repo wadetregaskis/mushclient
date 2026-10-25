@@ -135,7 +135,7 @@ cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 
 * **Linux**:
   ```bash
-  ./build/mushclient
+  ./build/MUSHclient   # or ./build/mushclient
   ```
 * **macOS**:
   ```bash

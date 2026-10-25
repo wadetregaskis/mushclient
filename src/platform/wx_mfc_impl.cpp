@@ -4072,6 +4072,19 @@ static const char* hook_load_text_resource(int id, unsigned* size)
             std::ifstream f(p.fn_str(), std::ios::binary);
             if (f) { std::stringstream ss; ss << f.rdbuf(); data = ss.str(); break; }
         }
+        if (data.empty() && id == 252)
+        {
+            wxString lic_cands[] = {
+                wxStandardPaths::Get().GetResourcesDir() + wxFILE_SEP_PATH + wxT("LICENSE"),
+                wxFileName(wxStandardPaths::Get().GetExecutablePath()).GetPath() + wxFILE_SEP_PATH + wxT("LICENSE"),
+                wxFileName(wxStandardPaths::Get().GetExecutablePath()).GetPath() + wxFILE_SEP_PATH + wxT("../LICENSE"),
+            };
+            for (const wxString& p : lic_cands)
+            {
+                std::ifstream f(p.fn_str(), std::ios::binary);
+                if (f) { std::stringstream ss; ss << f.rdbuf(); data = ss.str(); break; }
+            }
+        }
         it = cache.emplace(id, std::move(data)).first;
     }
     if (size) *size = (unsigned) it->second.size();

@@ -1319,6 +1319,18 @@ if(NOT WIN32)
                 "${CMAKE_SOURCE_DIR}/spell"
                 "${_mushgui_res_dir}/spell"
             COMMENT "Bundling spellchecker.lua + spell/ dictionaries")
+        add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/names"
+                "${_mushgui_res_dir}/names"
+            COMMENT "Bundling names/ generator files")
+        if(NOT APPLE)
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    MUSHclient
+                    "${_mushgui_res_dir}/mushclient"
+                COMMENT "Creating mushclient lowercase symlink")
+        endif()
     elseif(NOT wxWidgets_FOUND)
         message(STATUS "wxWidgets not found — mushgui target skipped")
         message(STATUS "  macOS: brew install wxwidgets")

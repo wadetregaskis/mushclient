@@ -147,7 +147,7 @@ cp "$REPO/res/tips.txt"                       "$STAGE_APP/"
 cp "$REPO/res/names.txt"                      "$STAGE_APP/"
 cp "$REPO/src/scripting/spellchecker.lua"     "$STAGE_APP/"
 
-for dir in lua fonts spell; do
+for dir in lua fonts spell names; do
     if [ -d "$REPO/$dir" ]; then
         cp -R "$REPO/$dir" "$STAGE_APP/"
     fi
@@ -425,7 +425,7 @@ EOF
         for item in mushclient_dialogs.rc resource.h tips.txt names.txt spellchecker.lua; do
             [ -f "$STAGE_APP/$item" ] && cp "$STAGE_APP/$item" "$INSTALL_SHARE/"
         done
-        for dir in lua dialog_art toolbar_art text fonts spell worlds userdata-seed tcl8.6; do
+        for dir in lua dialog_art toolbar_art text fonts spell names worlds userdata-seed tcl8.6; do
             [ -d "$STAGE_APP/$dir" ] && cp -R "$STAGE_APP/$dir" "$INSTALL_SHARE/"
         done
         [ -f "$STAGE_APP/default-world" ] && cp "$STAGE_APP/default-world" "$INSTALL_SHARE/"

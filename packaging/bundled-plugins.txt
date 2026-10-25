@@ -1,0 +1,55 @@
+# Plugins bundled with MUSHclient on every platform.
+#
+# Single source of truth for the macOS/Linux bundles (read by CMakeLists.txt,
+# packaging/.build-linux.sh and packaging/.build-mac.sh, which stage these into
+# userdata-seed/worlds/plugins/).  The Windows installer (install/mushclient.nsi)
+# lists the same files explicitly; tests/check_bundled_plugins.py fails if the
+# two ever disagree.  Everything else in plugins/ is a test or sample plugin
+# and is deliberately NOT shipped.
+#
+# One filename (relative to plugins/) per line; '#' starts a comment.
+
+ANSI_Log.xml
+ATCP_Mapper.xml
+ATCP_NJG.xml
+Automatic_Backup.xml
+Calculator.xml
+chat.xml
+Code_Chart.xml
+ColourNote.xml
+Config_Option_Changer.xml
+constants.js
+constants.lua
+constants.pl
+constants.pys
+constants.vbs
+Current_Output_Window.xml
+gag.xml
+Global_Option_Updater.xml
+health_bar.xml
+Hyperlink_URL.xml
+idle_message.xml
+InfoBox_Demo.xml
+Installer_sumcheck.xml
+Messages_Window.xml
+msp.xml
+MudDatabase.xml
+multiple_send.xml
+MUSHclient_Help.xml
+mush_teleport.xml
+NewActivity.xml
+Omit_Blank_Lines.xml
+plugin_list.xml
+plugin_summary.xml
+random_socials.xml
+Reconnecter_Lua.xml
+reverse_speedwalk.xml
+scan.xml
+showactivity.xml
+SMAUG_automapper_helper.xml
+status_bar_prompt.xml
+Summary.xml
+Text_To_Speech.xml
+timer.xml
+Timestamps.xml
+Version_Check.xml

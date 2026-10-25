@@ -127,8 +127,12 @@ cmake --build "$BUILD_DIR" --target mushgui -j"$JOBS"
 # ════════════════════════════════════════════════════════════════════════════
 SEED="$APP/Contents/Resources/userdata-seed"
 mkdir -p "$SEED/worlds/plugins"
-if [ -d "$REPO/plugins" ]; then
-    cp -R "$REPO/plugins"/* "$SEED/worlds/plugins/"
+if [ -f "$REPO/packaging/bundled-plugins.txt" ]; then
+    while IFS= read -r p || [ -n "$p" ]; do
+        p="${p%%#*}"
+        p="$(echo "$p" | tr -d " 	")"
+        [ -n "$p" ] && [ -f "$REPO/plugins/$p" ] && cp "$REPO/plugins/$p" "$SEED/worlds/plugins/"
+    done < "$REPO/packaging/bundled-plugins.txt"
 fi
 
 if [ "$WITH_DISCWORLD" = 1 ]; then

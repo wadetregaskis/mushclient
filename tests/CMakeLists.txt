@@ -252,6 +252,14 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/check_win_test_sources.py
                      --selftest)
+    add_test(NAME lint_bundled_plugins
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_bundled_plugins.py
+                     ${CMAKE_SOURCE_DIR})
+    add_test(NAME lint_bundled_plugins_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_bundled_plugins.py
+                     --selftest)
 else()
     message(WARNING "Python3 not found; Windows-test-sources lint SKIPPED")
 endif()

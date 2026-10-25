@@ -1324,12 +1324,21 @@ if(NOT WIN32)
                 "${CMAKE_SOURCE_DIR}/names"
                 "${_mushgui_res_dir}/names"
             COMMENT "Bundling names/ generator files")
+        file(STRINGS "${CMAKE_SOURCE_DIR}/packaging/bundled-plugins.txt" _bundled_plugins
+             REGEX "^[^#]+")
+        set(_plugin_src_files "")
+        foreach(_p IN LISTS _bundled_plugins)
+            string(STRIP "${_p}" _p)
+            if(_p)
+                list(APPEND _plugin_src_files "${CMAKE_SOURCE_DIR}/plugins/${_p}")
+            endif()
+        endforeach()
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory
                 "${_mushgui_res_dir}/userdata-seed/worlds/plugins"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/plugins"
-                "${_mushgui_res_dir}/userdata-seed/worlds/plugins"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${_plugin_src_files}
+                "${_mushgui_res_dir}/userdata-seed/worlds/plugins/"
             COMMENT "Bundling standard plugins into userdata-seed/worlds/plugins")
         if(NOT APPLE)
             add_custom_command(TARGET mushgui POST_BUILD

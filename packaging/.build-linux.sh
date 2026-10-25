@@ -92,6 +92,10 @@ if [ -f "/tmp/env.sh" ]; then
     set -u
 fi
 
+if [ -d "/tmp/sysroot" ]; then
+    export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-/tmp/sysroot}"
+fi
+
 command -v cmake >/dev/null 2>&1 || die "cmake not found; please install cmake"
 command -v tar >/dev/null 2>&1 || die "tar not found"
 

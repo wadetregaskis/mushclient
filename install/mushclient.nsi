@@ -100,7 +100,7 @@ Section "-MUSHclient program (required)"
 
   ; Put files there
 
-  File "Readme.txt" ; in install directory
+  File "readme.txt" ; in install directory
 
   File "..\WinRel\mushclient.exe"
   ; File "..\MUSHclient.exe.manifest"
@@ -112,7 +112,7 @@ Section "-MUSHclient program (required)"
   File "..\docs\mushclient.cnt"
   File "..\install\mushclient.ico"
   File "..\res\tips.txt"
-  File "..\lua\Example_Filters.lua"
+  File "..\lua\Example_filters.lua"
   File "..\res\names.txt"
   File /oname=license.txt "..\LICENSE"
   File "..\Dina.fon"
@@ -248,7 +248,7 @@ Section "Spell checker"
   SetOutPath $INSTDIR
 
   ; New spell checker
-  File "..\scripting\spellchecker.lua"
+  File "..\src\scripting\spellchecker.lua"
 
 SectionEnd
 
@@ -472,11 +472,11 @@ SetOverwrite ifnewer
 
   ; Put files there
 SetOverwrite ifnewer
-  File "..\scripting\exampscript.vbs"
-  File "..\scripting\exampscript.js"
-  File "..\scripting\exampscript.pl"
-  File "..\scripting\exampscript.pys"
-  File "..\scripting\exampscript.lua"
+  File "..\src\scripting\exampscript.vbs"
+  File "..\src\scripting\exampscript.js"
+  File "..\src\scripting\exampscript.pl"
+  File "..\src\scripting\exampscript.pys"
+  File "..\src\scripting\exampscript.lua"
 SetOverwrite on
   File "..\WinRel\MUSHclient.tlb"
 SectionEnd
@@ -500,30 +500,30 @@ Section "Plugins"
   File "..\plugins\ATCP_NJG.xml"
   File "..\plugins\Automatic_Backup.xml"
   File "..\plugins\Calculator.xml"
-  File "..\plugins\Chat.xml"
+  File "..\plugins\chat.xml"
   File "..\plugins\Code_Chart.xml"
   File "..\plugins\ColourNote.xml"
   File "..\plugins\Config_Option_Changer.xml"
   File "..\plugins\Current_Output_Window.xml"
-  File "..\plugins\Gag.xml"
+  File "..\plugins\gag.xml"
   File "..\plugins\Global_Option_Updater.xml"
-  File "..\plugins\Health_Bar.xml"
+  File "..\plugins\health_bar.xml"
   File "..\plugins\Hyperlink_URL.xml"
   File "..\plugins\InfoBox_Demo.xml"
   File "..\plugins\Installer_sumcheck.xml"
   File "..\plugins\MUSHclient_Help.xml"
-  File "..\plugins\MUSH_teleport.xml"
+  File "..\plugins\mush_teleport.xml"
   File "..\plugins\Messages_Window.xml"
   File "..\plugins\MudDatabase.xml"
   File "..\plugins\NewActivity.xml"
   File "..\plugins\Omit_Blank_Lines.xml"
   File "..\plugins\Reconnecter_Lua.xml"
   File "..\plugins\SMAUG_automapper_helper.xml"
-  File "..\plugins\ShowActivity.xml"
-  File "..\plugins\Status_Bar_Prompt.xml"
+  File "..\plugins\showactivity.xml"
+  File "..\plugins\status_bar_prompt.xml"
   File "..\plugins\Summary.xml"
   File "..\plugins\Text_To_Speech.xml"
-  File "..\plugins\Timer.xml"
+  File "..\plugins\timer.xml"
   File "..\plugins\Timestamps.xml"
   File "..\plugins\idle_message.xml"
   File "..\plugins\msp.xml"

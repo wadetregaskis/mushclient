@@ -74,7 +74,7 @@ fi
 # Sanity-check the two things the port cares about, so a moved or renamed
 # upstream fails here with a clear message rather than silently later.
 missing=0
-for f in "src/MUSHclient.rc" "src/resource.h" "res"; do
+for f in "MUSHclient.rc" "resource.h" "res"; do
     if [ ! -e "$DEST/$f" ]; then
         echo "resources: MISSING $f — upstream layout changed?" >&2
         missing=1

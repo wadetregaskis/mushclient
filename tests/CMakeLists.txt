@@ -15,8 +15,9 @@ macro(mc_test name)
     mc_sanitize(${name})
     target_include_directories(${name} PRIVATE
         ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/platform
-        ${CMAKE_SOURCE_DIR}/scripting
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/platform
+        ${CMAKE_SOURCE_DIR}/src/scripting
         ${CMAKE_SOURCE_DIR}/tests
     )
     target_compile_definitions(${name} PRIVATE

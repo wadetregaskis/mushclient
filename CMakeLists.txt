@@ -108,8 +108,9 @@ endif()
 
 # ── Global include paths ──────────────────────────────────────────────────
 include_directories(
-    ${CMAKE_SOURCE_DIR}           # root (for stdafx.h, lua.h, etc.)
-    ${CMAKE_SOURCE_DIR}/platform  # platform compat headers
+    ${CMAKE_SOURCE_DIR}               # root
+    ${CMAKE_SOURCE_DIR}/src           # engine headers (stdafx.h, doc.h, etc.)
+    ${CMAKE_SOURCE_DIR}/src/platform  # platform compat headers
 )
 
 # ── Compile definitions ───────────────────────────────────────────────────

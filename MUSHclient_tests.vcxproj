@@ -220,7 +220,7 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
-    <ClCompile Include="src\MiniWindow.cpp">
+    <ClCompile Include="src\miniwindow.cpp">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1039,91 +1039,91 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\png.c">
+    <ClCompile Include="png\png.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngerror.c">
+    <ClCompile Include="png\pngerror.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngget.c">
+    <ClCompile Include="png\pngget.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngmem.c">
+    <ClCompile Include="png\pngmem.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngpread.c">
+    <ClCompile Include="png\pngpread.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngread.c">
+    <ClCompile Include="png\pngread.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngrio.c">
+    <ClCompile Include="png\pngrio.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngrtran.c">
+    <ClCompile Include="png\pngrtran.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngrutil.c">
+    <ClCompile Include="png\pngrutil.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngset.c">
+    <ClCompile Include="png\pngset.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngtrans.c">
+    <ClCompile Include="png\pngtrans.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngwio.c">
+    <ClCompile Include="png\pngwio.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngwrite.c">
+    <ClCompile Include="png\pngwrite.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngwtran.c">
+    <ClCompile Include="png\pngwtran.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\png\pngwutil.c">
+    <ClCompile Include="png\pngwutil.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -1135,7 +1135,7 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\lsqlite\lsqlite3.c">
+    <ClCompile Include="lsqlite\lsqlite3.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -1257,7 +1257,9 @@
     <ClCompile Include="tests\test_xmlparse.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="src\MUSHclient.rc" />
+    <ResourceCompile Include="src\MUSHclient.rc">
+      <AdditionalIncludeDirectories>$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

@@ -24,8 +24,8 @@ packaging/build-app.sh
 
 This builds Release mode with CMake, vendors/relocates dynamic libraries, stages runtime resources (dialog templates, dialog art, toolbar strips, FIGlet fonts, spell checker dictionaries, and Lua modules), and produces in `dist/`:
 - `dist/mushclient/`: standalone relocatable application bundle with launcher script `mushclient.sh`
-- `dist/mushclient-6.0.0-linux-<arch>.tar.xz`: self-contained relocatable tarball archive
-- `dist/mushclient_6.0.0_<arch>.deb`: standard Debian/Ubuntu package for system installation
+- `dist/mushclient-6.00-linux-<arch>.tar.xz`: self-contained relocatable tarball archive
+- `dist/mushclient_6.00_<arch>.deb`: standard Debian/Ubuntu package for system installation
 
 To include Quow's Discworld plugins and maps:
 ```bash

@@ -27,6 +27,7 @@
 #include "scripting/errors.h"
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box (the reload prompt)
 #include "scripting/scripting.h"   // DOCUMENT_STATE, MakeLuaState, RegisterLuaRoutines
+#include "version.h"   // THISVERSION
 
 extern "C" {
 #include "lua.h"
@@ -68,8 +69,17 @@ TEST(LuaScripting, WorldVersion)
     EXPECT_EQ(1, n);
     EXPECT_TRUE(lua_isstring(L, -1));
     const char* ver = lua_tostring(L, -1);
-    // Version should look like "6.0.0" or similar
     EXPECT_TRUE(ver && strlen(ver) >= 4);
+    lua_settop(L, 0);
+
+    // Plugins read the version with tonumber (the bundled Version_Check.xml;
+    // Quow's Cow Bar compares it against 5.07 in its main chunk), so it must
+    // stay upstream's "<major>.<two-digit minor>" number -- a dotted triple
+    // such as "6.0.0" is nil to tonumber and stops those plugins loading.
+    n = run_ret(L, "return tonumber(world.Version())");
+    EXPECT_EQ(1, n);
+    EXPECT_TRUE(lua_isnumber(L, -1));
+    EXPECT_EQ(THISVERSION, (int)(lua_tonumber(L, -1) * 100 + 0.5));
     lua_settop(L, 0);
 
     lua_close(L);

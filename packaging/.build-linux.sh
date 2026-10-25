@@ -30,8 +30,8 @@ REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── defaults (overridable by flags / env) ───────────────────────────────────
 APP_NAME="MUSHclient"
-DEFAULT_VERSION="$(sed -n 's/^[[:space:]]*#define[[:space:]]*VERSION_STRING[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO/src/version.h" 2>/dev/null || echo "6.0.0")"
-VERSION="${VERSION:-${DEFAULT_VERSION:-6.0.0}}"
+DEFAULT_VERSION="$(sed -n 's/^[[:space:]]*#define[[:space:]]*VERSION_STRING[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO/src/version.h" 2>/dev/null || echo "6.00")"
+VERSION="${VERSION:-${DEFAULT_VERSION:-6.00}}"
 BUILD_TYPE="Release"
 BUILD_DIR="$REPO/build-linux-release"
 OUTPUT_DIR="$REPO/dist"

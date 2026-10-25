@@ -580,7 +580,7 @@ Section Uninstall
   Delete "$INSTDIR\tips.txt"
 
   ; example trigger/alias/timer list filters
-  Delete "$INSTDIR\Example_Filters.lua"
+  Delete "$INSTDIR\Example_filters.lua"
 
   ; and character name generation file
   Delete "$INSTDIR\names.txt"
@@ -763,30 +763,30 @@ Section Uninstall
   Delete "$INSTDIR\worlds\plugins\ATCP_NJG.xml"
   Delete "$INSTDIR\worlds\plugins\Automatic_Backup.xml"
   Delete "$INSTDIR\worlds\plugins\Calculator.xml"
-  Delete "$INSTDIR\worlds\plugins\Chat.xml"
+  Delete "$INSTDIR\worlds\plugins\chat.xml"
   Delete "$INSTDIR\worlds\plugins\Code_Chart.xml"
   Delete "$INSTDIR\worlds\plugins\ColourNote.xml"
   Delete "$INSTDIR\worlds\plugins\Config_Option_Changer.xml"
   Delete "$INSTDIR\worlds\plugins\Current_Output_Window.xml"
-  Delete "$INSTDIR\worlds\plugins\Gag.xml"
+  Delete "$INSTDIR\worlds\plugins\gag.xml"
   Delete "$INSTDIR\worlds\plugins\Global_Option_Updater.xml"
-  Delete "$INSTDIR\worlds\plugins\Health_Bar.xml"
+  Delete "$INSTDIR\worlds\plugins\health_bar.xml"
   Delete "$INSTDIR\worlds\plugins\Hyperlink_URL.xml"
   Delete "$INSTDIR\worlds\plugins\InfoBox_Demo.xml"
   Delete "$INSTDIR\worlds\plugins\Installer_sumcheck.xml"
   Delete "$INSTDIR\worlds\plugins\MUSHclient_Help.xml"
-
-  Delete "$INSTDIR\worlds\plugins\MUSH_teleport.xml"
+  Delete "$INSTDIR\worlds\plugins\mush_teleport.xml"
   Delete "$INSTDIR\worlds\plugins\Messages_Window.xml"
   Delete "$INSTDIR\worlds\plugins\MudDatabase.xml"
   Delete "$INSTDIR\worlds\plugins\NewActivity.xml"
   Delete "$INSTDIR\worlds\plugins\Omit_Blank_Lines.xml"
+  Delete "$INSTDIR\worlds\plugins\Reconnecter_Lua.xml"
   Delete "$INSTDIR\worlds\plugins\SMAUG_automapper_helper.xml"
-  Delete "$INSTDIR\worlds\plugins\ShowActivity.xml"
-  Delete "$INSTDIR\worlds\plugins\Status_Bar_Prompt.xml"
+  Delete "$INSTDIR\worlds\plugins\showactivity.xml"
+  Delete "$INSTDIR\worlds\plugins\status_bar_prompt.xml"
   Delete "$INSTDIR\worlds\plugins\Summary.xml"
   Delete "$INSTDIR\worlds\plugins\Text_To_Speech.xml"
-  Delete "$INSTDIR\worlds\plugins\Timer.xml"
+  Delete "$INSTDIR\worlds\plugins\timer.xml"
   Delete "$INSTDIR\worlds\plugins\Timestamps.xml"
   Delete "$INSTDIR\worlds\plugins\idle_message.xml"
   Delete "$INSTDIR\worlds\plugins\msp.xml"
@@ -796,7 +796,7 @@ Section Uninstall
   Delete "$INSTDIR\worlds\plugins\random_socials.xml"
   Delete "$INSTDIR\worlds\plugins\reverse_speedwalk.xml"
   Delete "$INSTDIR\worlds\plugins\scan.xml"
-  Delete "$INSTDIR\worlds\Version_Check.xml"
+  Delete "$INSTDIR\worlds\plugins\Version_Check.xml"
 
   ; locale stuff
 

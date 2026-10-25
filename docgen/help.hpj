@@ -6,7 +6,7 @@ LCID=0xc09 0x0 0x0 ; English (Australia)
 REPORT=Yes
 CONTENTS=DOC_CONTENTS
 TITLE=MUSHclient help
-COPYRIGHT=Copyright 2003 Gammon Software Solutions
+COPYRIGHT=Copyright 2003-2026 Gammon Software Solutions & Wade Tregaskis
 HLP=..\mushclient.hlp
 
 [FILES]

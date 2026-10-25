@@ -1,6 +1,6 @@
 COPYRIGHT
 
-MUSHclient is copyright 1995 onwards by Nick Gammon. All rights reserved worldwide.
+MUSHclient is copyright 1995-2026 by Nick Gammon & Wade Tregaskis. All rights reserved worldwide.
 
 MUSHclient is not in the public domain and Nick Gammon keeps its copyright.
 

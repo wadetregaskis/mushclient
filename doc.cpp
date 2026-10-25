@@ -317,7 +317,7 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
 
   Note ("");
   Note (TFormat ("Welcome to MUSHclient version %s!", (LPCTSTR) MUSHCLIENT_VERSION));
-  Note (Translate ("Written by Nick Gammon."));
+  Note (Translate ("Written by Nick Gammon & Wade Tregaskis."));
   Note ("");
   // show compilation date
   Note (TFormat ("Compiled: %s at %s.", __DATE__, __TIME__)); 
@@ -328,11 +328,6 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
         PNG_LIBPNG_VER_STRING, 
         SQLITE_VERSION, 
         ZLIB_VERSION));
-  Note ("");
-  Note (Translate ("For information and assistance about MUSHclient visit our forum at:"));
-  Tell ("   ");
-  Hyperlink (MUSHCLIENT_FORUM_URL, FORUM_URL, Translate ("MUSHclient forum"), 
-             "deepskyblue", "black", TRUE);
   Note ("");
   Tell (Translate ("Can you trust your plugins?  See: "));
   Hyperlink (SECURITY_URL, SECURITY_URL, Translate ("How to trust plugins"), 

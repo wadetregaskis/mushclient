@@ -80,10 +80,10 @@ class CPrefsP21; class CPrefsP22; class CPrefsP23;
 
 // ============================================================================
 
-#define MY_WEB_PAGE "http://www.gammon.com.au/mushclient/" 
+#define MY_WEB_PAGE "https://github.com/wadetregaskis/mushclient" 
 #define CHANGES_WEB_PAGE "https://github.com/wadetregaskis/mushclient/releases" 
 #define MUD_LIST "http://www.gammon.com.au/links/muds.htm" 
-#define BUG_REPORT_PAGE "http://www.gammon.com.au/forum/?bbtopic_id=5"
+#define BUG_REPORT_PAGE "https://github.com/wadetregaskis/mushclient/issues"
 #define FORUM_URL "http://www.gammon.com.au/forum/"
 #define MUSHCLIENT_FORUM_URL "http://www.gammon.com.au/forum/?bbsection_id=1"
 #define MUSHCLIENT_FUNCTIONS_URL "http://www.gammon.com.au/mushclient/functions.htm"

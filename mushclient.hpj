@@ -6,8 +6,8 @@ LCID=0xc09 0x0 0x0 ; English (Australia)
 REPORT=Yes
 CONTENTS=new_index
 TITLE=MUSHclient Application Help
-COPYRIGHT=Copyright 2008 by Nick Gammon.%date
-CITATION=Copyright 2008 by Nick Gammon.
+COPYRIGHT=Copyright 2008-2026 by Nick Gammon & Wade Tregaskis.%date
+CITATION=Copyright 2008-2026 by Nick Gammon & Wade Tregaskis.
 BMROOT=hlp
 HLP=.\MushClient.hlp
 

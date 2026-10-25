@@ -3,7 +3,7 @@ MUSHclient
 
 MUSHclient was designed and written by Nick Gammon of Gammon Software Solutions.
 
-MUSHclient is Copyright (C) 2007 by Gammon Software Solutions.
+MUSHclient is Copyright (C) 2007-2026 by Gammon Software Solutions & Wade Tregaskis.
 
 All rights are reserved worldwide.
 

@@ -47,7 +47,6 @@ You can customise your notepad colours and fonts with a couple of script calls.
 You can use plugins to enhance your client. Various plugins are supplied with MUSHclient, and others are available from the web site.
 Lua is the recommended scripting language now, as it is easy to learn, and ships with MUSHclient.
 Plugins can process "callbacks" which are special functions called at various stages of processing, such as input received from the MUD.
-The MUSHclient forum has extensive tips and information: http://www.mushclient.com/forum/
 The "Global Replace" dialog in the built-in Notepad lets you find and replace using regular expressions.
 You can edit scripts using an external editor. Crimson Editor is one such editor, and is free: http://www.crimsoneditor.com/
 Crimson Editor can be customised to display help from the MUSHclient help file for the function name that the cursor is over.

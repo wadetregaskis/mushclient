@@ -3,7 +3,7 @@ MUSHclient source
 
 Published to GitHub on 21st. January 2010
 
-Author: Nick Gammon
+Author: Nick Gammon & Wade Tregaskis
 
 This software is released under the conditions in the file docs/agreement.txt
 

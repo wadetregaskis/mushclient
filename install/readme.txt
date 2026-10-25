@@ -4,7 +4,8 @@ MUSHclient version 6.0.0
 Friday, 29 March 2019
 
 
-Author: Nick Gammon
+Original author: Nick Gammon
+Fork (v6) author: Wade Tregaskis
 Web support: http://www.gammon.com.au/forum/
 
 -----------------------------------------

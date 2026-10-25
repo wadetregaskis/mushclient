@@ -19,7 +19,7 @@ BEGIN
     CONTROL "&License ...", IDC_LICENSE, "Button", 0x50010000, 195, 149, 50, 14
     CONTROL "", IDC_LOGO, "Static", 0x50000003, 9, 6, 20, 20
     CONTROL "MUSHclient", IDC_STATIC, "Static", 0x50020000, 43, 4, 39, 8
-    CONTROL "Copyright � 2007 - Gammon Software Solutions\nAll rights reserved worldwide by Gammon Software Solutions.", IDC_STATIC, "Static", 0x50020000, 43, 24, 196, 18
+    CONTROL "Authors: Nick Gammon & Wade Tregaskis\nCopyright © 2007-2026. All rights reserved worldwide.", IDC_STATIC, "Static", 0x50020000, 43, 24, 196, 18
     CONTROL "Version (entered at runtime)", IDC_VERSION_LABEL, "Static", 0x50020000, 89, 4, 105, 8
     CONTROL "Distributed as FreeWare.", IDC_STATIC, "Static", 0x50020000, 4, 106, 123, 10
     CONTROL "Support:", IDC_STATIC, "Static", 0x50020002, 7, 53, 28, 8

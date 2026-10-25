@@ -22,3 +22,7 @@
 # macOS and Linux ("bad interpreter: /usr/bin/env ...^M").
 *.sh text eol=lf
 *.py text eol=lf
+
+# codesign hands entitlements to the kernel's AMFI XML parser, which rejects
+# CRLF outright ("AMFIUnserializeXML: syntax error near line 1").
+*.plist text eol=lf

@@ -146,6 +146,7 @@ cp "$REPO/src/resource.h"                     "$STAGE_APP/"
 cp "$REPO/res/tips.txt"                       "$STAGE_APP/"
 cp "$REPO/res/names.txt"                      "$STAGE_APP/"
 cp "$REPO/src/scripting/spellchecker.lua"     "$STAGE_APP/"
+cp "$REPO/LICENSE"                          "$STAGE_APP/"
 
 for dir in lua fonts spell names; do
     if [ -d "$REPO/$dir" ]; then
@@ -429,7 +430,7 @@ EOF
         chmod 755 "$INSTALL_BIN/mushclient"
 
         # Resources in /usr/share/mushclient
-        for item in mushclient_dialogs.rc resource.h tips.txt names.txt spellchecker.lua; do
+        for item in mushclient_dialogs.rc resource.h tips.txt names.txt spellchecker.lua LICENSE; do
             [ -f "$STAGE_APP/$item" ] && cp "$STAGE_APP/$item" "$INSTALL_SHARE/"
         done
         for dir in lua dialog_art toolbar_art text fonts spell names worlds userdata-seed tcl8.6; do

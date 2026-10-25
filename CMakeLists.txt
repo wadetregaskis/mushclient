@@ -1279,6 +1279,11 @@ if(NOT WIN32)
                 "${_mushgui_res_dir}/text"
             COMMENT "Bundling licence + credits text (About box)")
         add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_SOURCE_DIR}/LICENSE"
+                "${_mushgui_res_dir}/"
+            COMMENT "Bundling LICENSE")
+        add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/fonts"
                 "${_mushgui_res_dir}/fonts"

@@ -111,8 +111,23 @@ FRAMEWORKS="$APP/Contents/Frameworks"
 note "configuring ($BUILD_TYPE) → $BUILD_DIR"
 # EXTRA_CMAKE_ARGS lets you steer the configure, e.g. point at a redistributable
 # python.org framework:  EXTRA_CMAKE_ARGS="-DPython3_ROOT_DIR=/Library/Frameworks/Python.framework/Versions/3.12 -DPython3_FIND_FRAMEWORK=ONLY"
+#
+# Pin OpenSSL to Homebrew's openssl@3 unless EXTRA_CMAKE_ARGS names one.  The
+# bundled Python (python.org) and Ruby (fetch-ruby.sh, which also prefers
+# openssl@3) are built against OpenSSL 3, and step 3c makes all three share ONE
+# libssl/libcrypto, so the app must link 3.x too.  Left to itself, CMake takes
+# whichever OpenSSL Homebrew has linked -- openssl@4 on a Mac that has it.  -U
+# drops a previous run's cached choice, which would otherwise survive the pin.
+OPENSSL_PIN=()
+if [[ "${EXTRA_CMAKE_ARGS:-}" != *OPENSSL* ]]; then
+    ossl3="$(brew --prefix openssl@3 2>/dev/null || true)"
+    if [ -n "$ossl3" ] && [ -d "$ossl3/include/openssl" ]; then
+        OPENSSL_PIN=(-U 'OPENSSL_*' -DOPENSSL_ROOT_DIR="$ossl3")
+        note "OpenSSL: pinned to $ossl3"
+    fi
+fi
 # shellcheck disable=SC2086
-cmake -S "$REPO" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" ${EXTRA_CMAKE_ARGS:-} >/dev/null
+cmake -S "$REPO" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" ${OPENSSL_PIN[@]+"${OPENSSL_PIN[@]}"} ${EXTRA_CMAKE_ARGS:-} >/dev/null
 note "building mushgui (-j$JOBS)"
 # Force a pristine relink so the executable carries its ORIGINAL (Homebrew/Xcode)
 # rpaths + install names every run.  Without this, re-running on an already-
@@ -441,6 +456,18 @@ if [ "$DO_RELOCATE" = 1 ] && ls "$FRAMEWORKS"/libssl.*.dylib >/dev/null 2>&1; th
         find "$FRAMEWORKS/Python.framework" \
             \( -name 'libssl*.dylib' -o -name 'libcrypto*.dylib' \) -delete 2>/dev/null || true
     fi
+
+    # Every OpenSSL a bundled binary now asks for must be the copy in Frameworks.
+    # The repoint keeps each dependency's basename, so a consumer built against a
+    # different major (libssl.3 while the app linked libssl.4) would be pointed at
+    # a file that does not exist -- and Python's own copy has just been deleted.
+    # That loads fine until the first `import ssl`, so stop the build here.
+    missing=$(find "$APP" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.so' -o -name '*.bundle' \) \
+                -exec otool -L {} \; 2>/dev/null \
+              | awk '$1 ~ /^@rpath\/lib(ssl|crypto)\..*dylib$/ {sub("@rpath/", "", $1); print $1}' \
+              | sort -u | while IFS= read -r lib; do [ -f "$FRAMEWORKS/$lib" ] || echo "$lib"; done)
+    [ -z "$missing" ] || die "bundled code needs OpenSSL dylib(s) not in Frameworks: $missing
+  The app, Python and Ruby must share one OpenSSL major (see the OpenSSL pin above)."
 
     n=$(find "$APP" \( -name 'libssl*.dylib' -o -name 'libcrypto*.dylib' \) | wc -l | tr -d ' ')
     note "  OpenSSL dylibs in bundle now: $n (expect 2 — libssl.3.dylib + libcrypto.3.dylib)"

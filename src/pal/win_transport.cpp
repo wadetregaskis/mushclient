@@ -248,7 +248,10 @@ public:
                                  "unable to create SSL object");
             return;
         }
-        SSL_set_fd(m_ssl, m_sock.m_hSocket);
+        // SSL_set_fd takes an int; a SOCKET is UINT_PTR on 64-bit Windows.
+        // OpenSSL itself casts it the same way (its Windows socket BIO
+        // stores an int), and Winsock socket values fit in 32 bits.
+        SSL_set_fd(m_ssl, (int) m_sock.m_hSocket);
         if (!m_tlsParams.serverName.empty()) {
             // SNI + CN/SAN pinning — without SSL_set1_host any valid chain
             // for ANY host passes SSL_get_verify_result (StartSSLHandshake)

@@ -303,7 +303,7 @@ void CMUSHclientDoc::ThreadFunc(LPVOID pParam)
 {
   CThreadData*	pData = (CThreadData*) pParam;
 	char * strDir = pData->m_strFilename;
-  DWORD pDoc = pData->m_pDoc;
+  DWORD_PTR pDoc = pData->m_pDoc;   // a CMUSHclientDoc*: pointer-sized
 	char * p = strrchr (strDir, '\\');
 	if (!p)
 		p = strrchr (strDir, ':');   // why?
@@ -363,7 +363,7 @@ void CMUSHclientDoc::CreateMonitoringThread()
   strcpy (pData->m_strFilename, m_strScriptFilename);
 	pData->m_hWnd = Frame.GetSafeHwnd ();
 	pData->m_hEvent = m_eventScriptFileChanged;
-  pData->m_pDoc = (DWORD) this;
+  pData->m_pDoc = (DWORD_PTR) this;
 	m_eventScriptFileChanged.ResetEvent();
 
 	m_pThread = (HANDLE) _beginthread (ThreadFunc, 0, pData);

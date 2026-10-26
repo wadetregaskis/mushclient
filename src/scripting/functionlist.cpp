@@ -626,7 +626,7 @@ CString strCommand;
 
   // show the help
   if (App.HelpAvailable (true))
-    ::WinHelp (Frame, pApp->m_pszHelpFilePath, HELP_COMMAND, (DWORD) (LPCTSTR) strCommand);
+    ::WinHelp (Frame, pApp->m_pszHelpFilePath, HELP_COMMAND, (ULONG_PTR) (LPCTSTR) strCommand);
 
   } // end of ShowHelp 
 #else

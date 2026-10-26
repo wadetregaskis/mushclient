@@ -78,7 +78,10 @@ void CMUSHclientDoc::Pause(BOOL Flag)
 
 long CMUSHclientDoc::GetFrame() 
 {
-	return (long) App.m_pMainWnd->m_hWnd;
+	// The automation interface returns a long.  An HWND is only ever 32
+	// significant bits, even on 64-bit Windows (user handles are kept
+	// 32-bit-safe for WOW64 interop), so the narrowing loses nothing.
+	return (long) (LONG_PTR) App.m_pMainWnd->m_hWnd;
 }   // end of CMUSHclientDoc::GetFrame
 
 // reset time on status bar

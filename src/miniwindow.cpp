@@ -3618,7 +3618,7 @@ CPoint menupoint (Left, Top);
       CMenu* pNestedMenu = GrabAMenu ();   // nested menu
       if (pNestedMenu)
         {
-        vPopup.back ()->AppendMenu (MF_POPUP | MF_ENABLED, (UINT ) pNestedMenu->m_hMenu, strItem.Mid (1));
+        vPopup.back ()->AppendMenu (MF_POPUP | MF_ENABLED, (UINT_PTR) pNestedMenu->m_hMenu, strItem.Mid (1));
         vPopup.push_back (pNestedMenu);  // add to menu stack
         }
       }

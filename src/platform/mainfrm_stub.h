@@ -220,7 +220,7 @@ public:
     void OnContextMenu(CWnd*, CPoint);
     void OnSize(UINT, int, int);
     void OnActivate(UINT, CWnd*, BOOL);
-    void OnTimer(UINT);
+    void OnTimer(UINT_PTR);
     void OnSysCommand(UINT, LPARAM);
     void OnDrawItem(int, LPDRAWITEMSTRUCT);
     BOOL OnWorldSwitch(UINT);

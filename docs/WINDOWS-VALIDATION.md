@@ -128,6 +128,9 @@ re-verified.  Prefer Windows-only fixes.
 - Solution: `MUSHclient_2022.sln` / `MUSHclient.vcxproj` (Win32, MBCS,
   `/std:c++14` — the project sets no `<LanguageStandard>`, so **no C++17**
   anywhere in code MSVC compiles; the pal headers were scrubbed for this).
+- **x64 / ARM64** configurations exist too (2026-10); they use different
+  dependencies and output directories -- see `docs/WINDOWS-64BIT.md`.
+  Everything below is about Win32.
 - OpenSSL 3.x is expected at `$(SolutionDir)openssl\include` +
   `$(SolutionDir)openssl\lib` (`libssl.lib`, `libcrypto.lib`; `Crypt32.lib`
   from the SDK).  If the `openssl\` directory is absent in your clone, ask

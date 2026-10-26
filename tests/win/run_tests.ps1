@@ -3,6 +3,12 @@
 #   pwsh tests\win\run_tests.ps1                 # Debug
 #   pwsh tests\win\run_tests.ps1 -Config Release
 #   pwsh tests\win\run_tests.ps1 -NoBuild
+#   pwsh tests\win\run_tests.ps1 -Platform x64      # or ARM64; Win32 is the default
+#
+# The 64-bit platforms link against packaging\windows\deps\<platform>\, which
+# packaging\windows\fetch-deps.ps1 produces -- run that first (see
+# docs/WINDOWS-64BIT.md).  ARM64 can be BUILT on an x64 host (cross tools) but
+# only RUN on an ARM64 one.
 #
 # This is the Windows equivalent of `ctest --test-dir build`, and deliberately
 # not CTest: the Windows build is MSBuild (MUSHclient.vcxproj), the CMake tree
@@ -17,6 +23,7 @@
 
 param(
   [ValidateSet('Debug','Release')] [string]$Config = 'Debug',
+  [ValidateSet('Win32','x64','ARM64')] [string]$Platform = 'Win32',
   [switch]$NoBuild,
   # Per-suite wall clock.  Generous: the slowest honest suite is a few seconds,
   # so anything near this is hung rather than slow.
@@ -33,14 +40,25 @@ $vsroot = & $vswhere -latest -products * -property installationPath
 $vcvars = Join-Path $vsroot 'VC\Auxiliary\Build\vcvarsall.bat'
 if (-not (Test-Path $vcvars)) { throw "vcvarsall.bat not found under $vsroot" }
 
+# vcvarsall's argument is HOST_TARGET.  Win32 keeps the x86 host tools it has
+# always used; the 64-bit targets use native tools where the host matches and
+# the cross compiler where it does not.
+$hostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+$vcvarsArg = switch ($Platform) {
+  'Win32' { 'x86' }
+  'x64'   { if ($hostArch -eq 'Arm64') { 'arm64_x64' } else { 'x64' } }
+  'ARM64' { if ($hostArch -eq 'Arm64') { 'arm64' } else { 'x64_arm64' } }
+}
+$suffix = if ($Platform -eq 'Win32') { '' } else { "-$Platform" }
+
 if (-not $NoBuild) {
-  Write-Host "building MUSHclient_tests.vcxproj ($Config|Win32) ..."
+  Write-Host "building MUSHclient_tests.vcxproj ($Config|$Platform) ..."
   $bat = Join-Path $env:TEMP "mc_build_tests_$PID.bat"
   @"
 @echo off
-call "$vcvars" x86 >nul 2>&1
+call "$vcvars" $vcvarsArg >nul 2>&1
 cd /d "$root"
-msbuild MUSHclient_tests.vcxproj /p:Configuration=$Config /p:Platform=Win32 /p:SolutionDir=$root\ /m /nologo /v:minimal
+msbuild MUSHclient_tests.vcxproj /p:Configuration=$Config /p:Platform=$Platform /p:SolutionDir=$root\ /m /nologo /v:minimal
 "@ | Set-Content $bat -Encoding ascii
   & cmd /c $bat
   $rc = $LASTEXITCODE
@@ -48,15 +66,26 @@ msbuild MUSHclient_tests.vcxproj /p:Configuration=$Config /p:Platform=Win32 /p:S
   if ($rc -ne 0) { Write-Host "BUILD FAILED ($rc)"; exit $rc }
 }
 
-$exe = Join-Path $root 'WinTest\mushclient_tests.exe'
+if ($Platform -eq 'ARM64' -and $hostArch -ne 'Arm64') {
+  Write-Host "built; an ARM64 test binary cannot run on this $hostArch host"
+  exit 0
+}
+
+$exe = Join-Path $root "WinTest$suffix\mushclient_tests.exe"
 if (-not (Test-Path $exe)) { throw "no test binary at $exe" }
 
 # Run from the directory holding the runtime assets (lua5.1.dll, locale\en.dll,
 # spellchecker.lua ...); the engine resolves them relative to the executable's
 # working directory, and a bare directory looks exactly like a broken build.
-$assets = Join-Path $root 'WinDebug'
+$assets = Join-Path $root "WinDebug$suffix"
 if (-not (Test-Path (Join-Path $assets 'lua5.1.dll'))) {
-  Write-Host "WARNING: $assets has no lua5.1.dll - stage the runtime assets there (see docs/WINDOWS-VALIDATION.md section 2)"
+  if ($Platform -eq 'Win32') {
+    Write-Host "WARNING: $assets has no lua5.1.dll - stage the runtime assets there (see docs/WINDOWS-VALIDATION.md section 2)"
+  } else {
+    Write-Host "WARNING: $assets has no lua5.1.dll - run packaging\windows\fetch-deps.ps1 -Arch $Platform -StageTo $assets, then copy the data files (see docs/WINDOWS-64BIT.md)"
+  }
+  # Copy-Item below needs the directory to exist even when it is bare.
+  New-Item -ItemType Directory -Force -Path $assets | Out-Null
 }
 # How many TEST() the enabled files declare, printed just ahead of the run so it
 # sits beside the binary's own totals.

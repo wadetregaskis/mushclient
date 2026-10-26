@@ -270,7 +270,7 @@ void CMainFrame::OnDestroy       ()                  {}
 void CMainFrame::OnClose         ()                  {}
 void CMainFrame::OnSize          (UINT, int, int)    {}
 void CMainFrame::OnActivate      (UINT, CWnd*, BOOL) {}
-void CMainFrame::OnTimer         (UINT)              {}
+void CMainFrame::OnTimer         (UINT_PTR)          {}
 void CMainFrame::OnSysCommand    (UINT, LPARAM)      {}
 BOOL CMainFrame::PreTranslateMessage (MSG*)          { return FALSE; }
 BOOL CMainFrame::PreCreateWindow     (CREATESTRUCT&) { return TRUE;  }

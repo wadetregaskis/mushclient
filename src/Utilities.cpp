@@ -1876,7 +1876,7 @@ Example:
 bool SendToFront (const char * name)
   {
   SendToFrontFound = false;
-  EnumWindows (&EnumWindowsProc, (int) name);
+  EnumWindows (&EnumWindowsProc, (LPARAM) name);   // a pointer: (int) truncated it on 64-bit
   return SendToFrontFound;
   } /* end of SendToFront */
 #endif // _WIN32

@@ -1629,7 +1629,7 @@ static int getfontfamilies (lua_State *L)
   EnumFontFamiliesEx (dc.m_hDC,           // handle to device context
                       &lf,                // pointer to logical font information
                       EnumFontFamExProc,  // pointer to callback function
-                      (long) L,           // application-supplied data
+                      (LPARAM) L,         // application-supplied data (a pointer: not long, which is 32-bit on Win64)
                       0);                 // reserved; must be zero
 #else // !_WIN32
   // Enumerate installed font families via wxFontEnumerator (wx_mfc_impl.cpp).

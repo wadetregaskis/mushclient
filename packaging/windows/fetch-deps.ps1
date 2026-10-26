@@ -377,8 +377,30 @@ function Build-Lua {
   $src = Join-Path $Work 'lua'
   Expand-TarGz $tgz.Path $src
   $s = Join-Path $src 'src'
+  if (Test-Path (Join-Path $Work 'lua-obj')) { Remove-Item -Recurse -Force (Join-Path $Work 'lua-obj') }
   $obj = New-Dir (Join-Path $Work 'lua-obj')
   New-Dir $OutBin | Out-Null; New-Dir $OutLib | Out-Null
+
+  # Parity with the 32-bit DLL in how a number becomes an integer.  On x86,
+  # luaconf.h ROUNDS (the 2^52+2^51 union trick under GCC, which is how the
+  # shipped DLL was built, or fistp under MSVC: round half to even either
+  # way).  Every 64-bit target falls through to a plain C cast, which
+  # TRUNCATES.  So lua_tointeger / luaL_checkint / luaL_optint on 2.7 give 3
+  # in the 32-bit client and 2 in a stock 64-bit build: a plugin passing a
+  # computed coordinate to WindowRectOp would draw a pixel off.  lrint and
+  # llrint round half to even in the default floating-point mode, which is
+  # the x86 answer.  (lua_Integer is ptrdiff_t, 64-bit here, so values past
+  # 2^31 now survive where x86 wrapped them; nothing sensible can copy that.)
+  $conf = Join-Path $s 'luaconf.h'
+  $text = [System.IO.File]::ReadAllText($conf)
+  $old1 = "#define lua_number2int(i,d)`t((i)=(int)(d))"
+  $old2 = "#define lua_number2integer(i,d)`t((i)=(lua_Integer)(d))"
+  if (-not $text.Contains($old1) -or -not $text.Contains($old2)) {
+    throw "luaconf.h: the generic lua_number2int definitions were not found; re-check the rounding patch against Lua $LuaVersion"
+  }
+  $text = $text.Replace($old1, "#include <math.h>`n#define lua_number2int(i,d)`t((i)=(int)lrint(d))")
+  $text = $text.Replace($old2, "#define lua_number2integer(i,d)`t((i)=(lua_Integer)llrint(d))")
+  [System.IO.File]::WriteAllText($conf, $text)
 
   # The library is every .c in src\ except the two programs and luac's helper.
   $files = Get-ChildItem (Join-Path $s '*.c') | Where-Object { $_.Name -notin @('lua.c', 'luac.c', 'print.c') } |

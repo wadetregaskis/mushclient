@@ -29,7 +29,9 @@
 #endif
 
 #define LREXLIB_PCRE      // NJG
+#ifdef _MSC_VER
 #pragma warning( disable: 4057)  // 'const unsigned char *' differs in indirection to slightly different base types from 'const char *'
+#endif
 
 /* Sanity check */
 #if !defined(LREXLIB_POSIX) && !defined(LREXLIB_PCRE)
@@ -480,7 +482,7 @@ static void Lpcre_push_substrings
     const unsigned char * name = tabptr + 2;
     if (n >= 0 && n <= ud->ncapt)    // if in range
       {
-      lua_pushstring (L, name);  // name
+      lua_pushstring (L, (const char *) name);  // name
       lua_pushboolean (L, 0);    // false
       lua_settable (L, -3);      // set it
       }
@@ -499,7 +501,7 @@ static void Lpcre_push_substrings
       int j = n * 2;
       if (match[j] >= 0)
         {
-        lua_pushstring (L, name);  // name
+        lua_pushstring (L, (const char *) name);  // name
         lua_pushlstring (L, text + match[j], match[j + 1] - match[j]); // contents
         lua_settable (L, -3);      // set it
         }   // this one matched

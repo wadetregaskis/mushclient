@@ -96,7 +96,7 @@ static int bit_tonumber (lua_State *L)
   unsigned int base = luaL_optint(L, 2, 10);
 
   // get text to convert
-  const unsigned char * text = luaL_checkstring (L, 1);
+  const unsigned char * text = (const unsigned char *) luaL_checkstring (L, 1);
   const unsigned char * p;
   unsigned char c;
   unsigned int digit;
@@ -123,7 +123,7 @@ static int bit_tonumber (lua_State *L)
     p++;
 
 
-  while (c = *p++)
+  while ((c = *p++))
     {
 
     // The largest mantissa a double can have it 52 bits

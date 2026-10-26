@@ -1,4 +1,6 @@
+#ifdef _MSC_VER
 #pragma warning( disable : 4244)  // conversion from 'int ' to 'short ', possible loss of data
+#endif
 
 /*
 ** $Id: lpcode.c,v 1.23 2015/06/12 18:36:47 roberto Exp $

@@ -35,7 +35,14 @@ long nStatus;
 
   // create new variable item and insert in variable map
   GetVariableMap ().SetAt (strVariableName, variable_item = new CVariable);
-  m_bVariablesChanged = true;
+  // Divergence (docs/UPSTREAM-DIVERGENCES.md): upstream sets this flag
+  // unconditionally, so a plugin storing one of its OWN variables made closing
+  // the world ask "World internal variables (only) have changed. Save changes?"
+  // -- offering to save a world file that holds none of what changed (a
+  // plugin's variables live in its own map and are saved to its state file).
+  // GetVariableMap chose the world's map exactly when m_CurrentPlugin is NULL.
+  if (!m_CurrentPlugin)
+    m_bVariablesChanged = true;
 //  SetModifiedFlag (TRUE); // set flag instead now
   variable_item->nUpdateNumber = App.GetUniqueNumber ();   // for concurrency checks
 

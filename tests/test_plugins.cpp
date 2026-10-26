@@ -522,6 +522,38 @@ TEST(PluginLoad, ScriptStateHasLoadlibRemovedWhenPackageLibraryDisabled)
 // methods_plugins.cpp SaveState: "if we are already saving the state, don't
 // do it again" — world.SaveState() from inside OnPluginSaveState returns
 // ePluginCouldNotSaveState instead of recursing.
+// methods_variables.cpp SetVariable: only the WORLD's own variable map marks
+// the world as having changed variables.  Upstream set m_bVariablesChanged for
+// a plugin's variables too, so every world running Quow's plugins (which store
+// variables as they load) asked "World internal variables (only) have changed.
+// Save changes?" on every close, offering to save a world file that holds none
+// of what changed.  Exercised at load AND from a later callback, with the
+// world's own SetVariable as the control that the flag is still live.
+TEST(PluginState, PluginVariablesDoNotMarkWorldVariablesChanged)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_FALSE(doc.m_bVariablesChanged);
+
+    ASSERT_TRUE(load_plugin(doc, write_plugin("vars", IDA, "VarPlugin",
+        "world.SetVariable('at_load', 'x')\n"
+        "function OnPluginSend(s)\n"
+        "  world.SetVariable('at_send', s)\n"
+        "  return true\n"
+        "end\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+    EXPECT_STREQ("x", (const char*)plugin_var(p, "at_load"));
+    EXPECT_FALSE(doc.m_bVariablesChanged);
+
+    EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "hello", true));
+    EXPECT_STREQ("hello", (const char*)plugin_var(p, "at_send"));
+    EXPECT_FALSE(doc.m_bVariablesChanged);
+
+    // Control: the world's own variable still marks it.
+    EXPECT_EQ(eOK, doc.SetVariable("world_var", "y"));
+    EXPECT_TRUE(doc.m_bVariablesChanged);
+}
+
 TEST(PluginState, ReentrantSaveStateRejected)
 {
     CMUSHclientDoc doc; make_doc(doc);

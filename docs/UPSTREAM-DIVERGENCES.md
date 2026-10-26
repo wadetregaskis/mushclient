@@ -1069,3 +1069,28 @@ plugins the line belonged to.
 **Verification:** a message-text change in shared code. It is compiled on both
 platforms and exercised on the port, but on Windows it is only type-checked, so
 it needs a Windows run to see the box.
+
+## 25 — A plugin's own variables do not mark the world's variables as changed
+
+**Where:** `scripting/methods/methods_variables.cpp`, `CMUSHclientDoc::SetVariable`.
+
+**Was (upstream):** `m_bVariablesChanged = true` on every call. `GetVariableMap`
+hands a plugin its *own* map, so a plugin storing one of its own variables still
+flagged the **world**. Closing the world then asked "World internal variables
+(only) have changed. Save changes to <world>?" Answering Yes saved a world file
+that holds none of what changed: a plugin's variables are written to its state
+file, not the world file.
+
+**Now:** the flag is set only when the world's own map was written, which is
+exactly when `m_CurrentPlugin` is NULL (the condition `GetVariableMap` uses to
+choose the map). A world script's `SetVariable` and MXP `<VAR>` still set it.
+
+**Why it matters:** Quow's Discworld plugins call `SetVariable` as they load, so
+every session of the Discworld edition ended with that prompt, even when the
+user had changed nothing.
+
+**Verification:** `PluginState.PluginVariablesDoNotMarkWorldVariablesChanged`
+(`tests/test_plugins.cpp`) drives a real plugin that stores a variable at load
+and again from a later callback, with the world's own `SetVariable` as the
+control. It fails both with the old unconditional line and with the flag never
+set. Windows: type-checked only, so it needs a Windows run.

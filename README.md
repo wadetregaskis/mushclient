@@ -5,7 +5,7 @@
 
 MUSHclient is a fast, feature-rich, and highly customizable MUD (Multi-User Dungeon) client.
 
-This repository is an **unofficial fork** of the original [MUSHclient by Nick Gammon](https://github.com/nickgammon/mushclient). It extends the client with native **Linux** and **macOS** support alongside the existing **Windows** support, adds 64-bit compatibility, modernizes the build system, resolves numerous upstream bugs, and updates multi-language scripting support.
+This repository is an **unofficial fork** of the original [MUSHclient by Nick Gammon](https://github.com/nickgammon/mushclient). It extends the client with native **Linux** and **macOS** support alongside the existing **Windows** support, adds full 64-bit compatibility, modernizes the build system, resolves numerous bugs, and updates multi-language scripting support.
 
 > [!NOTE]
 > This fork is independently maintained by Wade Tregaskis and is **not endorsed by or affiliated with Nick Gammon**.
@@ -21,7 +21,7 @@ The easiest way to get and run MUSHclient is to download a pre-compiled release 
 Pre-built binaries are available for:
 
 * **macOS**:
-  Download the `.dmg` installer. Open it and drag **MUSHclient.app** into your `Applications` folder. Compatible with Apple Silicon (M1/M2/M3/M4) and Intel Macs.
+  Download the `.dmg` installer. Open it and drag **MUSHclient.app** into your `Applications` folder. Compatible with Apple Silicon and Intel Macs.  Tested on macOS 15 Sequoia and later.
 
 * **Linux (Debian, Ubuntu, Linux Mint, etc.)**:
   Download the `.deb` package and install it with:
@@ -41,26 +41,24 @@ Pre-built binaries are available for:
   ```
   All required runtime libraries, resources, and Lua modules are self-contained.
 
-* **Discworld MUD Edition**:
-  Pre-bundled releases featuring Quow's mapper and plugins configured out-of-the-box are also provided under [Releases](https://github.com/wadetregaskis/mushclient/releases).
+* **Discworld MUD Editions**:
+  Variants are also available that include [Quow's Discworld MUD plugins](https://quow.co.uk) configured out-of-the-box are also provided.
 
 ---
 
 ## Features
 
-* **Cross-Platform Native UI**: Clean, native graphical interface on macOS (Cocoa), Linux (wxWidgets GTK3), and Windows.
-* **Extensive Scripting Support**: Built-in Lua 5.1 support out of the box, with runtime engine support for Python 3, Perl, JavaScript, Tcl 8.6, and Ruby 4.0.
-* **MUD Protocol Support**: ANSI colors, 256-color xterm, 24-bit true color, MXP (Mud eXtension Protocol), MCCP (compression), Telnet subnegotiation, and IPv6.
+* **Cross-Platform UI**: Native controls are used on each platform, although MUSHclient is not a "native" app insofar as it clearly follows a Windows-centric design, even on macOS & Linux.
+* **Extensive Scripting Support**: Highly customisable, including GUI additions.  Scripting languages supported include Lua 5.1, Python 3, Perl, JavaScript, Tcl 8.6, and Ruby 4.0.
+* **MUD Protocol Support**: ANSI colors, 256-color xterm, 24-bit true color, MXP (Mud eXtension Protocol), MCCP (compression), Telnet subnegotiation, IPv6, and more.
 * **Secure Connections**: Built-in TLS / SSL connection support powered by OpenSSL.
-* **High Performance**: Optimized terminal engine capable of handling high-volume combat and spam scrollback with minimal memory overhead.
-* **Bug Fixes & Hardening**: Over 100 upstream bugs fixed, including memory leaks, out-of-bounds reads, use-after-free conditions, timer edge cases, and 64-bit portability issues. Tested clean with AddressSanitizer and UndefinedBehaviorSanitizer.
-* **Batteries Included**: All core libraries (PCRE, libpng, SQLite 3, zlib, Lua 5.1, miniaudio, spell checker dictionaries, and FIGlet fonts) are included directly in the source repository.
+* **High Performance**: Optimised terminal engine capable of handling high-volume combat and deep scrollback buffers.
 
 ---
 
 ## Building from Source
 
-All third-party libraries needed for core functionality (PCRE, libpng, SQLite, zlib, Lua 5.1, miniaudio) are directly bundled in the repository. You do **not** need to manually download or unpack separate dependency archives.
+All third-party libraries needed for _core_ functionality (PCRE, libpng, SQLite, zlib, Lua 5.1, miniaudio) are directly bundled in the repository. You do **not** need to manually download or unpack separate dependency archives.
 
 ### Prerequisites
 
@@ -100,6 +98,8 @@ This script automatically:
 3. Produces ready-to-distribute packages in the `dist/` directory:
    * **macOS**: `dist/MUSHclient.app` and `dist/MUSHclient-*.dmg`
    * **Linux**: `dist/mushclient/` (standalone folder), `dist/mushclient-*.tar.xz`, and `dist/mushclient_*.deb`
+
+**Note**: by default the Discworld plug-ins and some scripting languages are not include - see further details below.
 
 #### Common Build Options
 

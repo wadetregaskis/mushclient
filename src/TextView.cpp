@@ -1303,7 +1303,7 @@ bool bAll;
 
 }
 
-extern char * character_entities [1];
+extern const char * character_entities [];   // defined in mxp/mxpinit.cpp
 
 
 void CTextView::OnUnconvertConverthtmlspecial() 

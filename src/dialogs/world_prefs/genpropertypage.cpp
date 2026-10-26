@@ -912,7 +912,7 @@ int CALLBACK CGenPropertyPage::CompareFunc ( LPARAM lParam1,
                                              LPARAM lParamSort)
   { 
 
- ASSERT (lParamSort != NULL);
+ ASSERT (lParamSort != 0);   // an LPARAM, not a pointer
 
 t_gen_sort_param * psort_param = (t_gen_sort_param *) lParamSort;
 

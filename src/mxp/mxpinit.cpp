@@ -277,7 +277,7 @@ tMXP_colour MXP_colours [] =
 
  // note - these ARE case-sensitive
 
-char * character_entities [] = 
+const char * character_entities [] = 
   {
 "lt", "<",          "micro", "&#181;",  "Icirc", "&#206;",  "ccedil", "&#231;",
 "gt", ">",          "para", "&#182;",   "Iuml", "&#207;",   "egrave", "&#232;",  

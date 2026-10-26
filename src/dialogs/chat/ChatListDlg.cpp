@@ -372,7 +372,7 @@ static int CALLBACK CompareFunc ( LPARAM lParam1,
                                  LPARAM lParamSort)
   { 
 
- ASSERT (lParamSort != NULL);
+ ASSERT (lParamSort != 0);   // an LPARAM, not a pointer
 
 t_chat_sort_param * psort_param = (t_chat_sort_param *) lParamSort;
 

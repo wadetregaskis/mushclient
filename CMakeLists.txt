@@ -1221,7 +1221,7 @@ if(NOT WIN32)
             # must not reach the TUs that include the MFC headers.
             target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/src/platform/wx_osx_statusitem.mm)
             set_target_properties(mushgui PROPERTIES
-                MACOSX_BUNDLE_GUI_IDENTIFIER  "au.com.gammon.MUSHclient"
+                MACOSX_BUNDLE_GUI_IDENTIFIER  "com.wadetregaskis.MUSHclient"
                 MACOSX_BUNDLE_BUNDLE_NAME     "MUSHclient"
                 # MUSHCLIENT_VERSION, not PROJECT_VERSION: project()'s VERSION
                 # parsing treats each dot-component as a plain integer, so it

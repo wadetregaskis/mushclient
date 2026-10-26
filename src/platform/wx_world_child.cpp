@@ -2112,7 +2112,7 @@ void CWorldChildFrame::ApplyGlobalPrefs()
     // all, but it is not parity -- see wxOSXSetWindowTabbing.
     wxOSXSetWindowTabbing(this,
                           App.m_iWindowTabsStyle != WINDOW_TABS_NONE,
-                          "au.com.gammon.MUSHclient.world");
+                          "com.wadetregaskis.MUSHclient.world");
 }
 
 // Command-history depth: the world's own "Lines in command history" setting.

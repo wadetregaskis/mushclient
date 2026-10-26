@@ -124,7 +124,7 @@ Record the sha (must be `299af267…`, rule 3).
 
 **Corrected 2026-08-12, the hard way: `defaults export/import` does NOT
 control this app's real settings.** `defaults domains | grep -i mush` finds
-`au.com.gammon.MUSHclient` — but that domain is empty of app settings; it's
+`com.wadetregaskis.MUSHclient` — but that domain is empty of app settings; it's
 just AppKit's own per-bundle-ID bookkeeping (NSOpenPanel/NSColorPanel/
 NSFontPanel frame positions, `NSAutomaticPeriodSubstitutionEnabled`). This
 build's actual settings live in **two** other places, neither a `defaults`

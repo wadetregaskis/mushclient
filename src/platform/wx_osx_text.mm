@@ -75,7 +75,7 @@ void wxOSXDisableAutomaticPeriodSubstitution()
     //
     // So opt out where the preference is actually read.  Writing the key into
     // the standard user defaults puts it in THIS application's own domain
-    // (au.com.gammon.MUSHclient), which takes precedence over NSGlobalDomain
+    // (com.wadetregaskis.MUSHclient), which takes precedence over NSGlobalDomain
     // for this process only — the user's system-wide setting, and every other
     // application, are untouched.
     [[NSUserDefaults standardUserDefaults]

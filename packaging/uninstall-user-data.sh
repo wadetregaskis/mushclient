@@ -8,7 +8,7 @@
 # settings file (the wxConfig file or the global-preferences DB) can otherwise
 # make a "fresh build" behave like an upgrade and pick up old state.
 #
-# What it removes (bundle id: au.com.gammon.MUSHclient):
+# What it removes (bundle id: com.wadetregaskis.MUSHclient):
 #
 #   macOS:
 #     ~/Library/Application Support/MUSHclient/         worlds, plugins, maps,
@@ -16,11 +16,11 @@
 #     ~/Library/Preferences/MUSHclient/                 global-preferences DB
 #                                                        (mushclient_prefs.sqlite)
 #     ~/Library/Preferences/mushclient Preferences      wxConfig (window state…)
-#     ~/Library/Preferences/au.com.gammon.MUSHclient.plist   NSUserDefaults / cfprefs
-#     ~/Library/Saved Application State/au.com.gammon.MUSHclient.savedState/
-#     ~/Library/Caches/au.com.gammon.MUSHclient/
-#     ~/Library/HTTPStorages/au.com.gammon.MUSHclient*
-#     + `defaults delete au.com.gammon.MUSHclient` and a cfprefsd cache flush
+#     ~/Library/Preferences/com.wadetregaskis.MUSHclient.plist   NSUserDefaults / cfprefs
+#     ~/Library/Saved Application State/com.wadetregaskis.MUSHclient.savedState/
+#     ~/Library/Caches/com.wadetregaskis.MUSHclient/
+#     ~/Library/HTTPStorages/com.wadetregaskis.MUSHclient*
+#     + `defaults delete com.wadetregaskis.MUSHclient` and a cfprefsd cache flush
 #
 #   Linux:
 #     ${XDG_DATA_HOME:-~/.local/share}/MUSHclient/
@@ -33,7 +33,7 @@
 #
 set -u
 
-BUNDLE_ID="au.com.gammon.MUSHclient"
+BUNDLE_ID="com.wadetregaskis.MUSHclient"
 DRY=0
 YES=0
 

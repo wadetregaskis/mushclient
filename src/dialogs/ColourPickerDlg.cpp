@@ -377,7 +377,7 @@ float fLuminance = clr.GetLuminance ();
          iGreen,
          iRed));
 
-  m_ctlLuaName.SetWindowText (CFormat ("%ld", m_ctlSwatch.m_colour));
+  m_ctlLuaName.SetWindowText (CFormat ("%ld", (long) m_ctlSwatch.m_colour));
 
   m_iColour = iLastColour = m_ctlSwatch.m_colour;
 

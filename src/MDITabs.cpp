@@ -113,7 +113,7 @@ CString GetTabText (HWND hwnd)
     else
       strName = pDoc->m_strWindowTitle;
     if (pDoc->m_new_lines && !pDoc->m_bDoNotShowOutstandingLines)
-      strName += CFormat (" (%i)", pDoc->m_new_lines);
+      strName += CFormat (" (%ld)", pDoc->m_new_lines);
     }
   else if (pWnd->IsKindOf(RUNTIME_CLASS(CTextChildFrame)))
     {

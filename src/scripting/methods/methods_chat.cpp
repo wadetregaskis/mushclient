@@ -270,7 +270,7 @@ CString strMessage;
 
   if (!pSocket)
     {
-    ChatNote (eChatOutgoingPersonal, TFormat ("Chat ID %i is not connected.", ID));
+    ChatNote (eChatOutgoingPersonal, TFormat ("Chat ID %i is not connected.", (int) ID));
 	  return eChatIDNotFound;
     }
 
@@ -433,7 +433,7 @@ void CMUSHclientDoc::ChatNote(short NoteType, LPCTSTR Message)
       {
       strMessage = strMessage.Left (m_iMaxChatBytesPerMessage);
       strMessage += TFormat ("\n[Chat message truncated, exceeds %i bytes]", 
-            m_iMaxChatBytesPerMessage);
+            (int) m_iMaxChatBytesPerMessage);
       }
     }   // end of byte count check wanted
 
@@ -464,7 +464,7 @@ void CMUSHclientDoc::ChatNote(short NoteType, LPCTSTR Message)
     strMessage.ReleaseBuffer (-1);
     if (iLines >= m_iMaxChatLinesPerMessage && chAfterCut)
       strMessage += TFormat ("\n[Chat message truncated, exceeds %i lines]", 
-            m_iMaxChatLinesPerMessage);
+            (int) m_iMaxChatLinesPerMessage);
     }   // end of line count check wanted
 
   if (!SendToAllPluginCallbacks (ON_PLUGIN_CHAT_DISPLAY, 
@@ -1060,7 +1060,7 @@ long CMUSHclientDoc::ChatPasteText(long ID)
 
   if (!pSocket)
     {
-    ChatNote (eChatOutgoingPersonal, TFormat ("Chat ID %i is not connected.", ID));
+    ChatNote (eChatOutgoingPersonal, TFormat ("Chat ID %i is not connected.", (int) ID));
 	  return eChatIDNotFound;
     }
 
@@ -1147,7 +1147,7 @@ long CMUSHclientDoc::ChatSendFile(long ID, LPCTSTR FileName)
 
   if (!pSocket)
     {
-    ChatNote (eChatFile, TFormat ("Chat ID %i is not connected.", ID));
+    ChatNote (eChatFile, TFormat ("Chat ID %i is not connected.", (int) ID));
 	  return eChatIDNotFound;
     }
 
@@ -1256,7 +1256,7 @@ long CMUSHclientDoc::ChatStopFileTransfer(long ID)
 
   if (!pSocket)
     {
-    ChatNote (eChatOutgoingPersonal, TFormat ("Chat ID %i is not connected.", ID));
+    ChatNote (eChatOutgoingPersonal, TFormat ("Chat ID %i is not connected.", (int) ID));
 	  return eChatIDNotFound;
     }
 

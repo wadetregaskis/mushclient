@@ -878,10 +878,10 @@ bool bWasClosed = m_iConnectPhase == eConnectNotConnected;
     CTimeSpan ts = CTime::GetCurrentTime() - m_tConnectTime;
       
     CString strDuration = TFormat ("--- Connected for %i day%s, %i hour%s, %i minute%s, %i second%s. ---",
-                  PLURAL ((long) ts.GetDays()),
-                  PLURAL ((long) ts.GetHours()),
-                  PLURAL ((long) ts.GetMinutes()),
-                  PLURAL ((long) ts.GetSeconds()));
+                  PLURAL ((int) ts.GetDays()),
+                  PLURAL ((int) ts.GetHours()),
+                  PLURAL ((int) ts.GetMinutes()),
+                  PLURAL ((int) ts.GetSeconds()));
 
     Note (strDuration);  
 
@@ -892,8 +892,8 @@ bool bWasClosed = m_iConnectPhase == eConnectNotConnected;
     }  // end of message in world window wanted
 
   CString strInfo = TFormat ("--- Received %i line%s, sent %i line%s.",
-                PLURAL (m_nTotalLinesReceived),
-                PLURAL (m_nTotalLinesSent)
+                PLURAL ((int) m_nTotalLinesReceived),
+                PLURAL ((int) m_nTotalLinesSent)
                 );
   
   Note (strInfo);  
@@ -916,9 +916,9 @@ bool bWasClosed = m_iConnectPhase == eConnectNotConnected;
   Note (strInfo);
 
   strInfo = TFormat ("--- Matched %i trigger%s, %i alias%s, and %i timer%s fired.",
-                PLURAL (m_iTriggersMatchedThisSessionCount),   
-                PLURALES (m_iAliasesMatchedThisSessionCount),    
-                PLURAL (m_iTimersFiredThisSessionCount)       
+                PLURAL ((int) m_iTriggersMatchedThisSessionCount),   
+                PLURALES ((int) m_iAliasesMatchedThisSessionCount),    
+                PLURAL ((int) m_iTimersFiredThisSessionCount)       
                 );
 
   Note (strInfo);  

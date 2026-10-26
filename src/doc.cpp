@@ -1414,9 +1414,9 @@ DWORD nLines = 0,
 // ask user to confirm preamble, postamble etc., and warn them of file size
 
   dlg.m_strPasteMessage.Format ("About to send: %ld character%s, %ld line%s to %s.",
-                                nLength,
+                                (long) nLength,
                                 nLength == 1 ? "" : "s",
-                                nLines,
+                                (long) nLines,
                                 nLines == 1 ? "" : "s",
                                 (LPCTSTR) m_mush_name);
       
@@ -2969,10 +2969,10 @@ COleDateTime tNow = COleDateTime::GetCurrentTime();
   strTitle += m_mush_name;
 
 
-  CString strMsg = TFormat ("%s%s packet: %I64d (%i bytes) at %s%s%s", 
+  CString strMsg = TFormat ("%s%s packet: %lld (%i bytes) at %s%s%s", 
                                   ENDLINE,
                                   sCaption,
-                                  iNumber,
+                                  (long long) iNumber,
                                   size,
                                   (LPCTSTR) strTime,
                                   ENDLINE,

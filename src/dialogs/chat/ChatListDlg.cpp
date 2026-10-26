@@ -472,7 +472,7 @@ int nItem;
 	  m_ctlChatList.SetItemText (nItem, eColumnGroup, p->m_strGroup);
 	  m_ctlChatList.SetItemText (nItem, eColumnFromIP, inet_ntoa (p->m_ServerAddr.sin_addr));
 	  m_ctlChatList.SetItemText (nItem, eColumnCallIP, p->m_strAllegedAddress);
-	  m_ctlChatList.SetItemText (nItem, eColumnCallPort, CFormat ("%ld", p->m_iAllegedPort));
+	  m_ctlChatList.SetItemText (nItem, eColumnCallPort, CFormat ("%ld", (long) p->m_iAllegedPort));
 	  m_ctlChatList.SetItemText (nItem, eColumnFlags, strFlags);
     m_ctlChatList.SetItemData (nItem, p->m_iChatID);
 
@@ -530,7 +530,7 @@ CString CChatListDlg::MakeListHash (void)
         p->m_iChatStatus != eChatConnected)
         continue;
 
-    strResult += CFormat ("%ul,%s,%s,%s",
+    strResult += CFormat ("%ld,%s,%s,%s",
                           p->m_iChatID,
                           (LPCTSTR) p->m_strRemoteUserName,
                           (LPCTSTR) p->m_strGroup,

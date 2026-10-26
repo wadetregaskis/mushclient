@@ -102,7 +102,7 @@ void CTextAttributesDlg::OnLineInfo()
 
   INFO (TFormat ("Line %i (%i), %s", 
                 m_iLine, 
-                m_pLine->m_nLineNumber,
+                (int) m_pLine->m_nLineNumber,
                 (LPCTSTR) strDate));
   
   INFO (TFormat (" Flags = End para: %s, Note: %s, User input: %s, Log: %s, Bookmark: %s",

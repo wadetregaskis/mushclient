@@ -2180,7 +2180,7 @@ void CMainFrame::CollectWorldMenuItems (std::multimap<std::string, int> & sWorld
     CString strName = pDoc->m_mush_name;
 
     if (pDoc->m_new_lines)
-      strName += CFormat (" (%i)", pDoc->m_new_lines);
+      strName += CFormat (" (%ld)", pDoc->m_new_lines);
     
     if ((pDoc->m_view_number - 1) < TRAY_MENU_COUNT)
      sWorlds.insert (make_pair (std::basic_string<TCHAR>(strName), pDoc->m_view_number - 1));

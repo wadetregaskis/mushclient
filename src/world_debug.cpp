@@ -750,7 +750,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     for (i = 0; OptionsTable [i].pName; i++)
       {
       if (m_NumericConfiguration [i]->bInclude)
-        Note (CFormat ("%s = %i",  // name, included value
+        Note (CFormat ("%s = %ld",  // name, included value
                        (LPCTSTR) OptionsTable [i].pName,
                        m_NumericConfiguration [i]->iValue
                        ));
@@ -1095,8 +1095,8 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     else
       Note ("");
 
-    Note (TFormat ("   %ld enabled, %ld regexp, %I64d attempts, %I64d matched, %1.6f seconds.",
-                   nEnabled, nRegexp, nTotalMatchAttempts, nTotalMatches, elapsed_time));
+    Note (TFormat ("   %ld enabled, %ld regexp, %lld attempts, %lld matched, %1.6f seconds.",
+                   nEnabled, nRegexp, (long long) nTotalMatchAttempts, (long long) nTotalMatches, elapsed_time));
 
 
 
@@ -1150,8 +1150,8 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     else
       Note ("");
     
-    Note (TFormat ("   %ld enabled, %ld regexp, %I64d attempts, %I64d matched, %1.6f seconds.",
-                   nEnabled, nRegexp, nTotalMatchAttempts, nTotalMatches, elapsed_time));
+    Note (TFormat ("   %ld enabled, %ld regexp, %lld attempts, %lld matched, %1.6f seconds.",
+                   nEnabled, nRegexp, (long long) nTotalMatchAttempts, (long long) nTotalMatches, elapsed_time));
 
     nTotalMatches = 0;
     nTotal = 0;
@@ -1184,8 +1184,8 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     else
       Note ("");
 
-    Note (TFormat ("   %ld enabled, %I64d fired.",
-                   nEnabled, nTotalMatches));
+    Note (TFormat ("   %ld enabled, %lld fired.",
+                   nEnabled, (long long) nTotalMatches));
     if (App.m_nTimerInterval > 0)
       Note (TFormat ("   Timers checked every %i second(s).", App.m_nTimerInterval));
     else
@@ -1231,7 +1231,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     if (m_bCompress)
       {
       Note (TFormat ("MCCP active, took %1.6f seconds to decompress", elapsed_time));
-      Note (TFormat ("MCCP received %I64d compressed bytes, decompressed to %I64d bytes.", m_nTotalCompressed, m_nTotalUncompressed));
+      Note (TFormat ("MCCP received %lld compressed bytes, decompressed to %lld bytes.", (long long) m_nTotalCompressed, (long long) m_nTotalUncompressed));
       if (m_nTotalUncompressed)
         {
         double fRatio = (double) m_nTotalCompressed / (double) m_nTotalUncompressed * 100.0;
@@ -1395,9 +1395,9 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
     __int64 nInK = m_nBytesIn / (__int64) 1024;
     __int64 nOutK = m_nBytesOut / (__int64) 1024;
-    Note (TFormat ("Received: %I64d bytes (%I64d Kb)", m_nBytesIn, nInK));
-    Note (TFormat ("Sent: %I64d bytes (%I64d Kb)", m_nBytesOut, nOutK));
-    Note (TFormat ("Received %I64d packets, sent %I64d packets.", m_iInputPacketCount, m_iOutputPacketCount));
+    Note (TFormat ("Received: %lld bytes (%lld Kb)", (long long) m_nBytesIn, (long long) nInK));
+    Note (TFormat ("Sent: %lld bytes (%lld Kb)", (long long) m_nBytesOut, (long long) nOutK));
+    Note (TFormat ("Received %lld packets, sent %lld packets.", (long long) m_iInputPacketCount, (long long) m_iOutputPacketCount));
     Note (TFormat ("Total lines received: %ld", m_total_lines));
 
     Note (TFormat ("This connection: Sent %ld lines, received %ld lines.", m_nTotalLinesSent, m_nTotalLinesReceived));
@@ -1435,9 +1435,9 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
                     SHOW_TRUE (m_bPuebloActive),
                     sMode));
 
-    Note (TFormat ("MXP tags received: %I64d", m_iMXPtags));        
-    Note (TFormat ("MXP entities received: %I64d", m_iMXPentities));    
-    Note (TFormat ("MXP errors: %I64d", m_iMXPerrors));              
+    Note (TFormat ("MXP tags received: %lld", (long long) m_iMXPtags));        
+    Note (TFormat ("MXP entities received: %lld", (long long) m_iMXPentities));    
+    Note (TFormat ("MXP errors: %lld", (long long) m_iMXPerrors));              
 
     ColourNote  (SCRIPTERRORCONTEXTFORECOLOUR, "", "-- Commands --");
 
@@ -1522,19 +1522,19 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
            Note (TFormat ("Window: '%s', at (%ld,%ld,%ld,%ld), shown: %s",
                 win_it->first.c_str (), 
-                pWindow->m_rect.left,
-                pWindow->m_rect.top,
-                pWindow->m_rect.right,
-                pWindow->m_rect.bottom,
+                (long) pWindow->m_rect.left,
+                (long) pWindow->m_rect.top,
+                (long) pWindow->m_rect.right,
+                (long) pWindow->m_rect.bottom,
                 SHOW_TRUE (pWindow->GetShow ())));
 
            Note (TFormat ("        width: %ld, height: %ld, position: %d, hotspots: %ld, fonts: %ld, images: %ld", 
                 pWindow->GetWidth (),
                 pWindow->GetHeight (),
                 pWindow->GetPosition (),
-                nHotspots,
-                nFonts,
-                nImages
+                (long) nHotspots,
+                (long) nFonts,
+                (long) nImages
                 ));
            if (pWindow->m_bTemporarilyHide)
              Note (Translate ("        WARNING: temporarily hidden by auto-positioning (no room)"));
@@ -1560,16 +1560,16 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 #endif
 
     Note (TFormat ("Output pixels: width %ld, height: %ld, font width: %ld, font height: %ld",
-          r.right, r.bottom, m_FontWidth, m_FontHeight));
+          (long) r.right, (long) r.bottom, (long) m_FontWidth, (long) m_FontHeight));
 
     if (m_FontWidth > 0 && m_FontHeight > 0)
       Note (TFormat ("               can show %ld characters, wrapping at column %ld, height %ld lines.",
-            r.right / m_FontWidth, m_nWrapColumn, r.bottom / m_FontHeight));
+            (long) (r.right / m_FontWidth), (long) m_nWrapColumn, (long) (r.bottom / m_FontHeight)));
 
 
     Note (TFormat ("Output buffer: %i of %ld lines.", 
                                   m_LineList.GetCount (),
-                                  m_maxlines));
+                                  (long) m_maxlines));
 
     if (m_strSpecialFontName.size ())
       {
@@ -1599,7 +1599,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
                 ));
            }
 
-    Note (TFormat ("** SQLite3 databases: %i", m_Databases.size ()));
+    Note (TFormat ("** SQLite3 databases: %i", (int) m_Databases.size ()));
 
     // sound buffers?
 
@@ -2087,7 +2087,7 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
                                 it->first.c_str (),
                                 it->second.c_str ()));
 
-    ColourNote  (SCRIPTERRORCONTEXTFORECOLOUR, "", TFormat ("%i variable%s.", PLURAL (sortedVariables.size ())));
+    ColourNote  (SCRIPTERRORCONTEXTFORECOLOUR, "", TFormat ("%i variable%s.", PLURAL ((int) sortedVariables.size ())));
 
 
     }   // end of variablelist
@@ -2119,10 +2119,10 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
           if (!it->second.isvalid ())
             strColour = disabledFore;
 
-          ColourNote (strColour, "", CFormat ("%-30s -> Valid: %3s  %10I64i call%s.",
+          ColourNote (strColour, "", CFormat ("%-30s -> Valid: %3s  %10lli call%s.",
                                     it->first.c_str (),
                                     SHOW_TRUE (it->second.isvalid ()),
-                                    PLURAL (it->second._count)
+                                    PLURAL ((long long) it->second._count)
                                     ));
 
           }  // end if valid or non-zero count (and for loop)
@@ -2179,7 +2179,7 @@ void CMUSHclientDoc::DebugHelper (const CString strAction, CString strArgument)
                                 it->first.c_str (),
                                 it->second.c_str ()));
 
-    ColourNote  (SCRIPTERRORCONTEXTFORECOLOUR, "", TFormat ("%i accelerator%s.", PLURAL (sortedAccelerators.size ())));
+    ColourNote  (SCRIPTERRORCONTEXTFORECOLOUR, "", TFormat ("%i accelerator%s.", PLURAL ((int) sortedAccelerators.size ())));
 
 
     }   // end of acceleratorlist

@@ -90,8 +90,8 @@ void CInsertUnicodeDlg::DoDataExchange(CDataExchange* pDX)
 
     if (i < 0 || i > 2147483647LL)   // must fit an int (the _pcre_ord2utf parameter width), not LONG_MAX (64-bit on LP64)
         {
-        ::UMessageBox (TFormat ("Unicode character %I64i too large - must be in range 0 to 2147483647 "
-                                  "(hex 0 to 7FFFFFFF).", i));
+        ::UMessageBox (TFormat ("Unicode character %lli too large - must be in range 0 to 2147483647 "
+                                  "(hex 0 to 7FFFFFFF).", (long long) i));
         DDX_Text(pDX, IDC_UNICODE_CHARACTER, m_strCharacter);
         pDX->Fail();
         }

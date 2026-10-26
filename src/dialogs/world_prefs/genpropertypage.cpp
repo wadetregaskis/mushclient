@@ -1181,10 +1181,10 @@ void CGenPropertyPage::LoadList (void)
       m_ctlList->SetItemState (0, LVIS_FOCUSED | LVIS_SELECTED, 
                                   LVIS_FOCUSED | LVIS_SELECTED);
 
-  CString strSummary = TFormat ("%i item%s.", PLURAL (iCount));
+  CString strSummary = TFormat ("%i item%s.", PLURAL ((int) iCount));
 
   if (iNotShown)
-    strSummary += TFormat (" (%i item%s hidden by filter)", PLURAL (iNotShown));
+    strSummary += TFormat (" (%i item%s hidden by filter)", PLURAL ((int) iNotShown));
   m_ctlSummary->SetWindowText (strSummary);
 
   delete m_ScriptEngine;

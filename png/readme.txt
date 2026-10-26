@@ -13,7 +13,7 @@ PNG built as follows:
 
 1. Download recent version from download.sourceforge.net
 
-    In this case: http://download.sourceforge.net/libpng/libpng-1.6.37.tar.gz
+    In this case: https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.59.tar.gz
 
 
 2. Uncompress the archive with 7-Zip (if necessary), obtainable from:
@@ -47,7 +47,13 @@ PNG built as follows:
 	pngwtran.c
 	pngwutil.c
 
-5.  Copy scripts/pnglibconf.h.prebuilt to pnglibconf.h
+5.  Copy scripts/pnglibconf.h.prebuilt to pnglibconf.h, and add before its
+    "end of options" line:
+
+        #define PNG_ARM_NEON_OPT 0
+
+    (libpng enables its NEON code on arm64 by default, which needs the arm/
+    sources this directory does not carry.)
 
 
 6. Edit: pngstruct.h and change

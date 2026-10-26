@@ -9,6 +9,10 @@
 # on one, openssl@4 on another, and a Ruby cached from whichever was current
 # when it was built.  Building it here gives every Mac the same OpenSSL.
 #
+# Architectures and minimum macOS: universal (arm64 + x86_64) for macOS 11+ by
+# default.  OpenSSL's build handles one architecture per run, so each is built
+# separately and the libraries merged with lipo.
+#
 # Which version: the newest final release of OpenSSL's 3.5 LTS series (supported
 # until April 2030), looked up on GitHub each run, so security releases are
 # picked up as they appear.  Alphas, betas and anything GitHub marks as a
@@ -24,6 +28,7 @@
 #     packaging/openssl/install/lib/libssl.3.dylib, libcrypto.3.dylib
 #     packaging/openssl/install/include/openssl/*.h
 #     packaging/openssl/install/.version            — what was built
+#     packaging/openssl/install/.build              — architectures, macOS minimum
 #
 # macOS only: the Linux packages use the distribution's OpenSSL.
 #
@@ -32,6 +37,7 @@
 #   packaging/fetch-openssl.sh --version 3.5.9    # exactly this release
 #   packaging/fetch-openssl.sh --force            # rebuild even if up to date
 #   OPENSSL_SERIES=3.5 packaging/fetch-openssl.sh # the series to follow (default 3.5)
+#   MACOS_MIN=11.0 MACOS_ARCHS="arm64 x86_64" packaging/fetch-openssl.sh
 #
 set -euo pipefail
 
@@ -40,6 +46,8 @@ DEST="$SCRIPT_DIR/openssl"
 INSTALL="$DEST/install"
 SERIES="${OPENSSL_SERIES:-3.5}"
 VERSION="${OPENSSL_VERSION:-}"
+MACOS_MIN="${MACOS_MIN:-11.0}"
+MACOS_ARCHS="${MACOS_ARCHS:-arm64 x86_64}"
 FORCE=0
 
 note() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -58,13 +66,10 @@ done
 
 [ "$(uname -s)" = "Darwin" ] || die "this builds the macOS bundle's OpenSSL; Linux uses the system one"
 
-case "$(uname -m)" in
-    arm64)  TARGET="darwin64-arm64-cc" ;;
-    x86_64) TARGET="darwin64-x86_64-cc" ;;
-    *) die "unsupported architecture: $(uname -m)" ;;
-esac
-
+BUILD="$MACOS_ARCHS | macOS $MACOS_MIN"
 HAVE="$(cat "$INSTALL/.version" 2>/dev/null || true)"
+# Built for other architectures or another minimum: treat as not built.
+[ "$(cat "$INSTALL/.build" 2>/dev/null || true)" = "$BUILD" ] || HAVE=""
 
 # The newest final release in $SERIES, from GitHub's release list: tags of the
 # exact form openssl-<series>.<n>, not drafts, not pre-releases.  Empty on failure.
@@ -116,28 +121,64 @@ fi
 got="$(shasum -a 256 "$CACHE" | cut -d' ' -f1)"
 [ "$got" = "$want_sha" ] || { rm -f "$CACHE"; die "checksum mismatch for $PKG (got $got, want $want_sha); deleted it, re-run to download again"; }
 
-note "building OpenSSL $VERSION ($TARGET, shared, OPENSSLDIR=/etc/ssl)${HAVE:+ — replacing $HAVE}"
-rm -rf "$INSTALL" "$DEST/src"
-mkdir -p "$DEST/src"
-tar -xzf "$CACHE" -C "$DEST/src" --strip-components=1
+note "building OpenSSL $VERSION ($MACOS_ARCHS, macOS $MACOS_MIN+, shared, OPENSSLDIR=/etc/ssl)${HAVE:+ — replacing $HAVE}"
+rm -rf "$INSTALL" "$DEST/src" "$DEST"/arch-*
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 LOG="$DEST/build.log"
-(
-    cd "$DEST/src"
-    ./Configure "$TARGET" shared no-tests no-docs \
-        --prefix="$INSTALL" --libdir=lib --openssldir=/etc/ssl
-    make -j"$JOBS"
-    make install_sw      # libraries + headers only: no docs, no openssldir files
-) > "$LOG" 2>&1 || { tail -40 "$LOG" >&2; die "OpenSSL build failed (full log: $LOG)"; }
-
+: > "$LOG"
 MAJOR="${VERSION%%.*}"
+first=""
+for arch in $MACOS_ARCHS; do
+    case "$arch" in
+        arm64)  target="darwin64-arm64-cc" ;;
+        x86_64) target="darwin64-x86_64-cc" ;;
+        *) die "unsupported architecture: $arch" ;;
+    esac
+    src="$DEST/src-$arch"; out="$DEST/arch-$arch"
+    note "  $arch"
+    rm -rf "$src"; mkdir -p "$src"
+    tar -xzf "$CACHE" -C "$src" --strip-components=1
+    (
+        cd "$src"
+        # The final path is fixed with --prefix so install names and the
+        # compiled-in paths are right; DESTDIR stages each architecture apart.
+        ./Configure "$target" shared no-tests no-docs \
+            --prefix="$INSTALL" --libdir=lib --openssldir=/etc/ssl \
+            -mmacosx-version-min="$MACOS_MIN"
+        make -j"$JOBS"
+        make install_sw DESTDIR="$out"   # libraries + headers only
+    ) >> "$LOG" 2>&1 || { tail -40 "$LOG" >&2; die "OpenSSL build failed for $arch (full log: $LOG)"; }
+    rm -rf "$src"
+    [ -n "$first" ] || first="$out$INSTALL"
+done
+
+# Merge: the first architecture's tree, with every Mach-O replaced by a lipo of
+# all of them.  The headers must agree, or one architecture would compile
+# against the other's configuration.
+mkdir -p "$(dirname "$INSTALL")"
+cp -R "$first" "$INSTALL"
+for arch in $MACOS_ARCHS; do
+    diff -r "$first/include" "$DEST/arch-$arch$INSTALL/include" >/dev/null \
+        || die "OpenSSL headers differ between architectures ($arch); a merged include dir would be wrong"
+done
+while IFS= read -r rel; do
+    slices=()
+    for arch in $MACOS_ARCHS; do slices+=("$DEST/arch-$arch$INSTALL/$rel"); done
+    lipo -create "${slices[@]}" -output "$INSTALL/$rel"
+done < <(cd "$first" && find . -type f \( -name '*.dylib' -o -path './bin/*' \) | sed 's|^\./||' \
+           | while IFS= read -r f; do file -b "$first/$f" | grep -q Mach-O && echo "$f"; done)
+rm -rf "$DEST"/arch-*
+
 for lib in "libssl.$MAJOR.dylib" "libcrypto.$MAJOR.dylib"; do
     [ -f "$INSTALL/lib/$lib" ] || die "$lib not produced"
+    for arch in $MACOS_ARCHS; do
+        lipo -archs "$INSTALL/lib/$lib" | tr ' ' '\n' | grep -qx "$arch" || die "$lib lacks $arch"
+    done
 done
 # Shared only: a static copy linked into Ruby or the app would be a second
 # OpenSSL in the bundle, which is exactly what this build exists to prevent.
 rm -f "$INSTALL/lib/libssl.a" "$INSTALL/lib/libcrypto.a"
 printf '%s\n' "$VERSION" > "$INSTALL/.version"
-rm -rf "$DEST/src"
+printf '%s\n' "$BUILD" > "$INSTALL/.build"
 find "$DEST" -maxdepth 1 -name 'openssl-*.tar.gz' ! -name "$PKG" -delete   # older tarballs
-note "OpenSSL $VERSION staged in $INSTALL"
+note "OpenSSL $VERSION staged in $INSTALL ($(lipo -archs "$INSTALL/lib/libcrypto.$MAJOR.dylib"))"

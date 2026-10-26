@@ -51,41 +51,52 @@ The scripts here build a complete, self-contained, signed `MUSHclient.app`:
 | Script | What it does |
 |--------|--------------|
 | [`build-app.sh`](build-app.sh) | Build the whole thing — relocate deps, sign, notarize, DMG. |
-| [`fetch-python.sh`](fetch-python.sh) | Vendor a clean, redistributable **python.org** framework (Python engine). |
+| [`sign-release.sh`](sign-release.sh) | Sign + notarize a macOS build made by the GitHub release workflow, on your own Mac (see *Release pipeline*). |
+| [`fetch-wx.sh`](fetch-wx.sh) | Build **wxWidgets** from source: universal, static, macOS 11+. `build-app.sh` runs it. |
+| [`fetch-python.sh`](fetch-python.sh) | Vendor a clean, redistributable **python.org** framework (Python engine; already universal, macOS 11+). |
 | [`fetch-tcl.sh`](fetch-tcl.sh) | Build a static **Tcl 8.6** from source (Tcl engine). |
 | [`fetch-openssl.sh`](fetch-openssl.sh) | Build the bundle's one **OpenSSL** (newest 3.5.x LTS release) from source. `build-app.sh` runs it. |
 | [`fetch-ruby.sh`](fetch-ruby.sh) | Build a relocatable **Ruby 4.0** from source, + static libyaml, against that OpenSSL (Ruby engine). |
 | [`fetch-discworld-plugins.sh`](fetch-discworld-plugins.sh) | Stage Quow's Discworld plugins so they can be pre-bundled. |
 
 Everything the scripts produce lands in `dist/` (the final app) or git-ignored
-staging dirs (`packaging/{openssl,python,tcl,ruby,discworld-plugins}/`).
+staging dirs (`packaging/{openssl,wx,python,tcl,ruby,discworld-plugins}/`).
 
-> **Currently arm64-only** — wxWidgets here is arm64-only, so the app is too;
-> `build-app.sh` thins the bundled runtimes to match. A universal build needs
-> universal wx + deps first.
+> **Universal, macOS 11+.**  The app runs natively on Apple Silicon and Intel
+> Macs, on macOS 11 Big Sur and later.  Nothing in the bundle comes from
+> Homebrew, whose libraries are single-architecture and built for the build
+> machine's own macOS: wxWidgets, OpenSSL, Tcl and Ruby are built from source by
+> the `fetch-*.sh` scripts, libpng (`png/`) and Lua 5.1 are compiled into the
+> app, and Python is python.org's universal2 framework.  `build-app.sh` then
+> refuses to finish if any binary in the bundle lacks an architecture or needs a
+> newer macOS than 11.  `--archs` / `--macos-min` change either (e.g.
+> `--archs arm64` for a quicker local build).
+>
+> Perl and JavaScript are Apple's own.  JavaScriptCore is present on every macOS;
+> Perl is weak-linked, because Apple's `libperl` path names its version
+> (`/System/Library/Perl/5.34/...`): on a Mac without that version the app still
+> runs and Perl scripting reports itself unavailable.
 
 ---
 
 ## Quick start
 
 ```bash
-# one-time: vendor the brew-free scripting runtimes (cached; see below)
-packaging/fetch-python.sh
-packaging/fetch-tcl.sh
-packaging/fetch-ruby.sh
-
 # self-contained, ad-hoc-signed app + DMG in dist/  (runs on THIS Mac)
 packaging/build-app.sh
 ```
+
+The first run builds every dependency from source (wxWidgets, OpenSSL, Tcl,
+Ruby twice — once per architecture), which takes a while; after that each
+`fetch-*.sh` is a quick up-to-date check.
 
 That builds Release, copies every non-system dylib/framework the app links into
 `MUSHclient.app/Contents/Frameworks` (the bundled Ruby goes in `Contents/lib`),
 rewrites the load commands so the app no longer needs Homebrew/Xcode installed,
 ad-hoc signs it, and rolls a DMG.
 
-If you skip the `fetch-*` scripts the build still works but falls back to the
-**system** interpreters (Apple's Xcode Python, system Tcl 8.5, system Ruby 2.6 —
-all deprecated) — fine for a quick local build, **not** for a release.
+A plain CMake build (not `build-app.sh`) still uses Homebrew's wxWidgets and
+whatever interpreters it finds — fine for development, **not** for a release.
 
 To make a build you can give to *other* people you must sign + notarize with
 your Apple Developer ID (see below).
@@ -93,15 +104,44 @@ your Apple Developer ID (see below).
 ### Prerequisites
 
 - Xcode command-line tools (`xcode-select --install`)
-- Homebrew deps the app itself links: `brew install wxwidgets libpng lua@5.1`
-  (wxWidgets = GUI; libpng = images; lua@5.1 = the native scripting engine, else
-  CMake builds it via FetchContent).  OpenSSL does not come from Homebrew for a
-  package: `build-app.sh` builds it (see *OpenSSL* below).  A development build
-  uses whatever OpenSSL CMake finds, 3.x or 4.x.
-- The vendored scripting runtimes (`fetch-python.sh` / `fetch-tcl.sh` /
-  `fetch-ruby.sh`) — these build from source and need no Homebrew
+- Rosetta 2 on an Apple Silicon Mac (`softwareupdate --install-rosetta`): Ruby's
+  Intel half is built natively under it, and it runs the Intel half's tests
+- Nothing from Homebrew for a package.  A *development* build (plain CMake) uses
+  `brew install wxwidgets lua@5.1` and any OpenSSL CMake finds, 3.x or 4.x.
 - For notarization: an Apple Developer account + a *Developer ID Application*
   certificate in your login keychain
+
+---
+
+## Release pipeline (GitHub Actions)
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) builds and
+tests every platform.  It never runs on a push: start it from the repository's
+**Actions** tab → *Release builds* → **Run workflow**, optionally giving a tag
+(default `v` + `VERSION_STRING`), whether to also build the Discworld edition,
+and whether to create a draft release.  It produces:
+
+| Platform | Package | Tested on |
+|----------|---------|-----------|
+| macOS | one universal app, macOS 11+ — **unsigned** | Apple Silicon runner (natively, and the Intel half under Rosetta) + an Intel runner |
+| Linux x86-64, AArch64 | `.deb` + self-contained `.tar.xz` each | a runner of each architecture, under a virtual X display |
+| Windows x64, ARM64 | see `docs/WINDOWS-64BIT.md` | a runner of each architecture |
+
+With *create draft release* on, the packages are attached to a **draft** GitHub
+release.  The macOS app is attached unsigned so that your Developer ID key never
+goes to GitHub.  To finish it, download `MUSHclient-<version>-macOS-universal-UNSIGNED.zip`
+on your Mac and run:
+
+```bash
+packaging/sign-release.sh MUSHclient-<version>-macOS-universal-UNSIGNED.zip \
+    --sign-identity "Developer ID Application: Your Name (YOURTEAMID)" \
+    --notarize-profile mushclient-notary \
+    --upload v<version>          # needs the GitHub CLI (gh auth login); else upload by hand
+```
+
+It signs the app inside-out, notarizes and staples it, builds a signed DMG,
+notarizes and staples that too, and attaches both.  Delete the `-UNSIGNED`
+asset from the draft, then publish.  (Notarization setup: step 1 below.)
 
 ---
 

@@ -49,7 +49,10 @@ MAKE_DMG=1
 DO_RELOCATE=1
 PRUNE_PYTHON=1
 DO_CLEAN=0
-MIN_MACOS="11.0"
+# What the package runs on: universal (Apple Silicon + Intel), macOS 11 Big Sur
+# and later.  Every binary in the bundle is checked against both (step 3d).
+MACOS_MIN="${MACOS_MIN:-11.0}"
+MACOS_ARCHS="${MACOS_ARCHS:-arm64 x86_64}"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 note() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -74,6 +77,8 @@ Options
       --no-relocate         skip dylib bundling (faster; not self-contained)
       --no-prune-python     keep tkinter/tests/idle in the bundled Python framework
       --clean               wipe the build dir first
+      --archs "A B"         architectures (default: "arm64 x86_64" = universal)
+      --macos-min V         oldest macOS to support (default: 11.0)
   -h, --help                this help
 EOF
 }
@@ -92,6 +97,8 @@ while [ $# -gt 0 ]; do
         --no-relocate)        DO_RELOCATE=0; shift;;
         --no-prune-python)    PRUNE_PYTHON=0; shift;;
         --clean)              DO_CLEAN=1; shift;;
+        --archs)              MACOS_ARCHS="$2"; shift 2;;
+        --macos-min)          MACOS_MIN="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) die "unknown option: $1 (try --help)";;
     esac
@@ -108,6 +115,7 @@ FRAMEWORKS="$APP/Contents/Frameworks"
 # 1. build
 # ════════════════════════════════════════════════════════════════════════════
 [ "$DO_CLEAN" = 1 ] && { note "cleaning $BUILD_DIR"; rm -rf "$BUILD_DIR"; }
+export MACOS_MIN MACOS_ARCHS      # the fetch-*.sh scripts build for these
 note "configuring ($BUILD_TYPE) → $BUILD_DIR"
 # EXTRA_CMAKE_ARGS lets you steer the configure, e.g. point at a redistributable
 # python.org framework:  EXTRA_CMAKE_ARGS="-DPython3_ROOT_DIR=/Library/Frameworks/Python.framework/Versions/3.12 -DPython3_FIND_FRAMEWORK=ONLY"
@@ -124,21 +132,46 @@ OSSL_DIR="$SCRIPT_DIR/openssl/install"
 OSSL_VERSION="$(cat "$OSSL_DIR/.version")"
 note "OpenSSL: $OSSL_VERSION ($OSSL_DIR)"
 
+# Everything else the bundle carries that is not Apple's is built from source
+# for $MACOS_ARCHS and macOS $MACOS_MIN+ -- never taken from Homebrew, whose
+# libraries are single-architecture and built for the machine's own macOS.
+# Each script is a quick no-op when its build is already current.
+"$SCRIPT_DIR/fetch-wx.sh"  || die "could not build wxWidgets (packaging/fetch-wx.sh)"
+"$SCRIPT_DIR/fetch-tcl.sh" || die "could not build Tcl (packaging/fetch-tcl.sh)"
+[ -d "$SCRIPT_DIR/python/Python.framework" ] \
+    || "$SCRIPT_DIR/fetch-python.sh" || die "could not fetch Python (packaging/fetch-python.sh)"
+
 # A vendored Ruby links whichever OpenSSL it was built against, and is cached
-# across runs; rebuild it when that is not this one.  Only the major version
+# across runs; rebuild it when that is not this one, or when it was built for
+# other architectures or another macOS minimum.  Only OpenSSL's major version
 # matters -- every 3.x release shares one ABI -- so a patch update to OpenSSL
 # does not cost a Ruby rebuild.
 RUBY_STAGE="$SCRIPT_DIR/ruby/install"
-if [ -d "$RUBY_STAGE" ]; then
-    ruby_ossl="$(cat "$RUBY_STAGE/.openssl" 2>/dev/null || echo "unrecorded")"
-    if [ "$ruby_ossl" != "$OSSL_DIR ${OSSL_VERSION%%.*}" ]; then
-        note "the bundled Ruby was built against another OpenSSL ($ruby_ossl); rebuilding it"
-        OPENSSL_PREFIX="$OSSL_DIR" "$SCRIPT_DIR/fetch-ruby.sh" || die "could not rebuild Ruby (packaging/fetch-ruby.sh)"
-    fi
+ruby_have="$(cat "$RUBY_STAGE/.openssl" 2>/dev/null || echo "none") / $(cat "$RUBY_STAGE/.build" 2>/dev/null || echo "none")"
+ruby_want="$OSSL_DIR ${OSSL_VERSION%%.*} / $MACOS_ARCHS | macOS $MACOS_MIN"
+if [ "$ruby_have" != "$ruby_want" ]; then
+    note "building the bundled Ruby (have: $ruby_have)"
+    OPENSSL_PREFIX="$OSSL_DIR" "$SCRIPT_DIR/fetch-ruby.sh" || die "could not build Ruby (packaging/fetch-ruby.sh)"
 fi
+
+# A configure from another architecture or macOS setting (or the old Homebrew
+# wxWidgets) leaves cached choices behind that a re-configure would keep, so a
+# change of settings starts the build directory afresh.
+CONFIG_SIG="$MACOS_ARCHS | macOS $MACOS_MIN | wx $(cat "$SCRIPT_DIR/wx/install/.stamp") | ${EXTRA_CMAKE_ARGS:-}"
+if [ -d "$BUILD_DIR" ] && [ "$(cat "$BUILD_DIR/.mc-config" 2>/dev/null || true)" != "$CONFIG_SIG" ]; then
+    note "build settings changed; starting $BUILD_DIR afresh"
+    rm -rf "$BUILD_DIR"
+fi
+mkdir -p "$BUILD_DIR"
 OPENSSL_PIN=(-U 'OPENSSL_*' -DOPENSSL_ROOT_DIR="$OSSL_DIR")
 # shellcheck disable=SC2086
-cmake -S "$REPO" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "${OPENSSL_PIN[@]}" ${EXTRA_CMAKE_ARGS:-} >/dev/null
+cmake -S "$REPO" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "${OPENSSL_PIN[@]}" \
+    -DCMAKE_OSX_ARCHITECTURES="${MACOS_ARCHS// /;}" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOS_MIN" \
+    -DwxWidgets_CONFIG_EXECUTABLE="$SCRIPT_DIR/wx/install/bin/wx-config" \
+    -DMUSHCLIENT_BUNDLED_LUA=ON \
+    ${EXTRA_CMAKE_ARGS:-} >/dev/null
+printf '%s\n' "$CONFIG_SIG" > "$BUILD_DIR/.mc-config"
 note "building mushgui (-j$JOBS)"
 # Force a pristine relink so the executable carries its ORIGINAL (Homebrew/Xcode)
 # rpaths + install names every run.  Without this, re-running on an already-
@@ -331,7 +364,7 @@ relocate_one() {  # scan one binary, bundle + rewrite its non-system deps
                 fi
                 ;;
         esac
-    done < <(otool -L "$bin" | tail -n +2 | awk '{print $1}')
+    done < <(otool -L "$bin" | awk '/^\t/ {print $1}')
 }
 
 if [ "$DO_RELOCATE" = 1 ]; then
@@ -390,9 +423,13 @@ if [ "$DO_RELOCATE" = 1 ]; then
         done < <(find "$FRAMEWORKS" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \))
     else
         note "executable is multi-arch ($APP_ARCHS) — leaving bundled Mach-O fat (universal app)"
+        # Python's framework carries launchers the embedded interpreter never
+        # runs, one of them Intel-only (python3*-intel64); the guard in step 3d
+        # would rightly reject a single-architecture binary, so drop them.
+        find "$FRAMEWORKS" -type f \( -name '*-intel64' -o -path '*/Python.framework/Versions/*/bin/*' \) -delete 2>/dev/null || true
     fi
     note "  bundled $(ls -1 "$FRAMEWORKS" | wc -l | tr -d ' ') item(s); residual non-system deps:"
-    otool -L "$EXE" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/|@)' | sed 's/^/    LEAK: /' || true
+    otool -L "$EXE" | awk '/^\t/ {print $1}' | grep -vE '^(/usr/lib/|/System/|@)' | sed 's/^/    LEAK: /' || true
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -446,7 +483,7 @@ if [ "$DO_RELOCATE" = 1 ] && ls "$FRAMEWORKS"/libssl.*.dylib >/dev/null 2>&1; th
                     fi
                     ;;
             esac
-        done < <(otool -L "$bin" | tail -n +2 | awk '{print $1}')
+        done < <(otool -L "$bin" | awk '/^\t/ {print $1}')
         # @executable_path is the main exe wherever this Mach-O is loaded from, so
         # @rpath/libssl.3.dylib resolves to Contents/Frameworks for a dlopen'd
         # extension at any nesting depth.
@@ -499,7 +536,7 @@ if [ "$DO_RELOCATE" = 1 ]; then
         problems+="  ${ref#"$APP"/}"$'\n'
     done < <(find "$APP" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.so' -o -name '*.bundle' \) -print0 \
                | while IFS= read -r -d '' bin; do
-                     otool -L "$bin" 2>/dev/null | tail -n +2 | awk '{print $1}' \
+                     otool -L "$bin" 2>/dev/null | awk '/^\t/ {print $1}' \
                          | grep -E 'lib(ssl|crypto)[.]' | sed "s|^|$bin needs |" || true
                  done \
                | grep -vE " needs @rpath/($want_ssl|$want_crypto)\$" || true)
@@ -508,13 +545,60 @@ $problems"
     note "  OpenSSL in bundle: $want_ssl + $want_crypto ($OSSL_VERSION), referenced by nothing else"
 fi
 
+# Debug-symbol bundles (Ruby installs a .dSYM beside each extension) are for a
+# debugger, not a shipped app.
+find "$APP" -name '*.dSYM' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+# ════════════════════════════════════════════════════════════════════════════
+# 3d. every binary runs on what the package claims: $MACOS_ARCHS, macOS $MACOS_MIN+
+# ════════════════════════════════════════════════════════════════════════════
+# A single-architecture library, or one built for a newer macOS (a Homebrew
+# dependency, an object compiled without the deployment target), would make the
+# package fail to launch on some of the Macs its Info.plist accepts.  Check
+# every Mach-O in the bundle, each architecture's minimum separately.
+version_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+if [ "$DO_RELOCATE" = 1 ]; then
+    problems=""
+    nbin=0
+    while IFS= read -r -d '' f; do
+        file -b "$f" | grep -q Mach-O || continue
+        nbin=$((nbin + 1))
+        have=" $(lipo -archs "$f" 2>/dev/null) "
+        # Ruby keeps each architecture's extensions in its own directory
+        # (lib/ruby/<ver>/<arch>-darwin*, gems/.../extensions/<arch>-darwin-*),
+        # and each half of libruby loads only from its own: those are
+        # single-architecture by design and need only their own slice.
+        need="$MACOS_ARCHS"
+        for a in $MACOS_ARCHS; do
+            case "$f" in */"$a"-darwin*) need="$a" ;; esac
+        done
+        for a in $need; do
+            case "$have" in
+                *" $a "*) ;;
+                *) problems+="  ${f#"$APP"/}: no $a slice (has:$have)"$'\n'; continue ;;
+            esac
+            minos="$(otool -arch "$a" -l "$f" 2>/dev/null | awk '
+                /cmd LC_BUILD_VERSION/      { b = 1 }
+                b && $1 == "minos"          { print $2; exit }
+                /cmd LC_VERSION_MIN_MACOSX/ { v = 1 }
+                v && $1 == "version"        { print $2; exit }')"
+            if [ -n "$minos" ] && version_gt "$minos" "$MACOS_MIN"; then
+                problems+="  ${f#"$APP"/} ($a): needs macOS $minos"$'\n'
+            fi
+        done
+    done < <(find "$APP" -type f \( -name '*.dylib' -o -name '*.so' -o -name '*.bundle' -o -perm -u+x \) -print0)
+    [ -z "$problems" ] || die "the bundle must run on $MACOS_ARCHS, macOS $MACOS_MIN+:
+$problems"
+    note "  all $nbin binaries: $MACOS_ARCHS, macOS $MACOS_MIN+"
+fi
+
 # ════════════════════════════════════════════════════════════════════════════
 # 4. Info.plist touch-ups
 # ════════════════════════════════════════════════════════════════════════════
 PB=/usr/libexec/PlistBuddy
 plist="$APP/Contents/Info.plist"
-$PB -c "Set :LSMinimumSystemVersion $MIN_MACOS" "$plist" 2>/dev/null || \
-    $PB -c "Add :LSMinimumSystemVersion string $MIN_MACOS" "$plist"
+$PB -c "Set :LSMinimumSystemVersion $MACOS_MIN" "$plist" 2>/dev/null || \
+    $PB -c "Add :LSMinimumSystemVersion string $MACOS_MIN" "$plist"
 $PB -c "Set :NSHighResolutionCapable true" "$plist" 2>/dev/null || \
     $PB -c "Add :NSHighResolutionCapable bool true" "$plist"
 if ! $PB -c "Print :CFBundleDocumentTypes" "$plist" >/dev/null 2>&1; then
@@ -531,48 +615,11 @@ if ! $PB -c "Print :CFBundleDocumentTypes" "$plist" >/dev/null 2>&1; then
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
-# 5. code sign (inside-out)
+# 5. code sign (inside-out) — shared with sign-release.sh
 # ════════════════════════════════════════════════════════════════════════════
-# A real Developer ID signature gets a secure timestamp (needs network); ad-hoc
-# ("-") cannot be timestamped/notarized.  Avoid an empty-array flag so the
-# script stays bash-3.2 clean under `set -u`.
-sign_lib() {
-    if [ "$SIGN_ID" = "-" ]; then codesign --force --options runtime --sign - "$1"
-    else codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$1"; fi
-}
-sign_app() {
-    if [ "$SIGN_ID" = "-" ]; then
-        codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$1"
-    else
-        codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$1"
-    fi
-}
-
-# codesign refuses a bundle whose files carry extended attributes (resource
-# forks / Finder info / com.apple.quarantine), which cp and downloaded assets
-# routinely leave behind.  Strip them before signing.
-note "stripping extended attributes (xattr -cr)"
-xattr -cr "$APP" 2>/dev/null || true   # tolerate dangling symlinks (e.g. framework PrivateHeaders)
-
-note "code signing with identity: $SIGN_ID"
-[ "$SIGN_ID" = "-" ] && warn "ad-hoc signing — fine for THIS Mac, but cannot be notarized or run elsewhere"
-if [ -d "$FRAMEWORKS" ]; then
-    # nested Mach-O first (deepest last is fine; each is independent)
-    while IFS= read -r -d '' f; do sign_lib "$f"; done \
-        < <(find "$FRAMEWORKS" -type f \( -name '*.dylib' -o -name '*.so' \) -print0)
-    for f in "$FRAMEWORKS"/*.framework; do [ -d "$f" ] && sign_lib "$f"; done
-fi
-# Nested Mach-O bundled outside Frameworks — the relocatable Ruby's libruby dylib
-# and its .bundle C extensions live under Contents/lib (load-relative finds the
-# stdlib there).  They must be signed too, or a Developer-ID / notarized build is
-# rejected for unsigned nested code.
-for d in "$APP/Contents/lib" "$APP/Contents/Resources"; do
-    [ -d "$d" ] || continue
-    while IFS= read -r -d '' f; do sign_lib "$f"; done \
-        < <(find "$d" -type f \( -name '*.dylib' -o -name '*.so' -o -name '*.bundle' \) -print0)
-done
-sign_app "$APP"
-codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /' || warn "codesign --verify reported issues"
+# shellcheck source=.sign-mac.sh
+. "$SCRIPT_DIR/.sign-mac.sh"
+mc_sign_bundle "$APP" "$SIGN_ID" "$ENTITLEMENTS"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 6. notarize (optional) + package
@@ -582,11 +629,10 @@ ZIP="$OUTPUT_DIR/$APP_NAME.zip"
 
 if [ -n "$NOTARIZE_PROFILE" ]; then
     [ "$SIGN_ID" = "-" ] && die "cannot notarize an ad-hoc-signed app; pass --sign-identity"
-    note "notarizing via keychain profile '$NOTARIZE_PROFILE' (this can take a few minutes)"
     ditto -c -k --keepParent "$APP" "$ZIP"
-    xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARIZE_PROFILE" --wait
+    mc_notarize "$ZIP" "$NOTARIZE_PROFILE"
     note "stapling ticket"
-    xcrun stapler staple "$APP"
+    xcrun stapler staple "$APP" || die "could not staple $APP"
 fi
 
 note "packaging → $OUTPUT_DIR"
@@ -597,13 +643,11 @@ note "  wrote $ZIP"
 
 if [ "$MAKE_DMG" = 1 ]; then
     DMG="$OUTPUT_DIR/$APP_NAME.dmg"
-    stage="$(mktemp -d)"
-    cp -R "$APP" "$stage/$APP_NAME.app"
-    ln -s /Applications "$stage/Applications"
-    rm -f "$DMG"
-    hdiutil create -volname "$APP_NAME" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
-    rm -rf "$stage"
-    [ -n "$NOTARIZE_PROFILE" ] && xcrun stapler staple "$DMG" 2>/dev/null || true
+    mc_make_dmg "$APP" "$DMG" "$SIGN_ID"
+    if [ -n "$NOTARIZE_PROFILE" ]; then
+        mc_notarize "$DMG" "$NOTARIZE_PROFILE"
+        xcrun stapler staple "$DMG" || die "could not staple $DMG"
+    fi
     note "  wrote $DMG"
 fi
 

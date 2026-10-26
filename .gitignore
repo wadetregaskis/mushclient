@@ -2,6 +2,8 @@
 !.gitignore
 !.gitattributes
 !packaging/.build-*.sh
+!packaging/.sign-mac.sh
+!.github/
 
 #
 #  Help file is generated from database
@@ -111,6 +113,7 @@ packaging/python/
 packaging/tcl/
 packaging/ruby/
 packaging/openssl/
+packaging/wx/
 packaging/resources/
 .claude-audit/
 

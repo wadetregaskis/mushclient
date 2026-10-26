@@ -133,31 +133,47 @@ if(NOT WIN32)
     endif()
     find_package(ZLIB REQUIRED)
 
-    # libpng: on macOS find_package(PNG) can mis-detect a stale header dir
-    # (e.g. /Library/Frameworks/Mono.framework/Headers — libpng 1.4) while
-    # linking Homebrew's libpng 1.6, a latent header/ABI mismatch masked only
-    # by -isystem include ordering.  Steer detection to Homebrew's libpng so the
-    # header and library always match.  Uses `brew --prefix` so it works on both
-    # Apple Silicon (/opt/homebrew) and Intel (/usr/local).
-    if(APPLE)
-        find_program(BREW_EXECUTABLE brew)
-        if(BREW_EXECUTABLE)
-            execute_process(COMMAND ${BREW_EXECUTABLE} --prefix libpng
-                            OUTPUT_VARIABLE _png_prefix
-                            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-            if(_png_prefix AND EXISTS "${_png_prefix}/include/png.h")
-                set(PNG_ROOT "${_png_prefix}")
-                # Override any stale cached include dir from a prior configure.
-                set(PNG_PNG_INCLUDE_DIR "${_png_prefix}/include"
-                    CACHE PATH "libpng include dir" FORCE)
+    # libpng: by default the vendored png/ (libpng 1.6.x, the same copy the
+    # Windows build compiles) is built into the program -- the code includes its
+    # header as "png/png.h" either way, so this also keeps header and library the
+    # same version.  It is what makes the macOS package universal and macOS 11+
+    # (Homebrew's libpng is neither); the target is defined below, beside the
+    # other vendored libraries.  Distribution packagers who prefer the system
+    # library can turn this off.
+    option(MUSHCLIENT_SYSTEM_LIBPNG "Link the system libpng instead of the vendored png/" OFF)
+    if(MUSHCLIENT_SYSTEM_LIBPNG)
+        # libpng: on macOS find_package(PNG) can mis-detect a stale header dir
+        # (e.g. /Library/Frameworks/Mono.framework/Headers — libpng 1.4) while
+        # linking Homebrew's libpng 1.6, a latent header/ABI mismatch masked only
+        # by -isystem include ordering.  Steer detection to Homebrew's libpng so the
+        # header and library always match.  Uses `brew --prefix` so it works on both
+        # Apple Silicon (/opt/homebrew) and Intel (/usr/local).
+        if(APPLE)
+            find_program(BREW_EXECUTABLE brew)
+            if(BREW_EXECUTABLE)
+                execute_process(COMMAND ${BREW_EXECUTABLE} --prefix libpng
+                                OUTPUT_VARIABLE _png_prefix
+                                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+                if(_png_prefix AND EXISTS "${_png_prefix}/include/png.h")
+                    set(PNG_ROOT "${_png_prefix}")
+                    # Override any stale cached include dir from a prior configure.
+                    set(PNG_PNG_INCLUDE_DIR "${_png_prefix}/include"
+                        CACHE PATH "libpng include dir" FORCE)
+                endif()
             endif()
         endif()
+        find_package(PNG REQUIRED)
     endif()
-    find_package(PNG REQUIRED)
 
-    # Lua 5.1 — try several common names
-    find_package(Lua 5.1 QUIET)
-    if(NOT LUA_FOUND)
+    # Lua 5.1 — try several common names, unless asked to build it from source
+    # (the macOS release does: Homebrew's lua@5.1 is single-architecture and
+    # built for the build machine's macOS, so it cannot go into a universal,
+    # macOS 11+ program).
+    option(MUSHCLIENT_BUNDLED_LUA "Always build Lua 5.1.5 from source rather than use an installed one" OFF)
+    if(NOT MUSHCLIENT_BUNDLED_LUA)
+        find_package(Lua 5.1 QUIET)
+    endif()
+    if(NOT LUA_FOUND AND NOT MUSHCLIENT_BUNDLED_LUA)
         # Try pkg-config
         find_package(PkgConfig QUIET)
         if(PKG_CONFIG_FOUND)
@@ -176,10 +192,13 @@ if(NOT WIN32)
         # Lua scripting is disabled for this build (all other targets still build).
         include(FetchContent)
         set(FETCHCONTENT_UPDATES_DISCONNECTED ON)   # never re-download once cached
+        if(POLICY CMP0135)   # extracted files get the extraction time, so they rebuild
+            cmake_policy(SET CMP0135 NEW)
+        endif()
         FetchContent_Declare(
             lua51_src
             URL      https://www.lua.org/ftp/lua-5.1.5.tar.gz
-            URL_HASH MD5=2e115fe26e435a33deb048c90c3d78e0
+            URL_HASH SHA256=2640fc56a795f29d28ef15e13c34a47e223960b0240e8cb0a82d9b0738695333
         )
         FetchContent_GetProperties(lua51_src)
 
@@ -398,12 +417,30 @@ if(NOT WIN32)
         list(GET _rbdylib 0 RUBY_VENDORED_DYLIB)
         list(GET _rbapi   0 RUBY_INCLUDE_DIR)               # include/ruby-3.x.0
         set(RUBY_INCLUDE_DIRS "${RUBY_INCLUDE_DIR}")
-        # the arch-specific config.h lives one level deeper (…/<arch>-darwinNN)
-        file(GLOB _rbarch "${RUBY_INCLUDE_DIR}/*-darwin*")
-        if(_rbarch)
-            list(GET _rbarch 0 _rbarchdir)
-            list(APPEND RUBY_INCLUDE_DIRS "${_rbarchdir}")
+        # the arch-specific config.h lives one level deeper (…/<arch>-darwinNN).
+        # A universal Ruby (fetch-ruby.sh) has one such directory per
+        # architecture, and each half of a universal compile must see its own:
+        # -Xarch_<arch> hands the -I to that architecture only.
+        # Only the architectures this build compiles for: one gets a plain -I,
+        # several get one -Xarch_<arch> each (an -Xarch for an architecture not
+        # being built is an unused-argument warning).
+        set(_rb_build_archs "${CMAKE_OSX_ARCHITECTURES}")
+        if(NOT _rb_build_archs)
+            set(_rb_build_archs "${CMAKE_HOST_SYSTEM_PROCESSOR}")
         endif()
+        list(LENGTH _rb_build_archs _rb_build_n)
+        set(RUBY_ARCH_COMPILE_FLAGS "")
+        foreach(_a IN LISTS _rb_build_archs)
+            file(GLOB _d "${RUBY_INCLUDE_DIR}/${_a}-darwin*")
+            if(NOT _d)
+                continue()
+            endif()
+            if(_rb_build_n EQUAL 1)
+                list(APPEND RUBY_INCLUDE_DIRS "${_d}")
+            else()
+                string(APPEND RUBY_ARCH_COMPILE_FLAGS " -Xarch_${_a} -I${_d}")
+            endif()
+        endforeach()
         set(RUBY_VENDORED "${_rbv}")
         set(RUBY_ENGINE_FOUND TRUE)
         message(STATUS "Ruby found — vendored relocatable libruby (${RUBY_VENDORED_DYLIB})")
@@ -503,7 +540,9 @@ endif()
 add_library(mcsqlite3 STATIC sqlite3/sqlite3.c)
 target_include_directories(mcsqlite3 PUBLIC ${CMAKE_SOURCE_DIR}/sqlite3)
 if(NOT WIN32)
-    target_link_libraries(mcsqlite3 PUBLIC pthread dl)
+    if(NOT APPLE)   # on macOS both are part of libSystem
+        target_link_libraries(mcsqlite3 PUBLIC pthread dl)
+    endif()
     target_compile_options(mcsqlite3 PRIVATE -w)
 endif()
 
@@ -517,6 +556,19 @@ else()
     # On macOS/Linux, zlib is already found above as ZLIB::ZLIB
     add_library(mczlib INTERFACE)
     target_link_libraries(mczlib INTERFACE ZLIB::ZLIB)
+endif()
+
+# ── Vendored library: libpng (non-Windows; Windows compiles png/ itself) ──
+
+if(NOT WIN32 AND NOT MUSHCLIENT_SYSTEM_LIBPNG)
+    file(GLOB PNG_SOURCES ${CMAKE_SOURCE_DIR}/png/*.c)
+    add_library(mcpng STATIC ${PNG_SOURCES})
+    target_include_directories(mcpng PUBLIC ${CMAKE_SOURCE_DIR}/png)
+    target_link_libraries(mcpng PUBLIC mczlib)
+    # HAVE_CONFIG_H is defined globally for PCRE; libpng takes it as a cue to
+    # include an autoconf config.h it does not have.
+    target_compile_options(mcpng PRIVATE -w -UHAVE_CONFIG_H)
+    add_library(PNG::PNG ALIAS mcpng)
 endif()
 
 # ── Core portable library (non-Windows) ──────────────────────────────────
@@ -972,6 +1024,15 @@ if(NOT WIN32)
         set_source_files_properties(src/platform/perl_engine.cpp PROPERTIES
                                     COMPILE_FLAGS "${PERL_CCOPTS}")
         separate_arguments(PERL_LDOPTS_LIST UNIX_COMMAND "${PERL_LDOPTS}")
+        if(APPLE)
+            # Weak-link Apple's libperl.  Its path names the Perl version
+            # (/System/Library/Perl/5.34/...), which differs between macOS
+            # releases and may one day be gone (Apple has deprecated the bundled
+            # scripting runtimes).  Linked normally, a Mac without that exact
+            # version could not launch the app at all; weak-linked, the app starts
+            # and the Perl engine reports itself unavailable (perl_engine.cpp).
+            list(TRANSFORM PERL_LDOPTS_LIST REPLACE "^-lperl$" "-Wl,-weak-lperl")
+        endif()
         target_link_libraries(mushgui_adapters PUBLIC ${PERL_LDOPTS_LIST})
     endif()
 
@@ -1017,7 +1078,7 @@ if(NOT WIN32)
         target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_RUBY_SCRIPTING)
         set_source_files_properties(src/platform/ruby_engine.cpp PROPERTIES
                                     INCLUDE_DIRECTORIES "${RUBY_INCLUDE_DIRS}"
-                                    COMPILE_FLAGS "-Wno-register")
+                                    COMPILE_FLAGS "-Wno-register${RUBY_ARCH_COMPILE_FLAGS}")
         if(RUBY_VENDORED)
             target_link_libraries(mushgui_adapters PUBLIC "${RUBY_VENDORED_DYLIB}")
         else()

@@ -28,6 +28,7 @@
 #include <vector>
 #include <cstdint>
 #include <unistd.h>           // environ
+#include <dlfcn.h>            // dlsym: is the weak-linked libperl loaded?
 
 // MUSHclient defines WIN32 (no underscore) for source compatibility, but Perl's
 // headers read WIN32 as "native Windows build" and pull in win32thread.h /
@@ -294,6 +295,22 @@ void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
 // ── CScriptEngine Perl methods ──────────────────────────────────────────────
 void CScriptEngine::OpenPerl ()
   {
+#ifdef __APPLE__
+  // libperl is weak-linked (CMakeLists.txt): it is Apple's, at a path that names
+  // its version, so a Mac without that version still launches the app -- but
+  // then libperl was not loaded and calling into it would crash.  Ask the
+  // dynamic linker rather than test a weak symbol's address, which a compiler
+  // may assume is never null.
+  if (!dlsym (RTLD_DEFAULT, "perl_alloc"))
+    {
+    if (m_pDoc)
+      m_pDoc->ColourNote ("white", "red",
+        "Perl scripting is not available on this Mac: it uses the Perl that ships "
+        "with macOS, and this version of macOS does not include the one MUSHclient "
+        "was built with.");
+    return;
+    }
+#endif
   ensure_init ();
   CPerlEngine* e = new CPerlEngine ();
   e->doc = m_pDoc;

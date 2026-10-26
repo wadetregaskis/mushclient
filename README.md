@@ -21,10 +21,10 @@ The easiest way to get and run MUSHclient is to download a pre-compiled release 
 Pre-built binaries are available for:
 
 * **macOS**:
-  Download the `.dmg` installer. Open it and drag **MUSHclient.app** into your `Applications` folder. Compatible with Apple Silicon and Intel Macs.  Tested on macOS 15 Sequoia and later.
+  Download the `.dmg` installer. Open it and drag **MUSHclient.app** into your `Applications` folder. A universal app: runs natively on both Apple Silicon and Intel Macs, on macOS 11 Big Sur or later.  (Perl scripting uses the Perl built into macOS, so it is available only on macOS versions that include the same Perl version as the build — Perl 5.34 at present.)
 
-* **Linux (Debian, Ubuntu, Linux Mint, etc.)**:
-  Download the `.deb` package and install it with:
+* **Linux (Debian, Ubuntu, Linux Mint, etc.)**, for x86-64 (`amd64`) and ARM64 (`arm64`):
+  Download the `.deb` package for your architecture and install it with:
   ```bash
   sudo dpkg -i mushclient_*.deb
   # or

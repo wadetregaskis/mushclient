@@ -237,7 +237,7 @@ BOOL CPluginWizardPage3::OnInitDialog()
   	  m_ctlList.SetItemText(iItem, 1, t->trigger); 
   	  m_ctlList.SetItemText(iItem, 2, t->contents); 
   	  m_ctlList.SetItemText(iItem, 3, t->strGroup); 
-      m_ctlList.SetItemData (iItem, (unsigned long) t);
+      m_ctlList.SetItemData (iItem, (DWORD_PTR) t);
       m_ctlList.SetItemState (iItem, 0, LVIS_SELECTED);  // deselect
       }
     iItem++;   
@@ -417,7 +417,7 @@ BOOL CPluginWizardPage4::OnInitDialog()
   	  m_ctlList.SetItemText(iItem, 1, a->name); 
   	  m_ctlList.SetItemText(iItem, 2, a->contents); 
   	  m_ctlList.SetItemText(iItem, 3, a->strGroup); 
-      m_ctlList.SetItemData (iItem, (unsigned long) a);
+      m_ctlList.SetItemData (iItem, (DWORD_PTR) a);
       m_ctlList.SetItemState (iItem, 0, LVIS_SELECTED);  // deselect
       }
     iItem++;   
@@ -615,7 +615,7 @@ BOOL CPluginWizardPage5::OnInitDialog()
   	  m_ctlList.SetItemText(iItem, 1, strTimer); 
   	  m_ctlList.SetItemText(iItem, 2, t->strContents); 
   	  m_ctlList.SetItemText(iItem, 3, t->strGroup); 
-      m_ctlList.SetItemData (iItem, (unsigned long) t);
+      m_ctlList.SetItemData (iItem, (DWORD_PTR) t);
       m_ctlList.SetItemState (iItem, 0, LVIS_SELECTED);  // deselect
       }
     iItem++;   
@@ -832,7 +832,7 @@ BOOL CPluginWizardPage6::OnInitDialog()
     if (m_ctlList.InsertItem (iItem, v->strLabel) != -1)
       {
   	  m_ctlList.SetItemText(iItem, 1, v->strContents); 
-      m_ctlList.SetItemData (iItem, (unsigned long) v);
+      m_ctlList.SetItemData (iItem, (DWORD_PTR) v);
       m_ctlList.SetItemState (iItem, 0, LVIS_SELECTED);  // deselect
       }
     iItem++;   

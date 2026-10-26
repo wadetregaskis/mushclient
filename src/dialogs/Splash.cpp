@@ -239,7 +239,7 @@ CSize textsize;
 
 }
 
-void CSplashWnd::OnTimer(UINT nIDEvent)
+void CSplashWnd::OnTimer(UINT_PTR nIDEvent)
 {
 	// Destroy the splash screen window.
 	HideSplashScreen();

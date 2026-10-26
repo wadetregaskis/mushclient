@@ -5,8 +5,10 @@
    xmlns:asmv3="urn:schemas-microsoft-com:asm.v3"
    manifestVersion="1.0">
 
+    <!-- No processorArchitecture here: the attribute is optional, and this
+         one file is embedded into the Win32, x64 and ARM64 builds alike.
+         A hard-coded "x86" in a 64-bit image makes the loader refuse it. -->
     <assemblyIdentity
-        processorArchitecture="x86"
         version="6.0.0.0"
         type="win32"
         name="MUSHclient.exe"/>
@@ -50,7 +52,7 @@
                 type="win32"
                 name="Microsoft.Windows.Common-Controls"
                 version="6.0.0.0"
-                processorArchitecture="x86"
+                processorArchitecture="*"
                 publicKeyToken="6595b64144ccf1df"
                 language="*"
             />

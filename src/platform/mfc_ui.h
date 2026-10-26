@@ -5571,7 +5571,7 @@ public:
     virtual void OnDestroy() override {}
     virtual void OnSize(UINT, int, int) {}
     virtual void OnActivate(UINT, CWnd*, BOOL) {}
-    virtual void OnTimer(UINT) {}
+    virtual void OnTimer(UINT_PTR) {}   // UINT_PTR, as MFC declares it
     virtual void OnSysCommand(UINT, LPARAM) {}
     virtual void OnUpdateControlBarMenu(CCmdUI*) {}
     virtual BOOL OnBarCheck(UINT) { return FALSE; }

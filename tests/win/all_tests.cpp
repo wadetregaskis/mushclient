@@ -105,9 +105,22 @@ static void McTestPrintStack (const CONTEXT & context, int maxFrames)
   CONTEXT ctx = context;              // StackWalk64 modifies it
   STACKFRAME64 sf;
   memset (&sf, 0, sizeof sf);
+#if defined(_M_X64)
+  const DWORD machine = IMAGE_FILE_MACHINE_AMD64;
+  sf.AddrPC.Offset    = ctx.Rip;   sf.AddrPC.Mode    = AddrModeFlat;
+  sf.AddrFrame.Offset = ctx.Rbp;   sf.AddrFrame.Mode = AddrModeFlat;
+  sf.AddrStack.Offset = ctx.Rsp;   sf.AddrStack.Mode = AddrModeFlat;
+#elif defined(_M_ARM64)
+  const DWORD machine = IMAGE_FILE_MACHINE_ARM64;
+  sf.AddrPC.Offset    = ctx.Pc;    sf.AddrPC.Mode    = AddrModeFlat;
+  sf.AddrFrame.Offset = ctx.Fp;    sf.AddrFrame.Mode = AddrModeFlat;
+  sf.AddrStack.Offset = ctx.Sp;    sf.AddrStack.Mode = AddrModeFlat;
+#else
+  const DWORD machine = IMAGE_FILE_MACHINE_I386;
   sf.AddrPC.Offset    = ctx.Eip;   sf.AddrPC.Mode    = AddrModeFlat;
   sf.AddrFrame.Offset = ctx.Ebp;   sf.AddrFrame.Mode = AddrModeFlat;
   sf.AddrStack.Offset = ctx.Esp;   sf.AddrStack.Mode = AddrModeFlat;
+#endif
 
   char symbuf [sizeof (SYMBOL_INFO) + 512];
   SYMBOL_INFO * sym = (SYMBOL_INFO *) symbuf;
@@ -117,7 +130,7 @@ static void McTestPrintStack (const CONTEXT & context, int maxFrames)
 
   for (int frame = 0; frame < maxFrames; ++frame)
     {
-    if (!::StackWalk64 (IMAGE_FILE_MACHINE_I386, proc, thread, &sf, &ctx,
+    if (!::StackWalk64 (machine, proc, thread, &sf, &ctx,
                         NULL, ::SymFunctionTableAccess64, ::SymGetModuleBase64, NULL))
       break;
     if (sf.AddrPC.Offset == 0)
@@ -125,9 +138,9 @@ static void McTestPrintStack (const CONTEXT & context, int maxFrames)
 
     DWORD64 disp = 0;
     if (::SymFromAddr (proc, sf.AddrPC.Offset, &disp, sym))
-      fprintf (stderr, "  %2d  %s + 0x%lX", frame, sym->Name, (unsigned long) disp);
+      fprintf (stderr, "  %2d  %s + 0x%llX", frame, sym->Name, (unsigned long long) disp);
     else
-      fprintf (stderr, "  %2d  0x%08lX", frame, (unsigned long) sf.AddrPC.Offset);
+      fprintf (stderr, "  %2d  0x%08llX", frame, (unsigned long long) sf.AddrPC.Offset);
 
     IMAGEHLP_LINE64 line;
     DWORD lineDisp = 0;

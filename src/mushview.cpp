@@ -2227,7 +2227,7 @@ int line,
                           (const char *) strAction),
                           MB_ICONEXCLAMATION);
         else
-          if ((long) ShellExecute (Frame, _T("open"), strAction, NULL, NULL, SW_SHOWNORMAL) <= 32)
+          if ((INT_PTR) ShellExecute (Frame, _T("open"), strAction, NULL, NULL, SW_SHOWNORMAL) <= 32)
             ::UMessageBox(TFormat ("Unable to open the hyperlink \"%s\"",
                             (const char *) strAction),
                             MB_ICONEXCLAMATION);
@@ -4441,7 +4441,7 @@ CString strSelection;
     // fix problem with imbedded quotes
     strSelection.Replace ("\"", "\\\"");
 
-    if ((long) ShellExecute (Frame, _T("open"), strSelection, NULL, NULL, SW_SHOWNORMAL) <= 32)
+    if ((INT_PTR) ShellExecute (Frame, _T("open"), strSelection, NULL, NULL, SW_SHOWNORMAL) <= 32)
       ::UMessageBox(TFormat ("Unable to open the URL \"%s\"", (const char *) strSelection), 
                       MB_ICONEXCLAMATION);
     }   // end of non-empty selection
@@ -4483,7 +4483,7 @@ CString strSelection;
     if (strSelectionUpper.Left (7) != "MAILTO:")
       strSelection = "mailto:" + strSelection;
 
-    if ((long) ShellExecute (Frame, _T("open"), strSelection, NULL, NULL, SW_SHOWNORMAL) <= 32)
+    if ((INT_PTR) ShellExecute (Frame, _T("open"), strSelection, NULL, NULL, SW_SHOWNORMAL) <= 32)
       ::UMessageBox(TFormat ("Unable to send mail to \"%s\"", (const char *) strSelection), 
                       MB_ICONEXCLAMATION);
     }   // end of non-empty selection
@@ -5534,7 +5534,7 @@ ASSERT_VALID(pDoc);
                         (const char *) strAction), 
                         MB_ICONEXCLAMATION);
       else
-        if ((long) ShellExecute (Frame, _T("open"), strAction, NULL, NULL, SW_SHOWNORMAL) <= 32)
+        if ((INT_PTR) ShellExecute (Frame, _T("open"), strAction, NULL, NULL, SW_SHOWNORMAL) <= 32)
           ::UMessageBox(TFormat ("Unable to open the hyperlink \"%s\"", 
                           (const char *) strAction), 
                           MB_ICONEXCLAMATION);

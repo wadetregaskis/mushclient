@@ -3881,7 +3881,7 @@ void CMUSHclientDoc::EditFileWithEditor (CString strName)
             strArgument,   // argument
             NULL, SW_SHOWNORMAL);
 
-  if ((long) hInst <= 32)
+  if ((INT_PTR) hInst <= 32)
       ::UMessageBox(TFormat ("Unable to edit file %s.",
                   (LPCTSTR) strName), 
                      MB_ICONEXCLAMATION);

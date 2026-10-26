@@ -870,7 +870,7 @@ void CMainFrame::ProcessTimers (void)
   }  // end of CMainFrame::ProcessTimers
 
 // timers are pretty unreliable, so we'll just use them as a hint now to check the timer times
-void CMainFrame::OnTimer(UINT nIDEvent) 
+void CMainFrame::OnTimer(UINT_PTR nIDEvent) 
   {
 
   CheckTimerFallback ();
@@ -1302,7 +1302,7 @@ void CMainFrame::OnUpdateBtnWorldsWorld9(CCmdUI* pCmdUI)
 
 void CMainFrame::OnWebPage() 
 {
-if ((long) ShellExecute (Frame, _T("open"), MY_WEB_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
+if ((INT_PTR) ShellExecute (Frame, _T("open"), MY_WEB_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
             "Unable to open the Gammon Software Solutions web page: "
             MY_WEB_PAGE, 
@@ -1312,7 +1312,7 @@ if ((long) ShellExecute (Frame, _T("open"), MY_WEB_PAGE, NULL, NULL, SW_SHOWNORM
 
 void CMainFrame::OnHelpForum() 
 {
-if ((long) ShellExecute (Frame, _T("open"), MUSHCLIENT_FORUM_URL, NULL, NULL, SW_SHOWNORMAL) <= 32)
+if ((INT_PTR) ShellExecute (Frame, _T("open"), MUSHCLIENT_FORUM_URL, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
             "Unable to open the MUSHclient forum web page: "
             MUSHCLIENT_FORUM_URL, 
@@ -1321,7 +1321,7 @@ if ((long) ShellExecute (Frame, _T("open"), MUSHCLIENT_FORUM_URL, NULL, NULL, SW
 
 void CMainFrame::OnHelpFunctionswebpage() 
 {
-if ((long) ShellExecute (Frame, _T("open"), MUSHCLIENT_FUNCTIONS_URL, NULL, NULL, SW_SHOWNORMAL) <= 32)
+if ((INT_PTR) ShellExecute (Frame, _T("open"), MUSHCLIENT_FUNCTIONS_URL, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
             "Unable to open the MUSHclient forum web page: "
             MUSHCLIENT_FUNCTIONS_URL, 
@@ -1346,7 +1346,7 @@ void CMainFrame::OnViewResetToolbars()
 
 void CMainFrame::OnHelpMudlists() 
 {
-if ((long) ShellExecute (Frame, _T("open"), MUD_LIST, NULL, NULL, SW_SHOWNORMAL) <= 32)
+if ((INT_PTR) ShellExecute (Frame, _T("open"), MUD_LIST, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
               "Unable to open the MUD lists web page: "
               MUD_LIST, 
@@ -1512,7 +1512,7 @@ char sMessage [128];
 
 void CMainFrame::OnHelpBugreportsuggestion() 
 {
-if ((long) ShellExecute (Frame, _T("open"), BUG_REPORT_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
+if ((INT_PTR) ShellExecute (Frame, _T("open"), BUG_REPORT_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
             "Unable to open the Gammon Software Solutions Bug Report web page: "
             BUG_REPORT_PAGE, 
@@ -1962,7 +1962,7 @@ void CMainFrame::OnF1Test(void)
 
 void CMainFrame::OnHelpDocumentationwebpage() 
 {
-if ((long) ShellExecute (Frame, _T("open"), DOCUMENTATION_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
+if ((INT_PTR) ShellExecute (Frame, _T("open"), DOCUMENTATION_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
             "Unable to open the MUSHclient documentation web page: "
             DOCUMENTATION_PAGE, 
@@ -1972,7 +1972,7 @@ if ((long) ShellExecute (Frame, _T("open"), DOCUMENTATION_PAGE, NULL, NULL, SW_S
 
 void CMainFrame::OnHelpRegularexpressionswebpage() 
 {
-if ((long) ShellExecute (Frame, _T("open"), REGEXP_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
+if ((INT_PTR) ShellExecute (Frame, _T("open"), REGEXP_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
             "Unable to open the regular expressions web page: "
             REGEXP_PAGE, 
@@ -2371,7 +2371,7 @@ void CMainFrame::DoFixMenus(CCmdUI* pCmdUI)
 
 void CMainFrame::OnHelpPluginslist() 
 {
-if ((long) ShellExecute (Frame, _T("open"), PLUGINS_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
+if ((INT_PTR) ShellExecute (Frame, _T("open"), PLUGINS_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
             "Unable to open the plugins web page: "
             PLUGINS_PAGE, 

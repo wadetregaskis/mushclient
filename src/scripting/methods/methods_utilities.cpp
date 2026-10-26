@@ -467,7 +467,7 @@ CString strAction = URL;
         strAction.Left (7).CompareNoCase ("mailto:") != 0)
       return eBadParameter;
 
-    if ((long) ShellExecute (Frame, _T("open"), strAction, NULL, NULL, SW_SHOWNORMAL) <= 32)
+    if ((INT_PTR) ShellExecute (Frame, _T("open"), strAction, NULL, NULL, SW_SHOWNORMAL) <= 32)
       return eCouldNotOpenFile;
 
 	return eOK;

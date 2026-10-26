@@ -524,10 +524,15 @@ static SSL_CTX* make_tls_server_ctx(EVP_PKEY*& pkey, X509*& x)
     X509_gmtime_adj(X509_getm_notBefore(x), 0);
     X509_gmtime_adj(X509_getm_notAfter(x), 3600);
     X509_set_pubkey(x, pkey);
-    X509_NAME* name = X509_get_subject_name(x);
+    // A name of our own, set as subject AND issuer (both calls copy it).
+    // Not X509_get_subject_name + edit in place: OpenSSL 4 returns that
+    // as const X509_NAME*, so the old recipe no longer compiles there.
+    X509_NAME* name = X509_NAME_new();
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                (const unsigned char*)"localhost", -1, -1, 0);
+    X509_set_subject_name(x, name);
     X509_set_issuer_name(x, name);
+    X509_NAME_free(name);
     X509_sign(x, pkey, EVP_sha256());
     SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
     SSL_CTX_use_certificate(ctx, x);

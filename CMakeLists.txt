@@ -866,8 +866,18 @@ if(NOT WIN32)
             target_compile_definitions(${tgt} PRIVATE MUSHCLIENT_LUA_SCRIPTING)
         endif()
         if(OpenSSL_FOUND OR OPENSSL_FOUND)
-            target_include_directories(${tgt} PUBLIC ${OPENSSL_INCLUDE_DIR})
+            # BEFORE: /opt/homebrew/include is on the path for wx and libpng, and
+            # holds whichever OpenSSL Homebrew has *linked* -- which need not be
+            # the one found here (e.g. openssl@4 linked, openssl@3 pinned by
+            # packaging/.build-mac.sh).  The found headers must win.
+            target_include_directories(${tgt} BEFORE PUBLIC ${OPENSSL_INCLUDE_DIR})
             target_compile_definitions(${tgt} PRIVATE OPENSSL_FOUND)
+            # Lets posix_transport.cpp refuse to compile against headers from a
+            # different OpenSSL major than the library this links.
+            if(OPENSSL_VERSION MATCHES "^([0-9]+)\\.")
+                target_compile_definitions(${tgt} PRIVATE
+                    MC_OPENSSL_LINKED_MAJOR=${CMAKE_MATCH_1})
+            endif()
         endif()
     endmacro()
 

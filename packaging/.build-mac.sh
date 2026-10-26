@@ -126,6 +126,11 @@ cmake --build "$BUILD_DIR" --target mushgui -j"$JOBS"
 # 2. bundle Discworld plugins (optional) — done before signing so they're sealed
 # ════════════════════════════════════════════════════════════════════════════
 SEED="$APP/Contents/Resources/userdata-seed"
+# Start from nothing.  The build dir (and so $APP) is reused between runs and
+# only the executable is relinked, so without this a plain build that follows a
+# --with-discworld one would still ship the Discworld world, Quow's plugins, the
+# maps AND the auto-open marker -- i.e. silently be the Discworld edition.
+rm -rf "$SEED" "$APP/Contents/Resources/default-world"
 mkdir -p "$SEED/worlds/plugins"
 if [ -f "$REPO/packaging/bundled-plugins.txt" ]; then
     while IFS= read -r p || [ -n "$p" ]; do

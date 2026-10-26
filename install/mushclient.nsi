@@ -20,8 +20,49 @@ Caption "MUSHclient Installer"
 SetCompressor /SOLID lzma
 
 
+; Target architecture.  Plain "makensis mushclient.nsi" is the 32-bit
+; installer exactly as before.  "makensis /DARCH=x64 mushclient.nsi" (or
+; /DARCH=arm64) packages WinRel-x64 (WinRel-ARM64) and the DLLs that
+; packaging\windows\fetch-deps.ps1 built -- every DLL the installer ships must
+; match the exe's architecture.  See docs/WINDOWS-64BIT.md.  64-bit needs
+; NSIS 3.04+ (x64.nsh's IsNativeARM64).
+!ifndef ARCH
+  !define ARCH x86
+!endif
+!if "${ARCH}" == "x86"
+  !define BINDIR     "..\WinRel"
+  !define LUADLL     "..\WinRel\lua5.1.dll"
+  !define LUALIB     "..\src\lua5.1.lib"
+  !define LOCALEDIR  "..\WinRel\locale"
+  !define SOCKETCORE "..\lua\socket\core.dll"
+  !define MIMECORE   "..\lua\mime\core.dll"
+  !define OUTFILE    "mushclient50x.exe"
+  !define PROGDIR    "$PROGRAMFILES"
+  !define APPNAME    "MUSHclient"
+!else if "${ARCH}" == "x64"
+  !define PLAT x64
+!else if "${ARCH}" == "arm64"
+  !define PLAT ARM64
+!else
+  !error "ARCH must be x86, x64 or arm64"
+!endif
+!ifdef PLAT
+  !define DEPS       "..\packaging\windows\deps\${PLAT}"
+  !define BINDIR     "..\WinRel-${PLAT}"
+  !define LUADLL     "${DEPS}\bin\lua5.1.dll"
+  !define LUALIB     "${DEPS}\lib\lua5.1.lib"
+  !define LOCALEDIR  "${DEPS}\bin\locale"
+  !define SOCKETCORE "${DEPS}\bin\socket\core.dll"
+  !define MIMECORE   "${DEPS}\bin\mime\core.dll"
+  !define OUTFILE    "mushclient50x-${ARCH}.exe"
+  !define PROGDIR    "$PROGRAMFILES64"
+  !define APPNAME    "MUSHclient (${PLAT})"
+  !include "x64.nsh"
+  !include "LogicLib.nsh"
+!endif
+
 ; The file to write
-OutFile mushclient50x.exe
+OutFile ${OUTFILE}
 
 ; Modern interface settings
 !include "MUI.nsh"
@@ -45,7 +86,7 @@ OutFile mushclient50x.exe
 
 
 ; The default installation directory
-InstallDir $PROGRAMFILES\MUSHclient
+InstallDir ${PROGDIR}\MUSHclient
 
 ; Registry key to check for directory (so if you install again, it will
 ; overwrite the old one automatically)
@@ -75,6 +116,26 @@ CheckBitmap  "${NSISDIR}\Contrib\Graphics\Checks\simple-round2.bmp"
 
 Function .onInit
 
+!ifdef PLAT
+  ; A 64-bit exe cannot start on 32-bit Windows, and an ARM64 one only on
+  ; ARM64.  (x64 runs on ARM64 Windows 11 under emulation, so it is allowed.)
+  !if "${PLAT}" == "ARM64"
+    ${IfNot} ${IsNativeARM64}
+      MessageBox MB_OK|MB_ICONSTOP "This is the ARM64 build of MUSHclient; this computer is not ARM64."
+      Abort
+    ${EndIf}
+  !else
+    ${IfNot} ${RunningX64}
+      MessageBox MB_OK|MB_ICONSTOP "This is the 64-bit build of MUSHclient; it needs 64-bit Windows."
+      Abort
+    ${EndIf}
+  !endif
+  ; The installer itself is 32-bit: without this, HKLM writes land in
+  ; WOW6432Node.  (HKCU\Software is not redirected, so the preferences the
+  ; 32-bit and 64-bit builds read are the same keys.)
+  SetRegView 64
+!endif
+
 ; splash screen
 
 # the plugins dir is automatically deleted when the installer exits
@@ -102,11 +163,11 @@ Section "-MUSHclient program (required)"
 
   File "readme.txt" ; in install directory
 
-  File "..\WinRel\mushclient.exe"
+  File "${BINDIR}\mushclient.exe"
   ; File "..\MUSHclient.exe.manifest"
 
-  File "..\WinRel\lua5.1.dll"
-  File "..\src\lua5.1.lib"
+  File "${LUADLL}"
+  File "${LUALIB}"
   File "..\mushclient.HLP"
   File "..\help.db"
   File "..\docs\mushclient.cnt"
@@ -121,7 +182,7 @@ Section "-MUSHclient program (required)"
   WriteRegStr HKCU "Software\Gammon Software Solutions\MUSHclient\General Options" "InstallDir" $INSTDIR
 
   ; Write the uninstall keys for Windows
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient" "DisplayName" "MUSHclient"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient" "DisplayName" "${APPNAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient" "Publisher" "Nick Gammon"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient" "UninstallString" "$INSTDIR\uninstall.exe"
 
@@ -170,8 +231,8 @@ Section "-MUSHclient program (required)"
   SetOutPath $INSTDIR\locale
 
   File "..\Localize_template.lua"
-  File "..\WinRel\locale\en.dll"
-  File "..\WinRel\locale\en_small.dll"
+  File "${LOCALEDIR}\en.dll"
+  File "${LOCALEDIR}\en_small.dll"
   File "..\tools\count_locale_usage.lua"
   File "..\tools\detect_locale_changes.lua"
   File "..\docs\locale_notes.txt"
@@ -416,12 +477,12 @@ SetOverwrite ifnewer
   CreateDirectory "$INSTDIR\mime"
   SetOutPath $INSTDIR\mime
 
-   File "..\lua\mime\core.dll"
+   File "${MIMECORE}"
 
   CreateDirectory "$INSTDIR\socket"
   SetOutPath $INSTDIR\socket
 
-   File "..\lua\socket\core.dll"
+   File "${SOCKETCORE}"
    File "..\lua\socket\ftp.lua"
    File "..\lua\socket\http.lua"
    File "..\lua\socket\smtp.lua"
@@ -553,6 +614,12 @@ SectionEnd
 
 ; uninstall stuff
 UninstallText "Are you sure you want to remove MUSHclient and all of its components?"
+
+!ifdef PLAT
+Function un.onInit
+  SetRegView 64     ; the uninstall key was written to the 64-bit view
+FunctionEnd
+!endif
 
 ; special uninstall section.
 Section Uninstall

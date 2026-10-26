@@ -165,15 +165,12 @@ static void getparams()
 {
   extern char *optarg;
   extern int optind;
-  int firstfont,infoprint;
 
   fontdirname = DEFAULTFONTDIR;
-  firstfont = 1;
   deutschflag = 0;
   justification = -1;
   right2left = -1;
   paragraphflag = 0;
-  infoprint = -1;
   cmdinput = 0;
   outputwidth = DEFAULTCOLUMNS;
   

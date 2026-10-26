@@ -24,7 +24,9 @@ line, when required.
 
 */
 
+#ifdef _MSC_VER
 #pragma warning (disable : 4800)  // forcing value to bool 'true' or 'false' (performance warning)
+#endif
 
 
 static void WrapUpFind (CFindInfo & FindInfo)

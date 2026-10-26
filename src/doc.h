@@ -105,8 +105,13 @@ const char ENDLINE [] = "\r\n";         // line terminator
 const int VERSION = 15;                  // version number written to world file
 #define MAX_EXECUTION_DEPTH 20          // number of nested calls to world.Execute we permit
 
+// <sys/param.h> (macOS, BSD) defines the same two macros, equivalently.
+#ifndef MAX
 #define MAX(arg1, arg2) (((arg1) > (arg2)) ? (arg1) : (arg2))
+#endif
+#ifndef MIN
 #define MIN(arg1, arg2) (((arg1) < (arg2)) ? (arg1) : (arg2))
+#endif
 
 // definitions for Pueblo - see:
 //   http://www.chaco.com/pueblo/doc/manual/puebloPueblo_Enhancers_Guide.html

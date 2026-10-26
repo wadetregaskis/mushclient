@@ -569,7 +569,7 @@ void CMainFrame::OnClose()
 
   CancelSound ();
   // close any outstanding MCI devices
-  mciSendCommand(MCI_ALL_DEVICE_ID, MCI_CLOSE, MCI_WAIT, NULL);
+  mciSendCommand(MCI_ALL_DEVICE_ID, MCI_CLOSE, MCI_WAIT, 0);
 
   SaveBarState(szCtrlBars);
 
@@ -1402,7 +1402,7 @@ LRESULT CMainFrame::OnMCINotify(WPARAM wParam, LPARAM lParam)
   // don't close it if we already did (ie. after a STOP)
   if (wParam == MCI_NOTIFY_SUCCESSFUL)
     {
-    mciSendCommand(lParam, MCI_CLOSE, 0, NULL);
+    mciSendCommand(lParam, MCI_CLOSE, 0, 0);
     m_wDeviceID = 0;    // now can play another one
     }
   return 0;
@@ -1429,8 +1429,8 @@ void CMainFrame::CancelSound (void)
 #endif
   if (m_wDeviceID)
     {
-    mciSendCommand(m_wDeviceID, MCI_STOP, MCI_WAIT, NULL);
-    mciSendCommand(m_wDeviceID, MCI_CLOSE, MCI_WAIT, NULL);
+    mciSendCommand(m_wDeviceID, MCI_STOP, MCI_WAIT, 0);
+    mciSendCommand(m_wDeviceID, MCI_CLOSE, MCI_WAIT, 0);
     m_wDeviceID = 0;
     }   // end of stopping previous one
 
@@ -1468,10 +1468,10 @@ CString strType = strSound.Right (4);
   mciOpenParms.lpstrElementName = strSound;
 
 
-  if (dwReturn = mciSendCommand(NULL, 
+  if ((dwReturn = mciSendCommand(0, 
                                 MCI_OPEN,
                                 MCI_OPEN_ELEMENT,        
-                                (DWORD_PTR)(LPVOID) &mciOpenParms))
+                                (DWORD_PTR)(LPVOID) &mciOpenParms)))
     {
      ShowMCIError (dwReturn, strSound);
      return false;   // couldn't play it
@@ -1485,10 +1485,10 @@ CString strType = strSound.Right (4);
     mciPlayParms.dwCallback = (DWORD_PTR) Frame.m_hWnd;
 
     // play the file - our frame window will close it when finished
-    if (dwReturn = mciSendCommand(Frame.m_wDeviceID, MCI_PLAY, MCI_NOTIFY, 
-                      (DWORD_PTR)(LPSTR)&mciPlayParms))
+    if ((dwReturn = mciSendCommand(Frame.m_wDeviceID, MCI_PLAY, MCI_NOTIFY, 
+                      (DWORD_PTR)(LPSTR)&mciPlayParms)))
       {
-      mciSendCommand(Frame.m_wDeviceID, MCI_CLOSE, 0, NULL);  // close on error
+      mciSendCommand(Frame.m_wDeviceID, MCI_CLOSE, 0, 0);  // close on error
       Frame.m_wDeviceID = 0;
       ShowMCIError (dwReturn, strSound);
       return false;   // couldn't play it
@@ -1609,9 +1609,9 @@ void CMainFrame::OnViewFullscreenmode()
     CMDIChildWnd* pActiveWnd = MDIGetActive();
     
 	  if (pActiveWnd != NULL)
-		  pActiveWnd->OnUpdateFrameMenu(TRUE, pActiveWnd, NULL);
+		  pActiveWnd->OnUpdateFrameMenu(TRUE, pActiveWnd, 0);
     else
-      OnUpdateFrameMenu (NULL);   // select correct menu
+      OnUpdateFrameMenu (0);   // select correct menu
 
     SetWindowPlacement (&m_wpPrev);   // put window back, including maximised state
 
@@ -1637,7 +1637,7 @@ void CMainFrame::OnViewFullscreenmode()
 			// Invalidate before SetMenu since we are going to replace
 			//  the frame's client area anyway
 			Invalidate();
-			SetMenu(NULL);
+			SetMenu(0);
 			m_nIdleFlags &= ~idleMenu;  // avoid any idle menu processing
 		  }  // end of having a menu
 
@@ -1715,12 +1715,15 @@ BOOL OnNeedText(UINT id, NMHDR* pNMHDR, LRESULT* pResult)
 	CString strTipText; // used to hold final tool tip text before UNICODE conversion
 	TCHAR szFullText[256];
 
-	UINT nID = pNMHDR->idFrom;
-	if (pNMHDR->code == TTN_NEEDTEXTA && (pTTTA->uFlags & TTF_IDISHWND) ||
-		pNMHDR->code == TTN_NEEDTEXTW && (pTTTW->uFlags & TTF_IDISHWND))
+	// idFrom is a UINT_PTR: with TTF_IDISHWND it carries an HWND, which a UINT
+	// would truncate on 64-bit Windows.
+	UINT_PTR nIDFrom = pNMHDR->idFrom;
+	UINT nID = (UINT) nIDFrom;
+	if ((pNMHDR->code == TTN_NEEDTEXTA && (pTTTA->uFlags & TTF_IDISHWND)) ||
+		(pNMHDR->code == TTN_NEEDTEXTW && (pTTTW->uFlags & TTF_IDISHWND)))
 	{
 		// idFrom is actually the HWND of the tool
-		nID = ((UINT)(WORD)::GetDlgCtrlID((HWND)nID));
+		nID = ((UINT)(WORD)::GetDlgCtrlID((HWND)nIDFrom));
 	}
 
   int iWorld;
@@ -2170,7 +2173,7 @@ void CMainFrame::CollectWorldMenuItems (std::multimap<std::string, int> & sWorld
 
   POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
 
-	for (int nItem = 0; pos != NULL; nItem++)
+	while (pos != NULL)
 	  {
     CMUSHclientDoc* pDoc = (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
 
@@ -2297,7 +2300,7 @@ CMUSHclientDoc* pDoc = NULL;
 
   POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
 
-	for (int nItem = 0; pos != NULL; nItem++)
+	while (pos != NULL)
 	  {
     pDoc = (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
 

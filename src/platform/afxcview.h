@@ -7,14 +7,14 @@ class CListView : public CView {
     SHIM_RUNTIME_CLASS(CListView, CView)
 public:
     CListCtrl& GetListCtrl() { static CListCtrl s; return s; }
-    virtual void OnDestroy() {}
-    virtual void OnInitialUpdate() {}
+    virtual void OnDestroy() override {}
+    virtual void OnInitialUpdate() override {}
 };
 
 class CTreeView : public CView {
 public:
     CTreeCtrl& GetTreeCtrl() { static CTreeCtrl s; return s; }
-    virtual void OnDestroy() {}
-    virtual void OnInitialUpdate() {}
+    virtual void OnDestroy() override {}
+    virtual void OnInitialUpdate() override {}
 };
 #endif // !_WIN32

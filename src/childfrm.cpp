@@ -153,11 +153,6 @@ void CChildFrame::FixUpSplitterBar (void)
    if (m_pDoc)
      iDefaultHeight = (m_pDoc->m_InputFontHeight * 2) + 9;   // 2 lines plus 7 pixels for add, below
 
-   int iMinimumHeight = 15 + 9;
-
-   if (m_pDoc)
-     iMinimumHeight = m_pDoc->m_InputFontHeight + 9;   // 2 lines plus 7 pixels for add, below
-
 	CRect rectInside;
 	m_wndSplitter.GetClientRect(rectInside);
 	rectInside.InflateRect(-9, -9); // allow for borders and splitter bar

@@ -1544,6 +1544,10 @@ extern tVirtualKeyMapping VirtualKeys [];   // accelerators.cpp
 // engine can link CMUSHclientDoc::AcceleratorList, which is the only caller
 // outside the GUI.  Declared in stdafx.h.
 //
+// Windows' accelerator Shift flag.  <sys/param.h> on macOS/BSD has its own,
+// unrelated FSHIFT (11); see the note on the shim's definition in mfc_ui.h.
+static_assert (FSHIFT == 0x04, "FSHIFT is not the Windows accelerator flag here");
+
 CString KeyCodeToString (const BYTE fVirt, const WORD key)
   {
 

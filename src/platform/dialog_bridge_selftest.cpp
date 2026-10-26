@@ -175,7 +175,7 @@ public:
     afx_msg void OnMappedSelectAll(){ rec("mapped:SELECT_ALL"); }
     afx_msg void OnUpdateAny(CCmdUI* pCmdUI);
 
-    DECLARE_MESSAGE_MAP()
+    DECLARE_MESSAGE_MAP_OVERRIDE()
 };
 
 BEGIN_MESSAGE_MAP(CCmdRoutingProbe, CDialog)
@@ -537,7 +537,7 @@ public:
         m_rclickItem = (int) ((NMITEMACTIVATE*) pNMHDR)->iItem;
         *pResult = 0;
     }
-    DECLARE_MESSAGE_MAP()
+    DECLARE_MESSAGE_MAP_OVERRIDE()
 };
 
 BEGIN_MESSAGE_MAP(CRClickProbe, CDialog)
@@ -596,7 +596,7 @@ public:
     void OnDestroy() override { rec("reload:destroy"); }
 
     afx_msg void OnUpdateAny(CCmdUI*);
-    DECLARE_MESSAGE_MAP()
+    DECLARE_MESSAGE_MAP_OVERRIDE()
 
     // The abstract half of CGenPropertyPage.  None of it is reached with an
     // empty object map — LoadList's per-item loop never runs — so these exist
@@ -745,7 +745,7 @@ public:
     }
     void OnOK()      override { rec(m_tag + ":ok"); }
     void OnDestroy() override { rec(m_tag + ":destroy"); m_hWndAtDestroy = m_hWnd; }
-    DECLARE_MESSAGE_MAP()
+    DECLARE_MESSAGE_MAP_OVERRIDE()
 };
 
 BEGIN_MESSAGE_MAP(CLifecyclePage, CPropertyPage)

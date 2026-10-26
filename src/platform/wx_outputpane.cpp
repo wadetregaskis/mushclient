@@ -2065,7 +2065,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
         dc.SetDeviceClippingRegion(wxRegion(trL, trT, trR - trL, trB - trT));
 
     m_anyFading = false;      // recomputed by the DrawLine calls below
-    if (!LineCountI() == 0 && m_lineH > 0) {
+    if (LineCountI() != 0 && m_lineH > 0) {
         // Rows are drawn within the text viewport: the rectangle's height when a
         // plugin reserved one, else the client (less the hint bar when showing).
         int usableH = trActive ? (trB - trT)
@@ -2125,7 +2125,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
     // (handled in OnLeftDown) or pressing Escape in the input bar snaps the
     // view back to the live bottom.  Drawn after miniwindows so it's always
     // on top.  Uses client coordinates (device origin reset to 0,0).
-    if (!m_autoScroll && !LineCountI() == 0) {
+    if (!m_autoScroll && LineCountI() != 0) {
         dc.SetDeviceOrigin(0, 0);
 
         // Background bar.
@@ -2807,7 +2807,7 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
                    pal::clampToDeviceExtent(totalH64 + (clientH - TextViewportH())
                                                      + m_pixelOffset));
 
-    if (scrollToBottom && !LineCountI() == 0) {
+    if (scrollToBottom && LineCountI() != 0) {
         int unitH;
         GetScrollPixelsPerUnit(nullptr, &unitH);
         if (unitH > 0) {
@@ -3196,7 +3196,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     // The hint bar is painted on top of everything (miniwindows included), so
     // its click region takes priority.  We check it before the miniwindow hit
     // test so the visual layering is respected.
-    if (!m_autoScroll && !LineCountI() == 0) {
+    if (!m_autoScroll && LineCountI() != 0) {
         int clientH;
         GetClientSize(nullptr, &clientH);
         if (evt.GetY() >= clientH - kHintBarH) {
@@ -3209,7 +3209,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     // ── Triple-click: select the entire line ──────────────────────────────────
     // wxWidgets has no EVT_LEFT_TCLICK.  Detect triple-click as a left-down
     // that arrives within 500 ms of the last double-click on the same line.
-    if (!LineCountI() == 0 && m_lastDClickLine >= 0) {
+    if (LineCountI() != 0 && m_lastDClickLine >= 0) {
         wxLongLong elapsed = wxGetLocalTimeMillis() - m_lastDClickTimeMs;
         int clickLine = YToLine(evt.GetY());
         if (elapsed < 500 && clickLine == m_lastDClickLine) {
@@ -3253,7 +3253,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     // that the user can still select/copy link text by dragging over it.
     // XToChar returns the absolute character column within the logical line,
     // correctly accounting for visual-row wrapping.
-    if (m_lineH > 0 && !LineCountI() == 0) {
+    if (m_lineH > 0 && LineCountI() != 0) {
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < LineCountI()) {
             int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY(),
@@ -3716,7 +3716,7 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         //   4. Anywhere else → I-beam text cursor.
         int clientH;
         GetClientSize(nullptr, &clientH);
-        if (!m_autoScroll && !LineCountI() == 0 &&
+        if (!m_autoScroll && LineCountI() != 0 &&
             evt.GetY() >= clientH - kHintBarH)
         {
             SetCursor(wxCursor(wxCURSOR_HAND));
@@ -4228,7 +4228,7 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
 
     // Escape: scroll to bottom (if paused) then return focus to the input bar.
     if (code == WXK_ESCAPE) {
-        if (!m_autoScroll && !LineCountI() == 0) ScrollToBottom();
+        if (!m_autoScroll && LineCountI() != 0) ScrollToBottom();
         if (m_fn_return_focus) m_fn_return_focus();
         return;
     }

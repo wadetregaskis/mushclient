@@ -75,8 +75,8 @@ void CMUSHclientDoc::SetTrace(BOOL bNewValue)
 bNewValue = bNewValue != 0;   // make boolean
 
 // if they are changing the value - go ahead and do it
-if (bNewValue && !m_bTrace ||
-    !bNewValue && m_bTrace)
+if ((bNewValue && !m_bTrace) ||
+    (!bNewValue && m_bTrace))
   OnGameTrace ();
 
 } // end of CMUSHclientDoc::SetTrace

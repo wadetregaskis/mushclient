@@ -22,7 +22,9 @@ Copyright (C) 2000 Nick Gammon.
 #include "dialogs/GoToLineDlg.h"
 #include "dialogs/LuaGsubDlg.h"
 
+#ifdef _MSC_VER
 #pragma warning( disable : 4100)  // unreferenced formal parameter
+#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -449,7 +451,7 @@ char cLastChar = ' ';
       // leave it in - it will be a new paragraph
       const char * p = pOld;
       while (*p == ' ' || *p == '\t')
-        *p++;
+        p++;
       if (p [0] == '\r' && p [1] == '\n')
         {
         pOld = p + 2;   // bypass carriage-return/linefeed

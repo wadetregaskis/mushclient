@@ -74,7 +74,7 @@ void ReadNames (const LPCTSTR sName, const bool bNoDialog)
     CStdioFile f (strFileName, CFile::modeRead|CFile::shareDenyNone|CFile::typeText);
   
     // look for [start]
-    while (bOK = f.ReadString (sBuf))
+    while ((bOK = f.ReadString (sBuf)))
       {
       sBuf.TrimRight ();
       sBuf.TrimLeft ();
@@ -89,7 +89,7 @@ void ReadNames (const LPCTSTR sName, const bool bNoDialog)
       ThrowErrorException ("No [start] in names file");
 
     // look for [middle]
-    while (bOK = f.ReadString (sBuf))
+    while ((bOK = f.ReadString (sBuf)))
       {
       sBuf.TrimRight ();
       sBuf.TrimLeft ();              
@@ -108,7 +108,7 @@ void ReadNames (const LPCTSTR sName, const bool bNoDialog)
       ThrowErrorException ("No names in [start] section of names file");
 
     // look for [end]
-    while (bOK = f.ReadString (sBuf))
+    while ((bOK = f.ReadString (sBuf)))
       {
       sBuf.TrimRight ();
       sBuf.TrimLeft ();
@@ -127,7 +127,7 @@ void ReadNames (const LPCTSTR sName, const bool bNoDialog)
       ThrowErrorException ("No names in [middle] section of names file");
 
     // look for [stop]
-    while (bOK = f.ReadString (sBuf))
+    while ((bOK = f.ReadString (sBuf)))
       {
       sBuf.TrimRight ();
       sBuf.TrimLeft ();

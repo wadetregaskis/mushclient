@@ -743,6 +743,7 @@ void CSendView::SendCommand (const CString strOriginalCommand,
 
   // remove this command, unless we are supposed to keep it
   if (!bSavePrevious)
+    {
     if (pDoc->m_bAutoRepeat && !pDoc->m_bNoEcho)    // auto repeat re-enters the last command
       {
       SetCommand (strOriginalCommand);
@@ -751,6 +752,7 @@ void CSendView::SendCommand (const CString strOriginalCommand,
       }
     else
       SetCommand ("");
+    }
 
   // unpause the output window if wanted
   if (pDoc->m_bUnpauseOnSend && m_topview->m_freeze)

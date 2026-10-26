@@ -47,6 +47,7 @@ public:
 
     // Set font properties.  size=0 keeps the current size.
     // style bits: 1=bold, 2=italic, 4=underline, 8=strikeout.
+    using wxFrame::SetFont;   // wxWindow::SetFont(const wxFont&) stays callable
     void SetFont(const std::string& face, int size, int style, int charset);
 
     // Set or clear read-only mode.

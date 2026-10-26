@@ -938,14 +938,16 @@ bool bChanged;
                 (LPCTSTR) m_strOurChatName));
       else
       if (strOptionName == "private")
-         if (iValue)
+        {
+        if (iValue)
          chat_item->SendChatMessage (CHAT_MESSAGE, 
              TFormat ("%s has marked your connection as private", 
                 (LPCTSTR) m_strOurChatName));
-      else
+        else
          chat_item->SendChatMessage (CHAT_MESSAGE, 
              TFormat ("%s has marked your connection as public", 
                 (LPCTSTR) m_strOurChatName));
+        }
 
       }  // end of succesfully changing the option
 
@@ -982,6 +984,7 @@ bool bChanged;
       {
 
       if (strOptionName == "group")
+        {
         if (strlen (Value) > 0)
          chat_item->SendChatMessage (CHAT_MESSAGE, 
              TFormat ("%s has added you to the group %s", 
@@ -990,6 +993,7 @@ bool bChanged;
          chat_item->SendChatMessage (CHAT_MESSAGE, 
              TFormat ("%s has removed you from the chat group", 
                 (LPCTSTR) m_strOurChatName));
+        }
       }  // end of succesfully changing the option
 
       return iResult;

@@ -425,10 +425,12 @@ CMUSHclientDoc * CTextDocument::FindWorld (void)
 
     // it might be the same pointer, but is it the same *world*?
     if (pDoc == m_pRelatedWorld)
+      {
       if (pDoc->m_iUniqueDocumentNumber == m_iUniqueDocumentNumber)
         return pDoc;
       else
         return NULL;    // no, unique ID number has changed
+      }
     } // end of doing each document
 
   return NULL;    // no longer in world list

@@ -300,18 +300,20 @@ inline LPTSTR lstrcpyn(LPTSTR dst, LPCTSTR src, int n) {
 inline BOOL AfxIsValidString(LPCTSTR /*psz*/, int /*nLength*/ = -1) { return TRUE; }
 #endif
 
-// TRACE0-TRACE3 macros
+// TRACE0-TRACE3 macros.  Compiled out, but the arguments are named inside an
+// unevaluated sizeof: a variable whose only reader is a TRACE (as on Windows,
+// where these print in debug builds) is then not "set but never used".
 #ifndef TRACE0
 #  define TRACE0(s)             ((void)0)
 #endif
 #ifndef TRACE1
-#  define TRACE1(fmt, a)        ((void)0)
+#  define TRACE1(fmt, a)        ((void)sizeof(a))
 #endif
 #ifndef TRACE2
-#  define TRACE2(fmt, a, b)     ((void)0)
+#  define TRACE2(fmt, a, b)     ((void)sizeof(a), (void)sizeof(b))
 #endif
 #ifndef TRACE3
-#  define TRACE3(fmt, a, b, c)  ((void)0)
+#  define TRACE3(fmt, a, b, c)  ((void)sizeof(a), (void)sizeof(b), (void)sizeof(c))
 #endif
 
 // _stricmp / _strnicmp — MSVC names for POSIX strcasecmp / strncasecmp

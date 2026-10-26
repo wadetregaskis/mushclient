@@ -476,7 +476,7 @@ BOOL CALLBACK PrintingAbortProc(HDC, int)
 
 	MSG msg;
 	while (!bAborted &&
-		::PeekMessage(&msg, NULL, NULL, NULL, PM_NOREMOVE))
+		::PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE))
 	{
 		if (!AfxGetThread()->PumpMessage())
 			return FALSE;   // terminate if WM_QUIT received

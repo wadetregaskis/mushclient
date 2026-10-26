@@ -701,10 +701,12 @@ int nItem,
     // mucking around to make it plural properly
     CString sName =  m_strObjectType;
     if ((iCount + iGroupCount) > 1)
+      {
       if (sName == "alias")
         sName += "es";
       else
         sName += "s";
+      }
 
     if (::UMessageBox (TFormat ("Delete %i %s - are you sure?",
         iCount + iGroupCount, (LPCTSTR) sName), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2)

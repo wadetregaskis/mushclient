@@ -26,7 +26,7 @@ public:
 	//}}AFX_VIRTUAL
 #ifndef _WIN32
 public:
-	virtual INT_PTR DoModal() override;
+	virtual INT_PTR DoModal();   // no `override`: the class's canonical members carry none
 #endif
 
 // Implementation

@@ -152,7 +152,7 @@ bool bReplace = false;
     strTimerName.Format ("*timer%010ld", CTimer::GetNextTimerSequence ()); 
   else
     // return if bad name
-    if (nStatus = CheckObjectName (strTimerName))
+    if ((nStatus = CheckObjectName (strTimerName)))
       return nStatus;
 
   // if it already exists, error

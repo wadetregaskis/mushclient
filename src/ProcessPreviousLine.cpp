@@ -190,7 +190,6 @@ bool CMUSHclientDoc::ProcessPreviousLine (void)
 POSITION pos, 
          prevpos = NULL;
 int flags = NOTE_OR_COMMAND;
-int iLineCount = 0;
 
 CString strCurrentLine;   // we will assemble the full line here
 CPaneLine StyledLine;     // and here, with style information
@@ -283,7 +282,6 @@ assemble the full text of the original line.
      }
 
    flags = pLine->flags;    // flags should be the same for all lines
-   iLineCount++;    // count lines in this batch
    if (pLine->hard_return)    // just in case we erroneously end up at start of file
      break;
    }

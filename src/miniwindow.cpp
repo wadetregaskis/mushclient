@@ -2022,6 +2022,8 @@ long CMiniWindow::CreateImage(LPCTSTR ImageId, long Row1, long Row2, long Row3, 
       {\
       long base = row * perline;\
       unsigned char rA, gA, bA, rB, gB, bB; \
+      /* each mode reads only some channels */ \
+      (void) rA; (void) gA; (void) bA; (void) rB; (void) gB; (void) bB; \
       if (Opacity < 1.0) \
         for (i = 0; i < perline - 2; ) \
           {\

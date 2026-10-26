@@ -11,7 +11,9 @@
 static char THIS_FILE[] = __FILE__;
 #endif
 
+#ifdef _MSC_VER
 #pragma warning (disable : 4800)  // forcing value to bool 'true' or 'false' (performance warning)
+#endif
 
 /////////////////////////////////////////////////////////////////////////////
 // CFunctionListDlg dialog

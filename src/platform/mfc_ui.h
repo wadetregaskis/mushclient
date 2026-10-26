@@ -551,6 +551,11 @@ inline BOOL _TrackMouseEvent(TRACKMOUSEEVENT*) { return TRUE; }
 // Accelerator table flags
 #ifndef FVIRTKEY
 #  define FVIRTKEY  0x01
+// <sys/param.h> on macOS/BSD defines FSHIFT as 11 (the load average's fixed
+// point), which is not this flag at all.  utilities_shared.cpp static_asserts
+// the value where accelerators are decoded, so an include-order change that
+// lets the system value win fails the build rather than the Shift key.
+#  undef  FSHIFT
 #  define FSHIFT    0x04
 #  define FCONTROL  0x08
 #  define FALT      0x10
@@ -1737,6 +1742,13 @@ public:
 public: \
     static const AFX_MSGMAP* GetThisMessageMap(); \
     virtual const AFX_MSGMAP* GetMessageMap() const;
+// Port-only: the same, for a class that marks its overrides `override` --
+// clang warns (-Winconsistent-missing-override) when one class mixes both.
+// Not for canonical MFC classes, which never use `override`.
+#define DECLARE_MESSAGE_MAP_OVERRIDE() \
+public: \
+    static const AFX_MSGMAP* GetThisMessageMap(); \
+    const AFX_MSGMAP* GetMessageMap() const override;
 
 #define BEGIN_MESSAGE_MAP(theClass, baseClass) \
     const AFX_MSGMAP* theClass::GetMessageMap() const { return theClass::GetThisMessageMap(); } \
@@ -2917,11 +2929,12 @@ public:
         }
         return !rString.IsEmpty();
     }
-    bool ReadString(LPTSTR buf, UINT max) {
-        if (!m_fp || max == 0) return false;
-        if (fgets(buf, (int)max, m_fp) == nullptr) return false;
+    // Returns the buffer, or NULL at end of file, as MFC's does.
+    LPTSTR ReadString(LPTSTR buf, UINT max) {
+        if (!m_fp || max == 0) return nullptr;
+        if (fgets(buf, (int)max, m_fp) == nullptr) return nullptr;
         McTextModeCollapse(buf);
-        return true;
+        return buf;
     }
     void WriteString(LPCTSTR str) {
         // MFC-faithful: throws on a failed write (see CFile::Write above).
@@ -3094,8 +3107,9 @@ public:
         }
         return !str.IsEmpty();
     }
-    bool ReadString(LPTSTR buf, UINT max) {
-        if (!m_pFile || !buf || max == 0) return false;
+    // Returns the buffer, or NULL, as MFC's does.
+    LPTSTR ReadString(LPTSTR buf, UINT max) {
+        if (!m_pFile || !buf || max == 0) return nullptr;
         UINT i = 0;
         char ch;
         while (i + 1 < max && m_pFile->Read(&ch, 1) == 1) {
@@ -3103,7 +3117,7 @@ public:
             if (ch != '\r') buf[i++] = ch;
         }
         buf[i] = '\0';
-        return i > 0;
+        return i > 0 ? buf : nullptr;
     }
     void WriteString(LPCTSTR str) {
         if (m_pFile && str) m_pFile->Write(str, (UINT)strlen(str));
@@ -3396,7 +3410,8 @@ class CView : public CWnd {
     SHIM_RUNTIME_CLASS(CView, CWnd)
 public:
     CDocument* m_pDocument = nullptr;
-    virtual CDocument* GetDocument() const { return m_pDocument; }
+    // Not virtual, as in MFC: views shadow it with a typed GetDocument().
+    CDocument* GetDocument() const { return m_pDocument; }
 
     // Standard MFC command handlers referenced by message maps (stubs on the
     // port — printing goes through wx / is unsupported here).
@@ -3521,7 +3536,7 @@ public:
     void OnEditPaste() {}
     void OnEditCut() {}
     void OnEditUndo() {}
-    virtual void OnDestroy() {}
+    virtual void OnDestroy() override {}
     BOOL OnChange() { return TRUE; }
     // SetTabStops — MFC CEditView configures tab width on the embedded CEdit.
     void SetTabStops(int) {}
@@ -3607,7 +3622,9 @@ public:
     CWnd* m_pParentWnd = nullptr;
 
     // Modeless dialog support
-    virtual BOOL Create(UINT, CWnd* = nullptr)   { return FALSE; }
+    // Not virtual: nothing overrides it, and CProgressDlg::Create(CWnd*) hides it
+    // by design (adding it back with `using` makes Create(NULL) ambiguous).
+    BOOL Create(UINT, CWnd* = nullptr)   { return FALSE; }
     virtual BOOL CreateIndirect(LPVOID, CWnd*, HINSTANCE=nullptr) { return FALSE; }
     BOOL   DestroyWindow() { return FALSE; }
 
@@ -3615,8 +3632,8 @@ public:
     BOOL IsDialogMessage(MSG* pMsg) { return FALSE; }
 
     // Overridable window event handlers
-    virtual int  OnCreate(CREATESTRUCT*) { return 0; }
-    virtual void OnDestroy()  {}
+    virtual int  OnCreate(CREATESTRUCT*) override { return 0; }
+    virtual void OnDestroy() override {}
     virtual void OnSize(UINT, int, int) {}
     virtual void OnHScroll(UINT, UINT, CScrollBar*) {}
     virtual void OnSysCommand(UINT, LPARAM) {}
@@ -5372,8 +5389,8 @@ public:
     virtual BOOL OnSetActive()   { return TRUE; }
     virtual BOOL OnKillActive()  { return TRUE; }
     virtual void OnReset()       {}
-    virtual void OnOK()          {}
-    virtual void OnCancel()      {}
+    virtual void OnOK() override {}
+    virtual void OnCancel() override {}
     virtual BOOL OnApply()       { return TRUE; }
     void CancelToClose()         {}   // changes Cancel→Close once changes applied
     void SetModified(BOOL=TRUE)  {}
@@ -5432,7 +5449,7 @@ public:
     virtual void OnLButtonUp(UINT, CPoint) {}
     virtual void OnMouseMove(UINT, CPoint) {}
     virtual void OnPaint() {}
-    virtual BOOL OnEraseBkgnd(CDC*) { return FALSE; }
+    virtual BOOL OnEraseBkgnd(CDC*) override { return FALSE; }
     virtual void OnSelchangeTab(NMHDR*, LRESULT*) {}
     // Property page helpers
     CPropertyPage* GetPage(CPropertyPage*) const { return nullptr; }
@@ -5509,9 +5526,9 @@ public:
     // Windows calls OnUpdateFrameMenu(bActive, pActivateWnd, hMenuAlt)
     virtual void OnUpdateFrameMenu(BOOL, CWnd*, HMENU) {}
     virtual BOOL PreCreateWindow(CREATESTRUCT&) { return TRUE; }
-    virtual BOOL OnCreateClient(LPCREATESTRUCT, void*) { return TRUE; }
+    virtual BOOL OnCreateClient(LPCREATESTRUCT, CCreateContext*) { return TRUE; }  // MFC's signature
     virtual void OnClose() {}
-    virtual void OnDestroy() {}
+    virtual void OnDestroy() override {}
     virtual void OnSize(UINT, int, int) {}
     virtual void OnActivate(UINT, CWnd*, BOOL) {}
 };
@@ -5551,7 +5568,7 @@ public:
     virtual void OnUpdateFrameTitle(BOOL) {}
     // Message handlers (overridable by CMainFrame)
     virtual void OnClose() {}
-    virtual void OnDestroy() {}
+    virtual void OnDestroy() override {}
     virtual void OnSize(UINT, int, int) {}
     virtual void OnActivate(UINT, CWnd*, BOOL) {}
     virtual void OnTimer(UINT) {}
@@ -7577,6 +7594,9 @@ inline char* _wcstombsz(char* dst, const wchar_t* src, size_t n) {
 #  define GCL_HCURSOR   (-12)
 #  define GCL_STYLE     (-26)
 #endif
+#ifndef GCLP_HICONSM   // the pointer-sized GetClassLongPtr index
+#  define GCLP_HICONSM  (-34)
+#endif
 
 // ── GetWindow / GetNextWindow ─────────────────────────────────────────────
 #ifndef GW_HWNDNEXT
@@ -7717,6 +7737,7 @@ inline BOOL    LocalUnlock(HLOCAL)           { return FALSE; }
 // ── Global Win32 function stubs ───────────────────────────────────────────
 inline BOOL   BringWindowToTop(HWND)                     { return FALSE; }
 inline LONG   GetClassLong(HWND, int)                    { return 0; }
+inline ULONG_PTR GetClassLongPtr(HWND, int)               { return 0; }
 inline int    GetClassName(HWND, LPTSTR, int)            { return 0; }
 inline HWND   GetNextWindow(HWND, UINT)                  { return nullptr; }
 inline HWND   GetParent(HWND)                            { return nullptr; }

@@ -26,7 +26,7 @@ CVariable * variable_item;
 long nStatus;
 
   // return if bad name
-  if (nStatus = CheckObjectName (strVariableName))
+  if ((nStatus = CheckObjectName (strVariableName)))
     return nStatus;
 
   // get rid of old variable, if any
@@ -123,7 +123,7 @@ CVariable * variable_item;
 long nStatus;
 
   // return if bad name
-  if (nStatus = CheckObjectName (strVariableName))
+  if ((nStatus = CheckObjectName (strVariableName)))
     return nStatus;
 
   if (!GetVariableMap ().Lookup (strVariableName, variable_item))

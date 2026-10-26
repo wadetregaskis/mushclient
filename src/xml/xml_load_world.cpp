@@ -745,6 +745,9 @@ POSITION lpos;
   for (lpos = m_strCurrentIncludeFileList.GetHeadPosition (); lpos; )
     strIncludeList.AddTail (m_strCurrentIncludeFileList.GetNext (lpos));
 
+  CProgressDlg * pDlg = NULL;
+  
+#if IT_GET_GOATS_BLOOD_OUT   // defined nowhere: this progress dialog never shows
   int iCount = 0;
 
   if (bPlugins)
@@ -757,9 +760,6 @@ POSITION lpos;
       }
     }
 
-  CProgressDlg * pDlg = NULL;
-  
-#if IT_GET_GOATS_BLOOD_OUT
   if (iCount)
     {
     pDlg = new CProgressDlg;

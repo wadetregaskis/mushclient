@@ -335,10 +335,12 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
         {
         result.ChangeType (VT_I4);  // make a long
         if (result.vt == VT_I4)   // conversion successful
+          {
           if (result.lVal)        // return if non-zero
             return true;
           else
             return false;
+          }
         }  // end of having some sort of result
 
       }  // end of not Lua
@@ -436,10 +438,12 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
       {
       result.ChangeType (VT_I4);  // make a long
       if (result.vt == VT_I4)   // conversion successful
+        {
         if (result.lVal)        // return if non-zero
           return true;
         else
           return false;
+        }
       }  // end of having some sort of result
 
     }   // end of having a script engine
@@ -528,10 +532,12 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
       {
       result.ChangeType (VT_I4);  // make a long
       if (result.vt == VT_I4)   // conversion successful
+        {
         if (result.lVal)        // return if non-zero
           return true;
         else
           return false;
+        }
       }  // end of having some sort of result
 
     }   // end of having a script engine
@@ -625,10 +631,12 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
       {
       result.ChangeType (VT_I4);  // make a long
       if (result.vt == VT_I4)   // conversion successful
+        {
         if (result.lVal)        // return if non-zero
           return true;
         else
           return false;
+        }
       }  // end of having some sort of result
 
     }   // end of having a script engine

@@ -75,7 +75,7 @@ char c;
 long length;
 
   p = start = strMessage;
-  while (c = *p)
+  while ((c = *p))
     {
     if (c == ESC)
       {

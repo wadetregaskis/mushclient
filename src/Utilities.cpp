@@ -1618,7 +1618,7 @@ CString TFormat (const char * sFormat, ...)
         {
         // single character (pushed as a number - see definition for %c)
         case 'c':
-          cArg = va_arg (sstrings, char);
+          cArg = (char) va_arg (sstrings, int);   // char arrives promoted to int
           lua_pushinteger (App.m_Translator_Lua, cArg);
           break;
 
@@ -1627,7 +1627,7 @@ CString TFormat (const char * sFormat, ...)
           switch (cWidth)
             {
             case 'h':
-              dArg = va_arg (sstrings, short);
+              dArg = (short) va_arg (sstrings, int);   // promoted to int
               break;
 
             case 'L':
@@ -1646,7 +1646,7 @@ CString TFormat (const char * sFormat, ...)
           switch (cWidth)
             {
             case 'h':
-              dArg = va_arg (sstrings, unsigned short);
+              dArg = (unsigned short) va_arg (sstrings, int);   // promoted to int
               break;
 
             case 'L':

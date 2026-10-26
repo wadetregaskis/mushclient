@@ -566,7 +566,8 @@ TEST(Collections, StringListCopiesDeeply) {
     assigned = src;
     EXPECT_EQ(2, assigned.GetCount());
     EXPECT_STREQ("one", (LPCTSTR)assigned.GetHead());
-    assigned = assigned;                                        // self-assign
+    CStringList& same = assigned;   // through a reference: clang flags a literal x = x
+    assigned = same;                                            // self-assign
     EXPECT_EQ(2, assigned.GetCount());
 }
 

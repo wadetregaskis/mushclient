@@ -150,7 +150,7 @@ bool bReplace = false;
     strTriggerName.Format ("*trigger%s", (LPCTSTR) App.GetUniqueString ());
   else
     // return if bad name
-    if (nStatus = CheckObjectName (strTriggerName))
+    if ((nStatus = CheckObjectName (strTriggerName)))
       return nStatus;
 
   // if it already exists, error

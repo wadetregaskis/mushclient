@@ -2001,7 +2001,6 @@ POSITION pos = NULL;
   if (nLine < 0)
     nLine = 0;
 
-static long iCount = 0;
 long nIndex = nLine / JUMP_SIZE,
      nItem = nIndex * JUMP_SIZE;
 
@@ -2029,10 +2028,7 @@ long nIndex = nLine / JUMP_SIZE,
 // now count forwards until we hit the actual one we want
 
   for (long i = nItem; i < nLine && pos; i++)
-    {
-    iCount++;
     m_LineList.GetNext (pos);
-    }
 
 // not there? assume last one in the list
 

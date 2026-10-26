@@ -70,14 +70,14 @@ CmcDateTime CmcDateTime::operator+(const CmcDateTimeSpan& dateSpan) const
 	  CmcDateTime dateResult;    // Initializes m_status to valid
 
 	  // If either operand NULL, result NULL
-	  if (GetStatus() == null || dateSpan.GetStatus() == null)
+	  if (GetStatus() == null || dateSpan.GetStatus() == CmcDateTimeSpan::null)
 	    {
 		  dateResult.SetStatus(null);
 		  return dateResult;
 	    }
 
 	  // If either operand invalid, result invalid
-	  if (GetStatus() == invalid || dateSpan.GetStatus() == invalid)
+	  if (GetStatus() == invalid || dateSpan.GetStatus() == CmcDateTimeSpan::invalid)
 	    {
 		  dateResult.SetStatus(invalid);
 		  return dateResult;
@@ -97,14 +97,14 @@ CmcDateTime CmcDateTime::operator-(const CmcDateTimeSpan& dateSpan) const
 	  CmcDateTime dateResult;    // Initializes m_status to valid
 
 	  // If either operand NULL, result NULL
-	  if (GetStatus() == null || dateSpan.GetStatus() == null)
+	  if (GetStatus() == null || dateSpan.GetStatus() == CmcDateTimeSpan::null)
 	    {
 		  dateResult.SetStatus(null);
 		  return dateResult;
 	    }
 
 	  // If either operand invalid, result invalid
-	  if (GetStatus() == invalid || dateSpan.GetStatus() == invalid)
+	  if (GetStatus() == invalid || dateSpan.GetStatus() == CmcDateTimeSpan::invalid)
 	    {
 		  dateResult.SetStatus(invalid);
 		  return dateResult;
@@ -462,14 +462,14 @@ CmcDateTimeSpan CmcDateTimeSpan::operator+(const CmcDateTimeSpan& dateSpan) cons
 	CmcDateTimeSpan dateSpanTemp;
 
 	// If either operand Null, result Null
-	if (GetStatus() == null || dateSpan.GetStatus() == null)
+	if (GetStatus() == null || dateSpan.GetStatus() == CmcDateTimeSpan::null)
 	{
 		dateSpanTemp.SetStatus(null);
 		return dateSpanTemp;
 	}
 
 	// If either operand Invalid, result Invalid
-	if (GetStatus() == invalid || dateSpan.GetStatus() == invalid)
+	if (GetStatus() == invalid || dateSpan.GetStatus() == CmcDateTimeSpan::invalid)
 	{
 		dateSpanTemp.SetStatus(invalid);
 		return dateSpanTemp;
@@ -487,14 +487,14 @@ CmcDateTimeSpan CmcDateTimeSpan::operator-(const CmcDateTimeSpan& dateSpan) cons
 	CmcDateTimeSpan dateSpanTemp;
 
 	// If either operand Null, result Null
-	if (GetStatus() == null || dateSpan.GetStatus() == null)
+	if (GetStatus() == null || dateSpan.GetStatus() == CmcDateTimeSpan::null)
 	{
 		dateSpanTemp.SetStatus(null);
 		return dateSpanTemp;
 	}
 
 	// If either operand Invalid, result Invalid
-	if (GetStatus() == invalid || dateSpan.GetStatus() == invalid)
+	if (GetStatus() == invalid || dateSpan.GetStatus() == CmcDateTimeSpan::invalid)
 	{
 		dateSpanTemp.SetStatus(invalid);
 		return dateSpanTemp;

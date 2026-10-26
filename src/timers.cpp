@@ -440,7 +440,6 @@ void CMUSHclientDoc::OnUpdateGameResetalltimers(CCmdUI* pCmdUI)
 void  CMUSHclientDoc::SortTimers (void)
   {
 
-int i;
 CString strTimerName;
 CTimer * pTimer;
 POSITION pos;
@@ -448,7 +447,7 @@ POSITION pos;
   GetTimerRevMap ().clear ();
 
   // extract pointers into a simple array
-  for (i = 0, pos = GetTimerMap ().GetStartPosition(); pos; i++)
+  for (pos = GetTimerMap ().GetStartPosition(); pos; )
     {
      GetTimerMap ().GetNextAssoc (pos, strTimerName, pTimer);
      GetTimerRevMap () [pTimer] = strTimerName;

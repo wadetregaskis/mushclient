@@ -132,6 +132,14 @@ const MapNames& map_names()
 {
     static MapNames m = [] {
         MapNames n;
+        // Redefined as collectors below; drop the shim's definitions first.
+        #undef DISP_FUNCTION
+        #undef DISP_FUNCTION_ID
+        #undef DISP_PROPERTY
+        #undef DISP_PROPERTY_NOTIFY
+        #undef DISP_PROPERTY_EX
+        #undef DISP_PROPERTY_PARAM
+        #undef DISP_DEFVALUE
         #define DISP_FUNCTION(cls, name, fn, ret, ...)         n.methods.insert(lower(name));
         #define DISP_FUNCTION_ID(cls, name, id, fn, ret, ...)  n.methods.insert(lower(name));
         #define DISP_PROPERTY(cls, name, mem, type)            n.properties.insert(lower(name));

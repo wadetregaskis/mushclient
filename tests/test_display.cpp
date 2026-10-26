@@ -630,14 +630,6 @@ TEST(LineTest, NewLineSeededWithOneStyleAndUtf8SizedBuffer)
 // note-colour accessor family.  Headless the doc starts in RGB-notes mode
 // with silver-on-black, matching a fresh Windows world.
 
-// last (0-based) closed line index — count-2 because the tail is the
-// in-progress current line.
-static CLine* closed_tail(CMUSHclientDoc& doc)
-{
-    int n = (int)doc.m_LineList.GetCount();
-    return n >= 2 ? nth_line(doc, n - 2) : nullptr;
-}
-
 TEST(NotingTest, NoteClosesLineAndStampsCommentFlag)
 {
     CMUSHclientDoc doc; make_doc(doc);

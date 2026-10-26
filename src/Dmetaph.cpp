@@ -281,6 +281,7 @@ void MString::DoubleMetaphone(CString &metaph, CString &metaph2)
                                 //double 'C', but not if e.g. 'McClellan'
                                 if(StringAt(current, 2, "CC", "") AND !((current == 1) AND (GetAt(0) == 'M')))
                                         //'bellocchio' but not 'bacchus'
+                                        {
                                         if(StringAt((current + 2), 1, "I", "E", "H", "") AND !StringAt((current + 2), 2, "HU", ""))
                                         {
                                                 //'accident', 'accede' 'succeed'
@@ -296,6 +297,7 @@ void MString::DoubleMetaphone(CString &metaph, CString &metaph2)
                                                 MetaphAdd("K");
                                                 current += 2;
                                                 break;
+                                        }
                                         }
 
                                 if(StringAt(current, 2, "CK", "CG", "CQ", ""))
@@ -332,6 +334,7 @@ void MString::DoubleMetaphone(CString &metaph, CString &metaph2)
 
                         case 'D':
                                 if(StringAt(current, 2, "DG", ""))
+                                        {
                                         if(StringAt((current + 2), 1, "I", "E", "Y", ""))
                                         {
                                                 //e.g. 'edge'
@@ -343,6 +346,7 @@ void MString::DoubleMetaphone(CString &metaph, CString &metaph2)
                                                 MetaphAdd("TK");
                                                 current += 2;
                                                 break;
+                                        }
                                         }
 
                                 if(StringAt(current, 2, "DT", "DD", ""))
@@ -678,6 +682,7 @@ void MString::DoubleMetaphone(CString &metaph, CString &metaph2)
                                         //Schlesinger's rule
                                         if(GetAt(current + 2) == 'H')
                                                 //dutch origin, e.g. 'school', 'schooner'
+                                                {
                                                 if(StringAt((current + 3), 2, "OO", "ER", "EN", "UY", "ED", "EM", ""))
                                                 {
                                                         //'schermerhorn', 'schenker'
@@ -695,6 +700,7 @@ void MString::DoubleMetaphone(CString &metaph, CString &metaph2)
                                                                 MetaphAdd("X");
                                                         current += 3;
                                                         break;
+                                                }
                                                 }
 
                                         if(StringAt((current + 2), 1, "I", "E", "Y", ""))

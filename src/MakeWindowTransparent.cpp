@@ -13,7 +13,9 @@
 #include "stdafx.h"
 #include "MakeWindowTransparent.h"
 
+#ifndef WS_EX_LAYERED   // the Windows SDK (and the port's shim) already define it
 #define WS_EX_LAYERED           0x00080000    
+#endif
 
 #define LWA_COLORKEY            0x00000001
 #define LWA_ALPHA               0x00000002

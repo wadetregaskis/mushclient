@@ -23,7 +23,7 @@ static char THIS_FILE[] = __FILE__;
 
 
 CColor::CColor(COLORREF cr)
-: m_bIsRGB(true), m_bIsHLS(false), m_colorref(cr)
+: m_colorref(cr), m_bIsRGB(true), m_bIsHLS(false)
 {}
 
 CColor::operator COLORREF() const

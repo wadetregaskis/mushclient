@@ -90,7 +90,7 @@ BOOL CSplashWnd::PreTranslateAppMessage(MSG* pMsg)
 
 BOOL CSplashWnd::Create(CWnd* pParentWnd, const int iResourceID)
 {
-   LPCTSTR lpszResourceName = (LPCTSTR) iResourceID;
+   LPCTSTR lpszResourceName = MAKEINTRESOURCE (iResourceID);
 
    m_bNick = iResourceID == IDB_NICK;
 
@@ -151,7 +151,7 @@ BOOL CSplashWnd::Create(CWnd* pParentWnd, const int iResourceID)
 
 	return CreateEx(0,
 		AfxRegisterWndClass(0, AfxGetApp()->LoadStandardCursor(IDC_ARROW)),
-    NULL, WS_POPUP | WS_VISIBLE | WS_BORDER, 0, 0, bm.bmWidth, bm.bmHeight, pParentWnd->GetSafeHwnd(), NULL);
+    NULL, WS_POPUP | WS_VISIBLE | WS_BORDER, 0, 0, bm.bmWidth, bm.bmHeight, pParentWnd->GetSafeHwnd(), 0);
 }
 
 void CSplashWnd::HideSplashScreen()

@@ -1981,10 +1981,12 @@ ASSERT_VALID(pDoc);
 
   // auto-copy selection to clipboard
   if (pDoc->m_bCopySelectionToClipboard)
+    {
     if (pDoc->m_bAutoCopyInHTML)
       OnEditCopyashtml ();
     else
       OnEditCopy ();
+    }
 
   } // end of CMUSHView::extend_selection
 
@@ -2158,6 +2160,7 @@ int line,
     if (pStyle->pAction &&
         !pStyle->pAction->m_strAction.IsEmpty () &&
         pStyle->pAction->m_strAction.Find ("&text;") == -1)
+      {
       if ((iStyle & ACTIONTYPE) == ACTION_SEND ||
           (iStyle & ACTIONTYPE) == ACTION_PROMPT)
         {
@@ -2231,6 +2234,7 @@ int line,
                             MB_ICONEXCLAMATION);
         return;
         }  // end of ACTION_HYPERLINK
+      }
 
     } // end of column found
 
@@ -3539,6 +3543,7 @@ ASSERT_VALID(pDoc);
       if (pStyle->pAction &&
           !pStyle->pAction->m_strAction.IsEmpty () &&
           pStyle->pAction->m_strAction.Find ("&text;") == -1)
+        {
         if ((iStyle & ACTIONTYPE) == ACTION_SEND ||
             (iStyle & ACTIONTYPE) == ACTION_PROMPT)
           {
@@ -3637,6 +3642,7 @@ ASSERT_VALID(pDoc);
 
           return;
           }  // end of ACTION_HYPERLINK
+        }
 
       } // end of column found
 
@@ -3713,17 +3719,11 @@ int line = 0;
 POSITION pos;
 CLine * pLine;
 
-CLine * pStartLine,
-      * pEndLine;
-
 int thiscol,
     thislen,
     startcol,
     endcol;
 short style;
-
-  pStartLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (m_selstart_line));
-  pEndLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (m_selend_line));
 
 BOOL bHaveSelection = m_selend_line > m_selstart_line || 
                       (m_selend_line == m_selstart_line &&
@@ -4280,6 +4280,7 @@ BOOL CMUSHView::OnToolTipNeedText(UINT id, NMHDR * pNMHDR, LRESULT * pResult)
         if (pStyle->pAction &&
             !pStyle->pAction->m_strAction.IsEmpty () &&
             pStyle->pAction->m_strAction.Find ("&text;") == -1)
+          {
           if ((iStyle & ACTIONTYPE) == ACTION_SEND ||
             (iStyle & ACTIONTYPE) == ACTION_PROMPT)
 
@@ -4320,6 +4321,7 @@ BOOL CMUSHView::OnToolTipNeedText(UINT id, NMHDR * pNMHDR, LRESULT * pResult)
             // don't say "Line information" for MXP hints
             m_ToolTip.SendMessage (TTM_SETTITLE, TTI_NONE, (LPARAM) "" );
             } // end of ACTION_HYPERLINK
+          }
 
 
         } // end of column found
@@ -4822,10 +4824,12 @@ int line,
 
   // auto-copy selection to clipboard
   if (pDoc->m_bCopySelectionToClipboard)
+    {
     if (pDoc->m_bAutoCopyInHTML)
       OnEditCopyashtml ();
     else
       OnEditCopy ();
+    }
 
 }
 

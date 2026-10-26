@@ -60,10 +60,12 @@ unsigned int CharacterOffset (const char * s,
     // count characters until wanted one found
     for (iByte = 0; *s; iByte++)
       if ((*s++ & 0xC0) != 0x80)
+        {
         if (iCharacter >= iWantedCharacter)
           return iByte;   // if found, return byte position of it
         else
           iCharacter++;
+        }
 
     return iByte;    // not found, return length of string
 

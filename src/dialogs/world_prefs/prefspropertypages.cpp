@@ -36,7 +36,9 @@
 static char BASED_CODE THIS_FILE[] = __FILE__;
 #endif
 
+#ifdef _MSC_VER
 #pragma warning (disable : 4800)  // forcing value to bool 'true' or 'false' (performance warning)
+#endif
 bool NotFound (CFindInfo & FindInfo);
 
 #define NL "\r\n"
@@ -2435,7 +2437,7 @@ CListCtrl* pList = (CListCtrl*) pObject;
     if (FindInfo.m_bForwards)
       FindInfo.m_pFindPosition = 0;
     else
-      FindInfo.m_pFindPosition = (POSITION)(pList->GetItemCount () - 1);
+      FindInfo.m_pFindPosition = (POSITION)(INT_PTR)(pList->GetItemCount () - 1);
 
   } // end of CPrefsP6::InitiateSearch
 
@@ -3122,10 +3124,12 @@ CString * pstrObjectName;
 
     for (int iItem = 0; iItem < m_doc->m_AliasMap.GetCount (); iItem++)
       if (m_doc->m_AliasArray [iItem] != alias)
+        {
         if (m_doc->m_AliasArray [iItem]->iSequence < alias->iSequence)
           iLower = m_doc->m_AliasArray [iItem]->iSequence;
         else if (m_doc->m_AliasArray [iItem]->iSequence == alias->iSequence)
           bSame = true;
+        }
 
     if (bSame)
       alias->iSequence--;   // make a lower sequence (drop out of group)
@@ -3230,11 +3234,13 @@ CString * pstrObjectName;
 
     for (int iItem = 0; iItem < m_doc->m_AliasMap.GetCount (); iItem++)
       if (m_doc->m_AliasArray [iItem] != alias)
+        {
         if (m_doc->m_AliasArray [iItem]->iSequence > alias->iSequence &&
             iHigher == -1)
           iHigher = m_doc->m_AliasArray [iItem]->iSequence;
         else if (m_doc->m_AliasArray [iItem]->iSequence == alias->iSequence)
           bSame = true;
+        }
 
     if (bSame)
       alias->iSequence++;   // make a higher sequence (jump out of group)
@@ -4290,10 +4296,12 @@ CString * pstrObjectName;
 
     for (int iItem = 0; iItem < m_doc->m_TriggerMap.GetCount (); iItem++)
       if (m_doc->m_TriggerArray [iItem] != trigger)
+        {
         if (m_doc->m_TriggerArray [iItem]->iSequence < trigger->iSequence)
           iLower = m_doc->m_TriggerArray [iItem]->iSequence;
         else if (m_doc->m_TriggerArray [iItem]->iSequence == trigger->iSequence)
           bSame = true;
+        }
 
     if (bSame)
       trigger->iSequence--;   // make a lower sequence (drop out of group)
@@ -4397,11 +4405,13 @@ CString * pstrObjectName;
 
     for (int iItem = 0; iItem < m_doc->m_TriggerMap.GetCount (); iItem++)
       if (m_doc->m_TriggerArray [iItem] != trigger)
+        {
         if (m_doc->m_TriggerArray [iItem]->iSequence > trigger->iSequence &&
             iHigher == -1)
           iHigher = m_doc->m_TriggerArray [iItem]->iSequence;
         else if (m_doc->m_TriggerArray [iItem]->iSequence == trigger->iSequence)
           bSame = true;
+        }
 
     if (bSame)
       trigger->iSequence++;   // make a higher sequence (jump out of group)
@@ -7939,7 +7949,7 @@ CArchive * ar = NULL;
 
       CString sBuf;
       BOOL bOK;
-      while (bOK = f.ReadString (sBuf))
+      while ((bOK = f.ReadString (sBuf)))
         {
         sBuf.TrimLeft ();
 

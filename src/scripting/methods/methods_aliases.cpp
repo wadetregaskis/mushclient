@@ -133,7 +133,7 @@ bool bReplace = false;
     strAliasName.Format ("*alias%s", (LPCTSTR) App.GetUniqueString ());
   else
     // return if bad name
-    if (nStatus = CheckObjectName (strAliasName))
+    if ((nStatus = CheckObjectName (strAliasName)))
       return nStatus;
 
   // if it already exists, error

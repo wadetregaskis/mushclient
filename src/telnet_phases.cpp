@@ -846,7 +846,8 @@ void CMUSHclientDoc::Handle_TELOPT_CHARSET ()
   bool found = false;
   CString strCharset = "US-ASCII"; // default
 
-  if (m_font)
+  // (upstream tested `if (m_font)` here -- an array, so always true -- and
+  // nothing below uses the font)
     {
 
     // hack! ugh.

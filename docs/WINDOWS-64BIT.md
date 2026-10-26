@@ -417,6 +417,36 @@ Inherent, not bugs; worth a line in the release notes.
    now stop the build as C4311 -- that is the intent; each one is a real bug.
 4. LuaCOM interface signatures, if any no longer match the 64-bit SDK.
 
+## 9. The release workflow's Windows job
+
+`.github/workflows/release.yml` (run by hand from the Actions tab) has a
+`windows` job for x64 (`windows-2025`) and ARM64 (`windows-11-arm`).  Like
+everything in this document it has **never run**; expect the first runs to need
+the same iteration as a local build.  It:
+
+1. installs Strawberry Perl if the runner lacks it, and NASM for x64;
+2. runs `fetch-deps.ps1 -Only openssl,lua,luasocket -StageTo WinDebug-<plat>`
+   (cached on `fetch-deps.ps1`'s hash);
+3. builds `MUSHclient_2022.sln` Release for the platform;
+4. runs `tests\win\run_tests.ps1 -Platform <plat>`;
+5. uploads `MUSHclient-<version>-windows-<arch>.zip`: `MUSHclient.exe` plus
+   `deps\<plat>\bin\`.
+
+What it deliberately does **not** do yet, and why:
+
+- **Locale DLLs.**  `fetch-deps.ps1` rehosts them from the 32-bit `en.dll` /
+  `en_small.dll` of an existing install, which a runner does not have.
+  `en.dll` could instead be compiled from source per architecture: its
+  resources are `nickgammon/mushclient_resources` (`MUSHclient.rc`,
+  `mylocal.cpp`/`.def`, `res/`), which `packaging/fetch-resources.sh` already
+  checks out.  `en_small.dll` has no known source.
+- **The NSIS installer.**  `install/mushclient.nsi` also packages `help.db`,
+  which is not in this repository (it comes from an installed 5.0x), and the
+  locale DLLs above.
+
+The draft-release job does not wait on Windows: macOS and Linux must pass, and
+the Windows zips are attached only when their job passed.
+
 ## Verification (macOS, 2026-10-26)
 
 - `cmake --build build -j2`: exit 0.  16 warnings, all

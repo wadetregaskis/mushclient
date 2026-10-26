@@ -7,7 +7,10 @@
 #            UNSIGNED: sign and notarize it on your own Mac with
 #            packaging/sign-release.sh, so the Developer ID key never leaves it.
 #   Linux    x86-64 and AArch64: .deb + self-contained .tar.xz each.
-#   Windows  x64 and ARM64.
+#   Windows  x64 and ARM64: a zip of the program and its 64-bit DLLs.  Not yet
+#            validated on Windows (see docs/WINDOWS-64BIT.md), so a Windows
+#            failure does not stop the draft release; its packages are included
+#            only when its job passes.
 #
 # The macOS dependencies built from source (OpenSSL, wxWidgets, Tcl, Ruby, the
 # python.org framework) are cached between runs; the first run builds them all
@@ -211,11 +214,84 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  # ── Windows: x64 and ARM64 (docs/WINDOWS-64BIT.md) ───────────────────────────
+  windows:
+    name: Windows (${{ matrix.platform }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            arch: x64
+            runner: windows-2025
+          - platform: ARM64
+            arch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: OpenSSL build prerequisites (Strawberry Perl; NASM for x64)
+        run: |
+          if (-not (Get-Command perl -ErrorAction SilentlyContinue) -or -not ((perl -v) -match 'MSWin32')) {
+            choco install strawberryperl -y --no-progress
+          }
+          "C:\Strawberry\perl\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          if ('${{ matrix.arch }}' -eq 'x64') {
+            choco install nasm -y --no-progress
+            "C:\Program Files\NASM" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+
+      - name: Cache the from-source dependencies
+        uses: actions/cache@v4
+        with:
+          path: packaging/windows/deps/${{ matrix.platform }}
+          key: windows-${{ matrix.platform }}-deps-${{ hashFiles('packaging/windows/fetch-deps.ps1') }}
+
+      # The locale DLLs are left out: fetch-deps.ps1 rehosts them from the
+      # 32-bit en.dll / en_small.dll of an existing install, which CI does not have.
+      - name: Dependencies (OpenSSL 3.5 LTS, Lua 5.1, LuaSocket)
+        run: packaging\windows\fetch-deps.ps1 -Arch ${{ matrix.arch }} -Only openssl,lua,luasocket -StageTo WinDebug-${{ matrix.platform }}
+
+      - name: Build
+        run: msbuild MUSHclient_2022.sln /m /p:Configuration=Release /p:Platform=${{ matrix.platform }}
+
+      - name: Tests
+        run: tests\win\run_tests.ps1 -Platform ${{ matrix.platform }}
+
+      - name: Package (zip)
+        run: |
+          $out = "out\MUSHclient-$env:VERSION-windows-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item "WinRel-${{ matrix.platform }}\MUSHclient.exe" $out
+          Copy-Item -Recurse "packaging\windows\deps\${{ matrix.platform }}\bin\*" $out
+          Compress-Archive -Path "$out\*" -DestinationPath "$out.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: out/*.zip
+          if-no-files-found: error
+
   # ── Draft release ────────────────────────────────────────────────────────────
   release:
     name: Draft release
-    if: inputs.create_release
-    needs: [version, macos, macos-intel, linux]
+    # Windows is not yet validated, so it does not gate the release: macOS and
+    # Linux must pass; the Windows packages are added if their jobs passed.
+    if: >-
+      always() && inputs.create_release &&
+      needs.macos.result == 'success' && needs.macos-intel.result == 'success' &&
+      needs.linux.result == 'success'
+    needs: [version, macos, macos-intel, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -5119,8 +5119,12 @@ long SetBaseOptionItem (const int iItem,
   if (iItem < 0 || iItem >= iItemCount)
     return eUnknownOption;
 
-int iMinimum = BaseOptionsTable [iItem].iMinimum;
-int iMaximum = BaseOptionsTable [iItem].iMaximum;
+// double, as the table holds them: the "user" options and
+// chat_max_bytes_per_message reach LONG_MAX, which on LP64 (macOS, Linux) does
+// not fit an int.  Converting it was undefined behaviour -- arm64 saturates to
+// INT_MAX, x86-64 yields INT_MIN, so on Intel every value was "out of range".
+double iMinimum = BaseOptionsTable [iItem].iMinimum;
+double iMaximum = BaseOptionsTable [iItem].iMaximum;
 
   // fix up default 0, 0 to be 0, 1
   if (iMinimum == 0 && iMaximum == 0)

@@ -684,10 +684,12 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
     for (i = 0; OptionsTable [i].pName; i++)
       {
-      int iMinimum = OptionsTable [i].iMinimum; 
-      int iMaximum = OptionsTable [i].iMaximum; 
+      // double: some maxima are LONG_MAX, which an int cannot hold on LP64
+      // (see SetBaseOptionItem in doc_shared.cpp)
+      double iMinimum = OptionsTable [i].iMinimum;
+      double iMaximum = OptionsTable [i].iMaximum;
 
-      if ((iMinimum | iMaximum) == 0)
+      if (iMinimum == 0 && iMaximum == 0)
         {
         strType = "Boolean"; 
         strRange = "y/n";
@@ -695,7 +697,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
       else
         {
         strType = "Number";
-        strRange = CFormat ("%i to %i", iMinimum, iMaximum);
+        strRange = CFormat ("%.0f to %.0f", iMinimum, iMaximum);
         }
 
       if (OptionsTable [i].iFlags & OPT_CUSTOM_COLOUR)

@@ -46,7 +46,9 @@
 #include <ctype.h>
 #include <string.h>
 
+#ifdef _MSC_VER
 #pragma warning( disable : 4057)  // 'unsigned char *' differs in indirection to slightly different base types from 'char *'
+#endif
 
 typedef unsigned char UC;
 
@@ -100,14 +102,14 @@ static int mycompress (lua_State *L)
   c_stream.zfree = Z_NULL; 
   c_stream.opaque = Z_NULL; 
 
-  c_stream.next_in  = (char *) text;
+  c_stream.next_in  = (Bytef *) text;
   c_stream.avail_in = textLength;
   c_stream.total_in = 0;
 
   if (deflateInit (&c_stream, method) != Z_OK)
       luaL_error (L, "could not initialize compression engine");
 
-  c_stream.next_out = compr;
+  c_stream.next_out = (Bytef *) compr;
   c_stream.avail_out = (uInt)comprLen;
   c_stream.total_out = 0;
 
@@ -145,7 +147,7 @@ static int mydecompress (lua_State *L)
   d_stream.zfree = Z_NULL; 
   d_stream.opaque = Z_NULL; 
 
-  d_stream.next_in  = (char *) text;
+  d_stream.next_in  = (Bytef *) text;
   d_stream.avail_in = textLength;
   d_stream.total_in = 0;
 
@@ -158,7 +160,7 @@ static int mydecompress (lua_State *L)
 
   do
     {
-    d_stream.next_out = buf;
+    d_stream.next_out = (Bytef *) buf;
     d_stream.avail_out = sizeof (buf);
 
     err = inflate (&d_stream, Z_NO_FLUSH);
@@ -217,7 +219,7 @@ static int utils_sha256 (lua_State *L)
   sha256_update (&ctx, (UC *) text, textLength);
   sha256_finish (&ctx, digest);
 
-  lua_pushlstring (L, digest, sizeof digest);
+  lua_pushlstring (L, (const char *) digest, sizeof digest);
 
   return 1;  // number of result fields
   } // end of utils_sha256
@@ -237,7 +239,7 @@ static int utils_md5 (lua_State *L)
   md5_update (&ctx, (UC *) text, textLength);
   md5_finish (&ctx, digest);
 
-  lua_pushlstring (L, digest, sizeof digest);
+  lua_pushlstring (L, (const char *) digest, sizeof digest);
 
   return 1;  // number of result fields
   } // end of utils_md5
@@ -251,15 +253,15 @@ static int utils_tohex (lua_State *L)
   // get text to convert
   size_t textLength;
   size_t i;
-  const unsigned char * text = luaL_checklstring (L, 1, &textLength);
+  const unsigned char * text = (const unsigned char *) luaL_checklstring (L, 1, &textLength);
 
   // initialize buffer
   luaL_buffinit(L, &buffer);
 
   for (i = 0; i < textLength; i++)
     {
-    sprintf (buf, "%02X", text [i]);
-    luaL_addlstring(&buffer, buf, 2);
+    sprintf ((char *) buf, "%02X", text [i]);
+    luaL_addlstring(&buffer, (const char *) buf, 2);
     }
 
   luaL_pushresult(&buffer);
@@ -273,7 +275,7 @@ static int utils_fromhex (lua_State *L)
   luaL_Buffer buffer;
 
   // get text to convert
-  const unsigned char * text = luaL_checkstring (L, 1);
+  const unsigned char * text = (const unsigned char *) luaL_checkstring (L, 1);
   const unsigned char * p;
 
   // initialize buffer
@@ -303,7 +305,7 @@ static int utils_fromhex (lua_State *L)
       } // end of building up hex literal
 
     if (i)
-      luaL_addlstring(&buffer, &c, 1);
+      luaL_addlstring(&buffer, (const char *) &c, 1);
     }
 
   luaL_pushresult(&buffer);
@@ -328,7 +330,7 @@ static int myencodebase64 (lua_State *L)
   {
   // get text to hash
   size_t textLength;
-  const UC * text = luaL_checklstring (L, 1, &textLength);
+  const UC * text = (const UC *) luaL_checklstring (L, 1, &textLength);
   int bMultiLine = optboolean (L, 2, 0);
 
 	size_t i;
@@ -453,7 +455,7 @@ static int mydecodebase64 (lua_State *L)
 
   // get text to hash
   size_t textLength;
-  const UC * input = luaL_checklstring (L, 1, &textLength);
+  const UC * input = (const UC *) luaL_checklstring (L, 1, &textLength);
   const UC *last = input + textLength;    // where buffer ends
 
   // use a Lua buffer

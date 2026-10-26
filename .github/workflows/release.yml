@@ -1,0 +1,248 @@
+# Release builds — run by hand from the Actions tab ("Run workflow").
+#
+# Never triggered by a push.  Builds and tests every platform and, if asked,
+# gathers the packages into a DRAFT GitHub release for review:
+#
+#   macOS    one universal app (Apple Silicon + Intel), macOS 11+.  Uploaded
+#            UNSIGNED: sign and notarize it on your own Mac with
+#            packaging/sign-release.sh, so the Developer ID key never leaves it.
+#   Linux    x86-64 and AArch64: .deb + self-contained .tar.xz each.
+#   Windows  x64 and ARM64.
+#
+# The macOS dependencies built from source (OpenSSL, wxWidgets, Tcl, Ruby, the
+# python.org framework) are cached between runs; the first run builds them all
+# and takes a couple of hours, later ones far less.
+
+name: Release builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (default: v<VERSION_STRING from src/version.h>)"
+        required: false
+        default: ""
+      discworld:
+        description: "Also build the Discworld edition (macOS, Linux)"
+        type: boolean
+        default: false
+      create_release:
+        description: "Create a draft GitHub release with the packages"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          version="$(sed -n 's/^#define VERSION_STRING "\(.*\)".*/\1/p' src/version.h | tr -d '\r')"
+          [ -n "$version" ] || { echo "no VERSION_STRING in src/version.h" >&2; exit 1; }
+          tag="${{ inputs.tag }}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag:-v$version}" >> "$GITHUB_OUTPUT"
+
+  # ── macOS: one universal app, built on Apple Silicon ─────────────────────────
+  macos:
+    name: macOS (universal)
+    needs: version
+    runs-on: macos-15
+    timeout-minutes: 300
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rosetta 2 (builds Ruby's Intel half natively, and runs the Intel tests)
+        run: /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+
+      - name: Cache the from-source dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            packaging/openssl/install
+            packaging/wx/install
+            packaging/tcl/install
+            packaging/ruby/install
+            packaging/ruby/deps
+            packaging/python/Python.framework
+          key: macos-deps-${{ hashFiles('packaging/fetch-*.sh') }}
+
+      - name: Build the app (universal, macOS 11+)
+        run: packaging/build-app.sh --no-dmg
+
+      - name: Build the test suite (same settings)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DwxWidgets_CONFIG_EXECUTABLE="$PWD/packaging/wx/install/bin/wx-config" \
+            -DMUSHCLIENT_BUNDLED_LUA=ON -DOPENSSL_ROOT_DIR="$PWD/packaging/openssl/install"
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Tests — Apple Silicon
+        run: ctest --test-dir build -j"$(sysctl -n hw.ncpu)" --output-on-failure
+
+      - name: Tests — Intel (the x86_64 half, under Rosetta)
+        run: python3 tools/ctest-arch.py build x86_64 -j"$(sysctl -n hw.ncpu)"
+
+      - name: Package (unsigned)
+        run: |
+          mkdir -p out
+          ditto -c -k --keepParent dist/MUSHclient.app "out/MUSHclient-$VERSION-macOS-universal-UNSIGNED.zip"
+
+      - name: Discworld edition
+        if: inputs.discworld
+        run: |
+          packaging/fetch-discworld-plugins.sh
+          packaging/build-app.sh --with-discworld --no-dmg
+          ditto -c -k --keepParent dist/MUSHclient.app "out/MUSHclient-$VERSION-macOS-universal-discworld-UNSIGNED.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: out/*
+          if-no-files-found: error
+
+  # ── macOS: the same app on a real Intel Mac ──────────────────────────────────
+  macos-intel:
+    name: macOS (Intel check)
+    needs: macos
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+      - name: Run the packaged app's selftests natively on Intel
+        run: |
+          zip="$(find . -maxdepth 1 -name 'MUSHclient-*-macOS-universal-UNSIGNED.zip' | head -1)"
+          ditto -x -k "$zip" app
+          exe=app/MUSHclient.app/Contents/MacOS/MUSHclient
+          [ "$(uname -m)" = x86_64 ] || { echo "not an Intel runner" >&2; exit 1; }
+          lipo -archs "$exe"
+          rc=0
+          for t in --pal-surface-selftest --pal-transport-selftest --pal-miniwindow-selftest \
+                   --engines-selftest=lua --engines-selftest=python --engines-selftest=perl \
+                   --engines-selftest=js --engines-selftest=tcl --engines-selftest=ruby; do
+            set +e; "$exe" "$t" -ApplePersistenceIgnoreState YES > log.txt 2>&1; r=$?; set -e
+            if [ $r = 0 ] || [ $r = 77 ]; then echo "ok   ($r) $t: $(tail -1 log.txt)"
+            else echo "FAIL ($r) $t"; cat log.txt; rc=1; fi
+          done
+          exit $rc
+
+  # ── Linux: x86-64 and AArch64 ────────────────────────────────────────────────
+  linux:
+    name: Linux (${{ matrix.arch }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config xz-utils dpkg-dev file patchelf \
+            libwxgtk3.2-dev liblua5.1-0-dev libasound2-dev libssl-dev zlib1g-dev libffi-dev \
+            libperl-dev libjavascriptcoregtk-4.1-dev \
+            xvfb xauth
+
+      - name: Cache the from-source runtimes
+        uses: actions/cache@v4
+        with:
+          path: |
+            packaging/tcl/install
+            packaging/ruby/install
+            packaging/ruby/deps
+            packaging/python/install
+          key: linux-${{ matrix.arch }}-runtimes-${{ hashFiles('packaging/fetch-tcl.sh', 'packaging/fetch-ruby.sh', 'packaging/fetch-python.sh') }}
+
+      - name: Tcl, Ruby and Python runtimes
+        run: |
+          [ -f packaging/tcl/install/lib/libtcl8.6.a ] || packaging/fetch-tcl.sh
+          [ -d packaging/ruby/install/lib ] || packaging/fetch-ruby.sh
+          [ -d packaging/python/install/lib ] || packaging/fetch-python.sh
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build -j"$(nproc)"
+
+      - name: Tests (under a virtual X display)
+        run: xvfb-run -a ctest --test-dir build -j"$(nproc)" --output-on-failure
+
+      - name: Package (.deb + .tar.xz)
+        run: |
+          packaging/build-app.sh
+          mkdir -p out && mv dist/*.deb dist/*.tar.xz out/
+
+      - name: Discworld edition
+        if: inputs.discworld
+        run: |
+          packaging/fetch-discworld-plugins.sh
+          packaging/build-app.sh --with-discworld
+          for f in dist/*.deb dist/*.tar.xz; do
+            b="$(basename "$f")"; mv "$f" "out/${b/mushclient/mushclient-discworld}"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  # ── Draft release ────────────────────────────────────────────────────────────
+  release:
+    name: Draft release
+    if: inputs.create_release
+    needs: [version, macos, macos-intel, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create the draft release
+        run: |
+          ls -l artifacts
+          cat > notes.md <<EOF
+          MUSHclient $VERSION — draft built by the "Release builds" workflow from ${GITHUB_SHA::12}.
+
+          **Before publishing:** the macOS app is attached UNSIGNED.  On your Mac, download
+          \`MUSHclient-$VERSION-macOS-universal-UNSIGNED.zip\` and run
+
+              packaging/sign-release.sh MUSHclient-$VERSION-macOS-universal-UNSIGNED.zip \\
+                  --sign-identity "Developer ID Application: …" --notarize-profile <profile> \\
+                  --upload $TAG
+
+          then delete the -UNSIGNED asset(s) and publish.
+          EOF
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+            --target "$GITHUB_SHA" --title "MUSHclient $VERSION" --notes-file notes.md \
+            artifacts/*

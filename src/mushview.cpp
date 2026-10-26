@@ -2025,7 +2025,6 @@ ASSERT_VALID(pDoc);
   CLine * pLine = pDoc->m_LineList.GetAt (pos);
   pDoc->SetWordUnderMenu (pLine, col);
 
-CPoint menupoint = point;
 
   CMenu menu;
   VERIFY(menu.LoadMenu(IDR_MXP_MENU));

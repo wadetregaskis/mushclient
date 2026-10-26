@@ -2174,7 +2174,6 @@ TEST(Ddv, PluginWizardIdLengthIsEnforced) {
     g_wxhook_message_box = savedBox;
 }
 
-static intptr_t s_modalResult;
 static unsigned s_modalIdd;
 
 TEST(Dialog, DoModalRoutesThroughBridgeHook) {
@@ -5380,7 +5379,7 @@ TEST(Wnd, InertStubSurface) {
     EXPECT_EQ((CWnd*)nullptr, CWnd::ReleaseCapture());
     EXPECT_EQ((CWnd*)nullptr, w.GetFocus());
     EXPECT_EQ((CWnd*)nullptr, w.GetWindow(0));
-    EXPECT_EQ(0u, w.GetDlgCtrlID());
+    EXPECT_EQ(0, w.GetDlgCtrlID());
     EXPECT_EQ((UINT_PTR)0, w.SetTimer(1, 100));
     EXPECT_FALSE(w.KillTimer(1));
     w.SetScrollPos(0, 1);

@@ -1753,7 +1753,7 @@ int RunWorldFrameSelfTest()
             });
 
             s_prompts = 0; s_saves = 0; s_answer = IDCANCEL;
-            const bool closed = f->Close(true);      // forced: CanVeto() is false
+            f->Close(true);      // forced: CanVeto() is false
             wxYield();
 
         // (Deliberately NOT asserting GetVeto() here: it returns

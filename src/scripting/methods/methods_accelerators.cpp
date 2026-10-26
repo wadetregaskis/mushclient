@@ -65,12 +65,12 @@ WORD key;
   // meant world.Accelerator and world.AcceleratorTo could not register ANY key,
   // ever.  The map bookkeeping below is the part the port actually needs, and it
   // now runs on both platforms.
-  ACCEL aWanted;            // new accelerator
+#ifdef _WIN32
+  ACCEL aWanted;            // new accelerator (only the view tables below use it)
   aWanted.fVirt = fVirt;
   aWanted.key = key;
   aWanted.cmd = 0;
 
-#ifdef _WIN32
 	POSITION pos = NULL;
   
   pos = GetFirstViewPosition();
@@ -149,9 +149,9 @@ WORD key;
     else
       command = it->second;  // re-use command
 
+#ifdef _WIN32
     aWanted.cmd = command;
 
-#ifdef _WIN32
     // put command into accelerator table
     vAccel.push_back (aWanted);
 #endif

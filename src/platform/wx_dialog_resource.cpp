@@ -146,7 +146,6 @@ int RcResources::ResolveSymbol(const std::string& name, bool* found) const
 }
 
 // Resolve a token that is a decimal/0xHEX literal or a symbol.
-static long s_dummy;
 long resolveValue(const RcResources& res, const std::string& tok, bool* ok)
 {
     if (ok) *ok = true;

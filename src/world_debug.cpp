@@ -969,7 +969,6 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     long      nRegexp = 0;
     LONGLONG  iTimeTaken = 0;
     double    elapsed_time;
-    int i;
 
     CString enabledFore = "#0080FF";
     CString disabledFore = "gray";

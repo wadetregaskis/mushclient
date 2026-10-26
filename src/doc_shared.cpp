@@ -3187,7 +3187,7 @@ CString strLine (lpszText, size);
                 case '\r':
                 case '\n':   pReason = "got <NEWLINE>"; break;
                 case '\x1B': pReason = "got <ESC>"; break;
-                case '\xFF': pReason = "got <IAC>"; break;
+                case IAC:    pReason = "got <IAC>"; break;   // not '\xFF': c is unsigned, and that is -1
 
                 } // end of switch
               MXP_unterminated_element (pReason);
@@ -5538,7 +5538,6 @@ void CMUSHclientDoc::SendTo (
          const CString strVariable,     // what variable to set
          CString & strOutput)           // output to be displayed when finished
   {
-  POSITION pos;
 
   // empty send text does absolutely nothing :)  - in some cases :P
 
@@ -5566,7 +5565,7 @@ void CMUSHclientDoc::SendTo (
       SetCommandText(std::string((const char*)strSendText));
 #else
       // put trigger response into command buffer - provided it is empty
-      for (pos = GetFirstViewPosition(); pos != NULL; )
+      for (POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	      {
 	      CView* pView = GetNextView(pos);
 

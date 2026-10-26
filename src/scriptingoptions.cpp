@@ -373,17 +373,17 @@ long CMUSHclientDoc::SetAlphaOptionItem (const int iItem,
     if (strValue.GetLength () > 1)
       return eOptionOutOfRange;
 
-      if (strValue.IsEmpty ())
-        {
-        m_enable_command_stack = false;
-        return eOptionOutOfRange;
-        }
+    if (strValue.IsEmpty ())
+      {
+      m_enable_command_stack = false;
+      return eOptionOutOfRange;
+      }
 
-      if (!isprint (strValue [0]) || isspace (strValue [0]))
-        {
-        m_enable_command_stack = false;
-        return eOptionOutOfRange;
-        }
+    if (!isprint (strValue [0]) || isspace (strValue [0]))
+      {
+      m_enable_command_stack = false;
+      return eOptionOutOfRange;
+      }
 
     } // end of command stack character
 

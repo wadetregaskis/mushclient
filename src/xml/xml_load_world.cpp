@@ -166,6 +166,7 @@ UINT iErrorCount;
 
 #define GET_VERSION_AND_DEFAULTS(node) \
   long iVersion = GetDateAndVersion (*node); \
+  (void) iVersion;   /* not every expansion reads it */ \
   bool bUseDefault;  \
   Get_XML_boolean (*node, DEFAULTS_LIT, bUseDefault, false); \
   if (iFlags & LOAD_INCLUDE)  \

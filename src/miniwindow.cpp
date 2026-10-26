@@ -100,33 +100,10 @@ static int BytesPerLine (int nWidth, int nBitsPerPixel)
   return ( (nWidth * nBitsPerPixel + 31) & (~31) ) / 8;
   }
 
-// helper function to make normal/geometric pens
-// legacy behaviour is to do what we always did
-// however if an endcap or join mask bit is on we juse the ExtCreatePen function
-static void MakeAPen (CPen & pen, long PenColour, long PenStyle, long PenWidth)
-  {
-
-  // legacy behaviour
-  if ((PenStyle & PS_ENDCAP_MASK) == 0 &&
-      (PenStyle & PS_JOIN_MASK) == 0)
-    {
-    pen.CreatePen (PenStyle, PenWidth, PenColour);
-    }
-  else
-    {
-    LOGBRUSH logbrush;
-    logbrush.lbStyle = BS_SOLID;
-    logbrush.lbColor = PenColour;
-    logbrush.lbHatch = 0;     // not applicable
-
-    pen.Attach (::ExtCreatePen (PenStyle | PS_GEOMETRIC, PenWidth, &logbrush, 0, NULL));
-    }
-  } // end of MakeAPen
-
 // Decode a Win32 pen spec (colour + style bitmask + width) into a toolkit-neutral
 // pal::PenSpec for the ISurface seam (docs/PAL.md S3c). Call ONLY after
 // ValidatePenStyle has accepted PenStyle, so the STYLE/ENDCAP/JOIN fields are one
-// of the known flags; the adapter re-encodes them (GdiSurface reproduces MakeAPen
+// of the known flags; the adapter re-encodes them (GdiSurface reproduces the old MakeAPen
 // exactly, so Windows is unchanged).
 static pal::PenSpec PenSpecFromWin32 (long PenColour, long PenStyle, long PenWidth)
   {
@@ -2545,7 +2522,7 @@ long CMiniWindow::ImageFromWindow(LPCTSTR ImageId, CMiniWindow * pSrcWindow)
   // surfaces leave 0 in the high byte)
   pal::PixelBuffer buf;
   srf->readPixels (pSrcWindow->m_surfaceId,
-                   { 0, 0, pSrcWindow->m_iWidth, pSrcWindow->m_iHeight },
+                   { 0, 0, (int) pSrcWindow->m_iWidth, (int) pSrcWindow->m_iHeight },
                    buf, pal::PixelFormat::BGRA32);
   if (!buf.valid ())
     return eOK;

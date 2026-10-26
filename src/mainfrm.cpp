@@ -372,7 +372,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
     // remember default format
 
-    memset (&m_defaultInfoBarFormat, 0, sizeof (m_defaultInfoBarFormat));
+    ZeroMemory (&m_defaultInfoBarFormat, sizeof (m_defaultInfoBarFormat));
     m_defaultInfoBarFormat.cbSize = sizeof (m_defaultInfoBarFormat);
     m_defaultInfoBarFormat.dwMask = CFM_FACE | CFM_SIZE | CFM_BOLD | CFM_ITALIC | CFM_STRIKEOUT | CFM_UNDERLINE;
     pRichEdit->GetDefaultCharFormat (m_defaultInfoBarFormat);

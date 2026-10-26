@@ -243,17 +243,17 @@ void to_variant(VARIANT& r, double v) { r.vt = VT_R8;   r.dblVal  = v; }
 void to_variant(VARIANT& r, char* v)  { r.vt = VT_BSTR; r.bstrVal = v ? v : SysAllocString (""); } // BSTR
 void to_variant(VARIANT& r, void* v)  { r.vt = VT_DISPATCH; r.byref = v; }       // LPDISPATCH
 void to_variant(VARIANT& r, VARIANT v){ r = v; }                                 // take ownership (shallow)
-void to_variant(VARIANT& r, unsigned short v) { r.vt = VT_I2; r.iVal = (short) v; }
-void to_variant(VARIANT& r, const CString& v) { r.vt = VT_BSTR; r.bstrVal = SysAllocString((LPCTSTR) v); }
+[[maybe_unused]] void to_variant(VARIANT& r, unsigned short v) { r.vt = VT_I2; r.iVal = (short) v; }
+[[maybe_unused]] void to_variant(VARIANT& r, const CString& v) { r.vt = VT_BSTR; r.bstrVal = SysAllocString((LPCTSTR) v); }
 
 // VARIANT -> C++ value for property setters / member assignment.
 template<class T> T prop_from(const VARIANT* v);
 template<> long           prop_from<long>          (const VARIANT* v) { return var_to_long(v); }
 template<> short          prop_from<short>         (const VARIANT* v) { return (short) var_to_long(v); }
 template<> int            prop_from<int>           (const VARIANT* v) { return var_to_bool(v); }   // BOOL — every int-typed property is VT_BOOL
-template<> unsigned short prop_from<unsigned short>(const VARIANT* v) { return (unsigned short) var_to_long(v); }
-template<> double         prop_from<double>        (const VARIANT* v) { return var_to_double(v); }
-template<> CString        prop_from<CString>       (const VARIANT* v) { return var_to_cstr(v); }
+template<> [[maybe_unused]] unsigned short prop_from<unsigned short>(const VARIANT* v) { return (unsigned short) var_to_long(v); }
+template<> [[maybe_unused]] double         prop_from<double>        (const VARIANT* v) { return var_to_double(v); }
+template<> [[maybe_unused]] CString        prop_from<CString>       (const VARIANT* v) { return var_to_cstr(v); }
 
 // ── Argument holders (input VARIANT -> typed call argument) ─────────────────
 // Each holder owns whatever storage its argument needs and lives in the call's

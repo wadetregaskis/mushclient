@@ -217,8 +217,8 @@ int iLen = _pcre_ord2utf (dlg.m_iCode, utf8);
 CString strText;
 
 
-for (int i = 0; i < iLen; i++)
-  strText += CFormat ("\\%02X", utf8 [i]);
+  for (int i = 0; i < iLen; i++)
+    strText += CFormat ("\\%02X", utf8 [i]);
 
   m_ctlText.ReplaceSel (strText);
 

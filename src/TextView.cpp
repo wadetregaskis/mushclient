@@ -1384,7 +1384,7 @@ CString strEntityContents;
                 ::UMessageBox (TFormat ("Invalid hex number in entity: &%s; "
                                      "- maximum of 2 hex digits",
                                     (LPCTSTR) strEntity), MB_ICONSTOP);
-                iResult = (iResult << 4) + iNewDigit - '0';
+              iResult = (iResult << 4) + iNewDigit - '0';
               }
             } // end of hex entity
           else

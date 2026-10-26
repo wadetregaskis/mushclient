@@ -1038,7 +1038,7 @@ bool CMUSHclientDoc:: ChangedPrefsP9  (CPrefsP9  &page9)
     m_bTranslateBackslashSequences != page9.m_bTranslateBackslashSequences ||
     m_bSpellCheckOnSend != page9.m_bSpellCheckOnSend ||
     m_strTabCompletionDefaults != page9.m_strTabCompletionDefaults ||
-    m_iTabCompletionLines != page9.m_iTabCompletionLines ||
+    m_iTabCompletionLines != (unsigned int) page9.m_iTabCompletionLines ||
     m_bTabCompletionSpace != page9.m_bTabCompletionSpace ||
     m_bArrowKeysWrap != page9.m_bArrowKeysWrap ||
     m_bUseDefaultInputFont != page9.m_bUseDefaultInputFont ||
@@ -2520,23 +2520,23 @@ int CMUSHclientDoc::RecompileRegularExpressions ()
     else
       strRegexp = ConvertToRegularExpression (pTrigger->trigger);
 
-      // compile regular expression
-      try 
-        {
-        pTrigger->regexp = regcomp (strRegexp, (pTrigger->ignore_case ? PCRE_CASELESS : 0) |
-                                               (pTrigger->bMultiLine  ? PCRE_MULTILINE : 0) |
-                                               (m_bUTF_8 ? PCRE_UTF8 : 0)
-                                               );
-        }   // end of try
-      catch(CException* e)
-        {
-        pTrigger->regexp = NULL;
-        e->Delete ();
-        iTriggerErrors++;
-        ColourNote ("red", "", 
-                     TFormat ("In %s, could not recompile trigger (%s) matching on: %s.",
-                              (LPCTSTR) sPluginName, (LPCTSTR) pTrigger->strInternalName, (LPCTSTR) strRegexp));
-        } // end of catch
+    // compile regular expression
+    try 
+      {
+      pTrigger->regexp = regcomp (strRegexp, (pTrigger->ignore_case ? PCRE_CASELESS : 0) |
+                                             (pTrigger->bMultiLine  ? PCRE_MULTILINE : 0) |
+                                             (m_bUTF_8 ? PCRE_UTF8 : 0)
+                                             );
+      }   // end of try
+    catch(CException* e)
+      {
+      pTrigger->regexp = NULL;
+      e->Delete ();
+      iTriggerErrors++;
+      ColourNote ("red", "", 
+                   TFormat ("In %s, could not recompile trigger (%s) matching on: %s.",
+                            (LPCTSTR) sPluginName, (LPCTSTR) pTrigger->strInternalName, (LPCTSTR) strRegexp));
+      } // end of catch
     }  // end of for each trigger
 
 #if ALIASES_USE_UTF8

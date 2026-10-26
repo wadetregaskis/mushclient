@@ -337,7 +337,7 @@ public:
     static CWnd* ReleaseCapture() { return nullptr; }
     CWnd* GetFocus() { return nullptr; }
     CWnd* GetWindow(UINT) const { return nullptr; }
-    UINT  GetDlgCtrlID() const { return 0; }
+    int   GetDlgCtrlID() const { return 0; }   // int, as MFC's (IDC_STATIC is -1)
 
     // Timer
     UINT_PTR SetTimer(UINT nIDEvent, UINT nElapse, void* = nullptr) { return 0; }

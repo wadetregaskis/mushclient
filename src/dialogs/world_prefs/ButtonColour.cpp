@@ -46,10 +46,10 @@ void CColourButton::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
 	if (lpDrawItemStruct->CtlType == ODT_BUTTON)
 	{
 		// Draw 3D frame
-   if (lpDrawItemStruct->itemState & (ODS_SELECTED | ODS_DISABLED))
-  		pDC->DrawEdge(rc, EDGE_SUNKEN, BF_RECT|BF_ADJUST);
-   else
-  		pDC->DrawEdge(rc, EDGE_RAISED, BF_RECT|BF_ADJUST);
+		if (lpDrawItemStruct->itemState & (ODS_SELECTED | ODS_DISABLED))
+			pDC->DrawEdge(rc, EDGE_SUNKEN, BF_RECT|BF_ADJUST);
+		else
+			pDC->DrawEdge(rc, EDGE_RAISED, BF_RECT|BF_ADJUST);
 
 		// Draw colour
 		pDC->FillSolidRect(rc, m_colour);

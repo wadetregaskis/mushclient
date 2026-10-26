@@ -327,7 +327,7 @@ CString strNameFixed = strName;
       if (i & 0xF000000L)   // check not too long
         return true;
 
-    	i = (i << 4) + iNewDigit - '0';
+      i = (i << 4) + iNewDigit - '0';
       } // end of building up colour sequence
 
     // we need to change the order because of the endian-ness I suspect

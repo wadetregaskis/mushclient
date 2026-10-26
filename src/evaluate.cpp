@@ -444,7 +444,7 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
 
         for (int iCount = 0; 
               iCount < trigger_item->iLinesToMatch &&
-              iPos != m_sRecentLines.size ()
+              iPos != (int) m_sRecentLines.size ()
               ; iPos++, iCount++
             )
           {

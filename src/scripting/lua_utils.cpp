@@ -1347,7 +1347,7 @@ const char * data = luaL_checklstring (L, 1, &length);
         return 0;     // if not 0 xxxxxxx must be 11 xxxxxx
 
       ab = _pcre_utf8_table4 [c & 0x3f];  /* Number of additional bytes */
-      if (length < ab) 
+      if (length < (size_t) ab) 
         return 0;     // too short
 
       length -= ab;
@@ -2164,7 +2164,7 @@ static int menufontsize (lua_State *L)
   double points = luaL_optnumber (L, 1, 0);
 
   NONCLIENTMETRICS metrics;
-  memset (&metrics, 0, sizeof (metrics));   // on the port SystemParametersInfo is a no-op,
+  ZeroMemory (&metrics, sizeof (metrics));   // on the port SystemParametersInfo is a no-op,
                                             // so zero-init to avoid reading uninitialised fields
   metrics.cbSize = sizeof (metrics);
 

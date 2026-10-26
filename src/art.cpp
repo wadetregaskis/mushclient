@@ -71,7 +71,7 @@ static inchr deutsch[7] = {196, 214, 220, 228, 246, 252, 223};
 
 ****************************************************************************/
 
-static int deutschflag,justification,paragraphflag,right2left,multibyte;
+static int deutschflag,justification,paragraphflag,right2left;
 static int cmdinput;
 
 #define SM_SMUSH 128
@@ -93,7 +93,7 @@ static int smushoverride;
 
 static int outputwidth;
 static int outlinelenlimit;
-static const char *fontdirname,*fontname;
+static const char *fontdirname;
 
 
 /****************************************************************************
@@ -163,8 +163,6 @@ char *myalloc(size_t size)
 
 static void getparams()
 {
-  extern char *optarg;
-  extern int optind;
 
   fontdirname = DEFAULTFONTDIR;
   deutschflag = 0;

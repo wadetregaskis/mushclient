@@ -216,7 +216,7 @@ bool old_bTabCompletionSpace = m_bTabCompletionSpace;
     CLine * pLine = m_LineList.GetPrev (pos);
     CString strLine = CString (pLine->text, pLine->len);
 
-    if (++iCount > m_iTabCompletionLines)
+    if ((unsigned int) ++iCount > m_iTabCompletionLines)
       break;    // hit line limit
     if (TabCompleteOneLine (nStartChar, nEndChar, sWord, strLine))
       {

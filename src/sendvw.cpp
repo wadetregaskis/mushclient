@@ -37,7 +37,6 @@
 static char BASED_CODE THIS_FILE[] = __FILE__;
 #endif
 
-static CString RandomString();
 
 /////////////////////////////////////////////////////////////////////////////
 // CSendView

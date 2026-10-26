@@ -185,7 +185,9 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   // keeps what world.GetWorld returned and uses it after that world is closed
   // would dereference freed memory.
   if (!MC_DispatchDocIsLive (doc))
+    {
     rb_raise (rb_eRuntimeError, "world: that world has been closed");
+    }
 
     {
     std::string name = rb_id2name (SYM2ID (argv[0]));

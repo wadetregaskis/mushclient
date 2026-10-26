@@ -204,7 +204,21 @@ inline void fail_msg(const char* file, int line, const char* msg) {
 }
 
 template<typename A, typename B>
-inline bool cmp_eq(const A& a, const B& b) { return a == b; }
+inline bool cmp_eq(const A& a, const B& b) {
+    // Integers of different signedness compare by VALUE, like C++20's
+    // std::cmp_equal: `a == b` would first convert a negative operand to a
+    // huge unsigned one, so EXPECT_EQ(-1, someUnsigned) passed at UINT_MAX.
+    if constexpr (std::is_integral<A>::value && std::is_integral<B>::value &&
+                  !std::is_same<A, bool>::value && !std::is_same<B, bool>::value &&
+                  std::is_signed<A>::value != std::is_signed<B>::value) {
+        if constexpr (std::is_signed<A>::value)
+            return a >= 0 && static_cast<typename std::make_unsigned<A>::type>(a) == b;
+        else
+            return b >= 0 && a == static_cast<typename std::make_unsigned<B>::type>(b);
+    } else {
+        return a == b;
+    }
+}
 inline bool cmp_eq(const char* a, const char* b) {
     return a == b || (a && b && strcmp(a, b) == 0);
 }

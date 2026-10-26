@@ -1381,7 +1381,7 @@ int RunPalMiniWindowSelfTest()
         // body ignored nCount, filled the leading BITMAP and left the rest as
         // stack garbage.  POISONED first, so "wrote nothing there" fails.
         DIBSECTION ds;
-        memset(&ds, 0x7F, sizeof ds);
+        memset((void *) &ds, 0x7F, sizeof ds);   // poison
         mwCheck(doc->m_BackgroundBitmap.GetObject((int) sizeof ds, &ds)
                     == (int) sizeof(DIBSECTION),
                 "GetObject(sizeof DIBSECTION) answers the DIBSECTION size");
@@ -1402,13 +1402,13 @@ int RunPalMiniWindowSelfTest()
                 "GetObject(NULL) is Win32's size query and answers the size");
         // The other direction of "honours nCount": a BITMAP-sized buffer gets
         // the BITMAP and NOT ONE BYTE past it.
-        memset(&ds, 0x7F, sizeof ds);
+        memset((void *) &ds, 0x7F, sizeof ds);   // poison
         mwCheck(doc->m_BackgroundBitmap.GetObject((int) sizeof(BITMAP), &ds)
                     == (int) sizeof(BITMAP),
                 "GetObject(sizeof BITMAP) keeps the BITMAP-only contract");
         mwCheck(ds.dsBm.bmWidth == 9 && ds.dsBmih.biSize == 0x7F7F7F7Fu,
                 "...and writes nothing past the caller's declared size");
-        memset(&ds, 0x7F, sizeof ds);
+        memset((void *) &ds, 0x7F, sizeof ds);   // poison
         mwCheck(doc->m_BackgroundBitmap.GetObject(4, &ds) == 0 &&
                 ds.dsBm.bmType == 0x7F7F7F7F,
                 "...and a buffer smaller than a BITMAP is refused untouched");
@@ -1421,7 +1421,7 @@ int RunPalMiniWindowSelfTest()
         // that, the assertion below passes on the broken code, because the
         // struct still holds the ZEROES it was initialised with.  Same shape as
         // the headless twin's pin in tests/test_gdi_headless.cpp.
-        memset(&bmInfo, 0x7F, sizeof bmInfo);
+        memset((void *) &bmInfo, 0x7F, sizeof bmInfo);   // poison
         mwCheck(doc->m_BackgroundBitmap.GetBitmap(&bmInfo) == FALSE,
                 "...and the image is really GONE (it used to survive)");
         mwCheck(bmInfo.bmWidth == 0 && bmInfo.bmHeight == 0 &&
@@ -1429,7 +1429,7 @@ int RunPalMiniWindowSelfTest()
                 bmInfo.bmBitsPixel == 0 && bmInfo.bmType == 0 &&
                 bmInfo.bmBits == NULL,
                 "...and GetBitmap zeroed the caller's BITMAP before failing");
-        memset(&ds, 0x7F, sizeof ds);
+        memset((void *) &ds, 0x7F, sizeof ds);   // poison
         mwCheck(doc->m_BackgroundBitmap.GetObject((int) sizeof ds, &ds) == 0 &&
                 ds.dsBm.bmWidth == 0 && ds.dsBmih.biSize == 0 &&
                 ds.dsBmih.biBitCount == 0,

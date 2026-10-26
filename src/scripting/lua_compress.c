@@ -300,7 +300,7 @@ static int utils_fromhex (lua_State *L)
       t = toupper (*p);
       if (t >= 'A')
         t -= 7;
-    	c = (c << 4) + t - '0';
+      c = (c << 4) + t - '0';
       i++;
       } // end of building up hex literal
 

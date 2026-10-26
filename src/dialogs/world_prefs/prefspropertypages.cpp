@@ -2495,12 +2495,14 @@ void CPrefsP7::DoDataExchange(CDataExchange* pDX)
   if (pDX->m_bSaveAndValidate)
     if (m_ctlUseDefaultAliases.GetCheck ())
       if (m_ctlUseDefaultAliases.GetCheck () != m_bUseDefaultAliases)
+        {
         if (m_doc->m_AliasMap.GetCount () > 0)
          if (::UMessageBox (TFormat ("By checking the option \"Override with default aliases\" "
              " your existing %i aliase(s) will be PERMANENTLY discarded next time you open this world.\n\n"
              "Are you SURE you want to do this?", m_doc->m_AliasMap.GetCount ()),
              MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 ) != IDYES)
              pDX->Fail ();
+        }
 
 	CGenPropertyPage::DoDataExchange(pDX);
 	//{{AFX_DATA_MAP(CPrefsP7)
@@ -2884,9 +2886,9 @@ void CPrefsP7::OnChangeAlias()
 {
 
 // don't do it if they are using defaults
-if (m_ctlUseDefaultAliases.GetCheck () != 0 &&
+  if (m_ctlUseDefaultAliases.GetCheck () != 0 &&
                   !App.m_strDefaultAliasesFile.IsEmpty ())
-  return;
+    return;
 
   CAliasDlg dlg;
   dlg.m_pDoc = m_doc;
@@ -3496,12 +3498,14 @@ void CPrefsP8::DoDataExchange(CDataExchange* pDX)
   if (pDX->m_bSaveAndValidate)
     if (m_ctlUseDefaultTriggers.GetCheck ())
       if (m_ctlUseDefaultTriggers.GetCheck () != m_bUseDefaultTriggers)
+        {
         if (m_doc->m_TriggerMap.GetCount () > 0)
          if (::UMessageBox (TFormat ("By checking the option \"Override with default triggers\" "
              " your existing %i trigger%s will be PERMANENTLY discarded next time you open this world.\n\n"
              "Are you SURE you want to do this?", PLURAL (m_doc->m_TriggerMap.GetCount ())),
              MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 ) != IDYES)
              pDX->Fail ();
+        }
 
 	CGenPropertyPage::DoDataExchange(pDX);
 	//{{AFX_DATA_MAP(CPrefsP8)
@@ -4083,9 +4087,9 @@ void CPrefsP8::OnChangeTrigger()
 {         
 
 // don't do it if they are using defaults
-if (m_ctlUseDefaultTriggers.GetCheck () != 0 &&
+  if (m_ctlUseDefaultTriggers.GetCheck () != 0 &&
                   !App.m_strDefaultTriggersFile.IsEmpty ())
-  return;
+    return;
 
   CTriggerDlg dlg;
 
@@ -6258,12 +6262,14 @@ void CPrefsP16::DoDataExchange(CDataExchange* pDX)
   if (pDX->m_bSaveAndValidate)
     if (m_ctlUseDefaultTimers.GetCheck ())
       if (m_ctlUseDefaultTimers.GetCheck () != m_bUseDefaultTimers)
+        {
         if (m_doc->m_TimerMap.GetCount () > 0)
          if (::UMessageBox (TFormat ("By checking the option \"Override with default timers\" "
              " your existing %i timer%s will be PERMANENTLY discarded next time you open this world.\n\n"
              "Are you SURE you want to do this?", PLURAL (m_doc->m_TimerMap.GetCount ())),
              MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 ) != IDYES)
              pDX->Fail ();
+        }
 
 	CPropertyPage::DoDataExchange(pDX);
 	//{{AFX_DATA_MAP(CPrefsP16)

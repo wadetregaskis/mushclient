@@ -59,7 +59,7 @@ BOOL CLuaChooseList::OnInitDialog()
                         m_ctlListBox.SendMessage (LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0) 
                                                   | LVS_EX_FULLROWSELECT);
 
-  for (int i = 0; i < m_data.size (); i++)
+  for (int i = 0; i < (int) m_data.size (); i++)
     {
     int iPos = m_ctlListBox.InsertItem (i, m_data [i].sValue_.c_str ());
 

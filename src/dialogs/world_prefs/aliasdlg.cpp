@@ -537,7 +537,7 @@ BOOL CAliasDlg::PreTranslateMessage(MSG* pMsg)
 	if (pMsg->message == WM_SYSKEYDOWN &&
     pMsg->wParam == VK_RETURN)     
       {
-      PostMessage(WM_COMMAND, MAKELONG(IDC_EDIT_SEND, BN_CLICKED), NULL);
+      PostMessage(WM_COMMAND, MAKELONG(IDC_EDIT_SEND, BN_CLICKED), 0);
       return FALSE;
       }
 

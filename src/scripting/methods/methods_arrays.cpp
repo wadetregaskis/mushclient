@@ -473,7 +473,7 @@ VARIANT CMUSHclientDoc::ArrayExport(LPCTSTR Name, LPCTSTR Delimiter)
          sData = FindAndReplace (sData, sDelimiter, "\\" + sDelimiter);
 
          sResult += sKey + sDelimiter + sData;
-         if (++iCount < it->second->size ())
+         if ((size_t) ++iCount < it->second->size ())
           sResult += sDelimiter;
          }  // end of doing each one
 
@@ -527,7 +527,7 @@ VARIANT CMUSHclientDoc::ArrayExportKeys(LPCTSTR Name, LPCTSTR Delimiter)
      sKey = FindAndReplace (sKey, sDelimiter, "\\" + sDelimiter);
 
      sResult += sKey;
-     if (++iCount < it->second->size ())
+     if ((size_t) ++iCount < it->second->size ())
       sResult += sDelimiter;
      }  // end of doing each one
 

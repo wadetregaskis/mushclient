@@ -1130,7 +1130,7 @@ static const char * const kCanonicalColourNames [] =
 
 static bool IsCanonicalColourName (const CString & strName)
   {
-  for (int i = 0; i < sizeof kCanonicalColourNames / sizeof kCanonicalColourNames [0]; i++)
+  for (int i = 0; i < NUMITEMS (kCanonicalColourNames); i++)
     if (strName.CompareNoCase (kCanonicalColourNames [i]) == 0)
       return true;
   return false;

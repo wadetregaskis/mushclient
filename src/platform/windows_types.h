@@ -120,7 +120,9 @@ inline size_t mc_tcsftime(char* out, size_t maxsize, const char* fmt,
 
 typedef uint32_t COLORREF;
 
-inline COLORREF RGB(BYTE r, BYTE g, BYTE b)
+// constexpr, like Windows' macro: RGB (...) in a table initialiser is then a
+// constant, not a narrowing conversion (the option tables store it as double).
+constexpr COLORREF RGB(BYTE r, BYTE g, BYTE b)
 {
     return (COLORREF)(((BYTE)(r)) | ((DWORD)((BYTE)(g)) << 8) | ((DWORD)((BYTE)(b)) << 16));
 }
@@ -178,9 +180,12 @@ typedef LONG_PTR LRESULT;  // pointer-sized, matching Windows LRESULT
 #define INVALID_HANDLE_VALUE  ((HANDLE)(LONGLONG)-1)
 
 // ── Memory helpers ────────────────────────────────────────────────────────
-#define ZeroMemory(ptr, size)  memset((ptr), 0, (size))
-#define CopyMemory(dst, src, n) memcpy((dst), (src), (n))
-#define FillMemory(ptr, n, v)   memset((ptr), (v), (n))
+// The (void *) casts are GCC's documented opt-out of -Wclass-memaccess: the
+// shim gives several Windows structs default member initialisers, which makes
+// them "non-trivial" to GCC, though they are byte-filled exactly as on Windows.
+#define ZeroMemory(ptr, size)  memset((void *)(ptr), 0, (size))
+#define CopyMemory(dst, src, n) memcpy((void *)(dst), (src), (n))
+#define FillMemory(ptr, n, v)   memset((void *)(ptr), (v), (n))
 
 // ── MessageBox flags ──────────────────────────────────────────────────────
 
@@ -323,9 +328,19 @@ inline BOOL AfxIsValidString(LPCTSTR /*psz*/, int /*nLength*/ = -1) { return TRU
 #  define _strtoi64  strtoll
 #endif
 
-// wsprintf — like sprintf but Windows-named; just alias sprintf
+// wsprintf — Windows documents a 1,024-byte maximum output, so honour that
+// bound rather than aliasing sprintf (which macOS also deprecates).
 #ifndef wsprintf
-#  define wsprintf  sprintf
+#include <cstdarg>
+#include <cstdio>
+inline int wsprintf(char* buf, const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    const int n = vsnprintf(buf, 1024, fmt, ap);
+    va_end(ap);
+    return (n < 0 || n < 1024) ? n : 1023;   // characters stored, as Windows reports
+}
 #endif
 
 // process.h equivalents
@@ -367,7 +382,9 @@ struct SIZE  { LONG cx, cy; };
 #endif
 
 #ifndef TRACE
-#  define TRACE(...)    ((void)0)
+// As TRACE0-3 above: compiled out, arguments named in an unevaluated sizeof.
+namespace mc_trace_detail { template <class... T> int names (const T&...); }
+#  define TRACE(...)    ((void)sizeof(::mc_trace_detail::names(__VA_ARGS__)))
 #endif
 
 // BASED_CODE is a 16-bit Windows artefact; ignore it

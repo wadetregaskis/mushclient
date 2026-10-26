@@ -57,7 +57,7 @@ BOOL CLuaChooseListMulti::OnInitDialog()
 
   bool bHaveFocus = false;  // first selected item has the focus
 
-  for (int i = 0; i < m_data.size (); i++)
+  for (int i = 0; i < (int) m_data.size (); i++)
     {
     int iPos = m_ctlListBox.InsertItem (i, m_data [i].sValue_.c_str ());
 

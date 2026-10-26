@@ -227,11 +227,11 @@ END_DISPATCH_MAP()
 //  from VBA.  This IID must match the GUID that is attached to the 
 //  dispinterface in the .ODL file.
 
+#ifdef _WIN32
 // {11DFC5E8-AD6F-11D0-8EAE-00A0247B3BFD}
 static const IID IID_IMUSHclient =
 { 0x11dfc5e8, 0xad6f, 0x11d0, { 0x8e, 0xae, 0x0, 0xa0, 0x24, 0x7b, 0x3b, 0xfd } };
 
-#ifdef _WIN32
 BEGIN_INTERFACE_MAP(CMUSHclientDoc, CDocument)
 	INTERFACE_PART(CMUSHclientDoc, IID_IMUSHclient, Dispatch)
 END_INTERFACE_MAP()
@@ -2998,7 +2998,7 @@ COleDateTime tNow = COleDateTime::GetCurrentTime();
              *pa++ = *p;
            else
              *pa++ = '.';
-           sprintf (ph, " %02x", *p);
+           snprintf (ph, 4, " %02x", *p);   // 3 characters + NUL, as sized
            ph += 3;
            }  // end of each byte
 

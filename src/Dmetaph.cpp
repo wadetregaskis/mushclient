@@ -598,7 +598,7 @@ void MString::DoubleMetaphone(CString &metaph, CString &metaph2)
                                         current += 2;
                                 else
                                         current += 1;
-                                        MetaphAdd("P");
+                                MetaphAdd("P");
                                 break;
 
                         case 'Q':

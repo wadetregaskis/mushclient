@@ -1145,7 +1145,8 @@ void metaphone (const char *name, char * metaph, int metalen)
   metaph[0] = '\0';
 
   // don't allow overflow here
-  if (metalen > (sizeof (wname) - 1))
+  // (a negative length was always clamped here too, by the unsigned compare)
+  if (metalen < 0 || metalen > (int) sizeof (wname) - 1)
     metalen = sizeof (wname) - 1;
 
   jj = 0;
@@ -1189,7 +1190,7 @@ void metaphone (const char *name, char * metaph, int metalen)
     lastChr = Lng -1;
     }
 
-  for (ii=0; ( (strlen(metaph) < metalen) && (ii < Lng) ); ii++) {
+  for (ii=0; ( (strlen(metaph) < (size_t) metalen) && (ii < Lng) ); ii++) {
 
     curLtr = ename[ii];
 

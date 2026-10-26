@@ -51,7 +51,7 @@ BOOL CLuaChooseBox::OnInitDialog()
 	
   SetWindowText (m_strTitle);	
 	
-  for (int i = 0; i < m_data.size (); i++)
+  for (int i = 0; i < (int) m_data.size (); i++)
     {
     int iPos = m_ctlCombo.AddString (m_data [i].sValue_.c_str ());
 

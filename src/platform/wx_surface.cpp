@@ -387,12 +387,12 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
     case BrushStyle::Solid:
         return br.CreateSolidBrush(spec.fg) != 0;
     case BrushStyle::Null: {
-        LOGBRUSH lb; memset(&lb, 0, sizeof lb);
+        LOGBRUSH lb; ZeroMemory(&lb, sizeof lb);
         lb.lbStyle = BS_NULL;
         return br.CreateBrushIndirect(&lb) != 0;
     }
     case BrushStyle::Hatch: {
-        LOGBRUSH lb; memset(&lb, 0, sizeof lb);
+        LOGBRUSH lb; ZeroMemory(&lb, sizeof lb);
         lb.lbStyle = BS_HATCHED;
         lb.lbColor = spec.fg;
         lb.lbHatch = hatchToHs(spec.hatch);
@@ -858,8 +858,10 @@ void WxSurface::blit(SurfaceId dstId, Rect dstRect, const PixelBuffer& src, Rect
         for (int i = 0; i < 4; ++i) {
             const double X = cxs[i] * m->m11 + cys[i] * m->m21 + m->dx;
             const double Y = cxs[i] * m->m12 + cys[i] * m->m22 + m->dy;
-            if (X < minX) minX = X; if (X > maxX) maxX = X;
-            if (Y < minY) minY = Y; if (Y > maxY) maxY = Y;
+            if (X < minX) minX = X;
+            if (X > maxX) maxX = X;
+            if (Y < minY) minY = Y;
+            if (Y > maxY) maxY = Y;
         }
         Rect box = { (int)floor(minX) - 1, (int)floor(minY) - 1,
                      (int)ceil(maxX) - (int)floor(minX) + 2,

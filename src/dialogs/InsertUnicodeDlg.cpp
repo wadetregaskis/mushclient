@@ -71,7 +71,7 @@ void CInsertUnicodeDlg::DoDataExchange(CDataExchange* pDX)
         if (iNewDigit >= 'A')
           iNewDigit -= 7;
 
-    	  i = (i << 4) + iNewDigit - '0';
+        i = (i << 4) + iNewDigit - '0';
         } // end of building up sequence
       }  // in hex
     else

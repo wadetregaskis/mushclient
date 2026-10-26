@@ -470,7 +470,7 @@ vector<string> v;
   StringToVector (sScript, v, "\n", false);  // break script into lines so we can easily show each one
 
   // provided wanted line is in the table
-  if (!sScript.empty () && v.size () >= iLine)
+  if (!sScript.empty () && iLine >= 0 && v.size () >= (size_t) iLine)
     {
     ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, Translate ("Error context in script:"));
 
@@ -480,7 +480,7 @@ vector<string> v;
 
     int iEnd = iLine + 4;     // end 4 lines onwards
 
-    if (iEnd > v.size ())
+    if (iEnd > (int) v.size ())
       iEnd = v.size ();       // or at last line in script
 
     // show that range, marking error line with an asterisk
@@ -510,7 +510,7 @@ vector<string> v;
   StringToVector (sScript, v, "\n", false);  // break script into lines so we can easily show each one
 
   // provided wanted line is in the table
-  if (!sScript.empty () && v.size () >= iLine)
+  if (!sScript.empty () && iLine >= 0 && v.size () >= (size_t) iLine)
     {
     fputs (Translate ("Error context in script:\n"), f);
 
@@ -520,7 +520,7 @@ vector<string> v;
 
     int iEnd = iLine + 4;     // end 4 lines onwards
 
-    if (iEnd > v.size ())
+    if (iEnd > (int) v.size ())
       iEnd = v.size ();       // or at last line in script
 
     // show that range, marking error line with an asterisk

@@ -340,6 +340,7 @@ tInfoTypeMapping InfoTypes [] =
 
  };
 
+#ifdef _WIN32   // only the Windows toolbar/status-bar GetInfo cases use these
 static void GetWindowWidth (CWnd * pWnd, VARIANT & vaResult, const bool client = false )
   {
   RECT rect;
@@ -384,6 +385,7 @@ static void GetWindowHeight (CWnd * pWnd, VARIANT & vaResult, const bool client 
   vaResult.vt = VT_I4;
   vaResult.lVal = rect.bottom; 
   }   // end of GetWindowHeight
+#endif // _WIN32
 
 // helper function
 CMUSHView * CMUSHclientDoc::GetFirstOutputWindow ()

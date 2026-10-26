@@ -158,7 +158,7 @@ TEST(GdiHeadless, AttachTurnsADibIntoAReadableSurface)
     EXPECT_EQ((size_t)0, HeadlessLiveDibCountForTesting());
 
     BITMAP bi;
-    std::memset(&bi, 0x7F, sizeof bi);       // poison: GetBitmap must overwrite
+    std::memset((void *) &bi, 0x7F, sizeof bi);       // poison: GetBitmap must overwrite
     ASSERT_TRUE(image.GetBitmap(&bi));
     EXPECT_EQ(5, (int) bi.bmWidth);
     EXPECT_EQ(3, (int) bi.bmHeight);
@@ -314,7 +314,7 @@ TEST(GdiHeadless, AttachRejectsWhatItCannotRepresent)
         // GetBitmap that only returned FALSE would decide those branches by
         // whatever happened to be on the stack.
         BITMAP bi;
-        std::memset(&bi, 0x7F, sizeof bi);
+        std::memset((void *) &bi, 0x7F, sizeof bi);
         ASSERT_FALSE(image.GetBitmap(&bi));
         ASSERT_EQ(0, (int) bi.bmWidth);
         ASSERT_EQ(0, (int) bi.bmHeight);

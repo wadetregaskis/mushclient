@@ -111,7 +111,7 @@ inline eDatabaseIntegerBand DatabaseIntegerBand (const sqlite3_int64 iValue)
 inline CString DatabaseIntegerAsString (const sqlite3_int64 iValue)
   {
   CString strResult;
-  strResult.Format ("%I64d", iValue);
+  strResult.Format ("%lld", (long long) iValue);
   return strResult;
   }   // end of DatabaseIntegerAsString
 

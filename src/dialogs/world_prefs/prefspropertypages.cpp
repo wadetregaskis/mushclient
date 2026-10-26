@@ -9155,8 +9155,8 @@ void CPrefsP15::CalculateMemoryUsage ()
 
   // at new document time we won't have a line yet
   if (m_doc->m_LineList.GetCount ())
-    strMemory.Format ("%s (%i bytes/line)", (LPCTSTR) strKb,
-                      nMemory / m_doc->m_LineList.GetCount ());
+    strMemory.Format ("%s (%ld bytes/line)", (LPCTSTR) strKb,
+                      (long) (nMemory / m_doc->m_LineList.GetCount ()));
   else
     strMemory.Format ("%s", (LPCTSTR) strKb);
 

@@ -75,7 +75,7 @@ void CScriptErrorDlg::OnCopy()
                             "Event:        %s\n" 
                             "Description:  %s\n" 
                             "Called by:    %s\n" ,
-                            m_iError,
+                            (int) m_iError,
                             (LPCTSTR) m_strEvent,
                             (LPCTSTR) m_strDescription,
                             (LPCTSTR) m_strCalledBy), "\n", "\r\n"));

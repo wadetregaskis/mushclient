@@ -650,10 +650,10 @@ bool will_change_visibility = (Visible != m_bScrollBarWanted);
 void windowPositionHelper (CString & str, const RECT & r)
   {
   str.Format ("%ld,%ld,%ld,%ld", 
-              r.left, 
-              r.top, 
-              r.right - r.left,  // Width
-              r.bottom - r.top);  // Height
+              (long) r.left, 
+              (long) r.top, 
+              (long) (r.right - r.left),  // Width
+              (long) (r.bottom - r.top));  // Height
   } // end of windowPositionHelper
 
 

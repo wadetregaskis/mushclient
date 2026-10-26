@@ -1989,7 +1989,7 @@ CString strName,
     iType = ADD_TO_COMMAND;
   else 
     if (strType.IsEmpty ()) 
-      ThrowErrorException ("Macro type must be specified", (LPCTSTR) strType);
+      ThrowErrorException ("Macro type must be specified");
     else
       ThrowErrorException ("Macro type \"%s\" not recognised", (LPCTSTR) strType);
 

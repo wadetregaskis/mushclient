@@ -215,14 +215,14 @@ void CImportXMLdlg::ImportArchive (CArchive & ar)
             "%lu colour%s, "
             "%lu keypad%s, "
             "%lu printing style%s loaded. ",
-             PLURAL (iTriggers),
-             PLURALES (iAliases),
-             PLURAL (iTimers),
-             PLURAL (iMacros),
-             PLURAL (iVariables),
-             PLURAL (iColours),
-             PLURAL (iKeypad),
-             PLURAL (iPrinting));
+             PLURAL ((unsigned long) iTriggers),
+             PLURALES ((unsigned long) iAliases),
+             PLURAL ((unsigned long) iTimers),
+             PLURAL ((unsigned long) iMacros),
+             PLURAL ((unsigned long) iVariables),
+             PLURAL ((unsigned long) iColours),
+             PLURAL ((unsigned long) iKeypad),
+             PLURAL ((unsigned long) iPrinting));
 
       ::UMessageBox (strCounts, MB_ICONINFORMATION);
 

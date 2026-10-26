@@ -260,8 +260,8 @@ inline std::string describe(const T& v) {
 #define EXPECT_EQ(expected, actual) \
     do { if (!mc_test::cmp_eq((expected), (actual))) { \
         char mc_test_buf_[512]; \
-        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected " #expected " == " #actual \
-                 " (%s vs %s)", mc_test::describe(expected).c_str(), \
+        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected %s == %s (%s vs %s)", \
+                 #expected, #actual, mc_test::describe(expected).c_str(), \
                  mc_test::describe(actual).c_str()); \
         mc_test::fail_msg(__FILE__, __LINE__, mc_test_buf_); \
     }} while(0)
@@ -269,8 +269,8 @@ inline std::string describe(const T& v) {
 #define EXPECT_NE(a, b) \
     do { if (mc_test::cmp_eq((a),(b))) { \
         char mc_test_buf_[512]; \
-        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected " #a " != " #b \
-                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected %s != %s (%s vs %s)", \
+                 #a, #b, mc_test::describe(a).c_str(), \
                  mc_test::describe(b).c_str()); \
         mc_test::fail_msg(__FILE__, __LINE__, mc_test_buf_); \
     }} while(0)
@@ -278,8 +278,8 @@ inline std::string describe(const T& v) {
 #define EXPECT_GT(a, b) \
     do { if (!((a) > (b))) { \
         char mc_test_buf_[512]; \
-        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected " #a " > " #b \
-                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected %s > %s (%s vs %s)", \
+                 #a, #b, mc_test::describe(a).c_str(), \
                  mc_test::describe(b).c_str()); \
         mc_test::fail_msg(__FILE__, __LINE__, mc_test_buf_); \
     }} while(0)
@@ -287,8 +287,8 @@ inline std::string describe(const T& v) {
 #define EXPECT_GE(a, b) \
     do { if (!((a) >= (b))) { \
         char mc_test_buf_[512]; \
-        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected " #a " >= " #b \
-                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected %s >= %s (%s vs %s)", \
+                 #a, #b, mc_test::describe(a).c_str(), \
                  mc_test::describe(b).c_str()); \
         mc_test::fail_msg(__FILE__, __LINE__, mc_test_buf_); \
     }} while(0)
@@ -296,8 +296,8 @@ inline std::string describe(const T& v) {
 #define EXPECT_LT(a, b) \
     do { if (!((a) < (b))) { \
         char mc_test_buf_[512]; \
-        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected " #a " < " #b \
-                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected %s < %s (%s vs %s)", \
+                 #a, #b, mc_test::describe(a).c_str(), \
                  mc_test::describe(b).c_str()); \
         mc_test::fail_msg(__FILE__, __LINE__, mc_test_buf_); \
     }} while(0)
@@ -305,8 +305,8 @@ inline std::string describe(const T& v) {
 #define EXPECT_LE(a, b) \
     do { if (!((a) <= (b))) { \
         char mc_test_buf_[512]; \
-        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected " #a " <= " #b \
-                 " (%s vs %s)", mc_test::describe(a).c_str(), \
+        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected %s <= %s (%s vs %s)", \
+                 #a, #b, mc_test::describe(a).c_str(), \
                  mc_test::describe(b).c_str()); \
         mc_test::fail_msg(__FILE__, __LINE__, mc_test_buf_); \
     }} while(0)
@@ -327,8 +327,8 @@ inline std::string describe(const T& v) {
 #define EXPECT_NEAR(expected, actual, tol) \
     do { if (std::fabs((double)(expected) - (double)(actual)) > (double)(tol)) { \
         char mc_test_buf_[256]; \
-        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected |" #expected " - " #actual "| <= " #tol \
-                 " (diff=%.6g)", std::fabs((double)(expected)-(double)(actual))); \
+        snprintf(mc_test_buf_, sizeof(mc_test_buf_), "Expected |%s - %s| <= %s (diff=%.6g)", \
+                 #expected, #actual, #tol, std::fabs((double)(expected)-(double)(actual))); \
         mc_test::fail_msg(__FILE__, __LINE__, mc_test_buf_); \
     }} while(0)
 

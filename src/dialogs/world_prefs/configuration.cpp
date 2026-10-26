@@ -481,10 +481,10 @@ void CMUSHclientDoc:: LoadPrefsP15 (CPrefsP15 &page15)
 
   page15.m_strBufferLines.Format ("%i / %ld", 
                                   m_LineList.GetCount (),
-                                  m_maxlines);
-  page15.m_strTriggers.Format ("%i   (%I64d matched)", 
+                                  (long) m_maxlines);
+  page15.m_strTriggers.Format ("%i   (%lld matched)", 
                               m_TriggerMap.GetCount (),
-                              nTotalTriggers);
+                              (long long) nTotalTriggers);
 
   // time taken to execute triggers
   if (App.m_iCounterFrequency > 0)
@@ -503,12 +503,12 @@ void CMUSHclientDoc:: LoadPrefsP15 (CPrefsP15 &page15)
   else
      page15.m_strTimeTakenCompressing += "(MCCP not active)";
 
-  page15.m_strAliases.Format ("%i   (%I64d used)", 
+  page15.m_strAliases.Format ("%i   (%lld used)", 
                               m_AliasMap.GetCount (),
-                              nTotalAliases);
-  page15.m_strTimers.Format ("%i   (%I64d fired)", 
+                              (long long) nTotalAliases);
+  page15.m_strTimers.Format ("%i   (%lld fired)", 
                               m_TimerMap.GetCount (),
-                              nTotalTimers);
+                              (long long) nTotalTimers);
 
   if (m_sockAddr.sin_addr.s_addr == INADDR_NONE)
     page15.m_strIpAddress = "(unknown)";
@@ -538,8 +538,8 @@ void CMUSHclientDoc:: LoadPrefsP15 (CPrefsP15 &page15)
        page15.m_strCompressionRatio += " MCCP v 1";
     else if (m_iMCCP_type == 2)
        page15.m_strCompressionRatio += " MCCP v 2";
-    page15.m_strCompressedIn = CFormat ("%I64d", m_nTotalCompressed);
-    page15.m_strCompressedOut = CFormat ("%I64d", m_nTotalUncompressed);
+    page15.m_strCompressedIn = CFormat ("%lld", (long long) m_nTotalCompressed);
+    page15.m_strCompressedOut = CFormat ("%lld", (long long) m_nTotalUncompressed);
     }
   else
     {
@@ -550,8 +550,8 @@ void CMUSHclientDoc:: LoadPrefsP15 (CPrefsP15 &page15)
 
   __int64 nInK = m_nBytesIn / (__int64) 1024;
   __int64 nOutK = m_nBytesOut / (__int64) 1024;
-  page15.m_strBytesReceived = CFormat ("%I64d bytes (%I64d Kb)", m_nBytesIn, nInK);
-  page15.m_strBytesSent = CFormat ("%I64d bytes (%I64d Kb)", m_nBytesOut, nOutK);
+  page15.m_strBytesReceived = CFormat ("%lld bytes (%lld Kb)", (long long) m_nBytesIn, (long long) nInK);
+  page15.m_strBytesSent = CFormat ("%lld bytes (%lld Kb)", (long long) m_nBytesOut, (long long) nOutK);
 
   // MXP stuff
 
@@ -569,9 +569,9 @@ void CMUSHclientDoc:: LoadPrefsP15 (CPrefsP15 &page15)
   page15.m_strMXPreferenceCount   = CFormat ("%i", iRefCount);        
 
   // count of how many we got
-  page15.m_strMXPtagsReceived = CFormat ("%I64d", m_iMXPtags);        
-  page15.m_strMXPentitiesReceived = CFormat ("%I64d", m_iMXPentities);    
-  page15.m_strMXPerrors = CFormat ("%I64d", m_iMXPerrors);              
+  page15.m_strMXPtagsReceived = CFormat ("%lld", (long long) m_iMXPtags);        
+  page15.m_strMXPentitiesReceived = CFormat ("%lld", (long long) m_iMXPentities);    
+  page15.m_strMXPerrors = CFormat ("%lld", (long long) m_iMXPerrors);              
 
 
 

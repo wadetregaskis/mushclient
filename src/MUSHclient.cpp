@@ -1632,7 +1632,7 @@ bool bCompressInitOK = false;
 CString CMUSHclientApp::GetUniqueString (void)
   {
   CString strNumber;
-  strNumber.Format ("%I64d", GetUniqueNumber ());
+  strNumber.Format ("%lld", (long long) GetUniqueNumber ());
   return strNumber;
   }   // end of CMUSHclientApp::GetUniqueString
 

@@ -144,7 +144,7 @@ const char * p = "?";
   if (iLevel > m_iMXPdebugLevel)   // only show required level
     return;
 
-  CString str = CFormat ("%s %5i: (%5i) %s%s",
+  CString str = CFormat ("%s %5ld: (%5i) %s%s",
                       p,     // error level
                       iMessageNumber,   // actual error number
                       m_LineList.GetCount (),  // which line

@@ -168,7 +168,7 @@ int  CMUSHclientApp::ExitInstance   ()            { return 0; }
 CString CMUSHclientApp::GetUniqueString ()
 {
     CString s;
-    s.Format ("%I64d", GetUniqueNumber ());
+    s.Format ("%lld", (long long) GetUniqueNumber ());
     return s;
 }
 

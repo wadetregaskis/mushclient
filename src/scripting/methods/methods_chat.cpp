@@ -38,6 +38,8 @@
 //    SetChatOption
 
 
+#include "../../option_table_offsetof.h"
+
 #define CHATO(arg) offsetof (CChatSocket, arg), sizeof (((CChatSocket *)NULL)->arg)
 
 //-----config name ----------------  default ---variable name ---- min, max, flags ---

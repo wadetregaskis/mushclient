@@ -28,6 +28,8 @@
 //    SetAliasOption
 
 
+#include "../../option_table_offsetof.h"
+
 #define AO(arg) offsetof (CAlias, arg), sizeof (((CAlias *)NULL)->arg)
 
 //-----config name ----------------  default ---variable name ---- min, max, flags ---

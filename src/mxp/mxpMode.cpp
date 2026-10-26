@@ -30,7 +30,7 @@ void CMUSHclientDoc::MXP_mode_change (int iNewMode)
 
 // information message if moving in or out of permanent modes
 
-char * sMode [] =
+const char * sMode [] =
   {
   "open",               // 0
   "secure",             // 1

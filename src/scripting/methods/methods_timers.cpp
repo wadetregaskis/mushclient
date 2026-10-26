@@ -30,6 +30,8 @@
 //    SetTimerOption
 
 
+#include "../../option_table_offsetof.h"
+
 #define TMRO(arg) offsetof (CTimer, arg), sizeof (((CTimer *)NULL)->arg)
 
 //-----config name ----------------  default ---variable name ---- min, max, flags ---

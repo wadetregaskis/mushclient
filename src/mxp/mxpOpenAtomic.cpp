@@ -490,7 +490,7 @@ COLORREF       iBackColour = pStyle->iBackColour;
 
               for (long i = 0; OptionsTable [i].pName; i++)
                 {
-                char * pName = OptionsTable [i].pName;
+                const char * pName = OptionsTable [i].pName;
                 strOptions += CFormat ("%s=%ld ",
                                pName, 
                                GetOptionItem (i));

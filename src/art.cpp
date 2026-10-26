@@ -93,7 +93,7 @@ static int smushoverride;
 
 static int outputwidth;
 static int outlinelenlimit;
-static char *fontdirname,*fontname;
+static const char *fontdirname,*fontname;
 
 
 /****************************************************************************

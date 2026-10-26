@@ -205,7 +205,7 @@ void CTextAttributesDlg::OnLineInfo()
         INFO (TFormat (" Start MXP tag: %s", 
               (LPCTSTR) pStyle->pAction->m_strAction));
 
-  char * sColours [8] = 
+  const char * sColours [8] = 
   {
   "Black",
   "Red",

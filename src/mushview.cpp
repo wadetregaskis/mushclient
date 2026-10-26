@@ -4332,7 +4332,7 @@ BOOL CMUSHView::OnToolTipNeedText(UINT id, NMHDR * pNMHDR, LRESULT * pResult)
         if (!pDoc->m_bLineInformation)
           return FALSE;
 
-        char * p = "";
+        const char * p = "";
 
         // Adjust the text by filling in TOOLTIPTEXT
         CString strDate;
@@ -5241,7 +5241,7 @@ iStyle = pStyle->iFlags;
 
 char c = pStartLine->text [startcol];
 
-char * sColours [8] = 
+const char * sColours [8] = 
   {
   "Black",
   "Red",

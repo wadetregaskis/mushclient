@@ -20,7 +20,7 @@ void CMUSHclientDoc::MXP_error (const int iLevel,
                                 CString strMessage)
   {
 
-char * sLevel [] = 
+const char * sLevel [] = 
   {
   " ",
   "E", // error
@@ -29,7 +29,7 @@ char * sLevel [] =
   "A", // all
   };
 
-char * p = "?";
+const char * p = "?";
 
   // turn error level into a character
   if (iLevel >= 0 && iLevel < NUMITEMS (sLevel))
@@ -160,7 +160,7 @@ char * p = "?";
 // here at an unexpected termination of element collection, eg. <blah \n
 void CMUSHclientDoc::MXP_unterminated_element (const char * pReason)
   {
-  char * p = "thing";
+  const char * p = "thing";
   int i = errMXP_Unknown;
   switch (m_phase)
     {

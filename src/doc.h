@@ -469,7 +469,7 @@ enum {
 // for debug.options and MXP <option> tag
 typedef struct
   {
-  char *  pName;      // name, eg. "logoutput"
+  const char *  pName;      // name, eg. "logoutput"
   double  iDefault;   // original (default) value
   int     iOffset;    // offset in CMUSHclientDoc
   int     iLength;    // length of field (ie. 1, 2, 4, 8 bytes)
@@ -481,8 +481,8 @@ typedef struct
 // for XML load/save
 typedef struct
   {
-  char *  pName;      // name, eg. "server"
-  char *  sDefault;   // original (default) value
+  const char *  pName;      // name, eg. "server"
+  const char *  sDefault;   // original (default) value
   int     iOffset;    // offset in CMUSHclientDoc
   int     iFlags;     // flags, see above
   }  tConfigurationAlphaOption;

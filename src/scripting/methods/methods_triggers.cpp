@@ -29,6 +29,8 @@
 //    StopEvaluatingTriggers
 
 
+#include "../../option_table_offsetof.h"
+
 #define TO(arg) offsetof (CTrigger, arg), sizeof (((CTrigger *)NULL)->arg)
 
 //-----config name ----------------  default ---variable name ---- min, max, flags ---

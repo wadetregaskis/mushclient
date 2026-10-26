@@ -85,17 +85,17 @@ enum
 
 typedef struct
   {
-  char *  pName;     // name, eg. "bold"
+  const char *  pName;     // name, eg. "bold"
   int     iFlags;    // see above, secure or command flags
   int     iAction;   // action, eg. MXP_ACTION_BOLD
-  char *  pArgs;     // supported arguments
+  const char *  pArgs;     // supported arguments
   }  tMXP_element;
 
 // structure for loading colours
 
 typedef struct
   {
-  char      * pName;       // name, eg. "red"
+  const char * pName;       // name, eg. "red"
   COLORREF  iColour;     // colour, eg. 0xff0000
   }  tMXP_colour;
 

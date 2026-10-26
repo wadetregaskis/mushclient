@@ -34,6 +34,8 @@
 
   */
 
+#include "option_table_offsetof.h"
+
 #define O(arg) offsetof (CMUSHclientDoc, arg), sizeof (((CMUSHclientDoc *)NULL)->arg)
 
 //-----config name ----------------  default ---variable name ---- min, max, flags ---

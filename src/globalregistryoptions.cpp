@@ -2,12 +2,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 
-// CMUSHclientApp has virtual functions so is technically non-standard-layout,
-// but offsetof() works correctly with our compiler for plain data members.
-// Suppress the pedantic warning; the behaviour is well-defined in practice.
-#ifndef _MSC_VER
-#pragma GCC diagnostic ignored "-Winvalid-offsetof"
-#endif
+#include "option_table_offsetof.h"
 
 #define GLB_OPT(arg) offsetof (CMUSHclientApp, arg)
 

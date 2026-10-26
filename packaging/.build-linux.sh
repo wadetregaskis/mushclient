@@ -223,8 +223,12 @@ mkdir -p "$SEED/worlds/plugins"
 if [ -f "$REPO/packaging/bundled-plugins.txt" ]; then
     while IFS= read -r p || [ -n "$p" ]; do
         p="${p%%#*}"
-        p="$(echo "$p" | tr -d " 	")"
-        [ -n "$p" ] && [ -f "$REPO/plugins/$p" ] && cp "$REPO/plugins/$p" "$SEED/worlds/plugins/"
+        p="$(echo "$p" | tr -d ' \t\r')"   # spaces, tabs, and the CR of a CRLF checkout
+        [ -n "$p" ] || continue
+        # Loud, not skipped: a silently dropped plugin is how a mangled manifest
+        # (a CR left on each name) once shipped a package with none of them.
+        [ -f "$REPO/plugins/$p" ] || die "bundled-plugins.txt names $p, but plugins/$p does not exist"
+        cp "$REPO/plugins/$p" "$SEED/worlds/plugins/"
     done < "$REPO/packaging/bundled-plugins.txt"
 fi
 

@@ -110,6 +110,7 @@ CLAUDE.md
 packaging/python/
 packaging/tcl/
 packaging/ruby/
+packaging/openssl/
 packaging/resources/
 .claude-audit/
 

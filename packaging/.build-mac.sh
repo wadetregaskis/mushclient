@@ -112,22 +112,33 @@ note "configuring ($BUILD_TYPE) → $BUILD_DIR"
 # EXTRA_CMAKE_ARGS lets you steer the configure, e.g. point at a redistributable
 # python.org framework:  EXTRA_CMAKE_ARGS="-DPython3_ROOT_DIR=/Library/Frameworks/Python.framework/Versions/3.12 -DPython3_FIND_FRAMEWORK=ONLY"
 #
-# Pin OpenSSL to Homebrew's openssl@3 unless EXTRA_CMAKE_ARGS names one.  The
-# bundled Python (python.org) and Ruby (fetch-ruby.sh, which also prefers
-# openssl@3) are built against OpenSSL 3, and step 3c makes all three share ONE
-# libssl/libcrypto, so the app must link 3.x too.  Left to itself, CMake takes
-# whichever OpenSSL Homebrew has linked -- openssl@4 on a Mac that has it.  -U
-# drops a previous run's cached choice, which would otherwise survive the pin.
-OPENSSL_PIN=()
-if [[ "${EXTRA_CMAKE_ARGS:-}" != *OPENSSL* ]]; then
-    ossl3="$(brew --prefix openssl@3 2>/dev/null || true)"
-    if [ -n "$ossl3" ] && [ -d "$ossl3/include/openssl" ]; then
-        OPENSSL_PIN=(-U 'OPENSSL_*' -DOPENSSL_ROOT_DIR="$ossl3")
-        note "OpenSSL: pinned to $ossl3"
+# OpenSSL: the bundle ships exactly one, built from source by fetch-openssl.sh,
+# so every Mac produces the same package whatever Homebrew has installed.  The
+# app, the bundled Ruby (fetch-ruby.sh) and the bundled Python (step 3c) all use
+# it.  -U drops a previous configure's cached choice, which would otherwise
+# survive the pin.
+OSSL_DIR="$SCRIPT_DIR/openssl/install"
+# Builds the newest OpenSSL 3.5.x LTS release if this Mac does not have it yet;
+# a quick check otherwise, and keeps what it has when offline.
+"$SCRIPT_DIR/fetch-openssl.sh" || die "could not build OpenSSL (packaging/fetch-openssl.sh)"
+OSSL_VERSION="$(cat "$OSSL_DIR/.version")"
+note "OpenSSL: $OSSL_VERSION ($OSSL_DIR)"
+
+# A vendored Ruby links whichever OpenSSL it was built against, and is cached
+# across runs; rebuild it when that is not this one.  Only the major version
+# matters -- every 3.x release shares one ABI -- so a patch update to OpenSSL
+# does not cost a Ruby rebuild.
+RUBY_STAGE="$SCRIPT_DIR/ruby/install"
+if [ -d "$RUBY_STAGE" ]; then
+    ruby_ossl="$(cat "$RUBY_STAGE/.openssl" 2>/dev/null || echo "unrecorded")"
+    if [ "$ruby_ossl" != "$OSSL_DIR ${OSSL_VERSION%%.*}" ]; then
+        note "the bundled Ruby was built against another OpenSSL ($ruby_ossl); rebuilding it"
+        OPENSSL_PREFIX="$OSSL_DIR" "$SCRIPT_DIR/fetch-ruby.sh" || die "could not rebuild Ruby (packaging/fetch-ruby.sh)"
     fi
 fi
+OPENSSL_PIN=(-U 'OPENSSL_*' -DOPENSSL_ROOT_DIR="$OSSL_DIR")
 # shellcheck disable=SC2086
-cmake -S "$REPO" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" ${OPENSSL_PIN[@]+"${OPENSSL_PIN[@]}"} ${EXTRA_CMAKE_ARGS:-} >/dev/null
+cmake -S "$REPO" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "${OPENSSL_PIN[@]}" ${EXTRA_CMAKE_ARGS:-} >/dev/null
 note "building mushgui (-j$JOBS)"
 # Force a pristine relink so the executable carries its ORIGINAL (Homebrew/Xcode)
 # rpaths + install names every run.  Without this, re-running on an already-
@@ -150,8 +161,12 @@ mkdir -p "$SEED/worlds/plugins"
 if [ -f "$REPO/packaging/bundled-plugins.txt" ]; then
     while IFS= read -r p || [ -n "$p" ]; do
         p="${p%%#*}"
-        p="$(echo "$p" | tr -d " 	")"
-        [ -n "$p" ] && [ -f "$REPO/plugins/$p" ] && cp "$REPO/plugins/$p" "$SEED/worlds/plugins/"
+        p="$(echo "$p" | tr -d ' \t\r')"   # spaces, tabs, and the CR of a CRLF checkout
+        [ -n "$p" ] || continue
+        # Loud, not skipped: a silently dropped plugin is how a mangled manifest
+        # (a CR left on each name) once shipped a package with none of them.
+        [ -f "$REPO/plugins/$p" ] || die "bundled-plugins.txt names $p, but plugins/$p does not exist"
+        cp "$REPO/plugins/$p" "$SEED/worlds/plugins/"
     done < "$REPO/packaging/bundled-plugins.txt"
 fi
 
@@ -406,15 +421,13 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 # 3c. unify OpenSSL — one libssl/libcrypto for the app, Python AND Ruby
 # ════════════════════════════════════════════════════════════════════════════
-# The relocation BFS already bundled the app's (Homebrew) libssl/libcrypto into
-# Frameworks.  But Python ships its OWN pair inside its framework, and Ruby's
-# openssl/digest extensions are dlopen'd at runtime (so the BFS never saw them,
-# and their OpenSSL dep — also Homebrew — was left as an absolute path).  Point
-# every consumer at the single Frameworks copy and delete Python's, so the .app
-# carries exactly one OpenSSL.  All OpenSSL 3.x share the soname (libssl.3.dylib,
-# compat 3.0.0); the bundled copy is the newest any consumer was built against
-# (Homebrew — the app + Ruby), so Python's _ssl (built against an older 3.x)
-# loads against it fine: OpenSSL 3.x only adds symbols within the series.
+# The relocation BFS already bundled the app's libssl/libcrypto -- the OpenSSL
+# fetch-openssl.sh built -- into Frameworks.  But Python ships its OWN pair inside
+# its framework, and Ruby's openssl extension is dlopen'd at runtime (so the BFS
+# never saw it, and its dependency was left as an absolute path).  Point every
+# consumer at the Frameworks copy and delete Python's, so the .app carries exactly
+# one OpenSSL.  Python's _ssl is built against an older 3.x, which a newer 3.x
+# serves: OpenSSL 3 only adds symbols within the series.
 if [ "$DO_RELOCATE" = 1 ] && ls "$FRAMEWORKS"/libssl.*.dylib >/dev/null 2>&1; then
     note "unifying OpenSSL — single libssl/libcrypto for app + Python + Ruby"
 
@@ -457,21 +470,42 @@ if [ "$DO_RELOCATE" = 1 ] && ls "$FRAMEWORKS"/libssl.*.dylib >/dev/null 2>&1; th
             \( -name 'libssl*.dylib' -o -name 'libcrypto*.dylib' \) -delete 2>/dev/null || true
     fi
 
-    # Every OpenSSL a bundled binary now asks for must be the copy in Frameworks.
-    # The repoint keeps each dependency's basename, so a consumer built against a
-    # different major (libssl.3 while the app linked libssl.4) would be pointed at
-    # a file that does not exist -- and Python's own copy has just been deleted.
-    # That loads fine until the first `import ssl`, so stop the build here.
-    missing=$(find "$APP" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.so' -o -name '*.bundle' \) \
-                -exec otool -L {} \; 2>/dev/null \
-              | awk '$1 ~ /^@rpath\/lib(ssl|crypto)\..*dylib$/ {sub("@rpath/", "", $1); print $1}' \
-              | sort -u | while IFS= read -r lib; do [ -f "$FRAMEWORKS/$lib" ] || echo "$lib"; done)
-    [ -z "$missing" ] || die "bundled code needs OpenSSL dylib(s) not in Frameworks: $missing
-  The app, Python and Ruby must share one OpenSSL major (see the OpenSSL pin above)."
+fi
 
-    n=$(find "$APP" \( -name 'libssl*.dylib' -o -name 'libcrypto*.dylib' \) | wc -l | tr -d ' ')
-    note "  OpenSSL dylibs in bundle now: $n (expect 2 — libssl.3.dylib + libcrypto.3.dylib)"
-    [ "$n" = 2 ] || warn "expected exactly 2 OpenSSL dylibs after unify, found $n"
+# The bundle must contain exactly one OpenSSL, and it must be ours: one
+# libssl/libcrypto pair, in Frameworks, carrying fetch-openssl.sh's version, with
+# every reference to an OpenSSL library from any binary going to that pair.  A
+# second copy -- a dependency some library picked up from Homebrew, a Ruby or
+# Python built against another major -- fails the build here, naming the file,
+# rather than shipping a package whose SSL breaks at the first `import ssl`.
+if [ "$DO_RELOCATE" = 1 ]; then
+    want_ssl="libssl.${OSSL_VERSION%%.*}.dylib"
+    want_crypto="libcrypto.${OSSL_VERSION%%.*}.dylib"
+    problems=""
+    while IFS= read -r f; do
+        case "$f" in
+            "$FRAMEWORKS/$want_ssl"|"$FRAMEWORKS/$want_crypto") ;;
+            *) problems+="  another OpenSSL file: ${f#"$APP"/}"$'\n' ;;
+        esac
+    done < <(find "$APP" \( -name 'libssl*.dylib' -o -name 'libcrypto*.dylib' \
+                           -o -name 'libssl*.a' -o -name 'libcrypto*.a' \))
+    for lib in "$want_ssl" "$want_crypto"; do
+        [ -f "$FRAMEWORKS/$lib" ] || problems+="  missing: Contents/Frameworks/$lib"$'\n'
+    done
+    if [ -f "$FRAMEWORKS/$want_crypto" ] && ! grep -aq "OpenSSL $OSSL_VERSION " "$FRAMEWORKS/$want_crypto"; then
+        problems+="  Contents/Frameworks/$want_crypto is not OpenSSL $OSSL_VERSION"$'\n'
+    fi
+    while IFS= read -r ref; do
+        problems+="  ${ref#"$APP"/}"$'\n'
+    done < <(find "$APP" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.so' -o -name '*.bundle' \) -print0 \
+               | while IFS= read -r -d '' bin; do
+                     otool -L "$bin" 2>/dev/null | tail -n +2 | awk '{print $1}' \
+                         | grep -E 'lib(ssl|crypto)[.]' | sed "s|^|$bin needs |" || true
+                 done \
+               | grep -vE " needs @rpath/($want_ssl|$want_crypto)\$" || true)
+    [ -z "$problems" ] || die "the bundle must contain exactly one OpenSSL ($OSSL_VERSION, from packaging/fetch-openssl.sh):
+$problems"
+    note "  OpenSSL in bundle: $want_ssl + $want_crypto ($OSSL_VERSION), referenced by nothing else"
 fi
 
 # ════════════════════════════════════════════════════════════════════════════

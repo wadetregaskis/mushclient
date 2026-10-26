@@ -53,11 +53,12 @@ The scripts here build a complete, self-contained, signed `MUSHclient.app`:
 | [`build-app.sh`](build-app.sh) | Build the whole thing — relocate deps, sign, notarize, DMG. |
 | [`fetch-python.sh`](fetch-python.sh) | Vendor a clean, redistributable **python.org** framework (Python engine). |
 | [`fetch-tcl.sh`](fetch-tcl.sh) | Build a static **Tcl 8.6** from source (Tcl engine). |
-| [`fetch-ruby.sh`](fetch-ruby.sh) | Build a relocatable **Ruby 4.0** from source, + static OpenSSL/libyaml (Ruby engine). |
+| [`fetch-openssl.sh`](fetch-openssl.sh) | Build the bundle's one **OpenSSL** (newest 3.5.x LTS release) from source. `build-app.sh` runs it. |
+| [`fetch-ruby.sh`](fetch-ruby.sh) | Build a relocatable **Ruby 4.0** from source, + static libyaml, against that OpenSSL (Ruby engine). |
 | [`fetch-discworld-plugins.sh`](fetch-discworld-plugins.sh) | Stage Quow's Discworld plugins so they can be pre-bundled. |
 
 Everything the scripts produce lands in `dist/` (the final app) or git-ignored
-staging dirs (`packaging/{python,tcl,ruby,discworld-plugins}/`).
+staging dirs (`packaging/{openssl,python,tcl,ruby,discworld-plugins}/`).
 
 > **Currently arm64-only** — wxWidgets here is arm64-only, so the app is too;
 > `build-app.sh` thins the bundled runtimes to match. A universal build needs
@@ -92,10 +93,11 @@ your Apple Developer ID (see below).
 ### Prerequisites
 
 - Xcode command-line tools (`xcode-select --install`)
-- Homebrew deps the app itself links: `brew install wxwidgets libpng lua@5.1 openssl@3`
+- Homebrew deps the app itself links: `brew install wxwidgets libpng lua@5.1`
   (wxWidgets = GUI; libpng = images; lua@5.1 = the native scripting engine, else
-  CMake builds it via FetchContent; openssl@3 = the app's own TLS, bundled into
-  `Contents/Frameworks` at package time)
+  CMake builds it via FetchContent).  OpenSSL does not come from Homebrew for a
+  package: `build-app.sh` builds it (see *OpenSSL* below).  A development build
+  uses whatever OpenSSL CMake finds, 3.x or 4.x.
 - The vendored scripting runtimes (`fetch-python.sh` / `fetch-tcl.sh` /
   `fetch-ruby.sh`) — these build from source and need no Homebrew
 - For notarization: an Apple Developer account + a *Developer ID Application*
@@ -236,20 +238,29 @@ Notes:
   nothing extra to relocate. `tcl_engine.cpp` points `TCL_LIBRARY` at the bundled
   script library.
 - **Ruby** — built `--enable-shared --enable-load-relative`, with **libyaml**
-  linked statically into psych. Its `openssl`/`digest` extensions link Homebrew
-  `openssl@3` — the *same* OpenSSL the app and Python use — so the bundle ships a
-  **single** shared OpenSSL (next note), not a private Ruby copy. `libruby` lives
+  linked statically into psych. Its `openssl` extension links the OpenSSL
+  `fetch-openssl.sh` builds — the *same* one the app and Python use — so the
+  bundle ships a **single** shared OpenSSL (next note), not a private Ruby copy. `libruby` lives
   in `Contents/lib` (not `Frameworks`): Ruby's extensions link it as
   `@executable_path/../lib/...` and load-relative derives the stdlib prefix from
   there, so the host and every extension are self-locating.
-- **OpenSSL (one shared copy)** — the app links Homebrew `openssl@3` for its own
-  TLS; `build-app.sh` relocates a single `libssl.3.dylib`+`libcrypto.3.dylib`
-  into `Contents/Frameworks` and repoints **all three** consumers at it: the app,
-  Ruby's `openssl`/`digest` extensions, and Python's `_ssl`/`_hashlib` (whose
-  framework-internal pair is then deleted). OpenSSL 3.x is ABI-stable within the
-  series, so Python's extensions — built against an older 3.x — load the shared
-  (newer) copy fine. Net: no duplicate OpenSSL archives in the `.app`, and one
-  version to track for CVEs.
+- **OpenSSL (exactly one copy, built here)** — `fetch-openssl.sh` builds the
+  newest final release of the **3.5 LTS** series (supported to April 2030),
+  looked up on GitHub each run, so security releases arrive by themselves;
+  pre-releases are never used, and the download is checked against the release's
+  published SHA-256.  Taking OpenSSL from Homebrew made the package depend on
+  each Mac's state (`openssl@3` on one, `openssl@4` on another, plus a cached Ruby
+  linked against whichever was current when it was built).  `build-app.sh` links
+  the app against it, rebuilds the vendored Ruby when Ruby was built against a
+  different OpenSSL *major* (a patch release needs no rebuild: 3.x shares one
+  ABI), relocates a single `libssl.3.dylib`+`libcrypto.3.dylib` into
+  `Contents/Frameworks`, and repoints the app, Ruby's `openssl` extension and
+  Python's `_ssl`/`_hashlib` at it (deleting Python's framework-internal pair).
+  It then **fails the build** if the bundle holds any other OpenSSL file, if
+  anything references an OpenSSL library other than that pair, or if the pair
+  is not the version just built.  `OPENSSLDIR` is `/etc/ssl`, so the default
+  certificate store is macOS's own `/etc/ssl/cert.pem` — Homebrew's path, which
+  the bundle used to inherit, does not exist on a Mac without Homebrew.
 
 ---
 

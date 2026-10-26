@@ -8,8 +8,10 @@
 # Strategy:
 #   * libyaml is built *statically* into a private deps prefix (psych bakes it in;
 #     tiny + Ruby-only).
-#   * OpenSSL is NOT built here: links the shared OpenSSL (Homebrew openssl@3 on
-#     macOS, system libssl-dev on Linux).
+#   * OpenSSL is NOT built here.  On macOS it links the one OpenSSL the app
+#     bundle ships (packaging/openssl, built by fetch-openssl.sh, which this runs
+#     if needed); on Linux, the system libssl-dev.  The OpenSSL used is recorded
+#     in install/.openssl so .build-mac.sh can tell when Ruby needs rebuilding.
 #   * Build Ruby with --enable-shared --enable-load-relative: libruby is a single
 #     shared library whose load path (the stdlib + the C extensions) is computed at
 #     runtime *relative to the shared library's own location* (via dladdr).  Drop the whole
@@ -59,24 +61,14 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"                                   # arm64 / aarch64 | x86_64
 
 if [ "$OS" = "Darwin" ]; then
-    candidates=(
-        "$OPENSSL_PREFIX"
-        "$(brew --prefix openssl@3 2>/dev/null || true)"
-        "$(brew --prefix openssl 2>/dev/null || true)"
-        "/opt/homebrew/opt/openssl@3"
-        "/usr/local/opt/openssl@3"
-        "/opt/homebrew"
-        "/usr/local"
-    )
-    OPENSSL_PREFIX=""
-    for d in "${candidates[@]}"; do
-        if [ -n "$d" ] && [ -d "$d/include/openssl" ]; then
-            OPENSSL_PREFIX="$d"
-            break
-        fi
-    done
-    [ -n "$OPENSSL_PREFIX" ] \
-        || die "Homebrew openssl@3 not found — 'brew install openssl@3' (shared with the app)"
+    # The bundle's own OpenSSL -- never "whatever Homebrew has", which differs
+    # from Mac to Mac (openssl@3 here, openssl@4 there).
+    if [ -z "$OPENSSL_PREFIX" ]; then
+        OPENSSL_PREFIX="$SCRIPT_DIR/openssl/install"
+        [ -f "$OPENSSL_PREFIX/.version" ] || "$SCRIPT_DIR/fetch-openssl.sh" \
+            || die "could not build the bundle's OpenSSL (packaging/fetch-openssl.sh)"
+    fi
+    [ -d "$OPENSSL_PREFIX/include/openssl" ] || die "no OpenSSL headers under $OPENSSL_PREFIX"
 else
     candidates=(
         "$OPENSSL_PREFIX"
@@ -228,6 +220,11 @@ else
         ln -sf "$(basename "$SO")" "$INSTALL/lib/libruby.so"
     fi
 fi
+
+# Record the OpenSSL this Ruby links -- where, and which major version (the ABI)
+# -- for .build-mac.sh's staleness check.
+ossl_ver="$(cat "$OPENSSL_PREFIX/.version" 2>/dev/null || echo unknown)"
+printf '%s %s\n' "$OPENSSL_PREFIX" "${ossl_ver%%.*}" > "$INSTALL/.openssl"
 
 # ── 5. report ─────────────────────────────────────────────────────────────────
 note "staged relocatable Ruby $RUBY_VERSION:"

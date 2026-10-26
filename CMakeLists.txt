@@ -853,13 +853,7 @@ if(NOT WIN32)
         target_compile_definitions(${tgt} PRIVATE _NOSOUND WIN32 MUSHCLIENT_FULL_BUILD)
         target_compile_options(${tgt} PRIVATE
             -Wall
-            -Wno-deprecated-declarations
-            -Wno-unused-variable
-            -Wno-sign-compare
-            -Wno-missing-field-initializers
             $<$<OR:$<C_COMPILER_ID:Clang,AppleClang>,$<CXX_COMPILER_ID:Clang,AppleClang>>:-Werror=non-pod-varargs>
-            -Wno-narrowing
-            -Wno-unused-function
         )
         if(LUA_FOUND)
             target_include_directories(${tgt} PUBLIC ${LUA_INCLUDE_DIR})
@@ -1192,8 +1186,11 @@ if(NOT WIN32)
         target_include_directories(mushgui PRIVATE
             ${CMAKE_SOURCE_DIR}/src
             ${CMAKE_SOURCE_DIR}/src/platform
-            ${wxWidgets_INCLUDE_DIRS}
         )
+        # SYSTEM: wx's own headers are third-party code.  Warnings inside them
+        # (e.g. Apple deprecating the OpenGL types wx/defs.h forward-declares)
+        # are not ours to fix, and treating them as such would mask ours.
+        target_include_directories(mushgui SYSTEM PRIVATE ${wxWidgets_INCLUDE_DIRS})
         target_compile_definitions(mushgui PRIVATE
             ${wxWidgets_DEFINITIONS}
             MUSHCLIENT_WX_BACKEND   # signals that wx is the GUI backend
@@ -1201,13 +1198,7 @@ if(NOT WIN32)
         target_compile_options(mushgui PRIVATE
             ${wxWidgets_CXX_FLAGS}
             -Wall
-            -Wno-deprecated-declarations
             $<$<OR:$<C_COMPILER_ID:Clang,AppleClang>,$<CXX_COMPILER_ID:Clang,AppleClang>>:-Werror=non-pod-varargs>
-            -Wno-unused-variable
-            -Wno-sign-compare
-            -Wno-missing-field-initializers
-            -Wno-narrowing
-            -Wno-unused-function
         )
         # mushgui builds and runs under ASan, but its findings are not this
         # option's purpose: see docs/SANITIZERS.md "Can the GUI be sanitized?".

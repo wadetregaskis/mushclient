@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.14)
 
 # Shared compile options for all tests
 set(MC_TEST_COMPILE_OPTIONS
-    -Wall -Wno-sign-compare -Wno-unused-variable -Wno-deprecated-declarations
-    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-non-pod-varargs> -Wno-narrowing
+    -Wall
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Werror=non-pod-varargs>
 )
 
 # Helper macro: create a self-contained test executable

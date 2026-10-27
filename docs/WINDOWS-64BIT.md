@@ -1,461 +1,382 @@
 # 64-bit Windows: x64 and ARM64
 
-Handoff notes for whoever takes this to a real Windows machine.  Everything
-here was prepared **on macOS, by reading**: nothing in this document has been
-compiled, linked, run or installed on Windows.  The macOS build stayed green
-(see *Verification* at the end); that proves the shared-code edits are sound
-C++ and nothing about MSVC.
+The 64-bit Windows builds: how to build, test and package them, where every
+binary comes from, and what changed to get there.  The groundwork (project
+configurations, `fetch-deps.ps1`, the pointer-truncation pass, the installer's
+`ARCH` switch) was prepared on macOS by reading; the first real builds, the
+embedded scripting engines and the packaging were done on Windows 11 ARM64
+(build 26200), building and testing **both** architectures there -- x64 runs
+under emulation (see *Verification* at the end).
 
 Upstream MUSHclient has only ever been built 32-bit.  The bar is unchanged:
-existing plugins must behave exactly as they do in the 32-bit Windows client.
+existing plugins must behave exactly as they do in the 32-bit Windows client,
+except where this document says otherwise.
+
+The Win32 build is still built and tested (`tests\win\run_tests.ps1` with no
+`-Platform`) and behaves as before, but it is not packaged by the new scripts.
 
 ## 1. What to do, in order
 
 ### 1.1 Prerequisites
 
-- **Visual Studio 2022** (v143) with *Desktop development with C++*, plus these
-  individual components:
-  - MSVC v143 x64/x86 build tools (already in the workload);
-  - **MSVC v143 ARM64 build tools** (for ARM64);
-  - **C++ MFC for latest v143 build tools (x86 & x64)** and
-    **(ARM64/ARM64EC)** -- MFC is per-architecture, and `UseOfMfc=Static`
-    needs `nafxcw*.lib` for the target.  A missing ARM64 MFC shows up as
-    `LNK1104: cannot open file 'nafxcwd.lib'`;
-  - optionally **C++ Clang Compiler for Windows** (`clang-cl`): OpenSSL's
-    ARM64 assembler.  Without it ARM64 OpenSSL is built with no assembler.
-- **Strawberry Perl** (`winget install StrawberryPerl.StrawberryPerl`).  It
-  must be the `perl` first on PATH; Git-for-Windows' MSYS perl is rejected.
-- **NASM** for x64 OpenSSL (`winget install NASM.NASM`), or pass `-NoAsm`.
-- **NSIS 3.04+** for the installer (x64.nsh's `IsNativeARM64`).
-- The **32-bit `en.dll` and `en_small.dll`**, which are not in git: an
-  installed MUSHclient 5.0x's `locale\`, or `WinRel\locale\` if you have
-  staged one there for the Win32 build.
+- **Visual Studio 2022** (v143) or its *Build Tools*, with *Desktop
+  development with C++*, plus these individual components (the `--add` ids
+  are for `setup.exe modify` / the installer's command line):
+  - MSVC v143 x64/x86 build tools (in the workload);
+  - **MSVC v143 ARM64 build tools** -- `Microsoft.VisualStudio.Component.VC.Tools.ARM64`;
+  - **C++ MFC** for x86/x64 *and* for ARM64 --
+    `...VC.ATLMFC`, `...VC.MFC.ARM64` (+ `...VC.ATL.ARM64`).  MFC is
+    per-architecture and `UseOfMfc=Static` needs `nafxcw*.lib` for the target;
+    a missing one is `LNK1104: cannot open file 'nafxcwd.lib'`;
+  - **C++ Clang Compiler for Windows** -- `...VC.Llvm.Clang` and
+    `...VC.Llvm.ClangToolset`: OpenSSL's ARM64 assembler.  `fetch-deps.ps1`
+    finds VS's own `clang-cl` itself.  Without it ARM64 OpenSSL has no assembler.
+- **Strawberry Perl** (OpenSSL's `Configure`) -- the `perl` first on PATH;
+  Git-for-Windows' MSYS perl is rejected.
+- **NASM** for x64 OpenSSL, or pass `-NoAsm`.
 
-### 1.2 Dependencies
+  Neither needs installing: the *portable* zips work on PATH
+  (`strawberry-perl-5.42.x-64bit-portable.zip`, `nasm-2.16.03-win64.zip`), which
+  is how the first build was done, without administrator rights.
+- **NSIS 3.04+** and **7-Zip**: used if installed; otherwise `build-app.ps1` /
+  `fetch-deps.ps1` fetch NSIS's portable zip and 7-Zip's MSI (administrative
+  extract -- nothing is installed), both SHA-256 pinned, into
+  `packaging\windows\deps\_tools\`.  GitHub's Windows runners have 7-Zip.
 
-From any PowerShell (5.1 or 7) at the repo root; the script finds Visual
-Studio with `vswhere` and imports `vcvarsall.bat` itself, choosing native or
-cross tools from the host, so it does not need a Developer PowerShell:
+Nothing else: the 32-bit locale DLLs, `help.db` and the other files git does
+not carry come from the 5.06 release's installer (§2).
+
+### 1.2 Everything at once: a package
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\build-app.ps1 -Arch x64
+powershell -ExecutionPolicy Bypass -File packaging\windows\build-app.ps1 -Arch arm64 -WithDiscworld
+#   -Version 6.00     the version in the file names (default: src\version.h)
+#   -NoBuild          package the existing WinRel-<plat>\MUSHclient.exe
+#   -SkipDeps         do not run fetch-deps.ps1 first
+#   -NoSelftest       skip the last step
+```
+
+It runs `fetch-deps.ps1`, builds `Release|<Platform>`, builds the installer,
+extracts the installer's payload as the portable zip, checks that tree is
+self-contained, and runs every scripting language's selftest from it -- see
+`packaging/README.md`.  Output in `dist\`.
+
+### 1.3 Dependencies alone
+
+From any PowerShell (5.1 or 7) at the repo root.  The script finds Visual
+Studio with `vswhere`, imports `vcvarsall.bat` itself and picks native or
+cross tools from the *machine's* architecture (read from the system
+environment: an x64 PowerShell under emulation is told "X64" by .NET):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\windows\fetch-deps.ps1 -Arch x64
 powershell -ExecutionPolicy Bypass -File packaging\windows\fetch-deps.ps1 -Arch arm64
+#   -Only openssl,lua,luasocket,upstream,locale,python,tcl,quickjs,ruby
 #   -OpenSslVersion 3.5.9   pin instead of "newest 3.5.x on GitHub"
 #   -NoAsm                  no NASM / clang-cl needed (slower crypto)
-#   -LocaleSource <dir>     where the 32-bit en.dll / en_small.dll are
-#   -Only openssl,lua,...   one component at a time while iterating
-#   -StageTo WinDebug-x64   also copy the runtime DLLs next to the exe
+#   -LocaleSource <dir>     rehost these en.dll / en_small.dll instead of 5.06's
+#   -StageTo WinDebug-x64   also copy the runtime files next to a dev build
 #   -Force                  rebuild what is already built
 ```
 
-OpenSSL dominates the time (it is a full `nmake` of libcrypto).  Output goes
-to the git-ignored `packaging\windows\deps\<x64|ARM64>\` -- see §2.
+(`-Only a,b` needs the script run in-process -- `& .\packaging\windows\
+fetch-deps.ps1 ...` -- because `powershell -File` passes the list as one string.)
 
-### 1.3 Build
+What is built is skipped next time.  Ruby dominates a clean run (its MSVC
+build is a serial `nmake`, ~20 minutes per architecture), then OpenSSL.
+Output is the git-ignored `packaging\windows\deps\<x64|ARM64>\` plus the
+architecture-neutral `deps\upstream\`.
 
-From a *Developer Command Prompt for VS 2022* (any host architecture: MSBuild
-picks the right compiler from `Platform`):
+### 1.4 Build and run a development copy
 
 ```bat
-msbuild MUSHclient_2022.sln /m /p:Configuration=Release /p:Platform=x64
-msbuild MUSHclient_2022.sln /m /p:Configuration=Debug   /p:Platform=x64
-msbuild MUSHclient_2022.sln /m /p:Configuration=Release /p:Platform=ARM64
-msbuild MUSHclient_2022.sln /m /p:Configuration=Release /p:Platform=Win32   :: must still work
+msbuild MUSHclient.vcxproj /m /p:Configuration=Debug   /p:Platform=x64 /p:SolutionDir=%CD%\
+msbuild MUSHclient.vcxproj /m /p:Configuration=Release /p:Platform=ARM64 /p:SolutionDir=%CD%\
+msbuild MUSHclient.vcxproj /m /p:Configuration=Debug   /p:Platform=Win32 /p:SolutionDir=%CD%\
 ```
 
-Outputs: `WinRel-x64\`, `WinDebug-x64\`, `WinRel-ARM64\`, `WinDebug-ARM64\`
-(Win32 keeps `WinRel\` / `WinDebug\`).  All are git-ignored.
-
-### 1.4 Run it
-
-The exe needs its runtime files beside it, exactly as for Win32
-(`docs/WINDOWS-VALIDATION.md` §2): the **DLLs** must be the 64-bit ones, the
-**data** files are architecture-neutral.
-
-```powershell
-# -Only lua: everything is already built, so this just checks and copies
-# bin\ (lua5.1.dll, locale\*.dll, socket\, mime\) -- and skips the
-# GitHub lookup an OpenSSL up-to-date check makes.
-packaging\windows\fetch-deps.ps1 -Arch x64 -Only lua -StageTo WinDebug-x64
-# then copy the data files (lua\, spellchecker.lua, tips.txt, help.db, names\, ...)
-# from an installed 5.0x into WinDebug-x64\, NOT its DLLs.
-```
-
-A 32-bit DLL left in that directory fails with error 193
-(`ERROR_BAD_EXE_FORMAT`); for `locale\en.dll` that surfaces as MUSHclient's
-own "Failed to load resources file".
+Outputs: `WinRel-<plat>\`, `WinDebug-<plat>\` (Win32: `WinRel\`, `WinDebug\`).
+To run one, put the runtime files beside it -- `fetch-deps.ps1 -Arch x64
+-StageTo WinDebug-x64` copies the DLLs, the locale DLLs, `python\`,
+`lib\ruby\`, `tcl8.6\` and the VC++ runtime -- plus the architecture-neutral
+data files (`lua\`, `spellchecker.lua`, ...), or simply run a packaged copy.
 
 ### 1.5 Tests
 
-The Windows tests are `MUSHclient_tests.vcxproj` (generated by
-`tests/win/gen_test_vcxproj.ps1`, pinned by `tests/check_win_test_sources.py`):
-one console binary holding every Windows-capable `tests\test_*.cpp` plus
-`tests\win\*.cpp`, driven per-suite by `tests/win/run_tests.ps1`:
+```powershell
+powershell -File tests\win\run_tests.ps1                      # Win32 Debug, as before
+powershell -File tests\win\run_tests.ps1 -Platform x64
+powershell -File tests\win\run_tests.ps1 -Platform ARM64      # builds anywhere; runs on an ARM64 machine
+```
+
+And the scripting-language conformance suite (`src/platform/engines_selftest.cpp`,
+the one macOS and Linux run from ctest), from any 64-bit build with its
+runtime beside it:
 
 ```powershell
-pwsh tests\win\run_tests.ps1                      # Win32 Debug, as before
-pwsh tests\win\run_tests.ps1 -Platform x64
-pwsh tests\win\run_tests.ps1 -Platform ARM64      # builds anywhere; runs only on an ARM64 host
-pwsh tests\win\run_tests.ps1 -Platform x64 -Config Release
+MUSHclient.exe --engines-selftest            # every language; or =lua, =python, =js, =tcl, =ruby
 ```
 
-It builds into `WinTest-<plat>\` and runs from `WinDebug-<plat>\` (the
-runtime assets, §1.4).  Compare the totals with the Win32 run on the same
-commit: a suite that passes on Win32 and fails on x64 is the most valuable
-thing this whole exercise can produce.
-
-### 1.6 Installer
-
-```bat
-cd install
-makensis mushclient.nsi                 :: 32-bit, unchanged -> mushclient50x.exe
-makensis /DARCH=x64 mushclient.nsi      :: -> mushclient50x-x64.exe
-makensis /DARCH=arm64 mushclient.nsi    :: -> mushclient50x-arm64.exe
-```
-
-See §6 for what changed and what was deliberately left alone.
+It runs in `InitInstance` before any window exists, prints to stdout (so
+redirect it), closes any dialog it raises, and exits 0 / 1, or 77 for a
+language the build does not embed.
 
 ## 2. Where every binary comes from
 
-What the repo and the installer use today, and what each 64-bit build gets
-instead.  Architectures were read from the PE / COFF headers.
+| Item | 64-bit source | Notes |
+|---|---|---|
+| OpenSSL `libcrypto.lib`, `libssl.lib` | `fetch-deps.ps1`: newest 3.5.x, `VC-WIN64A` / `VC-WIN64-CLANGASM-ARM`, `no-shared`, checked against the release's `.sha256` | static, `/MT /Zl` -- the same recipe as the committed x86 libs (§2.1) |
+| `lua5.1.dll` + `.lib` | Lua **5.1.5** from lua.org (SHA-256 pinned), `LUA_BUILD_AS_DLL`, `/MT`; all 123 names the x86 DLL exports are checked | `luaconf.h` patched to round like x86 (§2.2) |
+| `socket\core.dll`, `mime\core.dll` | LuaSocket **v2.0.2** (pinned) | the version the committed `lua\socket*.lua` are written for |
+| `locale\en.dll`, `en_small.dll` | the 5.06 release's x86 DLLs, **rehosted**: every resource copied byte for byte into a fresh resource-only DLL for the target machine, then compared | §2.3 |
+| `help.db`, `MUSHCLIENT.HLP`, `Dina.fon`, `locale\Localize_template.lua` | extracted from the 5.06 installer (`mushclient506.exe`, SHA-256 pinned) by the `upstream` component | none is in git; `help.db`'s source (`documentation.sql`) is not either |
+| `python3XX.dll`, `python\Lib`, `python\DLLs` | python.org's NuGet package (`python` / `pythonarm64`, 3.14.x, SHA-256 pinned) | IDLE, Tk, the test suite and pip removed (no `python.exe` ships to run pip) |
+| `tcl86.lib` (linked in), `tcl8.6\` | Tcl **8.6.16** from source, `makefile.vc OPTS=static` | |
+| `<arch>-vcruntime140-ruby400.dll`, `lib\ruby\` | Ruby **4.0.5** from source, native MSVC build, with libyaml 0.2.5 (static), the repo's zlib, and the OpenSSL above | §2.4 |
+| `quickjs.lib` (linked in) | QuickJS-ng **0.17.0** (pinned) | §5 |
+| `vcruntime140.dll` (+ `vcruntime140_1.dll` on x64) | Visual Studio's own redistributable (`VC\Redist\MSVC\<ver>\<arch>\Microsoft.VC143.CRT`) | Python and Ruby are `/MD`; the exe itself links the CRT statically |
+| zlib, PCRE, libpng, SQLite, lpeg, lsqlite3, LuaCOM, bc, lrexlib | compiled into the exe from the repo | |
 
-| Item | Win32 today | Arch | 64-bit source |
-|---|---|---|---|
-| `openssl\lib\libcrypto.lib`, `libssl.lib` (committed) | OpenSSL **3.5.5**, built `VC-WIN32 no-shared`: these are **static** libraries (1009 / 98 object members, `/MT /Zl`), not import libraries.  No OpenSSL DLL exists or ships. | x86 | `fetch-deps.ps1`: newest 3.5.x, same recipe with `VC-WIN64A` / `VC-WIN64-CLANGASM-ARM` (or `VC-WIN64-ARM`), checked against the release's `.sha256` |
-| `openssl\include\` (committed) | the 3.5.5 headers | **x86-specific**: `openssl/configuration.h` is generated per target | the 64-bit build's own headers, `deps\<plat>\include\` -- the 64-bit configs do not look at `openssl\include\` at all |
-| `src\lua5.1.lib` (committed, 2006) | import library for `lua5.1.dll`, 122 imports | x86 | built with the DLL |
-| `lua5.1.dll` (not committed; `..\WinRel\lua5.1.dll` in the installer) | **Lua 5.1.4**, MinGW-built against `msvcrt.dll`, 123 exports (one more than the .lib: `lua_setlevel`) | x86 | Lua **5.1.5** from lua.org (SHA-256 pinned), `LUA_BUILD_AS_DLL`, `/MT`; the script checks all 123 names are exported |
-| `locale\en.dll` (not committed) | resource-only, built from github.com/nickgammon/mushclient_resources (VC6 `.dsp`) | x86 | **rehosted**: resources copied byte for byte into a fresh resource-only DLL for the target machine, then compared |
-| `locale\en_small.dll` (not committed) | resource-only, **2007, no source anywhere** (the resources repo builds `en.dll` only) | x86 | rehosted, same way |
-| `socket\core.dll`, `mime\core.dll` (not committed; `..\lua\socket\core.dll`, `..\lua\mime\core.dll`) | **LuaSocket 2.0.2** / MIME 1.0.2 (LuaBinaries, 2007), import `lua5.1.dll`, `MSVCRT.dll`, `WSOCK32.dll` | x86 | LuaSocket `v2.0.2` from github.com/lunarmodules/luasocket, `/MT` -- the version the committed `lua\socket.lua`, `mime.lua`, `socket\*.lua` are written for |
-| zlib, PCRE, libpng, SQLite, lpeg, lsqlite3, LuaCOM, bc, lrexlib | compiled into the exe from the repo | -- | same sources, compiled per platform by the project |
-| `tools\localize.bat` (`lua5.1.exe`, `sqlite3`, `xgettext`) | host tools run by the installer build | any | unchanged: they run on the build machine and produce data |
+### 2.1 Why not vcpkg for OpenSSL
 
-Why rehost the locale DLLs rather than recompile them: `en_small.dll` cannot
-be recompiled (no source), and copying resources is the only method that
-guarantees the 64-bit client shows *exactly* the menus, dialogs, strings and
-accelerators the 32-bit one does.  Resources are architecture-neutral data;
-only the PE wrapper is not.  One resource names an architecture --
-`RT_MANIFEST` -- and the copy rewrites any `processorArchitecture="x86"` in
-it to `"*"`, logging that it did.  If you would rather build `en.dll` from
-source, `packaging/fetch-resources.sh` pins the resources repo; it needs
-`rc` + `link /DLL /NOENTRY /MACHINE:X64`, and `en_small.dll` would still
-need rehosting.
+vcpkg's `openssl` port follows OpenSSL's newest release, not the 3.5 LTS, and
+pinning a 3.5.x works only for the versions its registry happened to record.
+OpenSSL's own `Configure` reproduces the committed x86 libs exactly (their
+build string is `platform: VC-WIN32`, `/MT /Zl`), so `VC-WIN64A no-shared` is
+the like-for-like 64-bit build, and it follows `packaging/fetch-openssl.sh`.
 
-### Why not vcpkg for OpenSSL
+`fetch-deps.ps1` passes **no `--prefix` / `--openssldir`**, on purpose: both
+are compiled into the library, and a build-tree OPENSSLDIR is a directory any
+user of the installed client could create (CVE-2019-1552's shape).  MUSHclient
+takes its trust roots from the Windows `ROOT` store (`pal/win_transport.cpp`).
 
-vcpkg (`openssl:x64-windows-static`, `openssl:arm64-windows-static`) would
-work, and it is preinstalled on GitHub's runners, but:
+`/Zl` is also what lets the same static OpenSSL link into the `/MT` exe and
+Ruby's `/MD` `openssl` extension alike.
 
-- vcpkg's `openssl` port follows OpenSSL's *newest* release, not the 3.5
-  LTS.  Pinning a 3.5.x needs manifest mode with a `builtin-baseline` plus an
-  `overrides` entry, and works only for 3.5.x versions vcpkg's registry
-  happens to have recorded -- which stops at whatever 3.5.x was current when
-  the port moved on.  The committed x86 libs are 3.5.5, and 3.5 keeps getting
-  security releases until 2030.
-- OpenSSL's own `Configure` reproduces the committed x86 libs exactly: their
-  embedded build string is `platform: VC-WIN32` with `/MT /Zl` -- i.e. a
-  plain `perl Configure VC-WIN32 no-shared` -- so `VC-WIN64A no-shared` is
-  the like-for-like 64-bit build.
-- It follows `packaging/fetch-openssl.sh` (the macOS bundle's OpenSSL): newest
-  3.5.x from GitHub's release list, verified against the published `.sha256`.
-
-The costs are Perl and NASM (both one `winget` away; Strawberry Perl is on
-GitHub's runners already).
-
-`fetch-deps.ps1` passes **no `--prefix` / `--openssldir`**, on purpose.  Both
-are compiled into the library and OPENSSLDIR is where `openssl.cnf` is read
-from at start-up; a build-tree path like `C:\src\...` is a directory any user
-of the *installed* client could create (CVE-2019-1552's shape).  The defaults
-are under `Program Files`.  MUSHclient takes its trust roots from the Windows
-`ROOT` store (`pal/win_transport.cpp`), so OPENSSLDIR holds nothing it needs.
-
-### The 64-bit `lua5.1.dll` is patched in one place
+### 2.2 The 64-bit `lua5.1.dll` is patched in one place
 
 Lua 5.1's `luaconf.h` converts a number to an integer by **rounding** on x86
-(`lua_number2int`: the 1.5*2^52 union trick under GCC, `fistp` under MSVC --
-round half to even either way) and by a **truncating** C cast on every other
-target.  The shipped x86 DLL is the GCC build (its code loads 1.5*2^52 as a
-float constant five times), so `lua_tointeger`, `luaL_checkint` and
-`luaL_optint` round in the 32-bit client.  A stock 64-bit build would
-truncate: `2.7` becomes `2` instead of `3`, and a plugin passing a computed
-coordinate to a miniwindow call draws a pixel off.  `fetch-deps.ps1` swaps
-the generic definitions for `lrint` / `llrint` before compiling, and stops if
-the text it patches is missing.
+and by a **truncating** C cast everywhere else.  The shipped x86 DLL rounds, so
+a stock 64-bit build would turn `2.7` into `2` instead of `3` -- a miniwindow
+coordinate a pixel off.  `fetch-deps.ps1` swaps the generic definitions for
+`lrint` / `llrint`, and stops if the text it patches is missing.  Unfixable:
+`lua_Integer` is 64-bit in a 64-bit DLL, so values past 2^31 survive where x86
+wrapped them.
 
-Two consequences remain and are not fixable: `lua_Integer` is `ptrdiff_t`, so
-it is 64-bit in a 64-bit DLL and values past 2^31 survive where x86 wrapped
-them; and NaN/infinity convert to whatever the platform gives.
+### 2.3 The locale DLLs
 
-(The macOS build has the same rounding difference today: its Lua is
-compiled for arm64/x86_64 with the stock `luaconf.h`.  Not touched here.)
+`AfxSetResourceHandle` makes `locale\EN.dll` the source of every menu, dialog,
+string table and accelerator -- the exe itself carries only its icon and
+version (15 resources against `en.dll`'s 307).  The full resource script is
+not in this repository (`src/platform/mushclient_dialogs.rc` is a decompile of
+the dialogs and menus only, for the wx port), and `en_small.dll` has no source
+anywhere, so both are rehosted from the last release's x86 DLLs: resources are
+architecture-neutral data, only the PE wrapper is not, and a byte-for-byte copy
+is the one method that guarantees the 64-bit client shows exactly what the
+32-bit one does.  The rehosted DLLs from the 5.06 installer and from an
+installed 5.06 are identical (same SHA-256 before rehosting).
 
-## 3. Project configuration changes
+User-made translations (a copied and edited `en.dll`, as `locale_notes.txt`
+suggests) are 32-bit and do not load in a 64-bit client; the rehost tool in
+`fetch-deps.ps1` converts one in seconds (`-LocaleSource <dir> -Only locale`).
 
-`MUSHclient.vcxproj` and `MUSHclient_2022.sln` gained `Debug|x64`,
-`Release|x64`, `Debug|ARM64`, `Release|ARM64`.  Every element conditioned on
-`<cfg>|Win32` has a twin per new platform; Win32's own elements are byte for
-byte what they were.  What differs in the twins:
+### 2.4 Ruby on MSVC: the details that mattered
 
-- `OutDir` / `IntDir` and every `.\WinDebug\` / `.\WinRel\` path:
-  `WinDebug-<plat>` / `WinRel-<plat>`.
-- MIDL `TargetEnvironment` `X64` / `ARM64` (the type library is embedded
-  in the exe via `MUSHclient.rc`); link `TargetMachine` `MachineX64` /
-  `MachineARM64`.
-- OpenSSL include path `$(SolutionDir)packaging\windows\deps\<plat>\include\`
-  instead of `openssl\include\`; library path `...\deps\<plat>\lib\`
-  *instead of* `src\;openssl\lib\` -- `src\` is dropped so the 32-bit
-  `lua5.1.lib` there can never be found (a wrong-architecture `.lib` is only
-  `LNK4272` and then an unresolved-symbol cascade).
-- Dropped as x86-only: `OmitFramePointers` (`/Oy`) and
-  `ImageHasSafeExceptionHandlers` (`/SAFESEH:NO`).  ARM64 Debug uses
-  `ProgramDatabase` (`/Zi`) instead of `EditAndContinue` (`/ZI`).
-- **`TreatSpecificWarningsAsErrors` 4311**: a pointer truncated to 32 bits is
-  a crash on 64-bit, so the compiler is made to do the audit this document
-  could only do by eye.  If it blocks you on something harmless, fix the
-  cast (`INT_PTR`, `LONG_PTR`, `HandleToLong`) rather than removing the switch.
-- ARM64 only: `PNG_ARM_NEON_OPT=0`.  libpng enables its NEON filters when
-  `__ARM_NEON` is defined, and those live in `png\arm\*.c`, which the project
-  does not compile.  If MSVC does not define `__ARM_NEON` this is a no-op.
+- **No host Ruby.**  The tarball carries every generated file except
+  `ext/ripper/ripper.c`; ripper (irb's and rdoc's parser library) is left out
+  rather than paying for a two-stage bootstrap.
+- `--with-opt-dir` must be given with forward slashes: mkmf passes it through a
+  Ruby string, and `C:\Users\...` arrived as `-IC:Users...`, so zlib and psych
+  were silently skipped.  `fetch-deps.ps1` now also fails if any of
+  `zlib.so`, `psych.so`, `openssl.so` is missing.
+- Ruby's `openssl` extension links only crypt32, ws2_32 and user32; a static
+  OpenSSL 3 also needs advapi32, which is folded into Ruby's copy of
+  `libcrypto.lib` (`lib.exe` merges an import library like any other).
+- **The import library MUSHclient links is not Ruby's own.**  The DLL also
+  exports ~150 POSIX, CRT and Winsock names as aliases of its `rb_w32_*`
+  wrappers (`accept`, `connect`, `close`, `fclose`, `getenv`, `Sleep`, ...);
+  linked as-is, the client's own calls to those could bind to Ruby's versions
+  (the link noticed only `getenv` and `strerror`, as duplicates).
+  `fetch-deps.ps1` cuts Ruby's generated `.def` to Ruby's own namespaces
+  (`rb_`, `ruby_`, `st_`, `onig`, ...) and makes the import library from that.
+- `NoDefaultCurrentDirectoryInExePath` (set by some shells and agents) breaks
+  both Ruby's and Tcl's builds, which run generated `.bat` files and freshly
+  built helpers by bare name; the script clears it for its own process.
 
-Not mirrored, because they are no-ops: per-file `PreprocessorDefinitions`
-set to `%(PreprocessorDefinitions)` (407 of them) and empty per-file
-`PrecompiledHeader` (152; the CL task treats empty as the project-wide
-`NotUsing`).  Everything else per-file *is* mirrored -- in particular the 36
-`pcre\*.c` `HAVE_CONFIG_H` entries, without which `pcre_internal.h` stops the
-build.
+## 3. Project configuration
 
-`MUSHclient_tests.vcxproj` is generated: the generator now loops over
-`Win32, x64, ARM64` with the same differences, and the committed file was
-regenerated with a Python port of the generator that first reproduced the
-previous committed output byte for byte.  **Run `pwsh
-tests\win\gen_test_vcxproj.ps1` once on Windows and confirm `git diff` is
-empty** -- that is the check that the PowerShell edit and its port agree.
-(The generator also wrote a literal backtick into the `ResourceCompile` line
-from a single-quoted string; the committed output never had it, so it is
-fixed in the generator.)  `tests/check_win_test_sources.py` passes.
+`MUSHclient.vcxproj` and `MUSHclient_2022.sln` have `Debug|x64`,
+`Release|x64`, `Debug|ARM64`, `Release|ARM64` beside Win32.  What differs from
+the Win32 twins:
 
-**Language standard.** The app is still C++14 (no `LanguageStandard`, MSVC's
-default) in every configuration, deliberately left alone; the test target is
-`stdcpp17` as before.  Moving the app to C++17 would be a separate decision
--- `stdafx.h` derives from `std::binary_function`, which C++17 removed, so it
-would need `_HAS_AUTO_PTR_ETC=1` as the tests do, or a code change.
+- `OutDir` / `IntDir`: `WinDebug-<plat>` / `WinRel-<plat>`.
+- MIDL `TargetEnvironment` and link `TargetMachine` per platform.
+- OpenSSL and Lua from `packaging\windows\deps\<plat>\` *instead of*
+  `openssl\` and `src\` (so the 32-bit `lua5.1.lib` can never be found).
+- Dropped as x86-only: `/Oy`, `/SAFESEH:NO`; ARM64 Debug uses `/Zi`.
+- **C4311 is an error**: a pointer truncated to 32 bits is a crash on 64-bit.
+- ARM64: `PNG_ARM_NEON_OPT=0` (libpng's NEON filters are in files the project
+  does not compile).
+- **`MUSHclient.engines.props`** (64-bit only): the embedded-engine defines
+  (`MUSHCLIENT_EMBEDDED_ENGINES` and one per language), the engine libraries,
+  and the interpreter include directories -- given only to the engine sources,
+  because Python's include directory alone holds a hundred-odd generic header
+  names.  The test project imports the same file, since the defines change
+  `CScriptEngine`'s layout.
 
-## 4. Code changes (the 64-bit correctness pass)
+**C++17 everywhere.**  The app is now `stdcpp17` in all six configurations
+(it was MSVC's C++14 default), like the test target and the CMake build.  The
+only casualty was `array_less` in `stdafx.h`, which derived from
+`std::binary_function`; nothing used the typedefs it supplied, so the base is
+gone (its `__cplusplus` guard never fired: MSVC reports 199711 without
+`/Zc:__cplusplus`).  No `std::byte` clash appeared.
 
-Method: every line compiled only on Windows (everything under `#ifdef _WIN32`
-arms, plus `luacom\`, `pal\win_*.cpp`, `pal\gdi_surface.cpp` and
-`TreePropertySheet.cpp`, which CMake never builds -- about 22,000 lines) was
-grepped for the LLP64 hazards, and every match read.  Code the macOS build
-compiles was searched only for casts through `long` / `unsigned long`: clang
-already *errors* on a pointer cast to `int`/`DWORD`/`UINT` (the shim's
-`DWORD`/`LONG` are 32-bit), but `long` is 64-bit on macOS and 32-bit on
-Windows, so those were invisible.
+`MUSHclient_tests.vcxproj` is generated (`tests/win/gen_test_vcxproj.ps1`,
+pinned by `tests/check_win_test_sources.py`); regenerate it after adding a
+source file to the app project.
 
-Real bugs -- a crash or a wrong answer on 64-bit:
+## 4. Code changes for 64-bit
 
-| Where | What |
-|---|---|
-| `src/scripting/scripting.cpp:306, 366` | script-file watcher thread: the `CMUSHclientDoc*` was cast to `DWORD` and read back into a `DWORD` (the struct field was already `DWORD_PTR`) |
-| `src/Utilities.cpp:1879` | `SendToFront`: `EnumWindows` given the title pointer as `(int)` |
-| `src/scripting/lua_utils.cpp:1632` | `utils.getfontfamilies`: `EnumFontFamiliesEx` given the `lua_State*` as `(long)` |
-| `src/dialogs/plugins/PluginWizard.cpp:240, 420, 618, 835` | trigger/alias/timer/variable pointers stored via `SetItemData(..., (unsigned long) p)` |
-| `src/dialogs/ColourPickerDlg.cpp:260` | same, colour pointer |
-| `src/miniwindow.cpp:3621` | `WindowMenu` nested popup: `HMENU` passed to `AppendMenu` as `(UINT)` |
-| `src/scripting/functionlist.cpp:629` | `WinHelp`'s string argument passed as `(DWORD)` |
-
-64-bit build breaks:
+The macOS-side reading pass (casts through `long`, `OnTimer(UINT_PTR)`, the
+manifest's `processorArchitecture`, the crash handler's registers, ...) is in
+git history (`3b16c4bc`).  The first real compile found the rest:
 
 | Where | What |
 |---|---|
-| `src/mainfrm.h:155`, `mainfrm.cpp:873`; `src/TimerWnd.h:44`, `TimerWnd.cpp:39`; `src/dialogs/Splash.h:54`, `Splash.cpp:242` | `OnTimer(UINT)` -> `OnTimer(UINT_PTR)`.  64-bit MFC's `ON_WM_TIMER` needs the latter, and `UINT` and `UINT_PTR` are only the same type on Win32.  The shim follows so the port still *overrides* rather than hides: `platform/mfc_ui.h:5574` (`CMDIFrameWnd`), `platform/mainfrm_stub.h:223`, `platform/windows_stubs.cpp:273` |
-| `tests/win/all_tests.cpp:108-143` | the crash-handler stack walk used `CONTEXT::Eip/Ebp/Esp` and `IMAGE_FILE_MACHINE_I386`; now per architecture (`Rip/Rbp/Rsp` + AMD64, `Pc/Fp/Sp` + ARM64), and the address printing no longer truncates |
-| `src/MUSHclient.exe.manifest` | hard-coded `processorArchitecture="x86"` for the app *and* its Common-Controls 6 dependency, which makes a 64-bit image refuse to load (side-by-side error).  The dependency is now `"*"` (what VS itself emits) and the optional attribute on the app's own identity is gone, so one manifest serves all three |
+| `src/scripting/lua_compress.c` `getdirectory` | **`utils.readdir` crashed**: `_findfirsti64`'s `intptr_t` handle was kept in an `int`.  A C file, so C4311 never saw it; the test suite's `LuaSurface` crashed on it. |
+| `ActivityView.cpp`, `mainfrm.cpp`, `mushview.cpp`, `sendvw.cpp` | `AppendMenu (MF_POPUP, (UINT) hMenu)` -> `UINT_PTR` |
+| `dialogs/world_prefs/prefspropertypages.cpp`, `genpropertypage.cpp` | `POSITION` <-> `long` index casts made explicit through `INT_PTR` |
+| `world_debug.cpp` | a loop variable whose declaration had gone (the sound-buffer count) |
+| `lsqlite/lsqlite3.c` | `#include "..\lua.h"` (a path from the old tree layout) -> `"lua.h"` |
 
-Warning-only today, fixed because C4311 is now an error on 64-bit:
+What remains at `/W3` is C4267 (`size_t` -> `int`, ~530, the expected
+`strlen`/`size()` into `int` kind) and nothing else.
 
-| Where | What |
-|---|---|
-| `src/mainfrm.cpp:1305, 1315, 1324, 1349, 1515, 1965, 1975, 2374`; `src/mushview.cpp:2230, 4444, 4486, 5537`; `src/scripting/methods/methods_utilities.cpp:470`; `src/doc.cpp:3884` | `(long) ShellExecute (...) <= 32` -> `(INT_PTR)`, the documented idiom |
-| `src/scripting/methods/methods_output.cpp:84` | `GetFrame` returns the frame `HWND` as `long` (the automation interface says `long`, so it stays): now via `LONG_PTR`, with a comment on why an HWND survives -- user handles keep 32 significant bits on 64-bit Windows for WOW64 interop |
-| `src/pal/win_transport.cpp:254` | `SSL_set_fd` takes an `int`; the `SOCKET` -> `int` narrowing is now explicit and explained (OpenSSL's own socket BIO stores an `int`) |
+Known, unchanged: a `long` is 32 bits on all Windows builds, so world-API
+values are 32-bit as they always were.
 
-Things checked and found clean: no `GetWindowLong`/`SetWindowLong` with a
-pointer index anywhere (`MakeWindowTransparent.cpp` and `luacom` use them
-only for `GWL_EXSTYLE`/`GWL_STYLE`); `win_transport.cpp` already uses
-`Get/SetWindowLongPtrA(GWLP_USERDATA)`; every `CALLBACK` (list-control sort
-functions, `EnumFontFamExProc`, `BrowseCallbackProc`, `PrintingAbortProc`,
-the CBT hook, the transport `WndProc`) has the right 64-bit signature; every
-`ON_MESSAGE` handler is `LRESULT (WPARAM, LPARAM)`; every `ON_NOTIFY`
-handler takes `LRESULT*`; `password.h` / `TreePropertySheet.h` already
-declare `INT_PTR DoModal`; the tooltip `idFrom` and `MDITabs` fixes are in
-place; MCI's `dwCallback` is already `DWORD_PTR`; Active Scripting uses the
-`IActiveScriptParse` / `IID_IActiveScriptParse` names, which `activscp.h`
-maps to the `...64` interface under `_WIN64`; the only inline assembly
-(`luaconf.h:563`, SQLite's `rdtsc`) is guarded by `_M_IX86`; zlib's ARM CRC
-code is guarded by `__aarch64__` (GCC/clang only); no `#pragma pack`.
+## 5. Scripting on 64-bit Windows
 
-### LuaCOM
+The 32-bit client runs every language but Lua through ActiveScript, and the
+ActiveScript engines for Python, Tcl and Ruby were only ever 32-bit -- a
+64-bit client cannot load them.  So the 64-bit builds embed those languages
+the way the macOS and Linux builds do: the same `src/platform/{py,tcl,ruby}_engine.cpp`,
+over the same portable dispatch table (`src/platform/mc_dispatch.cpp`), so a
+script sees the same world API, coercions and callbacks on all three
+platforms.  JavaScript is QuickJS-ng (`src/platform/qjs_engine.cpp`), a new
+adapter with `js_engine.cpp`'s contract point for point, because
+JavaScriptCore does not exist on Windows.
 
-`luacom\` (19 files, Windows-only) reads as **64-bit clean**: despite its
-version string (1.3b) the code is the later, 64-bit-aware LuaCOM -- pointers
-cross into Lua only as light userdata (`lua_pushlightuserdata` /
-`luaCompat_getPointer`), never as numbers; `tLuaControl.cpp:884` already uses
-`GetWindowLongPtr(GWLP_WNDPROC / DWLP_DLGPROC)`; `IViewObject::Draw` already
-has the `ULONG_PTR` continuation signature; sizes are `size_t`; `VT_I8` /
-`VT_UI8` are handled.  Nothing in it was changed.  Two things only a run can
-settle: whether every COM interface it implements still matches the 64-bit
-SDK's declarations (a mismatch is a compile error -- "cannot instantiate
-abstract class" -- not a silent bug), and the type-library paths it reads
-from the registry (`tCOMUtil.cpp`), which are per-bitness on 64-bit Windows.
+| Language name | 64-bit Windows | Win32 |
+|---|---|---|
+| Lua | native (unchanged) | native |
+| Python | embedded CPython 3.14 | ActiveScript (third-party engine) |
+| JScript / JavaScript / js | embedded QuickJS-ng (ES2023) | ActiveScript JScript (ES3) |
+| TclScript / Tcl | embedded Tcl 8.6 | ActiveScript (third-party engine) |
+| RubyScript / Ruby | embedded Ruby 4.0 | ActiveScript (third-party engine) |
+| VBScript, PerlScript, anything else | ActiveScript (64-bit engines only) | ActiveScript |
 
-## 5. Suspicions not fixed
+How it is wired: `scripting.h` defines `MC_EMBEDDED_ENGINES` everywhere but
+Win32; `CreateScriptEngine` sends the four language names to the embedded
+engines before trying ActiveScript; every trigger/alias/timer/plugin call site
+already gated on `UsesEmbeddedCallback()`, so none changed.
 
-Expected to compile, possibly with warnings; each wants a look when the first
-64-bit build reports on it.
+Behaviour a plugin author may notice, against the 32-bit client:
 
-| Where | What, and why it was left |
-|---|---|
-| `src/scripting/lua_methods.cpp:2945` | `L_GetFrame` pushes the `long` from `GetFrame` as light userdata (`long` -> `void*`, C4312).  Correct for HWNDs (sign extension restores them); left because changing what a plugin receives is an API change. |
-| `src/mainfrm.h:127-128`, `mainfrm.cpp:428-433`, `src/dialogs/global_prefs/GlobalPrefs.cpp:1384-1386`, `src/TimerWnd.h:25` / `TimerWnd.cpp:75` | `SetTimer`'s `UINT_PTR` result kept in `UINT` / `int`.  With a window it returns the small `nIDEvent` passed in, so nothing is lost; C4244. |
-| `src/dialogs/world_prefs/TreePropertySheet.cpp:205, 1274`, `src/dialogs/FunctionListDlg.cpp:224`, `src/dialogs/LuaChooseList.cpp:87`, `LuaChooseBox.cpp:75`, `LuaChooseListMulti.cpp:95`, `src/dialogs/chat/ChatListDlg.cpp:204` (+ the `GetItemData` calls at 257-454), `src/dialogs/world_prefs/prefspropertypages.cpp:2089` | `GetItemData` (`DWORD_PTR`) into `int`/`long`/`DWORD` -- but each of these stored an index or an ID, not a pointer.  C4244 at most. |
-| `src/evaluate.cpp:698, 872` | `int nResult = filedlg.DoModal()` (`INT_PTR` -> `int`); return codes are small. |
-| `src/mainfrm.cpp:1405` | `mciSendCommand (lParam, ...)`: `LPARAM` -> `MCIDEVICEID` (`UINT`); MM_MCINOTIFY's lParam *is* a device ID. |
-| `src/MUSHclient.cpp:1796, 1811` | **User-made locale DLLs.**  `locale_notes.txt` tells users to make translations by copying `en.dll` and editing it, so every existing third-party translation is a 32-bit DLL, and a 64-bit `LoadLibrary` of one fails -> "Failed to load resources file ... trying English".  Not changed, because the fix is a behaviour decision: `LoadLibraryEx (..., LOAD_LIBRARY_AS_DATAFILE \| LOAD_LIBRARY_AS_IMAGE_RESOURCE)` loads either bitness, but then MFC holds a data-file module as its resource handle, and whether every path (dialogs with icon controls, `LoadIcon`/`LoadCursor`, `CDocTemplate`) copes needs testing on Windows.  `fetch-deps.ps1`'s rehost tool converts a translation in seconds, if that is the preferred answer. |
-| `src/dialogs/world_prefs/prefspropertypages.cpp:7444` | Registers a script engine's DLL by `LoadLibrary` + `DllRegisterServer`.  The engines named there (PerlScript, Python ActiveScript, `php5activescript.dll`, ...) are almost always 32-bit builds, which a 64-bit client cannot load -- see §7. |
-| `src/lua.h`, `src/luaconf.h`, `src/lauxlib.h` | The headers MUSHclient compiles against are **Lua 5.1.4**; the 64-bit DLL is **5.1.5**.  5.1.5 is a bug-fix release with the same API and struct layouts (`luaL_Buffer` included), so this is expected to be fine, and the x86 pairing (5.1.4 headers, a 2006 import lib) was already looser. |
-| any `luaL_checkinteger` / `lua_tointeger` result stored in `int`/`long` | `lua_Integer` is 64-bit in the 64-bit DLL.  Values within 32 bits are unaffected; beyond that, x86 wrapped inside Lua and x64 wraps at the assignment instead.  C4244. |
-| `release` configs' `/GA` (`AdditionalOptions`) | "optimise TLS for an .exe".  Documented for x86/x64; if the ARM64 compiler rejects it, drop it from the ARM64 twins only. |
-| `_WIN32_WINNT=0x0501` | XP.  v143 cannot target XP anyway; if an ARM64 SDK or MFC header complains, raise it **for the 64-bit configs only** (0x0601 or 0x0A00). |
+- **JScript is now modern JavaScript.**  ES3 code runs as before.  JScript's
+  two COM adapters exist as thin shims -- `new VBArray(world.GetTriggerList()).toArray()`
+  and `Enumerator` work -- over the plain arrays this engine returns.
+  `ActiveXObject` does not exist.  Bare method references coerce as in COM
+  (`"x" + world.GetPluginName` calls it).
+- **World methods are not global names** in any embedded language (ActiveScript
+  added them with `SCRIPTITEM_GLOBALMEMBERS`, so `Note "x"` worked in
+  VBScript); write `world.Note`.  VBScript itself is unchanged.
+- **Text is the world's bytes**, decoded as UTF-8 with undecodable bytes
+  carried as U+DC80..U+DCFF ("surrogateescape") so they round-trip -- the
+  macOS/Linux rule.  In a non-UTF-8 (e.g. Latin-1) world, a Python `'é'`
+  written by a script is sent as UTF-8.
+- An integer beyond 32 bits passed to a string parameter arrives as its exact
+  digits (Python, Ruby), not as a rounded double.
+- Python finds a per-user `site-packages` (install the matching python.org
+  Python and `pip install --user`); the package has no `python.exe`.
 
-Expect a flood of C4267 (`size_t` -> `int`) and C4244 (`__int64` -> `int`)
-at `/W3` on the first 64-bit build -- hundreds, mostly `strlen`/`size()` into
-`int`.  They are not pointer truncations (those are C4311, now an error, and
-C4312).  Triage them; do not silence them project-wide before reading them.
+Windows-specific engine fixes, each found by `--engines-selftest`:
+
+- BSTRs are UTF-16 on Windows, `char*` elsewhere: the engines read and make
+  them only through `MC_BstrBytes` / `MC_BstrFromBytes` (`mc_dispatch.h`),
+  which convert with the thread code page exactly as MFC does, so the
+  document's bytes survive.  `mc_dispatch.cpp` has explicit `BSTR` and
+  `IDispatch*` overloads (both would otherwise convert silently to the
+  `void*` one), and drops the COM reference `GetWorld` takes, so the engines
+  hold the bare document pointer they hold elsewhere, checked on every use.
+- Ruby: `ruby_sysinit` on Windows re-parses the **process** command line, so
+  `ruby_options` was bootstrapping from MUSHclient's own arguments (a world
+  file to run as a script, or `--engines-selftest`); the engine puts its own
+  `-e0` back.  The GC stack base is the last word inside the thread's stack
+  (`StackBase - 1`), not `StackBase`, which belongs to the next region.
+- Python: a Debug build includes `Python.h` without `_DEBUG` (else
+  `Py_DEBUG` and `python3XX_d.lib`); `PyConfig.home` is `python\` beside the DLL.
+- Tcl: `STATIC_BUILD`; `TCL_LIBRARY` is set in the process environment block
+  (Tcl reads it with `GetEnvironmentVariableW`) before `Tcl_FindExecutable`.
 
 ## 6. The installer
 
-`install/mushclient.nsi` takes `/DARCH=x64|arm64`.  Without it, every path,
-the output name and the install directory are exactly as before.  With it:
+`install/mushclient.nsi` with `/DARCH=x64|arm64` (plain `makensis
+mushclient.nsi` is the 32-bit installer exactly as before).  For 64-bit:
 
-- the exe comes from `..\WinRel-<plat>\`, and every DLL it ships --
-  `lua5.1.dll`, `locale\en.dll`, `locale\en_small.dll`, `socket\core.dll`,
-  `mime\core.dll` -- plus `lua5.1.lib`, from `..\packaging\windows\deps\<plat>\`;
-- the default directory is `$PROGRAMFILES64\MUSHclient`;
-- `.onInit` refuses 32-bit Windows (x64 build) or non-ARM64 Windows (ARM64
-  build); x64 is allowed on ARM64 Windows 11, which emulates it;
-- `SetRegView 64` in `.onInit` and in a new `un.onInit`, so the HKLM
-  uninstall key lands in -- and is removed from -- the 64-bit view, not
-  `WOW6432Node`;
-- the Programs-and-Features name is `MUSHclient (x64)` / `MUSHclient (ARM64)`;
-  output `mushclient50x-x64.exe` / `mushclient50x-arm64.exe`.
+- the exe from `..\WinRel-<plat>\`; Lua, LuaSocket, locale, Python, Ruby and
+  Tcl from `..\packaging\windows\deps\<plat>\`; `help.db`, the WinHelp file,
+  `Dina.fon` and `Localize_template.lua` from `deps\upstream\`; the type
+  library from the build (`MUSHclient.tlb`, MIDL'd from `src\mushclient.odl`);
+  the VC++ runtime from `/DCRTDIR` (build-app passes VS's redist directory);
+- the runtime trees (`python\`, `lib\ruby\`, `tcl8.6\`) are replaced, not
+  merged, on an upgrade, and removed by the uninstaller;
+- no `tools\localize.bat` (it regenerates `help.db` from `documentation.sql`,
+  which is not in the repository, and needs `lua5.1.exe`, `sqlite3`, `xgettext`);
+- `/DVERSION=` names the output `MUSHclient-<version>-windows-<arch>[-discworld]-setup.exe`;
+- `/DDISCWORLD=<dir>`: the Discworld edition (`packaging/README.md`);
+- default directory `$PROGRAMFILES64\MUSHclient`; `.onInit` refuses 32-bit
+  Windows (x64) or non-ARM64 Windows (ARM64); `SetRegView 64`.
 
-Deliberately unchanged, and worth a decision:
-
-- **Upgrading in place.** `InstallDirRegKey` reads the per-user
-  `General Options\InstallDir`, which `HKCU\Software` shares between 32-bit
-  and 64-bit programs.  So on a machine with a 32-bit install, the 64-bit
-  installer proposes *that* directory (`C:\Program Files (x86)\MUSHclient`)
-  and replaces the exe and DLLs there.  That keeps every world, plugin and
-  log path in the user's preferences valid, which seemed the better default
-  than a clean `Program Files` install with preferences pointing elsewhere.
-  A side effect: the old 32-bit uninstall entry (in `WOW6432Node`) survives
-  beside the new one, both pointing at the same `uninstall.exe`.
-- **Preferences are shared.**  Both builds read the same `HKCU` keys and the
-  same `mushclient_prefs.sqlite`, so switching back and forth just works --
-  but a 32-bit-only engine or locale chosen in the 32-bit build is still
-  selected when the 64-bit one starts.
-- The `!system "..\tools\localize.bat"` step and the `lua5.1.exe` / `sqlite3`
-  / `xgettext` it runs are host tools: unchanged.
-
-Not compiled here (no NSIS on macOS).
+Deliberately unchanged: `InstallDirRegKey` reads the per-user install
+directory, which 32-bit and 64-bit programs share, so on a machine with a
+32-bit install the 64-bit installer proposes *that* directory -- which keeps
+every world, plugin and log path in the user's preferences valid.
 
 ## 7. What a 64-bit client cannot do that the 32-bit one can
 
-Inherent, not bugs; worth a line in the release notes.
-
-- **In-process COM and ActiveX servers must be 64-bit.**  VBScript and
-  JScript exist in both bitnesses (the classic engines; Windows is retiring
-  VBScript), but PerlScript, Python's ActiveScript engine, PHP's and most
-  third-party engines users have installed are 32-bit.  A world whose script
-  language is one of those fails to start its engine.  The same applies to
-  LuaCOM: a plugin calling `luacom.CreateObject` on a 32-bit-only in-process
-  server fails (out-of-process servers -- Office, for example -- still work).
-- **32-bit Lua C modules** a user has added (`require` of a `.dll` built
-  against the 32-bit `lua5.1.dll`) will not load.  The bundled `socket` and
-  `mime` cores are rebuilt; anything else needs a 64-bit build.
-- **32-bit translations** -- §5's locale-DLL row.
+- **32-bit in-process COM servers and ActiveScript engines.**  VBScript exists
+  in 64-bit; PerlScript, PHP's and most third-party engines do not.  A world in
+  such a language fails to start its engine.  (Python, JavaScript, Tcl and Ruby
+  are embedded, §5.)  The same applies to LuaCOM's `CreateObject` on a
+  32-bit-only in-process server.
+- **32-bit Lua C modules** a user added (`require` of a DLL built against the
+  32-bit `lua5.1.dll`).  The bundled `socket` and `mime` cores are rebuilt.
+- **32-bit translations** (§2.3).
 - WinHelp (`MUSHclient.hlp`) is unavailable on modern Windows regardless.
 
-## 8. What was not verified (everything Windows)
+## 8. The release workflow's Windows job
 
-- No MSVC compile, link or run of any configuration -- including Win32, whose
-  project XML gained only new siblings, and whose shared sources changed only
-  in casts and in the `OnTimer` parameter type.
-- `fetch-deps.ps1` has never run.  It is the first thing to try and the most
-  likely thing to need small fixes: argument quoting into `cl`/`link`, the
-  OpenSSL ARM64 target (`VC-WIN64-CLANGASM-ARM`), the LuaSocket 2.0.2 compile
-  with a 2022 compiler, and the rehost's `UpdateResource` round trip.  Its
-  LuaSocket download is not hash-pinned yet: the first run prints the SHA-256
-  (also in `deps\<plat>\VERSIONS.txt`); paste it into `$SocketSha256`.
-- `run_tests.ps1 -Platform`, the generator change (run it, expect no diff),
-  and the installer.
-- Whether MSVC defines `__ARM_NEON` on ARM64 (only matters for libpng; the
-  `PNG_ARM_NEON_OPT=0` define makes it moot either way).
-- The manifest change on Win32: the app identity no longer names an
-  architecture and the Common-Controls dependency says `*`.  Both are what
-  current Visual Studio emits; worth one launch of the Win32 build to see
-  visual styles still apply.
+`.github/workflows/release.yml`, `windows` job, on `windows-2025` (x64) and
+`windows-11-arm` (ARM64): Strawberry Perl and NASM if the runner lacks them;
+`fetch-deps.ps1` (every component, cached on the script's hash); the unit
+tests; `build-app.ps1 -SkipDeps`, which builds Release, the installer and the
+zip and runs every language's selftest from the package; with *discworld*, the
+Discworld edition from the same build.  It uploads both installers, both zips
+and the checksum files.  It has not run on GitHub yet; the same steps run
+locally (*Verification*).
 
-### What will probably block you first
+## Verification (Windows 11 ARM64, 2026-10-27)
 
-1. `fetch-deps.ps1` prerequisites: Strawberry Perl first on PATH, NASM for
-   x64, and the ARM64 build tools + ARM64 MFC components for ARM64.
-2. The rehost of `en.dll` needs the 32-bit DLLs (`-LocaleSource`).
-3. On the first 64-bit compile, any pointer truncation this pass missed will
-   now stop the build as C4311 -- that is the intent; each one is a real bug.
-4. LuaCOM interface signatures, if any no longer match the 64-bit SDK.
+All on one ARM64 machine with VS 2022 Build Tools 14.44, x64 under emulation:
 
-## 9. The release workflow's Windows job
-
-`.github/workflows/release.yml` (run by hand from the Actions tab) has a
-`windows` job for x64 (`windows-2025`) and ARM64 (`windows-11-arm`).  Like
-everything in this document it has **never run**; expect the first runs to need
-the same iteration as a local build.  It:
-
-1. installs Strawberry Perl if the runner lacks it, and NASM for x64;
-2. runs `fetch-deps.ps1 -Only openssl,lua,luasocket -StageTo WinDebug-<plat>`
-   (cached on `fetch-deps.ps1`'s hash);
-3. builds `MUSHclient_2022.sln` Release for the platform;
-4. runs `tests\win\run_tests.ps1 -Platform <plat>`;
-5. uploads `MUSHclient-<version>-windows-<arch>.zip`: `MUSHclient.exe` plus
-   `deps\<plat>\bin\`.
-
-What it deliberately does **not** do yet, and why:
-
-- **Locale DLLs.**  `fetch-deps.ps1` rehosts them from the 32-bit `en.dll` /
-  `en_small.dll` of an existing install, which a runner does not have.
-  `en.dll` could instead be compiled from source per architecture: its
-  resources are `nickgammon/mushclient_resources` (`MUSHclient.rc`,
-  `mylocal.cpp`/`.def`, `res/`), which `packaging/fetch-resources.sh` already
-  checks out.  `en_small.dll` has no known source.
-- **The NSIS installer.**  `install/mushclient.nsi` also packages `help.db`,
-  which is not in this repository (it comes from an installed 5.0x), and the
-  locale DLLs above.
-
-The draft-release job does not wait on Windows: macOS and Linux must pass, and
-the Windows zips are attached only when their job passed.
-
-## Verification (macOS, 2026-10-26)
-
-- `cmake --build build -j2`: exit 0.  16 warnings, all
-  `-Wcompound-token-split-by-macro` in `src/platform/ruby_engine.cpp`, a
-  file this work did not touch: this worktree has no vendored Ruby, so CMake
-  fell back to the system Ruby 2.6 framework headers, whose `rb_intern`
-  macro trips it.  None from changed code.
-- `ctest`: 74/74 passed.
-- `MUSHclient.vcxproj`, `MUSHclient_tests.vcxproj`: well-formed XML; every
-  non-no-op `<cfg>|Win32` element has an x64 and an ARM64 twin and nothing
-  64-bit lacks a Win32 original.  `tests/check_win_test_sources.py`: engine
-  sources agree (286), selftest 4/4.
+- `fetch-deps.ps1`, every component, both architectures, from clean.
+- Debug and Release builds of x64 and ARM64, and Debug Win32, as C++17.
+- `tests\win\run_tests.ps1`: **x64 1694/1694, ARM64 1694/1694** (Win32's
+  baseline on the same commit: 1689 passed, 5 failed -- tests written where
+  `long` is 64-bit, fixed in the tests).
+- `--engines-selftest`, x64 and ARM64 Debug: Lua 94, Python 104, JavaScript 96,
+  Tcl 80, Ruby 96 passed, 0 failed (skips are per-language, as on macOS).
+- `build-app.ps1 -Arch x64`: the self-containment check passed and the selftest
+  run from the extracted package passed (470/470).

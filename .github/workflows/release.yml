@@ -7,10 +7,11 @@
 #            UNSIGNED: sign and notarize it on your own Mac with
 #            packaging/sign-release.sh, so the Developer ID key never leaves it.
 #   Linux    x86-64 and AArch64: .deb + self-contained .tar.xz each.
-#   Windows  x64 and ARM64: a zip of the program and its 64-bit DLLs.  Not yet
-#            validated on Windows (see docs/WINDOWS-64BIT.md), so a Windows
-#            failure does not stop the draft release; its packages are included
-#            only when its job passes.
+#   Windows  x64 and ARM64: an NSIS installer + a portable zip each (and the
+#            Discworld edition of both).  Validated on a local Windows machine
+#            but not yet run on GitHub's runners (docs/WINDOWS-64BIT.md), so a
+#            Windows failure does not stop the draft release; its packages are
+#            included only when its job passes.
 #
 # The macOS dependencies built from source (OpenSSL, wxWidgets, Tcl, Ruby, the
 # python.org framework) are cached between runs; the first run builds them all
@@ -26,7 +27,7 @@ on:
         required: false
         default: ""
       discworld:
-        description: "Also build the Discworld edition (macOS, Linux)"
+        description: "Also build the Discworld edition (macOS, Linux, Windows)"
         type: boolean
         default: false
       create_release:
@@ -251,42 +252,50 @@ jobs:
             "C:\Program Files\NASM" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
 
+      # Everything fetch-deps.ps1 builds or extracts: OpenSSL, Lua, LuaSocket,
+      # Python, Tcl, QuickJS, Ruby (the slow ones), the rehosted locale DLLs and
+      # the 5.06 release's files (deps\upstream).
       - name: Cache the from-source dependencies
         uses: actions/cache@v4
         with:
-          path: packaging/windows/deps/${{ matrix.platform }}
+          path: |
+            packaging/windows/deps/${{ matrix.platform }}
+            packaging/windows/deps/upstream
           key: windows-${{ matrix.platform }}-deps-${{ hashFiles('packaging/windows/fetch-deps.ps1') }}
 
-      # The locale DLLs are left out: fetch-deps.ps1 rehosts them from the
-      # 32-bit en.dll / en_small.dll of an existing install, which CI does not have.
-      - name: Dependencies (OpenSSL 3.5 LTS, Lua 5.1, LuaSocket)
-        run: packaging\windows\fetch-deps.ps1 -Arch ${{ matrix.arch }} -Only openssl,lua,luasocket -StageTo WinDebug-${{ matrix.platform }}
-
-      - name: Build
-        run: msbuild MUSHclient_2022.sln /m /p:Configuration=Release /p:Platform=${{ matrix.platform }}
+      - name: Dependencies (OpenSSL 3.5 LTS, Lua 5.1, LuaSocket, Python, Tcl, QuickJS, Ruby, locale)
+        run: packaging\windows\fetch-deps.ps1 -Arch ${{ matrix.arch }} -StageTo WinDebug-${{ matrix.platform }}
 
       - name: Tests
         run: tests\win\run_tests.ps1 -Platform ${{ matrix.platform }}
 
-      - name: Package (zip)
+      # Release build, NSIS installer, the zip extracted from it, the
+      # self-containment check, and every scripting language's selftest run
+      # from the extracted package.  NSIS is fetched (pinned) if absent.
+      - name: Package (installer + zip)
+        run: packaging\windows\build-app.ps1 -Arch ${{ matrix.arch }} -Version $env:VERSION -SkipDeps -OutDir out
+
+      - name: Discworld edition
+        if: inputs.discworld
         run: |
-          $out = "out\MUSHclient-$env:VERSION-windows-${{ matrix.arch }}"
-          New-Item -ItemType Directory -Force $out | Out-Null
-          Copy-Item "WinRel-${{ matrix.platform }}\MUSHclient.exe" $out
-          Copy-Item -Recurse "packaging\windows\deps\${{ matrix.platform }}\bin\*" $out
-          Compress-Archive -Path "$out\*" -DestinationPath "$out.zip"
+          bash packaging/fetch-discworld-plugins.sh
+          packaging\windows\build-app.ps1 -Arch ${{ matrix.arch }} -Version $env:VERSION -SkipDeps -NoBuild -WithDiscworld -OutDir out
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.arch }}
-          path: out/*.zip
+          path: |
+            out/*.exe
+            out/*.zip
+            out/SHA256SUMS-*.txt
           if-no-files-found: error
 
   # ── Draft release ────────────────────────────────────────────────────────────
   release:
     name: Draft release
-    # Windows is not yet validated, so it does not gate the release: macOS and
-    # Linux must pass; the Windows packages are added if their jobs passed.
+    # Windows has not yet run on GitHub's runners, so it does not gate the
+    # release: macOS and Linux must pass; the Windows packages are added if
+    # their jobs passed.
     if: >-
       always() && inputs.create_release &&
       needs.macos.result == 'success' && needs.macos-intel.result == 'success' &&

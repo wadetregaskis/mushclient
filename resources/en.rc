@@ -191,7 +191,7 @@ BEGIN
     PUSHBUTTON      "&License ...",IDC_LICENSE,195,149,50,14
     ICON            IDR_MUSHCLTYPE,IDC_LOGO,9,6,20,20
     LTEXT           "MUSHclient",IDC_STATIC,43,4,39,8
-    LTEXT           "Copyright © 2007 - Gammon Software Solutions\nAll rights reserved worldwide by Gammon Software Solutions.",
+    LTEXT           "Authors: Nick Gammon && Wade Tregaskis\nCopyright © 2007-2026. All rights reserved worldwide.",
                     IDC_STATIC,43,24,196,18
     LTEXT           "Version (entered at runtime)",IDC_VERSION_LABEL,89,4,
                     105,8
@@ -278,6 +278,8 @@ BEGIN
     CONTROL         "&Save World Automatically On Close",
                     IDC_SAVE_AUTOMATICALLY,"Button",BS_AUTOCHECKBOX | 
                     WS_TABSTOP,25,179,127,10
+    CONTROL         "&Use SSL/TLS for this connection",IDC_USE_SSL,"Button",
+                    BS_AUTOCHECKBOX | WS_TABSTOP,25,195,160,10
     LTEXT           "Looking for a MUD to connect to? Click on the link below for some suggested lists of MUDs.",
                     IDC_STATIC,53,263,301,11
     LTEXT           "MUD lists",IDC_MUD_LISTS,86,279,334,8
@@ -1162,7 +1164,8 @@ BEGIN
     RTEXT           "&Number of lines in output buffer:",IDC_STATIC,33,291,
                     101,8
     EDITTEXT        IDC_LINES,147,289,55,12,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "(200 to 500,000)",IDC_STATIC,212,291,55,8
+    LTEXT           "(0=unlimited, else 200 to 100,000,000)",IDC_STATIC,208,
+                    287,87,17
     CONTROL         "&Wrap output at column number:",IDC_WRAP_OUTPUT,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,19,308,115,10
     EDITTEXT        IDC_WRAP_COLUMN,147,307,55,12,ES_AUTOHSCROLL | ES_NUMBER
@@ -1943,10 +1946,11 @@ BEGIN
                     IDC_STATIC,10,50,285,20
     LTEXT           "This screen will not appear again.",IDC_STATIC,10,105,
                     130,8
-    LTEXT           "- Nick Gammon",IDC_STATIC,240,130,55,8
-    LTEXT           "Changes in this version:",IDC_STATIC,10,75,76,8
-    LTEXT           "MUSHclient change history",IDC_CHANGES_ADDRESS,90,75,
-                    189,12
+    LTEXT           "- Nick Gammon (primary author)\n- Wade Tregaskis (fork author)",
+                    IDC_STATIC,160,125,136,18
+    LTEXT           "Release notes:",IDC_STATIC,10,75,55,8
+    LTEXT           "MUSHclient change history",IDC_CHANGES_ADDRESS,68,75,
+                    228,12
 END
 
 IDD_WELCOME1 DIALOG DISCARDABLE  34, 22, 306, 142
@@ -1964,10 +1968,11 @@ BEGIN
                     IDC_STATIC,10,54,285,20
     LTEXT           "This screen will not appear again for this version.",
                     IDC_STATIC,10,98,171,8
-    LTEXT           "- Nick Gammon",IDC_STATIC,239,124,55,8
-    LTEXT           "MUSHclient release notes:",IDC_STATIC,10,80,85,8
-    LTEXT           "MUSHclient change history",IDC_CHANGES_ADDRESS,103,80,
-                    189,12
+    LTEXT           "- Nick Gammon (primary author)\n- Wade Tregaskis (fork author)",
+                    IDC_STATIC,160,118,136,18
+    LTEXT           "Release notes:",IDC_STATIC,10,80,55,8
+    LTEXT           "MUSHclient change history",IDC_CHANGES_ADDRESS,68,80,
+                    228,12
 END
 
 IDD_CREDITS DIALOG DISCARDABLE  0, 0, 520, 350
@@ -2051,15 +2056,6 @@ BEGIN
                     IDC_STATIC,131,167,212,8
     LTEXT           "Click on a + sign to expand a category.",IDC_STATIC,131,
                     195,124,8
-END
-
-ID_RECALL_WINDOW DIALOG DISCARDABLE  0, 0, 442, 233
-STYLE WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
-CAPTION "Recall"
-FONT 8, "MS Sans Serif"
-BEGIN
-    EDITTEXT        IDC_TEXT,5,20,335,160,ES_MULTILINE | ES_WANTRETURN | 
-                    WS_VSCROLL
 END
 
 IDD_RECALL DIALOG DISCARDABLE  0, 0, 262, 130
@@ -3434,14 +3430,6 @@ BEGIN
         LEFTMARGIN, 7
         RIGHTMARGIN, 609
         TOPMARGIN, 7
-    END
-
-    ID_RECALL_WINDOW, DIALOG
-    BEGIN
-        LEFTMARGIN, 7
-        RIGHTMARGIN, 435
-        TOPMARGIN, 7
-        BOTTOMMARGIN, 226
     END
 
     IDD_RECALL, DIALOG

@@ -15,7 +15,10 @@ at `70f89f275be84b1c2e413ddcb7409461334c1df5`, its latest commit (2010-02-18),
 imported verbatim in this repository's history and then changed as below.
 Compiled as imported, 299 of its 307 resources are byte-identical to the
 `en.dll` shipped in MUSHclient 5.06 (2016); the other eight are the items
-below.
+below.  Where 5.06 was newer than the source, this copy has 5.06's version;
+where this repository has since changed a resource (in the macOS/Linux port's
+copy of the dialogs, `src\platform\mushclient_dialogs.rc`), this copy has
+the change too.
 
 ## What this copy changes
 
@@ -32,6 +35,23 @@ below.
   imported copies and 5.06's (authorship, copyright years, a stray non-ASCII
   apostrophe).  The other two texts (`text\lua_init.txt`,
   `text\multiple_asterisks.txt`) say exactly what 5.06's do.
+- **5.06's splash screen and activity-toolbar bitmap** (`res\Splsh16.bmp`,
+  `res\activity_toolbar.bmp`), extracted from its `en.dll`: the 2016
+  splash in place of the 2005 one, and the ten-button placeholder strip the
+  toolbar loads before the chosen style's bitmap (`IDB_ACTIVITY_TOOLBAR_n`)
+  replaces it.
+- **The dialog changes this repository made**, as in
+  `src\platform\mushclient_dialogs.rc`:
+  - About: the authors (Nick Gammon and Wade Tregaskis) and the copyright
+    years.
+  - Welcome and upgrade notices: both authors, and "Release notes:".
+  - World Properties > Output: the buffer-size range the client accepts
+    (0 for unlimited, else 200 to 100,000,000).
+  - World Properties > IP address: "Use SSL/TLS for this connection" is in
+    the template.  The client used to create it at run time, and still does
+    when a dialog lacks it (a translation made from an older `en.dll`).
+  - The template of the long-gone `CRecallDlg` (`ID_RECALL_WINDOW`) is
+    removed.
 - **`AFX_IDB_CHECKLISTBOX_NT` is defined** (30995, VC6's value): today's
   `afxres.h` no longer defines it, which turned that bitmap into a resource
   named by the string instead of the number MFC looks it up by.
@@ -39,9 +59,12 @@ below.
   `LibMain`/`.def` scaffolding (a resource-only DLL needs no entry point:
   `/NOENTRY`), and an unreferenced `manifest.xml`.
 
-Two of 5.06's bitmaps are newer than these and were *not* taken from it: the
-splash screen (5.06's is a high-colour image) and the activity-window
-toolbar.  Both here are the originals from the imported source.
+Every other resource is byte-identical to 5.06's.
+
+`src\platform\mushclient_dialogs.rc` is generated from this build by
+`tools\decompile_dialogs.py`, which turns an `en.dll`'s dialogs and menus
+back into `.rc` text the port can parse.  So a dialog or menu is changed here,
+and the port's copy regenerated (the tool's header says how).
 
 ## `en_small.dll`
 

@@ -205,9 +205,11 @@ BOOL CPrefsP1::OnInitDialog()
 	m_BugReportLink.SubclassDlgItem(IDC_BUG_REPORT,  this);
   m_strBugReportAddress = BUG_REPORT_PAGE;
 
-  // dynamically create the "Use SSL/TLS" checkbox aligned with "Save World Automatically"
+  // the "Use SSL/TLS" checkbox is in the template (resources\en.rc and the
+  // port's mushclient_dialogs.rc); a translation made from an older en.dll
+  // lacks it, so create one there, aligned with "Save World Automatically"
   CWnd * pSaveAuto = GetDlgItem (IDC_SAVE_AUTOMATICALLY);
-  if (pSaveAuto)
+  if (pSaveAuto && !GetDlgItem (IDC_USE_SSL))
     {
     CRect rcSave;
     pSaveAuto->GetWindowRect (&rcSave);

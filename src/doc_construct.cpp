@@ -6,9 +6,7 @@
 #include "mainfrm.h"
 
 #include "doc.h"
-#ifndef _WIN32
 #include "platform/mc_dispatch.h"
-#endif
 #include "genprint.h"
 #include "dialogs/QuickConnectDlg.h"
 #include "dialogs/world_prefs/prefspropertypages.h"
@@ -591,7 +589,7 @@ int i;
     App.m_pWorldDocTemplate->AddDocument (this);
 #endif
 
-#ifndef _WIN32
+#ifdef MC_DISPATCH_AVAILABLE
   // Note this document as live, for the world proxies the embedded engines hand
   // to scripts.  There is no COM here, so a VT_DISPATCH is a bare pointer and
   // nothing AddRefs it; the registry is what lets a proxy tell "still open" from
@@ -609,7 +607,7 @@ void closepane (pair<string, CPaneView *> item)
 
 CMUSHclientDoc::~CMUSHclientDoc()
 {
-#ifndef _WIN32
+#ifdef MC_DISPATCH_AVAILABLE
   // FIRST: any world proxy a script still holds must see this document as gone
   // before anything below frees what it points at.
   MC_DispatchDocUnregister (this);

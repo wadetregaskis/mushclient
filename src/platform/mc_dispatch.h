@@ -21,15 +21,39 @@
 //
 // Compiled into mushcore (the shared engine, Stage 9) — it needs the real
 // CMUSHclientDoc from doc.h.
+//
+// WINDOWS.  The 64-bit Windows builds embed Python, JavaScript, Tcl and Ruby
+// too (scripting.h, MC_EMBEDDED_ENGINES), and those engines reach the world
+// through this same table rather than through MFC's IDispatch, so that a
+// script sees the same coercions on every platform.  The one difference the
+// engines must mind is the BSTR: a char* off Windows, a real (UTF-16) BSTR on
+// it.  They read and make them only through MC_BstrBytes / MC_BstrFromBytes.
 
 #pragma once
-#if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)
+#if (!defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)) || \
+    (defined(_WIN32) && defined(MUSHCLIENT_EMBEDDED_ENGINES))
+#define MC_DISPATCH_AVAILABLE 1
 
 #include <string>
 #include <vector>
 
 class CMUSHclientDoc;
+#ifndef _WIN32
 struct VARIANT;
+#endif
+
+// A BSTR's text as the document's own bytes, and back.  Off Windows a BSTR IS
+// those bytes.  On Windows it is UTF-16 converted from them with the thread's
+// ANSI code page -- what CString::AllocSysString does to every string a world
+// method returns -- so converting back with that code page recovers the
+// document's bytes exactly, whatever they hold (a UTF-8 world's UTF-8, too).
+#ifdef _WIN32
+std::string MC_BstrBytes     (const BSTR b);        // null -> ""
+BSTR        MC_BstrFromBytes (const char * s);      // null -> ""; free with SysFreeString
+#else
+std::string MC_BstrBytes     (const char * b);      // (BSTR is char* here)
+char *      MC_BstrFromBytes (const char * s);
+#endif
 
 // Return codes from MC_DispatchInvoke.
 enum {
@@ -155,4 +179,4 @@ void MC_VariantCopy(VARIANT& dst, const VARIANT& src);
 // nil/None/undefined, because their variant switches had no VT_DATE arm.
 long MC_VariantDateToUnix(const VARIANT& v);
 
-#endif // !_WIN32 && MUSHCLIENT_FULL_BUILD
+#endif // MC_DISPATCH_AVAILABLE

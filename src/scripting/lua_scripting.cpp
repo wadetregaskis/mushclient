@@ -560,7 +560,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
 
   {
 
-#ifndef _WIN32
+#ifdef MC_EMBEDDED_ENGINES
   // Alt-language world (the call sites gate on UsesEmbeddedCallback(), so an
   // embedded Python/Perl/JS/Tcl engine lands here).  DispatchEmbedded gives the
   // callback the same SURROUNDINGS Lua's own body gets further down, because
@@ -816,7 +816,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   return false;   // no error
   } // end of CScriptEngine::ExecuteLua 
 
-#ifndef _WIN32
+#ifdef MC_EMBEDDED_ENGINES
 // Announce a callback the way ExecuteLua does, for the five embedded engines.
 // Trace is a format string and szProcedure is plugin-supplied, so the text goes
 // through as an ARGUMENT -- a callback whose name contains a % must not read a
@@ -874,7 +874,7 @@ bool CScriptEngine::DispatchEmbedded (bool * pErr, const std::function<bool ()> 
   *pErr = err;
   return true;
   }
-#endif // !_WIN32
+#endif // MC_EMBEDDED_ENGINES
 
 // returns true if script error
 bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will be set to DISPID_UNKNOWN on an error
@@ -887,7 +887,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
                                CString & result)         // where to put result
   {
 
-#ifndef _WIN32
+#ifdef MC_EMBEDDED_ENGINES
   // Same surroundings as the rich overload above -- see DispatchEmbedded's
   // comment in scripting.h for why the note style and the timing have to live
   // at the dispatch point.

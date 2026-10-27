@@ -613,6 +613,64 @@ BOOL CMUSHclientApp::InitInstance()
 
   LoadGlobalsFromDatabase ();
 
+#ifdef MUSHCLIENT_EMBEDDED_ENGINES
+  // --engines-selftest[=<language>]: the scripting-language conformance suite
+  // (platform/engines_selftest.cpp) the macOS and Linux builds run from their
+  // own entry point.  Here, once the resources, the document templates and the
+  // global preferences are in place, and before any window exists.  Output is
+  // stdout, so run it with stdout redirected; exit 0 / 1, or 77 for a language
+  // this build does not embed.  TerminateProcess rather than a return: the
+  // suite leaves interpreters running that have no business being torn down.
+  {
+  const char * p = strstr (m_lpCmdLine, "--engines-selftest");
+  if (p)
+    {
+    // Unbuffered, so a run that dies says how far it got; and in a Debug
+    // build an assertion is a line on stderr, not a modal box nobody is there
+    // to dismiss.
+    setvbuf (stdout, NULL, _IONBF, 0);
+    for (int type : { _CRT_WARN, _CRT_ERROR, _CRT_ASSERT })
+      {
+      _CrtSetReportMode (type, _CRTDBG_MODE_FILE);
+      _CrtSetReportFile (type, _CRTDBG_FILE_STDERR);
+      }
+    // Nor may a dialog block it: the suite deliberately takes the paths that
+    // end in the Scripting Error dialog (the "errors to the output window"
+    // box clear), which off Windows is inert in a selftest and here is real.
+    // Every dialog is closed as it activates -- tests/win/all_tests.cpp's
+    // WH_CBT hook, for the same reason.
+    struct DialogCloser
+      {
+      static LRESULT CALLBACK Proc (int code, WPARAM wParam, LPARAM lParam)
+        {
+        if (code == HCBT_ACTIVATE)
+          {
+          char cls [64] = "";
+          ::GetClassNameA ((HWND) wParam, cls, sizeof cls);
+          if (strcmp (cls, "#32770") == 0)          // the dialog window class
+            ::PostMessageA ((HWND) wParam, WM_CLOSE, 0, 0);
+          }
+        return ::CallNextHookEx (NULL, code, wParam, lParam);
+        }
+      };
+    ::SetWindowsHookExA (WH_CBT, DialogCloser::Proc, NULL, ::GetCurrentThreadId ());
+    CString which;
+    if (p [strlen ("--engines-selftest")] == '=')
+      {
+      which = p + strlen ("--engines-selftest=");
+      const int end = which.FindOneOf (" \t");
+      if (end >= 0)
+        which = which.Left (end);
+      }
+    extern int RunEmbeddedEnginesSelfTest (const char * only);
+    const int rc = RunEmbeddedEnginesSelfTest (which.IsEmpty () ? NULL : (LPCTSTR) which);
+    fflush (stdout);
+    fflush (stderr);
+    TerminateProcess (GetCurrentProcess (), (UINT) rc);
+    }
+  }
+#endif
+
 // check for configuration name collisions
 
 #ifdef _DEBUG

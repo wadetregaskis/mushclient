@@ -21,7 +21,7 @@
 //
 // Built only when CMake finds the Ruby framework (MUSHCLIENT_RUBY_SCRIPTING).
 
-#if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD) && defined(MUSHCLIENT_RUBY_SCRIPTING)
+#if (defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)) && defined(MUSHCLIENT_RUBY_SCRIPTING)
 
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -34,12 +34,15 @@
 #include <vector>
 #include <cstdint>
 #include <climits>          // LONG_MAX — the 64-bit range a VARIANT's lVal holds
+#ifndef _WIN32
 #include <pthread.h>        // pthread_get_stackaddr_np — GC stack base (see ensure_started)
+#endif
 
 // MUSHclient defines WIN32 (no underscore) for source compatibility; Ruby's
 // headers read WIN32 as a native-Windows build.  The MFC/MUSHclient headers above
 // are already parsed, so undefining it here only affects the Ruby include block.
-#ifdef WIN32
+// (On Windows it is one, and Ruby's headers need to know.)
+#if defined(WIN32) && !defined(_WIN32)
 #undef WIN32
 #endif
 
@@ -84,7 +87,8 @@ VALUE variant_to_ruby (const VARIANT& v)
         if (base == VT_BSTR)
           {
           BSTR* p = ((BSTR*) sa->pvData) + i;
-          rb_ary_push (arr, rb_str_new_cstr ((*p) ? *p : ""));
+          { const std::string s = MC_BstrBytes (*p);
+            rb_ary_push (arr, rb_str_new (s.data (), (long) s.size ())); }
           }
         else
           {
@@ -104,7 +108,8 @@ VALUE variant_to_ruby (const VARIANT& v)
     case VT_R4:   return DBL2NUM (v.fltVal);
     case VT_R8:   return DBL2NUM (v.dblVal);
     case VT_BOOL: return v.boolVal ? Qtrue : Qfalse;
-    case VT_BSTR: return rb_str_new_cstr (v.bstrVal ? v.bstrVal : "");
+    case VT_BSTR: { const std::string s = MC_BstrBytes (v.bstrVal);
+                    return rb_str_new (s.data (), (long) s.size ()); }
     case VT_DISPATCH: return v.byref ? make_world ((CMUSHclientDoc*) v.byref) : Qnil;
     case VT_DATE: return LONG2NUM(MC_VariantDateToUnix(v));
     default:      return Qnil;
@@ -140,6 +145,14 @@ void ruby_to_variant (VALUE r, VARIANT& out)
         { out.vt = VT_I4; out.lVal = (long) mag; return; }
       if (sign == -1 && mag <= (unsigned long long) LONG_MAX + 1ULL)
         { out.vt = VT_I4; out.lVal = (long) (- (long long) (mag - 1) - 1); return; }
+#if LONG_MAX < LLONG_MAX
+      // A 32-bit long (Windows; a Fixnum there stops at 2^30): what fits 64
+      // bits but not lVal crosses as its exact digits, below, rather than as
+      // a double that reaches a string parameter in "%.14g" notation.
+      if ((sign == 1  && mag <= (unsigned long long) LLONG_MAX) ||
+          (sign == -1 && mag <= (unsigned long long) LLONG_MAX + 1ULL))
+        break;
+#endif
       out.vt = VT_R8; out.dblVal = NUM2DBL (r); return;   // genuinely out of range
       }
     default: break;
@@ -154,7 +167,7 @@ void ruby_to_variant (VALUE r, VARIANT& out)
   // RSTRING_PTR is always NUL-terminated by MRI, and SysAllocString truncates at
   // the first NUL, so this matches the other four engines (perl/js/tcl/py all
   // feed a raw char* straight through) and the non-NUL case is unchanged.
-  out.bstrVal = SysAllocString (RSTRING_PTR (s));
+  out.bstrVal = MC_BstrFromBytes (RSTRING_PTR (s));
   }
 
 // ── world.<Method|Property>[=] — World#method_missing ────────────────────────
@@ -295,7 +308,25 @@ void ensure_started ()
   int    argc_   = 2;
   char** pargv   = argv_;
   ruby_sysinit (&argc_, &pargv);
-#ifdef __APPLE__
+#if defined(_WIN32)
+  // rb_w32_sysinit ignores the vector it is handed and re-parses the PROCESS
+  // command line (GetCommandLineW) into a new one -- so ruby_options below
+  // would be bootstrapping from MUSHclient's own arguments: a world file to
+  // run as a Ruby script, or an unknown option.  Either way not "-e0", and a
+  // half-initialised Ruby is exactly the bogus-NoMethodError state the
+  // paragraph above describes (the GC battery found it).  Back to ours.
+  argc_ = 2;
+  pargv = argv_;
+#endif
+#if defined(_WIN32)
+  // The thread's stack base from its TIB (GetCurrentThreadStackLimits says the
+  // same but is declared only for _WIN32_WINNT >= 0x0602, and
+  // MUSHclient.vcxproj pins 0x0501).  The last word INSIDE the stack, not
+  // StackBase itself, which is one past its end: Ruby on Windows asks
+  // VirtualQuery about the address it is given, and StackBase belongs to the
+  // next region -- ruby_init then crashes.
+  ruby_init_stack ((VALUE*) ((NT_TIB*) NtCurrentTeb ())->StackBase - 1);
+#elif defined(__APPLE__)
   ruby_init_stack ((VALUE*) pthread_get_stackaddr_np (pthread_self ()));
 #else
   {
@@ -419,6 +450,14 @@ bool script_defined (VALUE obj, ID mid)
   return RTEST (r);
   }
 
+// The singleton `world` method each engine object answers with (OpenRuby).  A
+// named function rather than a lambda: MSVC's preprocessor mangles a lambda
+// inside the rb_define_singleton_method macro's argument list.
+VALUE engine_world (VALUE self)
+  {
+  return rb_ivar_get (self, rb_intern ("@__world"));
+  }
+
 } // anonymous namespace
 
 // ── CScriptEngine Ruby methods ────────────────────────────────────────────────
@@ -441,8 +480,7 @@ void CScriptEngine::OpenRuby ()
   // simply say world.Note("hi") while its def's stay isolated to this object.
   rb_ivar_set (e->obj, rb_intern ("@__world"), e->world);
   rb_define_singleton_method (e->obj, "world",
-      (VALUE (*)(ANYARGS)) +[](VALUE self) -> VALUE {
-        return rb_ivar_get (self, rb_intern ("@__world")); }, 0);
+      (VALUE (*)(ANYARGS)) engine_world, 0);
   m_rubyEngine = e;
   }
 
@@ -608,4 +646,4 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   return false;
   }
 
-#endif // !_WIN32 && MUSHCLIENT_FULL_BUILD && MUSHCLIENT_RUBY_SCRIPTING
+#endif // (_WIN32 || MUSHCLIENT_FULL_BUILD) && MUSHCLIENT_RUBY_SCRIPTING

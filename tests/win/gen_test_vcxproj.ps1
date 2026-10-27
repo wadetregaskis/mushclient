@@ -125,6 +125,10 @@ foreach ($cfg in @('Debug','Release')) {
 }
 }
 W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />'
+# The app's embedded-engine switches, libraries and include list, from the one
+# file both projects import: the defines change CScriptEngine's layout, so the
+# two projects disagreeing would be an ODR violation, not a missing feature.
+W '  <Import Project="MUSHclient.engines.props" />'
 W '  <PropertyGroup>'
 W '    <OutDir>$(SolutionDir)WinTest\</OutDir>'
 W '    <IntDir>$(SolutionDir)WinTest\obj\$(Configuration)\</IntDir>'

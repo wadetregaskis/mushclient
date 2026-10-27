@@ -6,7 +6,7 @@
 #include "doc.h"
 #include "platform/mc_dispatch.h"
 
-#if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)
+#ifdef MC_DISPATCH_AVAILABLE
 
 #include <unordered_map>
 #include <unordered_set>
@@ -20,7 +20,44 @@
 #include <cstdio>    // snprintf — MC_DispatchBadArgsMessage()
 #include <cmath>     // nearbyint — round_to_long()
 #include <climits>   // LONG_MIN / LONG_MAX — round_to_long()
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#else
 #include <strings.h>   // strcasecmp — bool_word()
+#endif
+
+// ── BSTR <-> the document's bytes (see mc_dispatch.h) ──────────────────────
+#ifdef _WIN32
+// CP_THREAD_ACP because it is what MFC converts with in both directions
+// (_AtlGetConversionACP): CString::AllocSysString on the way out of every world
+// method, CString(LPCWSTR) on the way into every LPCTSTR parameter.
+std::string MC_BstrBytes (const BSTR b)
+  {
+  const int n = b ? (int) SysStringLen (b) : 0;
+  if (n == 0)
+    return std::string ();
+  const int len = WideCharToMultiByte (CP_THREAD_ACP, 0, b, n, NULL, 0, NULL, NULL);
+  std::string s ((size_t) (len > 0 ? len : 0), '\0');
+  if (len > 0)
+    WideCharToMultiByte (CP_THREAD_ACP, 0, b, n, &s [0], len, NULL, NULL);
+  return s;
+  }
+
+BSTR MC_BstrFromBytes (const char * s)
+  {
+  if (!s || !*s)
+    return SysAllocString (L"");
+  const int n = (int) strlen (s);
+  const int len = MultiByteToWideChar (CP_THREAD_ACP, 0, s, n, NULL, 0);
+  BSTR b = SysAllocStringLen (NULL, (UINT) (len > 0 ? len : 0));
+  if (b && len > 0)
+    MultiByteToWideChar (CP_THREAD_ACP, 0, s, n, b, len);
+  return b;
+  }
+#else
+std::string MC_BstrBytes (const char * b)     { return b ? b : ""; }
+char *      MC_BstrFromBytes (const char * s) { return SysAllocString (s ? s : ""); }
+#endif
 
 // COM constants not in the port's VT_* set.
 #ifndef VT_ERROR
@@ -67,7 +104,11 @@ void var_copy(VARIANT& dst, const VARIANT& src)
   var_clear(dst);
   dst = src;                       // shallow copy of the scalar/struct fields
   if (src.vt == VT_BSTR)           // deep-copy the one owned heap resource we marshal
+#ifdef _WIN32
+    dst.bstrVal = src.bstrVal ? SysAllocStringLen(src.bstrVal, SysStringLen(src.bstrVal)) : nullptr;
+#else
     dst.bstrVal = src.bstrVal ? SysAllocString(src.bstrVal) : nullptr;
+#endif
   else if (src.vt & 0x2000)        // VT_ARRAY: there is no SafeArrayCopy in the shim, so
     {                              // do NOT share src's SAFEARRAY — that would let both
     dst.parray = nullptr;          // src and dst SafeArrayDestroy() the same pointer
@@ -158,8 +199,9 @@ long var_to_long(const VARIANT* a)
     // which is -1.  See the boolean note above var_to_bool below.
     case VT_BOOL: return a->boolVal;
     case VT_BSTR: { long b;
-                    if (bool_word (a->bstrVal, b)) return b;
-                    return str_to_long (a->bstrVal); }
+                    const std::string s = MC_BstrBytes (a->bstrVal);
+                    if (bool_word (s.c_str (), b)) return b;
+                    return str_to_long (s.c_str ()); }
     default:      return 0;
     }
   }
@@ -201,8 +243,9 @@ double var_to_double(const VARIANT* a)
     case VT_R8:   return a->dblVal;
     case VT_BOOL: return a->boolVal;          // VARIANT_TRUE is -1.0, as above
     case VT_BSTR: { long b;
-                    if (bool_word (a->bstrVal, b)) return b;
-                    return a->bstrVal ? atof (a->bstrVal) : 0.0; }
+                    const std::string s = MC_BstrBytes (a->bstrVal);
+                    if (bool_word (s.c_str (), b)) return b;
+                    return atof (s.c_str ()); }
     default:      return 0.0;
     }
   }
@@ -213,7 +256,7 @@ CString var_to_cstr(const VARIANT* a)
   if (!a) return s;
   switch (a->vt)
     {
-    case VT_BSTR: if (a->bstrVal) s = a->bstrVal;            break;
+    case VT_BSTR: if (a->bstrVal) s = MC_BstrBytes (a->bstrVal).c_str (); break;
     case VT_I2:   s.Format ("%d",  (int) a->iVal);          break;
     case VT_I4:   s.Format ("%ld", a->lVal);                break;
     // %.7g / %.14g, NOT %g: %g keeps only 6 significant digits, so a script
@@ -240,11 +283,29 @@ void to_variant(VARIANT& r, long v)   { r.vt = VT_I4;   r.lVal    = v; }
 void to_variant(VARIANT& r, int v)    { r.vt = VT_BOOL; r.boolVal = v ? 1 : 0; } // BOOL
 void to_variant(VARIANT& r, short v)  { r.vt = VT_I2;   r.iVal    = v; }
 void to_variant(VARIANT& r, double v) { r.vt = VT_R8;   r.dblVal  = v; }
+#ifdef _WIN32
+// A real BSTR and a real IDispatch* here, and BOTH would otherwise convert
+// silently to the void* overload -- so a string result would come back as a
+// world object.  Each gets its own overload, and there is no void* one.
+void to_variant(VARIANT& r, BSTR v)   { r.vt = VT_BSTR; r.bstrVal = v ? v : SysAllocString (L""); }
+// A world method's LPDISPATCH (GetWorld, GetWorldById) is pDoc->GetIDispatch
+// (TRUE), AddRef'd for a COM caller.  The engines want what they get off
+// Windows -- the bare CMUSHclientDoc*, checked against MC_DispatchDocIsLive on
+// every use -- so the reference is dropped here and the pointer handed on.
+void to_variant(VARIANT& r, IDispatch* v)
+  {
+  CCmdTarget* t = v ? CCmdTarget::FromIDispatch (v) : nullptr;
+  if (v) v->Release ();
+  r.vt = VT_DISPATCH;
+  r.byref = t ? static_cast<CMUSHclientDoc*> (t) : nullptr;
+  }
+#else
 void to_variant(VARIANT& r, char* v)  { r.vt = VT_BSTR; r.bstrVal = v ? v : SysAllocString (""); } // BSTR
 void to_variant(VARIANT& r, void* v)  { r.vt = VT_DISPATCH; r.byref = v; }       // LPDISPATCH
+#endif
 void to_variant(VARIANT& r, VARIANT v){ r = v; }                                 // take ownership (shallow)
 [[maybe_unused]] void to_variant(VARIANT& r, unsigned short v) { r.vt = VT_I2; r.iVal = (short) v; }
-[[maybe_unused]] void to_variant(VARIANT& r, const CString& v) { r.vt = VT_BSTR; r.bstrVal = SysAllocString((LPCTSTR) v); }
+[[maybe_unused]] void to_variant(VARIANT& r, const CString& v) { r.vt = VT_BSTR; r.bstrVal = MC_BstrFromBytes((LPCTSTR) v); }
 
 // VARIANT -> C++ value for property setters / member assignment.
 template<class T> T prop_from(const VARIANT* v);
@@ -646,8 +707,19 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
             // A string default is BORROWED, exactly like the caller's own
             // VARIANTs above: `padded` holds shallow views that nothing
             // var_clears, and the holders copy out of it before the call.
-            // (bstrVal is a plain char* here -- windows_types.h:39.)
+            // (bstrVal is a plain char* off Windows -- windows_types.h:39;
+            // on Windows a real BSTR, made once per default and kept.)
+#ifdef _WIN32
+            if (d.str)
+              {
+              static std::unordered_map<std::string, BSTR> s_defaults;
+              BSTR & b = s_defaults [d.str];
+              if (!b) b = MC_BstrFromBytes (d.str);
+              v.vt = VT_BSTR; v.bstrVal = b;
+              }
+#else
             if (d.str) { v.vt = VT_BSTR; v.bstrVal = const_cast<char*> (d.str); }
+#endif
             else       { v.vt = VT_I4;   v.lVal    = d.value; }
             break;
             }
@@ -775,4 +847,4 @@ long MC_VariantDateToUnix(const VARIANT& v)
     return (long) tm.GetTime();
 }
 
-#endif // !_WIN32 && MUSHCLIENT_FULL_BUILD
+#endif // MC_DISPATCH_AVAILABLE

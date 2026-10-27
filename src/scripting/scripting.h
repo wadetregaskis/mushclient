@@ -16,7 +16,17 @@ extern "C"
 
 #include "paneline.h"
 
-#ifndef _WIN32
+// The embedded alt-language engines (platform/{py,perl,js,qjs,tcl,ruby}_engine.cpp
+// over platform/mc_dispatch.cpp).  Everywhere but Windows they are the only
+// way to run those languages.  On Windows the 64-bit builds embed them too
+// (MUSHclient.vcxproj defines MUSHCLIENT_EMBEDDED_ENGINES): the ActiveScript
+// engines for Python, Tcl and Ruby were only ever 32-bit, so a 64-bit client
+// carries its own.  Win32 keeps ActiveScript for everything but Lua.
+#if !defined(_WIN32) || defined(MUSHCLIENT_EMBEDDED_ENGINES)
+#define MC_EMBEDDED_ENGINES 1
+#endif
+
+#ifdef MC_EMBEDDED_ENGINES
 #include <functional>   // std::function — DispatchEmbedded's callback argument
 #endif
 
@@ -66,7 +76,7 @@ class CScriptEngine : public CObject
       m_pDispatch = NULL;
 #endif
       L = NULL;
-#ifndef _WIN32
+#ifdef MC_EMBEDDED_ENGINES
       m_pyEngine = NULL;
       m_perlEngine = NULL;
       m_jsEngine = NULL;
@@ -158,11 +168,11 @@ class CScriptEngine : public CObject
   // The non-Lua engines (Python, Perl, JavaScript) are embedded directly on the
   // port and reach the world API through the portable dispatch-map Invoke
   // (platform/mc_dispatch.cpp), not a hand-written per-language binding.  Each
-  // Is<Lang>() is defined on every platform — false on Windows, where the COM
-  // host runs these languages instead — so the shared trigger/alias/timer/plugin
+  // Is<Lang>() is defined on every platform — false where the COM host runs
+  // these languages instead (Win32) — so the shared trigger/alias/timer/plugin
   // call sites gate on UsesEmbeddedCallback() with no per-site #ifdefs.  See
   // platform/{py_engine,perl_engine,js_engine}.cpp.
-#ifdef _WIN32
+#ifndef MC_EMBEDDED_ENGINES
   const bool IsPython () const { return false; }
   const bool IsPerl   () const { return false; }
   const bool IsJS     () const { return false; }

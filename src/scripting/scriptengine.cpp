@@ -44,12 +44,52 @@ bool CScriptEngine::Execute (DISPID & dispid,  // dispatch ID, will be set to DI
     if (result)
       {
       result->vt = VT_BOOL;
-      result->boolVal = r; 
+      result->boolVal = r;
       }
     return status;
-    } // have Lua 
+    } // have Lua
 
-  // don't do it if no routine address 
+#ifdef MC_EMBEDDED_ENGINES
+  // An embedded Python/JavaScript/Tcl/Ruby engine (the 64-bit builds): the same
+  // hand-off as the non-Windows Execute below, ExecuteLua dispatching on to the
+  // active engine.  Unlike the Lua arm above, the caller's arguments are passed
+  // on -- an ActiveScript engine received them through Invoke, and these engines
+  // stand in for those.  rgvarg is in REVERSE order (COM convention).
+  if (UsesEmbeddedCallback ())
+    {
+    list<double> nparams;
+    list<string> sparams;
+    for (int i = (int) params.cArgs - 1; i >= 0; i--)
+      {
+      const VARIANT & v = params.rgvarg [i];
+      switch (v.vt)
+        {
+        // A real (wide) BSTR here: CString narrows it the way MFC's automation
+        // layer would have for the callee.
+        case VT_BSTR:  sparams.push_back ((LPCTSTR) CString (v.bstrVal));  break;
+        case VT_I2:    nparams.push_back (v.iVal);              break;
+        case VT_I4:    nparams.push_back (v.lVal);              break;
+        case VT_R4:    nparams.push_back (v.fltVal);            break;
+        case VT_R8:    nparams.push_back (v.dblVal);            break;
+        case VT_BOOL:  nparams.push_back (v.boolVal ? 1 : 0);   break;
+        default: break;   // arrays/objects have no typed-list equivalent
+        }
+      }
+
+    bool r = false;
+    bool status = ExecuteLua (dispid, szProcedure, iReason, szType, szReason,
+                              nparams, sparams, nInvocationCount,
+                              nullptr, nullptr, nullptr, &r);
+    if (result)
+      {
+      result->vt = VT_BOOL;
+      result->boolVal = r;
+      }
+    return status;
+    }
+#endif // MC_EMBEDDED_ENGINES
+
+  // don't do it if no routine address
   if (dispid == DISPID_UNKNOWN)
     return false;
 
@@ -283,6 +323,33 @@ bool CScriptEngine::CreateScriptEngine (void)
     return false;
     }  // end of Lua
 
+#ifdef MC_EMBEDDED_ENGINES
+  // The languages a 64-bit build embeds (scripting.h, MC_EMBEDDED_ENGINES) run
+  // in-process; any other -- VBScript, PerlScript, an installed third-party
+  // engine -- still goes to ActiveScript below.  The names are the ones the
+  // non-Windows CreateScriptEngine accepts.
+#ifdef MUSHCLIENT_PYTHON_SCRIPTING
+  if (m_strLanguage.CompareNoCase ("Python") == 0)
+    { OpenPython (); return false; }
+#endif
+#ifdef MUSHCLIENT_JS_SCRIPTING
+  if (m_strLanguage.CompareNoCase ("jscript") == 0 ||
+      m_strLanguage.CompareNoCase ("javascript") == 0 ||
+      m_strLanguage.CompareNoCase ("js") == 0)
+    { OpenJS (); return false; }
+#endif
+#ifdef MUSHCLIENT_TCL_SCRIPTING
+  if (m_strLanguage.CompareNoCase ("tclscript") == 0 ||
+      m_strLanguage.CompareNoCase ("tcl") == 0)
+    { OpenTcl (); return false; }
+#endif
+#ifdef MUSHCLIENT_RUBY_SCRIPTING
+  if (m_strLanguage.CompareNoCase ("rubyscript") == 0 ||
+      m_strLanguage.CompareNoCase ("ruby") == 0)
+    { OpenRuby (); return false; }
+#endif
+#endif // MC_EMBEDDED_ENGINES
+
   // not under Wine
  if (bWine)
     return true;
@@ -427,6 +494,13 @@ bool CScriptEngine::Parse (const CString & strCode, const CString & strWhat)
   if (L)
     return ParseLua (strCode, strWhat);
 
+#ifdef MC_EMBEDDED_ENGINES
+  if (m_pyEngine)   return ParsePython (strCode, strWhat);
+  if (m_jsEngine)   return ParseJS     (strCode, strWhat);
+  if (m_tclEngine)  return ParseTcl    (strCode, strWhat);
+  if (m_rubyEngine) return ParseRuby   (strCode, strWhat);
+#endif
+
   if (!m_IActiveScriptParse || !m_IActiveScript)
     return true;   // no script engine
 
@@ -498,6 +572,13 @@ DISPID CScriptEngine::GetDispid (const CString & strName)
  // Do Lua differently
   if (L)
     return GetLuaDispid (strName);
+
+#ifdef MC_EMBEDDED_ENGINES
+  if (m_pyEngine)   return GetPythonDispid (strName);
+  if (m_jsEngine)   return GetJSDispid     (strName);
+  if (m_tclEngine)  return GetTclDispid    (strName);
+  if (m_rubyEngine) return GetRubyDispid   (strName);
+#endif
 
   if (!m_pDispatch)
     return DISPID_UNKNOWN;   // no script engine
@@ -608,6 +689,13 @@ void CScriptEngine::DisableScripting (void)
     CloseLua ();
     return;
     }
+
+#ifdef MC_EMBEDDED_ENGINES
+  if (m_pyEngine)   ClosePython ();
+  if (m_jsEngine)   CloseJS ();
+  if (m_tclEngine)  CloseTcl ();
+  if (m_rubyEngine) CloseRuby ();
+#endif
 
   // release engine
 
@@ -806,9 +894,13 @@ bool CScriptEngine::ExecuteLua (DISPID& dispid,
   { dispid = DISPID_UNKNOWN; return false; }
 #endif // !MUSHCLIENT_LUA_SCRIPTING
 
-// When an engine's source isn't compiled (CMake didn't find its toolkit), these
-// no-op stubs let the library link — a world in that language simply gets no
-// engine.  Each real implementation lives in platform/{py,perl,js}_engine.cpp.
+#endif // _WIN32
+
+#ifdef MC_EMBEDDED_ENGINES
+// When an engine's source isn't compiled (CMake didn't find its toolkit; on
+// Windows, Perl, which stays on ActiveScript), these no-op stubs let the
+// library link — a world in that language simply gets no embedded engine.
+// Each real implementation lives in platform/{py,perl,js,qjs,tcl,ruby}_engine.cpp.
 #define MC_ENGINE_LINK_STUBS(Lang, member)                                           \
   void   CScriptEngine::Open##Lang ()  {}                                            \
   void   CScriptEngine::Close##Lang () { member = NULL; }                            \
@@ -839,6 +931,5 @@ MC_ENGINE_LINK_STUBS(Tcl, m_tclEngine)
 MC_ENGINE_LINK_STUBS(Ruby, m_rubyEngine)
 #endif
 #undef MC_ENGINE_LINK_STUBS
-
-#endif // _WIN32
+#endif // MC_EMBEDDED_ENGINES
 

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MUSHclient.engines.props: the embedded scripting engines of the 64-bit
+  Windows builds, shared by MUSHclient.vcxproj and the MUSHclient_tests.vcxproj
+  that tests/win/gen_test_vcxproj.ps1 generates from it.  One file, so the two
+  projects cannot disagree about which engines are compiled in (the defines
+  change scripting.h's CScriptEngine layout, so a disagreement would be an ODR
+  violation, not just a missing feature).
+
+  Python, JavaScript (QuickJS-ng), Tcl and Ruby run in-process, over
+  src/platform/mc_dispatch.cpp, exactly as on macOS and Linux.  Lua is native
+  everywhere; VBScript, PerlScript and any other installed engine still go
+  through ActiveScript.  The libraries and headers come from
+  packaging\windows\fetch-deps.ps1 (packaging\windows\deps\<Platform>\).
+
+  Win32 is untouched: it keeps ActiveScript for every language but Lua.
+
+  Python's import library is not listed: pyconfig.h names it itself
+  (#pragma comment(lib, "python3XX.lib")), so only fetch-deps.ps1 knows the
+  version.  netapi32 and userenv are static Tcl's.
+-->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(Platform)'=='x64' Or '$(Platform)'=='ARM64'">
+    <MCEngineDeps>$(MSBuildThisFileDirectory)packaging\windows\deps\$(Platform)\</MCEngineDeps>
+    <!-- Only the engine sources see these (per-file, in MUSHclient.vcxproj):
+         Python's include directory alone holds a hundred-odd generic names. -->
+    <MCEngineIncludes>$(MCEngineDeps)include\python;$(MCEngineDeps)include\tcl;$(MCEngineDeps)include\quickjs;$(MCEngineDeps)include\ruby;$(MCEngineDeps)include\ruby-arch</MCEngineIncludes>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64' Or '$(Platform)'=='ARM64'">
+    <ClCompile>
+      <PreprocessorDefinitions>MUSHCLIENT_EMBEDDED_ENGINES;MUSHCLIENT_PYTHON_SCRIPTING;MUSHCLIENT_JS_SCRIPTING;MUSHCLIENT_TCL_SCRIPTING;MUSHCLIENT_RUBY_SCRIPTING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>ruby.lib;tcl86.lib;quickjs.lib;netapi32.lib;userenv.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Debug: the static Tcl is a release build (/MT, compiled /GL), whose
+       objects ask for LIBCMT; the debug app's CRT is LIBCMTD, and two static
+       CRTs in one image is LNK4098 at best. -->
+  <ItemDefinitionGroup Condition="('$(Platform)'=='x64' Or '$(Platform)'=='ARM64') And '$(Configuration)'=='Debug'">
+    <Link>
+      <IgnoreSpecificDefaultLibraries>libcmt.lib;%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

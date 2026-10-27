@@ -2994,9 +2994,16 @@ TEST(WorldLoadR5, PluginHeaderValidationArms)
 
 // A whitelisted-but-unbuildable language ("python" is accepted off-Windows)
 // reaches CreateScriptEngine, which fails headless: "Could not initialise
-// script engine".
+// script engine".  Where this target embeds Python -- the 64-bit Windows
+// builds, whose test project imports MUSHclient.engines.props like the app --
+// the same plugin is not unbuildable: it loads and its script runs.
 TEST(WorldLoadR5, PluginNonLuaEngineFailsToInitialise)
 {
+#if defined(_WIN32) && defined(MUSHCLIENT_PYTHON_SCRIPTING)
+    const bool kPythonLoads = true;
+#else
+    const bool kPythonLoads = false;
+#endif
     const char* xml =
         "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
         "<plugin name=\"P\" id=\"0123456789abcdef012345ee\" language=\"python\">\n"
@@ -3004,7 +3011,7 @@ TEST(WorldLoadR5, PluginNonLuaEngineFailsToInitialise)
         "<script>print('hi')</script>\n"
         "</muclient>\n";
     CMUSHclientDoc doc;
-    EXPECT_FALSE(TryLoadPlugin(doc, write_temp_named("p_python.xml", xml).c_str()));
+    EXPECT_EQ(kPythonLoads, TryLoadPlugin(doc, write_temp_named("p_python.xml", xml).c_str()));
 }
 
 // A <script> tag with no language: the throw is tolerated per-item

@@ -29,7 +29,9 @@
 // line in all five; and Tcl and Ruby answering "yes, that callback exists" for
 // every built-in command / inherited Object method.
 
-#ifndef _WIN32
+// Windows: the 64-bit builds, which embed the engines too (scripting.h,
+// MC_EMBEDDED_ENGINES); MUSHclient.cpp runs it from InitInstance.
+#if !defined(_WIN32) || defined(MUSHCLIENT_EMBEDDED_ENGINES)
 
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -45,7 +47,11 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>          // atof -- the thread battery reads a stamped delta
+#ifdef _WIN32
+#define usleep(us) Sleep ((DWORD) ((us) / 1000))
+#else
 #include <unistd.h>         // usleep -- an idle window with NO Python running
+#endif
 #include <list>
 #include <map>
 #include <string>
@@ -53,6 +59,14 @@
 namespace {
 
 int g_pass = 0, g_fail = 0, g_skip = 0;
+
+// A world document the suite can construct: MFC's DECLARE_DYNCREATE makes
+// CMUSHclientDoc's constructor protected on Windows, which a subclass can
+// still reach.  (Elsewhere the constructor is public and this adds nothing.)
+struct SelftestDoc : CMUSHclientDoc
+{
+    SelftestDoc() {}
+};
 
 void check(bool ok, const char* lang, const char* what)
 {
@@ -75,7 +89,7 @@ struct Engine {
 
     Engine(const char* language, const char* code)
     {
-        doc = new CMUSHclientDoc();
+        doc = new SelftestDoc();
         // Route script errors to the output window; otherwise LuaError and the
         // engines' report_error raise the Scripting Error dialog, which is inert
         // here.  This is the same box a user ticks in World Properties.
@@ -154,7 +168,7 @@ struct Engine {
     std::string var(const char* name)
     {
         VARIANT v = doc->GetVariable(name);
-        return (v.vt == VT_BSTR && v.bstrVal) ? std::string(v.bstrVal) : std::string();
+        return (v.vt == VT_BSTR) ? MC_BstrBytes(v.bstrVal) : std::string();
     }
 
     std::string output() const
@@ -907,7 +921,7 @@ void battery_mxp_callsite(const Dialect& d)
 {
     const char* L = d.display;
 
-    CMUSHclientDoc doc;
+    SelftestDoc doc;
     doc.m_bScriptErrorsToOutputWindow = TRUE;
     doc.SetUpOutputWindow();
     doc.m_bMXP      = true;
@@ -931,17 +945,17 @@ void battery_mxp_callsite(const Dialect& d)
     doc.DisplayMsg(text, (int) strlen(text), 0);
 
     VARIANT v = doc.GetVariable("mxptag");
-    const CString tag (v.bstrVal ? v.bstrVal : "");
+    const CString tag (MC_BstrBytes (v.bstrVal).c_str ());
     check(tag.Find("font") == 0, L,
           "an MXP open tag reaches the world's handler with its tag name");
 
     v = doc.GetVariable("mxpargs");
-    const CString args (v.bstrVal ? v.bstrVal : "");
+    const CString args (MC_BstrBytes (v.bstrVal).c_str ());
     check(args.Find("color") >= 0, L, "...and with the argument text");
 
     // The third argument is the tell: only the rich callback path carries it.
     v = doc.GetVariable("mxptype");
-    const CString ttype (v.bstrVal ? v.bstrVal : "");
+    const CString ttype (MC_BstrBytes (v.bstrVal).c_str ());
     check(ttype == d.mxpTableType, L,
           "...and with a mapping of the parsed arguments, which the COM path drops");
 }
@@ -958,7 +972,7 @@ void battery_trigger_callsite(const Dialect& d, bool lowercase)
 {
     const char* L = d.display;
 
-    CMUSHclientDoc doc;
+    SelftestDoc doc;
     doc.m_bScriptErrorsToOutputWindow = TRUE;
     doc.SetUpOutputWindow();
     doc.m_iConnectPhase = eConnectConnectedToMud;
@@ -1008,7 +1022,7 @@ void battery_trigger_callsite(const Dialect& d, bool lowercase)
     doc.DisplayMsg(line, (int) strlen(line), 0);
 
     VARIANT v = doc.GetVariable("wc");
-    const std::string got (v.bstrVal ? v.bstrVal : "");
+    const std::string got (MC_BstrBytes (v.bstrVal));
 
     // Lua ignores the option entirely, so BOTH runs expect the raw text from it.
     const bool wantFolded = lowercase && strcmp(d.key, "lua") != 0;
@@ -1578,7 +1592,7 @@ void battery_stale_proxy(const Dialect& d)
     if (!e.ok) { skip(L, "a proxy to a closed world is refused", "engine failed to open"); return; }
 
     // A SECOND world, registered so GetWorld can find it by name.
-    CMUSHclientDoc* other = new CMUSHclientDoc();
+    CMUSHclientDoc* other = new SelftestDoc();
     other->m_mush_name  = "SelftestOtherWorld";
     other->m_strWorldID = "cccccccccccccccccccccccc";
     App.m_pWorldDocTemplate->AddDocument(other);
@@ -2146,4 +2160,4 @@ int RunEmbeddedEnginesSelfTest(const char* only)
     return g_fail ? 1 : 0;
 }
 
-#endif // !_WIN32
+#endif // !_WIN32 || MUSHCLIENT_EMBEDDED_ENGINES

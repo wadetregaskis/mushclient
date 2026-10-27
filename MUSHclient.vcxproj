@@ -106,6 +106,8 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="$(VCTargetsPath)Microsoft.CPP.UpgradeFromVC60.props" />
   </ImportGroup>
+  <!-- The embedded scripting engines of the 64-bit builds; see the file. -->
+  <Import Project="MUSHclient.engines.props" />
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <_ProjectFileVersion>10.0.30319.1</_ProjectFileVersion>
@@ -1866,6 +1868,22 @@
     <ClCompile Include="src\pal\gdi_surface.cpp" />
     <ClCompile Include="src\pal\win_transport.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
+    <!-- The embedded scripting engines (MUSHclient.engines.props).  Empty
+         translation units in Win32, which defines none of their switches. -->
+    <ClCompile Include="src\platform\mc_dispatch.cpp" />
+    <ClCompile Include="src\platform\engines_selftest.cpp" />
+    <ClCompile Include="src\platform\py_engine.cpp">
+      <AdditionalIncludeDirectories>$(MCEngineIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="src\platform\qjs_engine.cpp">
+      <AdditionalIncludeDirectories>$(MCEngineIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="src\platform\tcl_engine.cpp">
+      <AdditionalIncludeDirectories>$(MCEngineIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="src\platform\ruby_engine.cpp">
+      <AdditionalIncludeDirectories>$(MCEngineIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Midl Include="src\mushclient.odl">

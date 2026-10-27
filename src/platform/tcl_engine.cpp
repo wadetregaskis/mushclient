@@ -20,7 +20,7 @@
 //
 // Built only where the Tcl framework is found (MUSHCLIENT_TCL_SCRIPTING).
 
-#if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD) && defined(MUSHCLIENT_TCL_SCRIPTING)
+#if (defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)) && defined(MUSHCLIENT_TCL_SCRIPTING)
 
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -29,10 +29,14 @@
 #include "platform/mc_dispatch.h"
 #include "platform/mc_variant_args.h"
 
-// MUSHclient defines WIN32 (no underscore) for source compatibility; tcl.h would
+// The port defines WIN32 (no underscore) for source compatibility; tcl.h would
 // then treat this as a Windows build (dllimport storage classes, Win types).  The
 // MFC headers above are already parsed, so undefining it here only affects tcl.h.
-#ifdef WIN32
+// On Windows it IS a Windows build, and the Tcl linked is the static one
+// (packaging\windows\fetch-deps.ps1), which tcl.h has to be told.
+#ifdef _WIN32
+#define STATIC_BUILD
+#elif defined(WIN32)
 #undef WIN32
 #endif
 
@@ -41,7 +45,11 @@
 #include <vector>
 #include <cstdlib>          // setenv, realpath
 #include <sys/stat.h>       // stat
-#ifdef __APPLE__
+#ifdef _WIN32
+#ifndef PATH_MAX
+#define PATH_MAX MAX_PATH
+#endif
+#elif defined(__APPLE__)
 #include <mach-o/dyld.h>    // _NSGetExecutablePath
 #else
 #include <unistd.h>         // readlink
@@ -81,7 +89,8 @@ Tcl_Obj* variant_to_tcl (Tcl_Interp* interp, const VARIANT& v)
         if (base == VT_BSTR)
           {
           BSTR* p = ((BSTR*) sa->pvData) + i;
-          Tcl_ListObjAppendElement (interp, list, Tcl_NewStringObj ((*p) ? *p : "", -1));
+          { const std::string s = MC_BstrBytes (*p);
+            Tcl_ListObjAppendElement (interp, list, Tcl_NewStringObj (s.data (), (int) s.size ())); }
           }
         else
           {
@@ -107,7 +116,8 @@ Tcl_Obj* variant_to_tcl (Tcl_Interp* interp, const VARIANT& v)
     case VT_R4:   return Tcl_NewDoubleObj (v.fltVal);
     case VT_R8:   return Tcl_NewDoubleObj (v.dblVal);
     case VT_BOOL: return Tcl_NewBooleanObj (v.boolVal != 0);
-    case VT_BSTR: return Tcl_NewStringObj (v.bstrVal ? v.bstrVal : "", -1);
+    case VT_BSTR: { const std::string s = MC_BstrBytes (v.bstrVal);
+                    return Tcl_NewStringObj (s.data (), (int) s.size ()); }
     case VT_DATE: return Tcl_NewLongObj (MC_VariantDateToUnix(v));
     default:      return Tcl_NewObj ();
     }
@@ -120,7 +130,7 @@ void tcl_to_variant (Tcl_Obj* o, VARIANT& out)
   {
   VariantInit (&out);
   out.vt = VT_BSTR;
-  out.bstrVal = SysAllocString (o ? Tcl_GetString (o) : "");
+  out.bstrVal = MC_BstrFromBytes (o ? Tcl_GetString (o) : "");
   }
 
 // ── the `world` command: world <Method|Property> [args...] ───────────────────
@@ -259,7 +269,12 @@ void CScriptEngine::OpenTcl ()
     {
     s_platformInited = true;
     char real[PATH_MAX];
-#ifdef __APPLE__
+#ifdef _WIN32
+    // (Tcl's own TclpFindExecutable asks Windows for the module name itself
+    // and ignores the argument; the path still locates the script library.)
+    const DWORD n = GetModuleFileNameA (NULL, real, sizeof (real));
+    const bool haveExe = n > 0 && n < sizeof (real);
+#elif defined(__APPLE__)
     char exe[PATH_MAX]; uint32_t sz = sizeof (exe);
     const bool haveExe =
         _NSGetExecutablePath (exe, &sz) == 0 && realpath (exe, real) != NULL;
@@ -268,11 +283,10 @@ void CScriptEngine::OpenTcl ()
     if (n > 0) real[n] = '\0';
     const bool haveExe = n > 0;
 #endif
-    Tcl_FindExecutable (haveExe ? real : NULL);   // copies the name; `real` need not outlive this
     if (haveExe)
       {
       std::string p (real);                       // .../Contents/MacOS/MUSHclient
-      size_t slash = p.find_last_of ('/');
+      size_t slash = p.find_last_of ("/\\");
       if (slash != std::string::npos)
         {
         const std::string dir = p.substr (0, slash);
@@ -283,12 +297,22 @@ void CScriptEngine::OpenTcl ()
           struct stat st;
           if (stat ((lib + "/init.tcl").c_str (), &st) == 0)
             {
+#ifdef _WIN32
+            // The process environment block: Tcl reads it with
+            // GetEnvironmentVariableW (tclWinInit.c), not the CRT's copy.
+            SetEnvironmentVariableA ("TCL_LIBRARY", lib.c_str ());
+#else
             setenv ("TCL_LIBRARY", lib.c_str (), 1);
+#endif
             break;
             }
           }
         }
       }
+    // AFTER TCL_LIBRARY: initialising the subsystems can settle the library
+    // path (the encoding search path is derived from it), and a variable set
+    // later would then be too late to count.
+    Tcl_FindExecutable (haveExe ? real : NULL);   // copies the name; `real` need not outlive this
     }
 
   CTclEngine* e = new CTclEngine ();
@@ -447,4 +471,4 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
   return false;
   }
 
-#endif // !_WIN32 && MUSHCLIENT_FULL_BUILD && MUSHCLIENT_TCL_SCRIPTING
+#endif // (_WIN32 || MUSHCLIENT_FULL_BUILD) && MUSHCLIENT_TCL_SCRIPTING

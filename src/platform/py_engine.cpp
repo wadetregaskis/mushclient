@@ -21,9 +21,19 @@
 // Built only when CMake finds Python3 (MUSHCLIENT_PYTHON_SCRIPTING) in the full
 // (mushapp) build; scriptengine.cpp provides link stubs otherwise.
 
-#if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD) && defined(MUSHCLIENT_PYTHON_SCRIPTING)
+#if (defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)) && defined(MUSHCLIENT_PYTHON_SCRIPTING)
 
-#include <Python.h>          // must precede the MFC/MUSHclient headers
+// Python.h must precede the MFC/MUSHclient headers.  On Windows a Debug build
+// must not let it see _DEBUG: pyconfig.h would then define Py_DEBUG (a
+// different object layout) and link python3XX_d.lib, and the runtime shipped is
+// python.org's release build, the only one there is to ship.
+#if defined(_WIN32) && defined(_DEBUG)
+#  undef _DEBUG
+#  include <Python.h>
+#  define _DEBUG
+#else
+#  include <Python.h>
+#endif
 
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -35,7 +45,9 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#ifndef _WIN32
 #include <dlfcn.h>           // dladdr — locate the bundled framework at runtime
+#endif
 
 #ifndef VT_ERROR
 #define VT_ERROR 10
@@ -94,6 +106,17 @@ void py_to_variant(PyObject* o, VARIANT& v)
     v.vt = VT_I4;  v.lVal = PyLong_AsLong(o);
     if (v.lVal != -1 || !PyErr_Occurred()) return;
     PyErr_Clear();
+#if LONG_MAX < LLONG_MAX
+    // A 32-bit long (Windows): an int that fits 64 bits but not lVal would
+    // otherwise cross as a double, and reach a string parameter as "%.14g"
+    // scientific notation.  The digits are exact, and the fallback at the
+    // bottom produces them (a numeric parameter rounds and saturates either way).
+    {
+    const long long ll = PyLong_AsLongLong(o);
+    if (ll != -1 || !PyErr_Occurred()) { v.vt = VT_EMPTY; goto as_string; }
+    PyErr_Clear();
+    }
+#endif
     v.vt = VT_R8;  v.dblVal = PyLong_AsDouble(o);
     // An int beyond double range (~1.8e308) makes PyLong_AsDouble itself RAISE
     // OverflowError and answer -1.0 -- unchecked, the method received -1.0 and
@@ -120,24 +143,27 @@ void py_to_variant(PyObject* o, VARIANT& v)
     v.vt = VT_BSTR;
     PyObject* enc = PyUnicode_AsEncodedString(o, "utf-8", "surrogateescape");
     if (enc)
-      { v.bstrVal = SysAllocString(PyBytes_AsString(enc) ? PyBytes_AsString(enc) : "");
+      { v.bstrVal = MC_BstrFromBytes(PyBytes_AsString(enc) ? PyBytes_AsString(enc) : "");
         Py_DECREF(enc); }
     else
-      { PyErr_Clear(); v.bstrVal = SysAllocString(""); }
+      { PyErr_Clear(); v.bstrVal = MC_BstrFromBytes(""); }
     return;
     }
-  if (PyBytes_Check(o))                    { v.vt = VT_BSTR; v.bstrVal = SysAllocString(PyBytes_AsString(o)); return; }
+  if (PyBytes_Check(o))                    { v.vt = VT_BSTR; v.bstrVal = MC_BstrFromBytes(PyBytes_AsString(o)); return; }
   // Fallback: str(o)
+#if LONG_MAX < LLONG_MAX
+as_string:
+#endif
   PyObject* str = PyObject_Str(o);
   v.vt = VT_BSTR;
   v.bstrVal = nullptr;
   if (str)
     {
     PyObject* enc = PyUnicode_AsEncodedString(str, "utf-8", "surrogateescape");
-    if (enc) { v.bstrVal = SysAllocString(PyBytes_AsString(enc)); Py_DECREF(enc); }
+    if (enc) { v.bstrVal = MC_BstrFromBytes(PyBytes_AsString(enc)); Py_DECREF(enc); }
     else     PyErr_Clear();
     }
-  if (!v.bstrVal) v.bstrVal = SysAllocString("");
+  if (!v.bstrVal) v.bstrVal = MC_BstrFromBytes("");
   Py_XDECREF(str);
   }
 
@@ -157,8 +183,8 @@ PyObject* variant_to_py(const VARIANT& v)
       if (base == VT_BSTR)
         {
         BSTR* p = ((BSTR*) sa->pvData) + i;
-        item = (*p) ? PyUnicode_DecodeUTF8(*p, strlen(*p), "surrogateescape")
-                    : PyUnicode_FromString("");
+        const std::string s = MC_BstrBytes (*p);
+        item = PyUnicode_DecodeUTF8(s.data(), (Py_ssize_t) s.size(), "surrogateescape");
         }
       else // VT_VARIANT (the MUSHclient norm) or anything else: element is a VARIANT
         {
@@ -178,8 +204,8 @@ PyObject* variant_to_py(const VARIANT& v)
     case VT_R4:   return PyFloat_FromDouble(v.fltVal);
     case VT_R8:   return PyFloat_FromDouble(v.dblVal);
     case VT_BOOL: return PyBool_FromLong(v.boolVal);
-    case VT_BSTR: return v.bstrVal ? PyUnicode_DecodeUTF8(v.bstrVal, strlen(v.bstrVal), "surrogateescape")
-                                   : PyUnicode_FromString("");
+    case VT_BSTR: { const std::string s = MC_BstrBytes (v.bstrVal);
+                    return PyUnicode_DecodeUTF8(s.data(), (Py_ssize_t) s.size(), "surrogateescape"); }
     case VT_DISPATCH: if (v.byref) return make_world((CMUSHclientDoc*) v.byref);
                       Py_RETURN_NONE;
     case VT_DATE: return PyLong_FromLong(MC_VariantDateToUnix(v));
@@ -345,6 +371,30 @@ void ensure_init()
         PyConfig_SetString (&config, &config.home, whome);
         PyMem_RawFree (whome);
         }
+      }
+    }
+#elif defined (_WIN32)
+  // Windows: python3XX.dll sits beside MUSHclient.exe (the exe imports it, so
+  // it has to), and its stdlib in python\ beside that -- python\Lib and
+  // python\DLLs, as packaging\windows\fetch-deps.ps1 stages them.  Found from
+  // the DLL's own location, like the macOS arm above, so a copy of the client
+  // anywhere on disk works.  Without this the default search would look for
+  // Lib\ beside the DLL, i.e. in the install directory itself.
+  HMODULE hPython = NULL;
+  wchar_t path [MAX_PATH];
+  if (GetModuleHandleExW (GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          (LPCWSTR) &Py_InitializeFromConfig, &hPython) &&
+      GetModuleFileNameW (hPython, path, MAX_PATH) > 0)
+    {
+    std::wstring home = path;                 // …\python3XX.dll
+    const size_t slash = home.find_last_of (L'\\');
+    if (slash != std::wstring::npos)
+      {
+      home.resize (slash);
+      home += L"\\python";
+      if (GetFileAttributesW ((home + L"\\Lib\\os.py").c_str ()) != INVALID_FILE_ATTRIBUTES)
+        PyConfig_SetString (&config, &config.home, home.c_str ());
       }
     }
 #endif
@@ -747,4 +797,4 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   return false;
   }
 
-#endif // !_WIN32 && MUSHCLIENT_FULL_BUILD && MUSHCLIENT_PYTHON_SCRIPTING
+#endif // (_WIN32 || MUSHCLIENT_FULL_BUILD) && MUSHCLIENT_PYTHON_SCRIPTING

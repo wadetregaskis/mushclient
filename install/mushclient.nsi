@@ -8,8 +8,6 @@
 ;  !system "copy ..\WinRel\mushclient.exe mushclient.exe" = 0
 ;  !system "upx mushclient.exe" = 0
 
-!system "..\tools\localize.bat" = 0
-
 ; The name of the installer
 Name "MUSHclient"
 Caption "MUSHclient Installer"
@@ -26,6 +24,12 @@ SetCompressor /SOLID lzma
 ; packaging\windows\fetch-deps.ps1 built -- every DLL the installer ships must
 ; match the exe's architecture.  See docs/WINDOWS-64BIT.md.  64-bit needs
 ; NSIS 3.04+ (x64.nsh's IsNativeARM64).
+;
+; packaging\windows\build-app.ps1 drives the 64-bit builds and passes:
+;   /DVERSION=6.00       names the output MUSHclient-<version>-windows-<arch>[-discworld]-setup.exe
+;   /DCRTDIR=<dir>       the VC++ runtime DLLs the embedded Python and Ruby need
+;   /DDISCWORLD=<dir>    the Discworld edition: Quow's plugins and maps from
+;                        packaging\discworld-plugins (fetch-discworld-plugins.sh)
 !ifndef ARCH
   !define ARCH x86
 !endif
@@ -39,6 +43,14 @@ SetCompressor /SOLID lzma
   !define OUTFILE    "mushclient50x.exe"
   !define PROGDIR    "$PROGRAMFILES"
   !define APPNAME    "MUSHclient"
+  ; files git does not carry, from the release tree
+  !define HELPDB      "..\help.db"
+  !define HLPFILE     "..\mushclient.HLP"
+  !define DINAFON     "..\Dina.fon"
+  !define LOCTEMPLATE "..\Localize_template.lua"
+  ; The 32-bit release regenerates help.db and the translation templates
+  ; first (lua5.1.exe, sqlite3 and xgettext on PATH).
+  !system "..\tools\localize.bat" = 0
 !else if "${ARCH}" == "x64"
   !define PLAT x64
 !else if "${ARCH}" == "arm64"
@@ -54,9 +66,30 @@ SetCompressor /SOLID lzma
   !define LOCALEDIR  "${DEPS}\bin\locale"
   !define SOCKETCORE "${DEPS}\bin\socket\core.dll"
   !define MIMECORE   "${DEPS}\bin\mime\core.dll"
-  !define OUTFILE    "mushclient50x-${ARCH}.exe"
+  !ifdef DISCWORLD
+    !define EDITION "-discworld"
+  !else
+    !define EDITION ""
+  !endif
+  !ifdef VERSION
+    !define OUTFILE  "MUSHclient-${VERSION}-windows-${ARCH}${EDITION}-setup.exe"
+  !else
+    !define OUTFILE  "mushclient50x-${ARCH}${EDITION}.exe"
+  !endif
   !define PROGDIR    "$PROGRAMFILES64"
   !define APPNAME    "MUSHclient (${PLAT})"
+  ; The files git does not carry come from the 5.06 release, extracted by
+  ; fetch-deps.ps1's "upstream" component.  No localize.bat: help.db is
+  ; generated from documentation.sql, which is not in the repository, and the
+  ; translation templates are a release-time chore of the 32-bit build.
+  !define UPSTREAM    "..\packaging\windows\deps\upstream"
+  !define HELPDB      "${UPSTREAM}\help.db"
+  !define HLPFILE     "${UPSTREAM}\MUSHCLIENT.HLP"
+  !define DINAFON     "${UPSTREAM}\Dina.fon"
+  !define LOCTEMPLATE "${UPSTREAM}\locale\Localize_template.lua"
+  !ifndef CRTDIR
+    !error "64-bit builds need /DCRTDIR=<the VC++ redist's Microsoft.VC143.CRT directory> (build-app.ps1 passes it)"
+  !endif
   !include "x64.nsh"
   !include "LogicLib.nsh"
 !endif
@@ -168,15 +201,42 @@ Section "-MUSHclient program (required)"
 
   File "${LUADLL}"
   File "${LUALIB}"
-  File "..\mushclient.HLP"
-  File "..\help.db"
+  File "${HLPFILE}"
+  File "${HELPDB}"
   File "..\docs\mushclient.cnt"
   File "..\install\mushclient.ico"
   File "..\res\tips.txt"
   File "..\lua\Example_filters.lua"
   File "..\res\names.txt"
   File /oname=license.txt "..\LICENSE"
-  File /nonfatal "..\Dina.fon"
+  File /nonfatal "${DINAFON}"
+
+!ifdef PLAT
+  ; The embedded scripting languages (MUSHclient.engines.props): Python,
+  ; Ruby and Tcl as fetch-deps.ps1 staged them (JavaScript is QuickJS, linked
+  ; into the exe), and the VC++ runtime the Python and Ruby DLLs import.  The
+  ; DLLs sit beside the exe because the exe imports them; each runtime finds
+  ; its library beside its DLL (python\, lib\ruby\, tcl8.6\).
+  File "${DEPS}\bin\python3*.dll"
+  File "${DEPS}\bin\*-ruby*.dll"
+  ; Only what something imports (build-app.ps1 checks): vcruntime140_1.dll is
+  ; x64's C++ exception runtime (Python's _wmi.pyd), and the ARM64 redist's
+  ; copy is an x64-headed ARM64X binary nothing in an ARM64 package uses.
+  File "${CRTDIR}\vcruntime140.dll"
+  !if "${PLAT}" == "x64"
+    File "${CRTDIR}\vcruntime140_1.dll"
+  !endif
+  ; Replaced, not merged, on an upgrade: a stale module of an older runtime
+  ; must not shadow the new one's.
+  RMDir /r "$INSTDIR\python"
+  RMDir /r "$INSTDIR\lib\ruby"
+  RMDir /r "$INSTDIR\tcl8.6"
+  File /r "${DEPS}\bin\python"
+  SetOutPath $INSTDIR\lib
+  File /r "${DEPS}\bin\lib\ruby"
+  SetOutPath $INSTDIR
+  File /r "${DEPS}\bin\tcl8.6"
+!endif
 
   ; Write the installation path into the registry
   WriteRegStr HKCU "Software\Gammon Software Solutions\MUSHclient\General Options" "InstallDir" $INSTDIR
@@ -230,7 +290,7 @@ Section "-MUSHclient program (required)"
   CreateDirectory "$INSTDIR\locale"
   SetOutPath $INSTDIR\locale
 
-  File "..\Localize_template.lua"
+  File "${LOCTEMPLATE}"
   File "${LOCALEDIR}\en.dll"
   File "${LOCALEDIR}\en_small.dll"
   File "..\tools\count_locale_usage.lua"
@@ -539,7 +599,7 @@ SetOverwrite ifnewer
   File "..\src\scripting\exampscript.pys"
   File "..\src\scripting\exampscript.lua"
 SetOverwrite on
-  File "..\WinRel\MUSHclient.tlb"
+  File "${BINDIR}\MUSHclient.tlb"
 SectionEnd
 
 Section "Plugins"
@@ -600,6 +660,29 @@ Section "Plugins"
 SectionEnd
 
 
+!ifdef DISCWORLD
+; The Discworld edition: Quow's plugins and maps (packaging\discworld-plugins,
+; staged by packaging/fetch-discworld-plugins.sh), where they look for each
+; other -- the plugins in worlds\plugins, the maps in quow_plugins\maps
+; relative to the install directory -- and a ready-made Discworld world.
+Section "-Discworld plugins and maps (required)"
+  SectionIn 1 2 3  ; typical, full, compact
+
+  SetOutPath $INSTDIR\worlds\plugins
+  File "${DISCWORLD}\worlds\plugins\Quow*.xml"
+  SetOutPath $INSTDIR
+  ; The player's own mapper data is never shipped (and so never overwritten).
+  File /r /x "_quowmap_userdata.db" /x ".DS_Store" "${DISCWORLD}\quow_plugins"
+  ; The world file is the player's once it has been used: on an upgrade the
+  ; existing one is kept.
+  SetOutPath $INSTDIR\worlds
+  SetOverwrite off
+  File "${DISCWORLD}\worlds\Discworld.mcl"
+  SetOverwrite on
+  SetOutPath $INSTDIR
+SectionEnd
+!endif
+
 ; optional section
 Section "Start Menu Shortcuts"
   ; Which section type it is in
@@ -653,6 +736,28 @@ Section Uninstall
 
   ; and Dina font
   Delete "$INSTDIR\Dina.fon"
+
+!ifdef PLAT
+  ; the embedded scripting runtimes and the VC++ runtime
+  Delete "$INSTDIR\python3*.dll"
+  Delete "$INSTDIR\*-ruby*.dll"
+  Delete "$INSTDIR\vcruntime140.dll"
+  Delete "$INSTDIR\vcruntime140_1.dll"
+  RMDir /r "$INSTDIR\python"
+  RMDir /r "$INSTDIR\lib\ruby"
+  RMDir    "$INSTDIR\lib"
+  RMDir /r "$INSTDIR\tcl8.6"
+!endif
+!ifdef DISCWORLD
+  ; Quow's plugins and maps -- by name, never the directories wholesale: the
+  ; mapper keeps the player's own data (_quowmap_userdata.db) beside its maps.
+  Delete "$INSTDIR\worlds\plugins\Quow*.xml"
+  Delete "$INSTDIR\quow_plugins\maps\*.png"
+  Delete "$INSTDIR\quow_plugins\maps\*.wav"
+  Delete "$INSTDIR\quow_plugins\maps\_quowmap_database.db"
+  RMDir  "$INSTDIR\quow_plugins\maps"
+  RMDir  "$INSTDIR\quow_plugins"
+!endif
 
   ; scripting stuff
   Delete "$INSTDIR\scripts\MUSHclient.tlb"

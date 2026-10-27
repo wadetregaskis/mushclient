@@ -1,6 +1,6 @@
 # Packaging MUSHclient
 
-The packaging scripts build self-contained, distributable MUSHclient releases for macOS and Linux.
+The packaging scripts build self-contained, distributable MUSHclient releases for macOS, Linux and 64-bit Windows.
 
 ---
 
@@ -113,6 +113,59 @@ your Apple Developer ID (see below).
 
 ---
 
+## Packaging for Windows (x64, ARM64)
+
+| Script | What it does |
+|--------|--------------|
+| [`windows/fetch-deps.ps1`](windows/fetch-deps.ps1) | Build or fetch every third-party piece for one architecture (OpenSSL, Lua, LuaSocket, Python, Tcl, QuickJS, Ruby), rehost the locale DLLs, and extract the files git lacks from the 5.06 release. |
+| [`windows/build-app.ps1`](windows/build-app.ps1) | Release build, NSIS installer, portable zip, self-containment check, every language's selftest from the package. |
+
+```powershell
+# from the repo root, in any PowerShell (5.1 or 7); no Developer prompt needed
+powershell -ExecutionPolicy Bypass -File packaging\windows\build-app.ps1 -Arch x64
+powershell -ExecutionPolicy Bypass -File packaging\windows\build-app.ps1 -Arch arm64
+
+# the Discworld edition (stage Quow's plugins first, as for the other platforms)
+bash packaging/fetch-discworld-plugins.sh
+powershell -ExecutionPolicy Bypass -File packaging\windows\build-app.ps1 -Arch x64 -WithDiscworld
+```
+
+Output in `dist\`: `MUSHclient-<version>-windows-<arch>[-discworld]-setup.exe`,
+the matching `.zip` (unzip anywhere, run `MUSHclient.exe`), and
+`SHA256SUMS-windows-<arch>[-discworld].txt`.  The installer is the one list of
+what a Windows package holds (`install/mushclient.nsi`); the zip is that
+installer's payload, extracted, so the two cannot differ.
+
+Prerequisites: Visual Studio 2022 (or its Build Tools) with *Desktop development
+with C++*, the **MFC** component for each target architecture and, for ARM64,
+the **ARM64 build tools** (plus *C++ Clang Compiler for Windows*, OpenSSL's ARM64
+assembler); **Strawberry Perl** and, for x64, **NASM** for OpenSSL.  NSIS and
+7-Zip are used if installed and otherwise fetched in their official portable
+forms (pinned); `docs/WINDOWS-64BIT.md` has the details, including a
+no-administrator route for Perl and NASM.
+
+The scripting runtimes, as on the other platforms, are the package's own:
+
+| Engine | Source | Where it ends up |
+|--------|--------|------------------|
+| **Lua 5.1** | lua.org 5.1.5, built as `lua5.1.dll` | beside the exe |
+| **Python 3.14** | python.org's NuGet package | `python3XX.dll` beside the exe, stdlib in `python\` |
+| **Tcl 8.6** | built static from source | linked into the exe; script library in `tcl8.6\` |
+| **Ruby 4.0** | built from source (MSVC) | `<arch>-vcruntime140-ruby400.dll` beside the exe, stdlib in `lib\ruby\` |
+| **JavaScript** | QuickJS-ng, built static | linked into the exe (macOS/Linux use JavaScriptCore, which Windows lacks) |
+| **VBScript, PerlScript, …** | Windows' ActiveScript, as before | not bundled |
+
+Python and Ruby need the VC++ runtime, so `vcruntime140.dll` (and, on x64,
+`vcruntime140_1.dll`) ship beside the exe, from Visual Studio's redistributable.
+
+**Discworld edition.**  Quow's plugins go into `worlds\plugins\` and their map
+data into `quow_plugins\maps\` under the install directory (the minimap looks
+for `.\quow_plugins\maps\`); `Discworld.mcl` goes into `worlds\` and is never
+overwritten by an upgrade, and the per-user `_quowmap_userdata.db` is neither
+shipped nor touched by the uninstaller.
+
+---
+
 ## Release pipeline (GitHub Actions)
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds and
@@ -125,7 +178,7 @@ and whether to create a draft release.  It produces:
 |----------|---------|-----------|
 | macOS | one universal app, macOS 11+ — **unsigned** | Apple Silicon runner (natively, and the Intel half under Rosetta) + an Intel runner |
 | Linux x86-64, AArch64 | `.deb` + self-contained `.tar.xz` each | a runner of each architecture, under a virtual X display |
-| Windows x64, ARM64 | see `docs/WINDOWS-64BIT.md` | a runner of each architecture |
+| Windows x64, ARM64 | NSIS installer + portable `.zip` each (`windows/build-app.ps1`) | a runner of each architecture: the unit tests, then every scripting language's selftest run from the package |
 
 With *create draft release* on, the packages are attached to a **draft** GitHub
 release.  The macOS app is attached unsigned so that your Developer ID key never

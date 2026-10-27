@@ -28,6 +28,10 @@ import tempfile
 
 FILE_RE = re.compile(r'^\s*File\s+"\.\.\\plugins\\([^"]+)"', re.M)
 DEL_RE = re.compile(r'^\s*Delete\s+"\$INSTDIR\\worlds\\plugins\\([^"\\]+)"', re.M)
+# The Discworld edition's own plugins (Quow's, from packaging/discworld-plugins)
+# are installed and removed inside `!ifdef DISCWORLD` blocks.  They are not the
+# bundled set every platform ships, so those blocks are left out of the count.
+EDITION_RE = re.compile(r'^\s*!ifdef\s+DISCWORLD\b.*?^\s*!endif\b', re.M | re.S)
 
 
 def read_manifest(path):
@@ -45,7 +49,7 @@ def check(root):
     manifest = read_manifest(os.path.join(root, "packaging", "bundled-plugins.txt"))
     with open(os.path.join(root, "install", "mushclient.nsi"), encoding="utf-8",
               errors="replace") as f:
-        nsi = f.read()
+        nsi = EDITION_RE.sub("", f.read())
     installed = FILE_RE.findall(nsi)
     deleted = DEL_RE.findall(nsi)
 

@@ -63,7 +63,8 @@ SetCompressor /SOLID lzma
   !define BINDIR     "..\WinRel-${PLAT}"
   !define LUADLL     "${DEPS}\bin\lua5.1.dll"
   !define LUALIB     "${DEPS}\lib\lua5.1.lib"
-  !define LOCALEDIR  "${DEPS}\bin\locale"
+  ; locale\en.dll is built with the client (resources\en.vcxproj)
+  !define LOCALEDIR  "${BINDIR}\locale"
   !define SOCKETCORE "${DEPS}\bin\socket\core.dll"
   !define MIMECORE   "${DEPS}\bin\mime\core.dll"
   !ifdef DISCWORLD
@@ -78,15 +79,13 @@ SetCompressor /SOLID lzma
   !endif
   !define PROGDIR    "$PROGRAMFILES64"
   !define APPNAME    "MUSHclient (${PLAT})"
-  ; The files git does not carry come from the 5.06 release, extracted by
-  ; fetch-deps.ps1's "upstream" component.  No localize.bat: help.db is
-  ; generated from documentation.sql, which is not in the repository, and the
-  ; translation templates are a release-time chore of the 32-bit build.
-  !define UPSTREAM    "..\packaging\windows\deps\upstream"
-  !define HELPDB      "${UPSTREAM}\help.db"
-  !define HLPFILE     "${UPSTREAM}\MUSHCLIENT.HLP"
-  !define DINAFON     "${UPSTREAM}\Dina.fon"
-  !define LOCTEMPLATE "${UPSTREAM}\locale\Localize_template.lua"
+  ; No help.db, WinHelp file or translation template: they came only from
+  ; the 32-bit release tree (help.db is generated from documentation.sql,
+  ; which is not in the repository; Windows 10 and 11 cannot open WinHelp; the
+  ; template is tools\localize.bat's output, a translator's tool).  Dina is its
+  ; author's own release, fetched by fetch-deps.ps1.
+  !define DINAFON     "..\packaging\windows\deps\common\Dina.fon"
+  !define DINALICENCE "..\packaging\windows\deps\common\Dina_license.txt"
   !ifndef CRTDIR
     !error "64-bit builds need /DCRTDIR=<the VC++ redist's Microsoft.VC143.CRT directory> (build-app.ps1 passes it)"
   !endif
@@ -201,8 +200,12 @@ Section "-MUSHclient program (required)"
 
   File "${LUADLL}"
   File "${LUALIB}"
+!ifdef HLPFILE
   File "${HLPFILE}"
+!endif
+!ifdef HELPDB
   File "${HELPDB}"
+!endif
   File "..\docs\mushclient.cnt"
   File "..\install\mushclient.ico"
   File "..\res\tips.txt"
@@ -290,9 +293,12 @@ Section "-MUSHclient program (required)"
   CreateDirectory "$INSTDIR\locale"
   SetOutPath $INSTDIR\locale
 
+!ifdef LOCTEMPLATE
   File "${LOCTEMPLATE}"
+!endif
+  ; en.dll only: en_small.dll (for screens under 1024x768) has no source, and
+  ; without it the client uses en.dll on a small screen too.
   File "${LOCALEDIR}\en.dll"
-  File "${LOCALEDIR}\en_small.dll"
   File "..\tools\count_locale_usage.lua"
   File "..\tools\detect_locale_changes.lua"
   File "..\docs\locale_notes.txt"
@@ -446,6 +452,9 @@ Section "Licences"
   File "..\licences\big numbers licence.txt"
   File "..\licences\libpng-LICENSE.txt"
   File "..\licences\zLib licence.txt"
+!ifdef DINALICENCE
+  File "/oname=Dina licence.txt" "${DINALICENCE}"
+!endif
 
 
 SectionEnd
@@ -916,6 +925,7 @@ Section Uninstall
   Delete "$INSTDIR\licences\big numbers licence.txt"
   Delete "$INSTDIR\licences\libpng-LICENSE.txt"
   Delete "$INSTDIR\licences\zLib licence.txt"
+  Delete "$INSTDIR\licences\Dina licence.txt"
 
   RMDir  "$INSTDIR\licences"
 

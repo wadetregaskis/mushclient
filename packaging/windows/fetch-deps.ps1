@@ -5,37 +5,37 @@
 .DESCRIPTION
   The Win32 build uses prebuilts committed to the repository -- openssl\lib\
   libcrypto.lib + libssl.lib (static OpenSSL 3.5, VC-WIN32, /MT) and
-  src\lua5.1.lib (import library for lua5.1.dll) -- plus DLLs that are not
-  committed at all (lua5.1.dll, locale\en.dll, locale\en_small.dll,
-  socket\core.dll, mime\core.dll) and come from an existing installation.
-  Every one of those is 32-bit x86 and cannot be linked into, or loaded by, a
-  64-bit process.  This script produces the equivalent set for one 64-bit
-  architecture, from source wherever source exists:
+  src\lua5.1.lib (import library for lua5.1.dll) -- plus DLLs from an existing
+  installation (lua5.1.dll, socket\core.dll, mime\core.dll).  Every one is
+  32-bit x86.  This script produces the 64-bit set for one architecture, from
+  source wherever source exists, plus the scripting runtimes the 64-bit
+  builds embed (MUSHclient.engines.props):
 
-    OpenSSL 3.5.x  static libcrypto.lib / libssl.lib + headers, built exactly
-                   the way the committed x86 libs were (their embedded
-                   "compiler:" string: VC-WIN32, no-shared, /MT /Zl).
-                   Default: the newest 3.5.x release on GitHub, verified
-                   against the .sha256 published with it.
-    Lua 5.1.5      lua5.1.dll + lua5.1.lib, from lua.org's tarball (SHA-256
-                   pinned below), exporting every symbol the shipped x86
-                   lua5.1.dll exports (checked after the build).
-    LuaSocket 2.0.2  socket\core.dll + mime\core.dll -- the version the
-                   committed lua\socket.lua etc. are written for.
-    en.dll, en_small.dll  the localised resource DLLs.  These are resource-
-                   only, so their resources are copied, byte for byte, out of
-                   the shipped x86 DLLs into a fresh DLL for the target
-                   architecture (see Copy-ResourceDll for why, and why not
-                   from source).
+    openssl    OpenSSL 3.5.x, static libcrypto.lib / libssl.lib + headers,
+               built the way the committed x86 libs were (VC-WIN32,
+               no-shared, /MT /Zl).  Default: the newest 3.5.x on GitHub,
+               verified against its published .sha256.
+    lua        Lua 5.1.5 as lua5.1.dll + lua5.1.lib (lua.org, pinned), every
+               symbol the x86 DLL exports, x86's rounding (Build-Lua).
+    luasocket  LuaSocket 2.0.2: socket\core.dll + mime\core.dll.
+    dina       the Dina bitmap font one bundled plugin uses, from its author's
+               own release (pinned; MIT licence) -- architecture-neutral.
+    python     python.org's NuGet package: python3XX.dll + python\.
+    tcl        Tcl 8.6, static, + its script library (tcl8.6\).
+    quickjs    QuickJS-ng, static: the JavaScript engine.
+    ruby       Ruby 4.0, MSVC build: its DLL + lib\ruby\.
+    locale     NOT run by default: rehost a 32-bit resource DLL -- a
+               translation made for the 32-bit client -- for this
+               architecture (-LocaleSource).  The client's own locale\en.dll
+               is built from source by resources\en.vcxproj.
 
   Output, git-ignored, laid out for MUSHclient.vcxproj's 64-bit configurations:
 
-    packaging\windows\deps\<Platform>\include\openssl\*.h
-    packaging\windows\deps\<Platform>\lib\libcrypto.lib, libssl.lib, lua5.1.lib
-    packaging\windows\deps\<Platform>\bin\lua5.1.dll
-    packaging\windows\deps\<Platform>\bin\socket\core.dll, mime\core.dll
-    packaging\windows\deps\<Platform>\bin\locale\en.dll, en_small.dll
-    packaging\windows\deps\<Platform>\VERSIONS.txt     what was built, from what
+    packaging\windows\deps\<Platform>\include\...   openssl, python, tcl, quickjs, ruby
+    packaging\windows\deps\<Platform>\lib\...       the import / static libraries
+    packaging\windows\deps\<Platform>\bin\...       what ships beside the exe, in its layout
+    packaging\windows\deps\<Platform>\VERSIONS.txt  what was built, from what
+    packaging\windows\deps\common\                  architecture-neutral files (Dina)
 
   <Platform> is the MSBuild platform name: x64 or ARM64.
 
@@ -46,14 +46,13 @@
   does NOT need a Developer PowerShell (it works from one too).  Also needed:
 
     - Perl for Windows (Strawberry Perl; preinstalled on GitHub's Windows
-      runners).  An MSYS/Git-for-Windows perl will not do: OpenSSL needs one
-      that reports $^O = MSWin32.
+      runners; the portable zip on PATH works too).  An MSYS/Git-for-Windows
+      perl will not do: OpenSSL needs one that reports $^O = MSWin32.
     - x64 only, unless -NoAsm: NASM 2.09+ on PATH (winget install NASM.NASM).
     - ARM64: OpenSSL's assembler for Windows-on-ARM is clang-cl (VS component
-      "C++ Clang Compiler for Windows").  Without it the build falls back to
-      the VC-WIN64-ARM target, which has no assembler at all.
+      "C++ Clang Compiler for Windows"; found in VS without being on PATH).
+      Without it the build falls back to VC-WIN64-ARM, which has no assembler.
     - tar.exe from Windows 10 1803+ (System32), for the .tar.gz sources.
-    - The x86 en.dll / en_small.dll, for -Only locale (see -LocaleSource).
 
 .PARAMETER Arch
   x64 or arm64 (case-insensitive).
@@ -65,17 +64,18 @@
   Build OpenSSL without assembler (no NASM / clang-cl needed; slower crypto).
 
 .PARAMETER LocaleSource
-  Directory holding the 32-bit en.dll and en_small.dll to rehost.  Default:
-  the first of WinRel\locale, WinDebug\locale, "${env:ProgramFiles(x86)}\
-  MUSHclient\locale" that has both.
+  For -Only locale: the directory holding the 32-bit resource DLLs to rehost.
 
 .PARAMETER Only
-  Build only these components: openssl, lua, luasocket, locale.  luasocket
-  needs lua built first (it links lua5.1.lib).
+  Build only these components (see above).  luasocket needs lua built first
+  (it links lua5.1.lib); ruby needs openssl.  From PowerShell call the script
+  in-process (& .\fetch-deps.ps1 -Only a,b): powershell -File passes a list
+  as one string.
 
 .PARAMETER StageTo
-  After building, copy bin\ (the runtime DLLs, in their runtime layout) into
-  this directory -- e.g. WinDebug-x64 -- so the built exe can run there.
+  After building, copy bin\ (the runtime files, in their runtime layout) and
+  the VC++ runtime into this directory -- e.g. WinDebug-x64 -- so the built
+  exe can run there.
 
 .PARAMETER Force
   Rebuild components that are already built.
@@ -83,7 +83,9 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File packaging\windows\fetch-deps.ps1 -Arch x64
 .EXAMPLE
-  pwsh packaging\windows\fetch-deps.ps1 -Arch arm64 -StageTo WinDebug-ARM64
+  powershell -ExecutionPolicy Bypass -File packaging\windows\fetch-deps.ps1 -Arch arm64 -StageTo WinDebug-ARM64
+.EXAMPLE
+  & .\packaging\windows\fetch-deps.ps1 -Arch x64 -Only locale -LocaleSource 'C:\Program Files (x86)\MUSHclient\locale'
 #>
 [CmdletBinding()]
 param(
@@ -93,7 +95,7 @@ param(
   [string]$OpenSslSeries = '3.5',
   [switch]$NoAsm,
   [string]$LocaleSource = '',
-  [ValidateSet('openssl', 'lua', 'luasocket', 'upstream', 'locale', 'python', 'tcl', 'ruby', 'quickjs')] [string[]]$Only = @(),
+  [ValidateSet('openssl', 'lua', 'luasocket', 'dina', 'locale', 'python', 'tcl', 'ruby', 'quickjs')] [string[]]$Only = @(),
   [string]$StageTo = '',
   [switch]$Force
 )
@@ -147,18 +149,11 @@ $TclSha256     = '91cb8fa61771c63c262efb553059b7c7ad6757afa5857af6265e4b0bdc2a14
 $QuickJsVersion = '0.17.0'
 $QuickJsUrl     = "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v$QuickJsVersion.tar.gz"
 $QuickJsSha256  = '559bc4c420475e55c7ab4510adbc562f55d7524d75e8e89d79ce4bb02f5687d9'   # GitHub's tag archive
-# The last upstream release's installer: the source of the files a build needs
-# that are not in git (the 32-bit locale DLLs to rehost, help.db, the WinHelp
-# file, the Dina font), so a machine with no MUSHclient installed --
-# a CI runner -- can build a complete package.  Extracted with 7-Zip.
-$UpstreamUrl    = 'https://www.gammon.com.au/files/mushclient/mushclient506.exe'
-$UpstreamSha256 = 'd6ee92d30eb6e73875283e78826787cdc5309563c1688469c1128ffac0469f07'
-$UpstreamFiles  = @('locale\en.dll', 'locale\en_small.dll', 'locale\Localize_template.lua',
-                    'help.db', 'MUSHCLIENT.HLP', 'Dina.fon')
-# 7-Zip, only when none is installed (GitHub's Windows runners have one): its
-# MSI, unpacked with an administrative extract -- nothing is installed.
-$SevenZipUrl    = 'https://www.7-zip.org/a/7z2409-x64.msi'
-$SevenZipSha256 = 'ec6af1ea0367d16dde6639a89a080a524cebc4d4bedfe00ed0cac4b865a918d8'
+# Dina, the bitmap font the Current_Output_Window plugin loads (Dina.fon in
+# the install directory): Joergen Ibsen's own release, MIT-licensed.  Its
+# regular face, DinaR.fon, ships as Dina.fon, the name the plugin uses.
+$DinaUrl       = 'https://www.dcmembers.com/jibsen/_dl/61/Dina.zip'
+$DinaSha256    = '1f51bba53f75a64d2d8bd037e8e0f84b6f8064e50a72ee954033bede173508cf'
 
 # Every name the shipped 32-bit lua5.1.dll exports (Lua 5.1.4, read from its
 # export table).  A stock 5.1.5 built with LUA_BUILD_AS_DLL exports all of
@@ -192,7 +187,7 @@ $LuaExports = @(
   'luaopen_package','luaopen_string','luaopen_table'
 )
 
-$Components = if ($Only.Count) { $Only } else { @('openssl', 'lua', 'luasocket', 'upstream', 'locale', 'python', 'tcl', 'ruby', 'quickjs') }
+$Components = if ($Only.Count) { $Only } else { @('openssl', 'lua', 'luasocket', 'dina', 'python', 'tcl', 'ruby', 'quickjs') }
 $Versions = [ordered]@{}
 
 function Note([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
@@ -820,60 +815,43 @@ function Build-Ruby {
   $Versions['Ruby'] = "$RubyVersion ($($dll.Name), sha256 $($tgz.Sha256)); libyaml $YamlVersion"
 }
 
-# --------------------------------------------------------------- upstream ---
+# -------------------------------------------------------------------- Dina ---
 
-# packaging\windows\deps\upstream\ (architecture-neutral): the files of the
-# 5.06 release that a build needs and git does not carry.  See $UpstreamFiles.
-$UpstreamDir = Join-Path $Deps 'upstream'
+# packaging\windows\deps\common\ (architecture-neutral): Dina.fon + its licence.
+$CommonDir = Join-Path $Deps 'common'
 
-function Find-SevenZip {
-  $c = Get-Command 7z -ErrorAction SilentlyContinue
-  if ($c) { return $c.Source }
-  foreach ($p in $env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
-    if ($p -and (Test-Path (Join-Path $p '7-Zip\7z.exe'))) { return Join-Path $p '7-Zip\7z.exe' }
-  }
-  $local = Join-Path $Deps '_tools\7-Zip\Files\7-Zip\7z.exe'
-  if (Test-Path $local) { return $local }
-  $msi = Get-Download -Url $SevenZipUrl -Name '7z.msi' -Sha256 $SevenZipSha256
-  Note 'unpacking 7-Zip (administrative extract: nothing is installed)'
-  $target = Join-Path $Deps '_tools\7-Zip'
-  $p = Start-Process msiexec.exe -ArgumentList @('/a', "`"$($msi.Path)`"", '/qn', "TARGETDIR=`"$target`"") -Wait -PassThru
-  if ($p.ExitCode -ne 0 -or -not (Test-Path $local)) { throw "could not unpack 7-Zip from $($msi.Path) (msiexec exit $($p.ExitCode))" }
-  $local
-}
-
-function Build-Upstream {
-  $stamp = Join-Path $UpstreamDir '.sha256'
-  if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp) -eq $UpstreamSha256)) {
-    Note 'upstream 5.06 files are up to date'
-    $Versions['upstream'] = '5.06 (already extracted)'
+function Build-Dina {
+  $stamp = Join-Path $CommonDir '.dina-sha256'
+  if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp) -eq $DinaSha256)) {
+    Note 'Dina is up to date'
+    $Versions['Dina'] = '(already fetched)'
     return
   }
-  $exe = Get-Download -Url $UpstreamUrl -Name 'mushclient506.exe' -Sha256 $UpstreamSha256
-  $7z = Find-SevenZip
-  if (Test-Path $UpstreamDir) { Remove-Item -Recurse -Force $UpstreamDir }
-  New-Dir $UpstreamDir | Out-Null
-  Note "extracting $($UpstreamFiles.Count) files from the 5.06 installer"
-  Exec $7z (@('x', '-y', '-bso0', '-bsp0', "-o$UpstreamDir", $exe.Path) + $UpstreamFiles)
-  foreach ($f in $UpstreamFiles) {
-    if (-not (Test-Path (Join-Path $UpstreamDir $f))) { throw "the 5.06 installer had no $f" }
-  }
-  Set-Content -Path $stamp -Value $UpstreamSha256
-  $Versions['upstream'] = "5.06 installer (sha256 $UpstreamSha256)"
+  $zip = Get-Download -Url $DinaUrl -Name 'Dina.zip' -Sha256 $DinaSha256
+  $x = Join-Path $Work 'dina'
+  if (Test-Path $x) { Remove-Item -Recurse -Force $x }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [IO.Compression.ZipFile]::ExtractToDirectory($zip.Path, $x)
+  New-Dir $CommonDir | Out-Null
+  Copy-Item -Force (Join-Path $x 'DinaR.fon') (Join-Path $CommonDir 'Dina.fon')
+  Copy-Item -Force (Join-Path $x 'LICENSE') (Join-Path $CommonDir 'Dina_license.txt')
+  Set-Content -Path $stamp -Value $DinaSha256
+  $Versions['Dina'] = "Dina.zip (dcmembers.com/jibsen, sha256 $DinaSha256)"
 }
 
 # ------------------------------------------------------- resource DLLs ---
 
-# en.dll and en_small.dll are resource-only DLLs (MUSHclient.cpp LoadLibrary's
-# one and makes it the MFC resource handle: every menu, dialog, string and
-# accelerator lives there).  A 64-bit process cannot LoadLibrary a 32-bit DLL,
-# so each needs a 64-bit twin.
+# A resource DLL (locale\<lang>.dll) is what MUSHclient.cpp's I18N_Setup
+# LoadLibrary's and makes the MFC resource handle: every menu, dialog, string
+# and accelerator lives there.  A 64-bit process cannot LoadLibrary a 32-bit
+# DLL, so a translation made for the 32-bit client -- by copying and editing
+# en.dll, as locale_notes.txt describes -- needs a 64-bit twin.  The client's
+# own en.dll needs none: it is built from source (resources\en.vcxproj).
 #
-# Why rehost instead of compile: en_small.dll has no source anywhere (it dates
-# from 2007; github.com/nickgammon/mushclient_resources builds en.dll only),
-# and copying the resources byte for byte is the one method that guarantees
-# the 64-bit client shows exactly what the 32-bit one does.  Resources are
-# architecture-neutral data; only the PE wrapper around them is not.
+# Why rehost rather than ask for the translation's source: there usually is
+# none, and copying the resources byte for byte guarantees the 64-bit client
+# shows exactly what the 32-bit one did.  Resources are architecture-neutral
+# data; only the PE wrapper around them is not.
 #
 # Mechanism: link an empty resource-only DLL for the target machine, open the
 # x86 DLL as a data file (works across architectures), and UpdateResource
@@ -1052,14 +1030,12 @@ public static class MushResRehost
 '@
 
 function Find-LocaleSource {
-  if ($LocaleSource) { return $LocaleSource }
-  $candidates = @((Join-Path $UpstreamDir 'locale'), (Join-Path $Repo 'WinRel\locale'), (Join-Path $Repo 'WinDebug\locale'))
-  if (${env:ProgramFiles(x86)}) { $candidates += Join-Path ${env:ProgramFiles(x86)} 'MUSHclient\locale' }
-  foreach ($c in $candidates) {
-    if ((Test-Path (Join-Path $c 'en.dll')) -and (Test-Path (Join-Path $c 'en_small.dll'))) { return $c }
+  if (-not $LocaleSource) {
+    throw ('-Only locale rehosts the 32-bit resource DLLs in -LocaleSource <dir> -- a translation made ' +
+           'for the 32-bit client.  The client''s own locale\en.dll is built from resources\ by the solution.')
   }
-  throw ("no 32-bit en.dll + en_small.dll found (looked in: $($candidates -join '; ')); " +
-         'pass -LocaleSource <dir>, e.g. an installed MUSHclient 5.0x\locale')
+  if (-not (Get-ChildItem $LocaleSource -Filter '*.dll' -ErrorAction SilentlyContinue)) { throw "no DLLs in $LocaleSource" }
+  $LocaleSource
 }
 
 function Copy-ResourceDll([string]$Source, [string]$Target) {
@@ -1079,24 +1055,21 @@ function Copy-ResourceDll([string]$Source, [string]$Target) {
   Assert-Machine $Target
 }
 
+# Into locale-rehosted\, never bin\locale\: the client's own en.dll is built
+# from source (resources\en.vcxproj), and a rehosted DLL there would shadow it
+# in every -StageTo copy and package.  Copy what you need into an install's
+# locale\ yourself.
 function Build-Locale {
-  $dir = New-Dir (Join-Path $OutBin 'locale')
-  $done = (Test-Path (Join-Path $dir 'en.dll')) -and (Test-Path (Join-Path $dir 'en_small.dll'))
-  if (-not $Force -and $done) {
-    Note "locale DLLs ($Platform) are up to date"
-    $Versions['locale'] = '(already built)'
-    return
-  }
   $src = Find-LocaleSource
+  $dir = New-Dir (Join-Path $Out 'locale-rehosted')
   $hashes = @()
-  foreach ($n in 'en.dll', 'en_small.dll') {
-    $s = Join-Path $src $n
-    if ((Get-PeMachine $s) -ne 0x14C) { Warn "$s is not an x86 DLL; rehosting it anyway" }
-    Note "rehosting $n from $src"
-    Copy-ResourceDll $s (Join-Path $dir $n)
-    $hashes += "$n sha256 $((Get-FileHash -Algorithm SHA256 $s).Hash.ToLowerInvariant())"
+  foreach ($s in Get-ChildItem $src -Filter '*.dll') {
+    if ((Get-PeMachine $s.FullName) -ne 0x14C) { Warn "$($s.FullName) is not an x86 DLL; rehosting it anyway" }
+    Note "rehosting $($s.Name) from $src"
+    Copy-ResourceDll $s.FullName (Join-Path $dir $s.Name)
+    $hashes += "$($s.Name) sha256 $((Get-FileHash -Algorithm SHA256 $s.FullName).Hash.ToLowerInvariant())"
   }
-  $Versions['locale'] = "rehosted from $src ($($hashes -join ', '))"
+  $Versions['locale'] = "rehosted from $src into $dir ($($hashes -join ', '))"
 }
 
 # -------------------------------------------------------------------- main ---
@@ -1114,8 +1087,7 @@ Import-VsEnvironment
 if ($Components -contains 'openssl')   { Build-OpenSsl }
 if ($Components -contains 'lua')       { Build-Lua }
 if ($Components -contains 'luasocket') { Build-LuaSocket }
-# locale rehosts the upstream release's DLLs unless -LocaleSource names others.
-if ($Components -contains 'upstream' -or ($Components -contains 'locale' -and -not $LocaleSource)) { Build-Upstream }
+if ($Components -contains 'dina')      { Build-Dina }
 if ($Components -contains 'locale')    { Build-Locale }
 if ($Components -contains 'python')    { Build-Python }
 if ($Components -contains 'tcl')       { Build-Tcl }

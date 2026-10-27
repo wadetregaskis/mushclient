@@ -38,13 +38,14 @@ The Win32 build is still built and tested (`tests\win\run_tests.ps1` with no
   Neither needs installing: the *portable* zips work on PATH
   (`strawberry-perl-5.42.x-64bit-portable.zip`, `nasm-2.16.03-win64.zip`), which
   is how the first build was done, without administrator rights.
-- **NSIS 3.04+** and **7-Zip**: used if installed; otherwise `build-app.ps1` /
-  `fetch-deps.ps1` fetch NSIS's portable zip and 7-Zip's MSI (administrative
+- **NSIS 3.04+** and **7-Zip** (for the packages): used if installed;
+  otherwise `build-app.ps1` fetches NSIS's portable zip and 7-Zip's MSI (administrative
   extract -- nothing is installed), both SHA-256 pinned, into
   `packaging\windows\deps\_tools\`.  GitHub's Windows runners have 7-Zip.
 
-Nothing else: the 32-bit locale DLLs, `help.db` and the other files git does
-not carry come from the 5.06 release's installer (§2).
+Nothing else: everything else is built from source or fetched, pinned (§2).
+In particular `locale\en.dll` -- every menu, dialog and string -- is built
+from `resources\` with the client (§2.3).
 
 ### 1.2 Everything at once: a package
 
@@ -72,10 +73,10 @@ environment: an x64 PowerShell under emulation is told "X64" by .NET):
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\windows\fetch-deps.ps1 -Arch x64
 powershell -ExecutionPolicy Bypass -File packaging\windows\fetch-deps.ps1 -Arch arm64
-#   -Only openssl,lua,luasocket,upstream,locale,python,tcl,quickjs,ruby
+#   -Only openssl,lua,luasocket,dina,python,tcl,quickjs,ruby
 #   -OpenSslVersion 3.5.9   pin instead of "newest 3.5.x on GitHub"
 #   -NoAsm                  no NASM / clang-cl needed (slower crypto)
-#   -LocaleSource <dir>     rehost these en.dll / en_small.dll instead of 5.06's
+#   -Only locale -LocaleSource <dir>   rehost a 32-bit translation (§2.3)
 #   -StageTo WinDebug-x64   also copy the runtime files next to a dev build
 #   -Force                  rebuild what is already built
 ```
@@ -86,7 +87,7 @@ fetch-deps.ps1 ...` -- because `powershell -File` passes the list as one string.
 What is built is skipped next time.  Ruby dominates a clean run (its MSVC
 build is a serial `nmake`, ~20 minutes per architecture), then OpenSSL.
 Output is the git-ignored `packaging\windows\deps\<x64|ARM64>\` plus the
-architecture-neutral `deps\upstream\`.
+architecture-neutral `deps\common\`.
 
 ### 1.4 Build and run a development copy
 
@@ -98,7 +99,7 @@ msbuild MUSHclient.vcxproj /m /p:Configuration=Debug   /p:Platform=Win32 /p:Solu
 
 Outputs: `WinRel-<plat>\`, `WinDebug-<plat>\` (Win32: `WinRel\`, `WinDebug\`).
 To run one, put the runtime files beside it -- `fetch-deps.ps1 -Arch x64
--StageTo WinDebug-x64` copies the DLLs, the locale DLLs, `python\`,
+-StageTo WinDebug-x64` copies the DLLs, `python\`,
 `lib\ruby\`, `tcl8.6\` and the VC++ runtime -- plus the architecture-neutral
 data files (`lua\`, `spellchecker.lua`, ...), or simply run a packaged copy.
 
@@ -129,8 +130,8 @@ language the build does not embed.
 | OpenSSL `libcrypto.lib`, `libssl.lib` | `fetch-deps.ps1`: newest 3.5.x, `VC-WIN64A` / `VC-WIN64-CLANGASM-ARM`, `no-shared`, checked against the release's `.sha256` | static, `/MT /Zl` -- the same recipe as the committed x86 libs (§2.1) |
 | `lua5.1.dll` + `.lib` | Lua **5.1.5** from lua.org (SHA-256 pinned), `LUA_BUILD_AS_DLL`, `/MT`; all 123 names the x86 DLL exports are checked | `luaconf.h` patched to round like x86 (§2.2) |
 | `socket\core.dll`, `mime\core.dll` | LuaSocket **v2.0.2** (pinned) | the version the committed `lua\socket*.lua` are written for |
-| `locale\en.dll`, `en_small.dll` | the 5.06 release's x86 DLLs, **rehosted**: every resource copied byte for byte into a fresh resource-only DLL for the target machine, then compared | §2.3 |
-| `help.db`, `MUSHCLIENT.HLP`, `Dina.fon`, `locale\Localize_template.lua` | extracted from the 5.06 installer (`mushclient506.exe`, SHA-256 pinned) by the `upstream` component | none is in git; `help.db`'s source (`documentation.sql`) is not either |
+| `locale\en.dll` | built from `resources\` (`resources\en.vcxproj`, referenced by `MUSHclient.vcxproj`), for every architecture | §2.3 |
+| `Dina.fon` | Joergen Ibsen's own release (`Dina.zip`, pinned; MIT), `DinaR.fon` shipped as `Dina.fon` | the font `Current_Output_Window` loads |
 | `python3XX.dll`, `python\Lib`, `python\DLLs` | python.org's NuGet package (`python` / `pythonarm64`, 3.14.x, SHA-256 pinned) | IDLE, Tk, the test suite and pip removed (no `python.exe` ships to run pip) |
 | `tcl86.lib` (linked in), `tcl8.6\` | Tcl **8.6.16** from source, `makefile.vc OPTS=static` | |
 | `<arch>-vcruntime140-ruby400.dll`, `lib\ruby\` | Ruby **4.0.5** from source, native MSVC build, with libyaml 0.2.5 (static), the repo's zlib, and the OpenSSL above | §2.4 |
@@ -164,23 +165,33 @@ coordinate a pixel off.  `fetch-deps.ps1` swaps the generic definitions for
 `lua_Integer` is 64-bit in a 64-bit DLL, so values past 2^31 survive where x86
 wrapped them.
 
-### 2.3 The locale DLLs
+### 2.3 `locale\en.dll`, and what the 64-bit packages leave out
 
 `AfxSetResourceHandle` makes `locale\EN.dll` the source of every menu, dialog,
 string table and accelerator -- the exe itself carries only its icon and
-version (15 resources against `en.dll`'s 307).  The full resource script is
-not in this repository (`src/platform/mushclient_dialogs.rc` is a decompile of
-the dialogs and menus only, for the wx port), and `en_small.dll` has no source
-anywhere, so both are rehosted from the last release's x86 DLLs: resources are
-architecture-neutral data, only the PE wrapper is not, and a byte-for-byte copy
-is the one method that guarantees the 64-bit client shows exactly what the
-32-bit one does.  The rehosted DLLs from the 5.06 installer and from an
-installed 5.06 are identical (same SHA-256 before rehosting).
+version.  Its source is `resources\`: github.com/nickgammon/mushclient_resources,
+imported verbatim and then adapted (`resources\README.md`), built by
+`resources\en.vcxproj` into `locale\` beside each configuration's exe, Win32
+included.  Built as imported, 299 of its 307 resources are byte-identical to
+5.06's `en.dll`; this copy also has *Display > Stop Trigger Sounds / Stop
+Script Sounds*, which the client has long handled but the menu never showed.
+
+Left out, because only the 32-bit release tree ever had them:
+
+- `en_small.dll` (screens under 1024x768): no source was ever published.
+  Without it the client now uses `en.dll` on a small screen too.
+- `help.db`, which the bundled *MUSHclient Help* plugin reads: generated from
+  `documentation.sql`, which is in neither repository (macOS and Linux do not
+  ship it either).  The plugin says it is not found.
+- `MUSHCLIENT.HLP`: WinHelp, which Windows 10 and 11 cannot open.
+- `locale\Localize_template.lua`: `tools\localize.bat`'s output, a
+  translator's tool.
 
 User-made translations (a copied and edited `en.dll`, as `locale_notes.txt`
-suggests) are 32-bit and do not load in a 64-bit client; the rehost tool in
-`fetch-deps.ps1` converts one in seconds (`-LocaleSource <dir> -Only locale`).
-
+suggests) are 32-bit and do not load in a 64-bit client.
+`fetch-deps.ps1 -Only locale -LocaleSource <dir>` rehosts every DLL in that
+directory -- each resource copied byte for byte into a fresh resource-only DLL
+for the target machine, then compared -- into `deps\<plat>\locale-rehosted\`.
 ### 2.4 Ruby on MSVC: the details that mattered
 
 - **No host Ruby.**  The tarball carries every generated file except
@@ -325,9 +336,10 @@ Windows-specific engine fixes, each found by `--engines-selftest`:
 `install/mushclient.nsi` with `/DARCH=x64|arm64` (plain `makensis
 mushclient.nsi` is the 32-bit installer exactly as before).  For 64-bit:
 
-- the exe from `..\WinRel-<plat>\`; Lua, LuaSocket, locale, Python, Ruby and
-  Tcl from `..\packaging\windows\deps\<plat>\`; `help.db`, the WinHelp file,
-  `Dina.fon` and `Localize_template.lua` from `deps\upstream\`; the type
+- the exe and `locale\en.dll` from `..\WinRel-<plat>\`; Lua, LuaSocket,
+  Python, Ruby and Tcl from `..\packaging\windows\deps\<plat>\`; `Dina.fon`
+  and its licence from `deps\common\`; no `help.db`, WinHelp file or
+  translation template (§2.3); the type
   library from the build (`MUSHclient.tlb`, MIDL'd from `src\mushclient.odl`);
   the VC++ runtime from `/DCRTDIR` (build-app passes VS's redist directory);
 - the runtime trees (`python\`, `lib\ruby\`, `tcl8.6\`) are replaced, not

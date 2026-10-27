@@ -252,18 +252,18 @@ jobs:
             "C:\Program Files\NASM" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
 
-      # Everything fetch-deps.ps1 builds or extracts: OpenSSL, Lua, LuaSocket,
-      # Python, Tcl, QuickJS, Ruby (the slow ones), the rehosted locale DLLs and
-      # the 5.06 release's files (deps\upstream).
+      # Everything fetch-deps.ps1 builds or fetches: OpenSSL, Lua, LuaSocket,
+      # Python, Tcl, QuickJS, Ruby (the slow ones), and the Dina font (deps\common).
+      # locale\en.dll is not among them: it is built from resources\ with the client.
       - name: Cache the from-source dependencies
         uses: actions/cache@v4
         with:
           path: |
             packaging/windows/deps/${{ matrix.platform }}
-            packaging/windows/deps/upstream
+            packaging/windows/deps/common
           key: windows-${{ matrix.platform }}-deps-${{ hashFiles('packaging/windows/fetch-deps.ps1') }}
 
-      - name: Dependencies (OpenSSL 3.5 LTS, Lua 5.1, LuaSocket, Python, Tcl, QuickJS, Ruby, locale)
+      - name: Dependencies (OpenSSL 3.5 LTS, Lua 5.1, LuaSocket, Python, Tcl, QuickJS, Ruby, Dina)
         run: packaging\windows\fetch-deps.ps1 -Arch ${{ matrix.arch }} -StageTo WinDebug-${{ matrix.platform }}
 
       - name: Tests

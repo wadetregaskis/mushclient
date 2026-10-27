@@ -117,7 +117,7 @@ your Apple Developer ID (see below).
 
 | Script | What it does |
 |--------|--------------|
-| [`windows/fetch-deps.ps1`](windows/fetch-deps.ps1) | Build or fetch every third-party piece for one architecture (OpenSSL, Lua, LuaSocket, Python, Tcl, QuickJS, Ruby), rehost the locale DLLs, and extract the files git lacks from the 5.06 release. |
+| [`windows/fetch-deps.ps1`](windows/fetch-deps.ps1) | Build or fetch every third-party piece for one architecture (OpenSSL, Lua, LuaSocket, Python, Tcl, QuickJS, Ruby) and the Dina font.  `locale\en.dll` is built from [`../resources/`](../resources/README.md) with the client. |
 | [`windows/build-app.ps1`](windows/build-app.ps1) | Release build, NSIS installer, portable zip, self-containment check, every language's selftest from the package. |
 
 ```powershell
@@ -359,12 +359,13 @@ Notes:
 
 ## Upstream Windows resources (`fetch-resources.sh`)
 
-MUSHclient's dialog layouts, menus, bitmaps, icons and cursors are not in the
-main source tree. They live in a separate project that Visual Studio compiles
-into `locale/en.dll` — <https://github.com/nickgammon/mushclient_resources>,
-which this repo's `README.md` points at under "Resources". Windows loads that
-DLL at runtime; the macOS port has no DLL resource loader, so it needs the
-underlying files.
+MUSHclient's dialog layouts, menus, bitmaps, icons and cursors come from the
+project that compiles into `locale/en.dll` —
+<https://github.com/nickgammon/mushclient_resources>.  Since 2026-10 its source
+is also **in this repository**, adapted, at [`resources/`](../resources/README.md),
+which is what the Windows builds compile `en.dll` from; this script's pinned
+checkout is the unmodified original.  Windows loads that DLL at runtime; the
+macOS port has no DLL resource loader, so it needs the underlying files.
 
 ```bash
 packaging/fetch-resources.sh          # pinned checkout into packaging/resources/

@@ -95,6 +95,9 @@ $Base = "MUSHclient-$Version-windows-$Arch$Edition"
 # The pinned portable tools, fetched only when nothing is installed.
 $NsisUrl    = 'https://prdownloads.sourceforge.net/nsis/nsis-3.10.zip'
 $NsisSha256 = 'fcdce3229717a2a148e7cda0ab5bdb667f39d8fb33ede1da8dabc336bd5ad110'
+# 7-Zip's MSI, unpacked with an administrative extract: nothing is installed.
+$SevenZipUrl    = 'https://www.7-zip.org/a/7z2409-x64.msi'
+$SevenZipSha256 = 'ec6af1ea0367d16dde6639a89a080a524cebc4d4bedfe00ed0cac4b865a918d8'
 
 function Note([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 
@@ -172,8 +175,19 @@ function Find-SevenZip {
   }
   $local = Join-Path $Deps '_tools\7-Zip\Files\7-Zip\7z.exe'
   if (Test-Path $local) { return $local }
-  # fetch-deps.ps1's "upstream" component unpacks the same pinned copy.
-  throw 'no 7-Zip: install it, or run fetch-deps.ps1 -Only upstream, which unpacks a portable one'
+  $dl = New-Dir (Join-Path $Deps '_downloads')
+  $msi = Join-Path $dl '7z.msi'
+  if (-not (Test-Path $msi)) {
+    Note "downloading $SevenZipUrl"
+    Invoke-WebRequest -UseBasicParsing -UserAgent 'curl/8.0' -Uri $SevenZipUrl -OutFile "$msi.part"
+    Move-Item -Force "$msi.part" $msi
+  }
+  $got = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
+  if ($got -ne $SevenZipSha256) { Remove-Item -Force $msi; throw "checksum mismatch for 7z.msi (got $got); deleted it, re-run to download again" }
+  Note 'unpacking 7-Zip (administrative extract: nothing is installed)'
+  $p = Start-Process msiexec.exe -ArgumentList @('/a', "`"$msi`"", '/qn', "TARGETDIR=`"$(Join-Path $Deps '_tools\7-Zip')`"") -Wait -PassThru
+  if ($p.ExitCode -ne 0 -or -not (Test-Path $local)) { throw "could not unpack 7-Zip from $msi (msiexec exit $($p.ExitCode))" }
+  $local
 }
 
 # ── 1. dependencies ───────────────────────────────────────────────────────────
@@ -182,10 +196,10 @@ if (-not $SkipDeps) {
   & (Join-Path $PSScriptRoot 'fetch-deps.ps1') -Arch $Arch
   if (-not $?) { throw 'fetch-deps.ps1 failed' }
 }
-foreach ($f in 'bin\lua5.1.dll', 'bin\locale\en.dll', 'bin\python', 'bin\lib\ruby', 'bin\tcl8.6', 'lib\ruby.lib') {
+foreach ($f in 'bin\lua5.1.dll', 'bin\python', 'bin\lib\ruby', 'bin\tcl8.6', 'lib\ruby.lib') {
   if (-not (Test-Path (Join-Path $Deps "$Platform\$f"))) { throw "packaging\windows\deps\$Platform\$f is missing: run fetch-deps.ps1 -Arch $Arch" }
 }
-if (-not (Test-Path (Join-Path $Deps 'upstream\help.db'))) { throw 'packaging\windows\deps\upstream is missing: run fetch-deps.ps1 -Only upstream' }
+if (-not (Test-Path (Join-Path $Deps 'common\Dina.fon'))) { throw 'packaging\windows\deps\common\Dina.fon is missing: run fetch-deps.ps1 -Only dina' }
 
 if ($WithDiscworld) {
   if (-not $DiscworldDir) { $DiscworldDir = Join-Path $Repo 'packaging\discworld-plugins' }
@@ -204,6 +218,9 @@ if (-not $NoBuild) {
 }
 if (-not (Test-Path $exe)) { throw "no $exe (build it, or drop -NoBuild)" }
 if ((Get-PeMachine $exe) -ne $PeMachine) { throw "$exe is not a $Platform executable" }
+# locale\en.dll is built with the client (resources\en.vcxproj).
+$enDll = Join-Path $Repo "WinRel-$Platform\locale\en.dll"
+if (-not (Test-Path $enDll) -or (Get-PeMachine $enDll) -ne $PeMachine) { throw "no $Platform $enDll (build MUSHclient.vcxproj, which builds resources\en.vcxproj)" }
 
 # ── 3. the installer ──────────────────────────────────────────────────────────
 New-Dir $OutDir | Out-Null

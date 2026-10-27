@@ -2432,7 +2432,7 @@ void CPrefsP6::InitiateSearch (const CObject * pObject,
 CListCtrl* pList = (CListCtrl*) pObject;
 
   if (FindInfo.m_bAgain)
-    FindInfo.m_pFindPosition = (POSITION) FindInfo.m_nCurrentLine;
+    FindInfo.m_pFindPosition = (POSITION) (INT_PTR) FindInfo.m_nCurrentLine;
   else
     if (FindInfo.m_bForwards)
       FindInfo.m_pFindPosition = 0;
@@ -2447,16 +2447,16 @@ bool CPrefsP6::GetNextLine (const CObject * pObject,
   {
 CListCtrl* pList = (CListCtrl*) pObject;
 
-  if ((long) FindInfo.m_pFindPosition < 0 ||
-      (long) FindInfo.m_pFindPosition >= pList->GetItemCount ())
+  if ((long) (INT_PTR) FindInfo.m_pFindPosition < 0 ||
+      (long) (INT_PTR) FindInfo.m_pFindPosition >= pList->GetItemCount ())
     return true;
 
  
-  strLine = pList->GetItemText((long) FindInfo.m_pFindPosition, eColumnName);
+  strLine = pList->GetItemText((long) (INT_PTR) FindInfo.m_pFindPosition, eColumnName);
   strLine += '\t';
-  strLine += pList->GetItemText((long) FindInfo.m_pFindPosition, eColumnText);
+  strLine += pList->GetItemText((long) (INT_PTR) FindInfo.m_pFindPosition, eColumnText);
   strLine += '\t';
-  strLine += pList->GetItemText((long) FindInfo.m_pFindPosition, eColumnAction);
+  strLine += pList->GetItemText((long) (INT_PTR) FindInfo.m_pFindPosition, eColumnAction);
 
   if (FindInfo.m_bForwards)
     FindInfo.m_pFindPosition = (POSITION)((intptr_t)FindInfo.m_pFindPosition + 1);

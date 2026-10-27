@@ -1362,13 +1362,13 @@ void CGenPropertyPage::InitiateSearch (const CObject * pObject,
                                       CFindInfo & FindInfo)
   {
   if (FindInfo.m_bAgain)
-    FindInfo.m_pFindPosition = (POSITION) FindInfo.m_nCurrentLine;
+    FindInfo.m_pFindPosition = (POSITION) (INT_PTR) FindInfo.m_nCurrentLine;
   else
     {
     if (FindInfo.m_bForwards)
       FindInfo.m_pFindPosition = 0;
     else
-      FindInfo.m_pFindPosition = (POSITION)(FindInfo.m_nTotalLines - 1);
+      FindInfo.m_pFindPosition = (POSITION) (INT_PTR) (FindInfo.m_nTotalLines - 1);
     }
 
   } // end of CGenPropertyPage::InitiateSearch

@@ -42,9 +42,6 @@
     #include "..\..\lua52\src\lauxlib.h"
     #define lua_strlen(L,i)		lua_rawlen(L, (i))
     LUALIB_API int (luaL_typerror) (lua_State *L, int narg, const char *tname);
-#elif defined(_WIN32)
-    #include "..\lua.h"
-    #include "..\lauxlib.h"
 #else
     #include "lua.h"
     #include "lauxlib.h"

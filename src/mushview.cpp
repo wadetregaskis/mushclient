@@ -3661,7 +3661,7 @@ ASSERT_VALID(pDoc);
       VERIFY(mainmenu.LoadMenu(IDR_MUSHCLTYPE));
 
       pPopup->AppendMenu (MF_SEPARATOR, 0, ""); 
-      pPopup->AppendMenu (MF_POPUP | MF_ENABLED, (UINT ) mainmenu.m_hMenu, 
+      pPopup->AppendMenu (MF_POPUP | MF_ENABLED, (UINT_PTR) mainmenu.m_hMenu, 
                           "Main Menus");     
 
       }

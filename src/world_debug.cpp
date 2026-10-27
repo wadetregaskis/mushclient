@@ -1607,7 +1607,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     nTotal = 0;
 
 #ifdef _WIN32
-    for (i = 0; i < MAX_SOUND_BUFFERS; i++)
+    for (int i = 0; i < MAX_SOUND_BUFFERS; i++)
       if (m_pDirectSoundSecondaryBuffer [i])
         nTotal++;
 #endif

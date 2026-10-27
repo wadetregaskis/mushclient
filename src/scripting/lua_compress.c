@@ -499,7 +499,7 @@ static int getdirectory (lua_State *L)
   size_t dirLength = strlen (dirname);
   struct _finddatai64_t fdata;
 
-  int h = _findfirsti64 (dirname, &fdata); // get handle
+  intptr_t h = _findfirsti64 (dirname, &fdata); // get handle (intptr_t: a pointer-sized handle on 64-bit)
 
   if (h == -1L)    // no good?
     {

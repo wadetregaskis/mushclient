@@ -125,9 +125,11 @@ re-verified.  Prefer Windows-only fixes.
 
 ## 2. Building
 
-- Solution: `MUSHclient_2022.sln` / `MUSHclient.vcxproj` (Win32, MBCS,
-  `/std:c++14` — the project sets no `<LanguageStandard>`, so **no C++17**
-  anywhere in code MSVC compiles; the pal headers were scrubbed for this).
+- Solution: `MUSHclient_2022.sln` / `MUSHclient.vcxproj` (Win32, MBCS).
+  **C++17** (`<LanguageStandard>stdcpp17`) in every configuration since
+  2026-10, like the test target and the CMake build; until then it was MSVC's
+  C++14 default, and this section's old rule was "no C++17 anywhere in code
+  MSVC compiles".
 - **x64 / ARM64** configurations exist too (2026-10); they use different
   dependencies and output directories -- see `docs/WINDOWS-64BIT.md`.
   Everything below is about Win32.

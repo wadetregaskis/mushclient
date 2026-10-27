@@ -164,10 +164,10 @@ foreach ($cfg in @('Debug','Release')) {
   W ('      <AdditionalIncludeDirectories>$(SolutionDir)src\;$(SolutionDir);$(SolutionDir)luacom\;' + $sslInc + ';$(SolutionDir)tests\;$(SolutionDir)pcre\;$(SolutionDir)zlib\;$(SolutionDir)png\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>')
   # _HAS_AUTO_PTR_ETC=1 goes with LanguageStandard stdcpp17 below: C++17
   # removed std::unary_function / std::binary_function / std::auto_ptr, and
-  # stdafx.h derives a comparator from std::binary_function.  The app never
-  # meets this because it is C++14.  This switch restores the three under C++17
-  # in MSVC's STL, so the test target can have the language mc_test.h needs
-  # without touching a line of shipping source.
+  # this switch restores the three in MSVC's STL.  It was added when stdafx.h
+  # derived a comparator from std::binary_function and the app was C++14; the
+  # app is C++17 now and stdafx.h no longer does, so it only keeps any test
+  # code that still names them compiling.
   # MUSHCLIENT_LUA_SCRIPTING is what tests/test_database.cpp and
   # tests/test_lua_scripting.cpp gate their whole body on; without it each
   # falls through to a "Lua not available" stub that defines its own main(),
@@ -185,12 +185,9 @@ foreach ($cfg in @('Debug','Release')) {
   # C4311 is a pointer truncated to 32 bits: a crash on 64-bit, so an error.
   if (-not $win32) { W '      <TreatSpecificWarningsAsErrors>4311;%(TreatSpecificWarningsAsErrors)</TreatSpecificWarningsAsErrors>' }
   W '      <MultiProcessorCompilation>true</MultiProcessorCompilation>'
-  # The app is /std:c++14 (MUSHclient.vcxproj sets no LanguageStandard, so it
-  # takes the MSVC default).  The TESTS need C++17: mc_test.h:149 uses
-  # `if constexpr` for its value-rendering SFINAE.  Raising it here rather than
-  # in the app keeps docs/WINDOWS-VALIDATION.md Â§2's "no C++17 anywhere in code
-  # MSVC compiles" rule true where it matters -- the shipping client -- while
-  # letting the harness use the language the harness is written in.
+  # C++17, as the app is (MUSHclient.vcxproj, every configuration) -- and the
+  # harness needs it anyway: mc_test.h:149 uses `if constexpr` for its
+  # value-rendering SFINAE.
   W '      <LanguageStandard>stdcpp17</LanguageStandard>'
   if ($dbg) {
     W '      <Optimization>Disabled</Optimization>'

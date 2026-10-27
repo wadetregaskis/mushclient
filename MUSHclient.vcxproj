@@ -175,6 +175,7 @@
       <BrowseInformation>true</BrowseInformation>
       <BrowseInformationFile>.\WinDebug/</BrowseInformationFile>
       <WarningLevel>Level3</WarningLevel>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <DisableSpecificWarnings>4996</DisableSpecificWarnings>
@@ -228,6 +229,7 @@
       <BrowseInformation>true</BrowseInformation>
       <BrowseInformationFile>.\WinDebug-x64/</BrowseInformationFile>
       <WarningLevel>Level3</WarningLevel>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <TreatSpecificWarningsAsErrors>4311;%(TreatSpecificWarningsAsErrors)</TreatSpecificWarningsAsErrors>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
@@ -281,6 +283,7 @@
       <BrowseInformation>true</BrowseInformation>
       <BrowseInformationFile>.\WinDebug-ARM64/</BrowseInformationFile>
       <WarningLevel>Level3</WarningLevel>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <TreatSpecificWarningsAsErrors>4311;%(TreatSpecificWarningsAsErrors)</TreatSpecificWarningsAsErrors>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -332,6 +335,7 @@
       <ObjectFileName>.\WinRel/</ObjectFileName>
       <ProgramDataBaseFileName>.\WinRel/</ProgramDataBaseFileName>
       <WarningLevel>Level3</WarningLevel>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <OmitFramePointers>true</OmitFramePointers>
@@ -389,6 +393,7 @@
       <ObjectFileName>.\WinRel-x64/</ObjectFileName>
       <ProgramDataBaseFileName>.\WinRel-x64/</ProgramDataBaseFileName>
       <WarningLevel>Level3</WarningLevel>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <TreatSpecificWarningsAsErrors>4311;%(TreatSpecificWarningsAsErrors)</TreatSpecificWarningsAsErrors>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -446,6 +451,7 @@
       <ObjectFileName>.\WinRel-ARM64/</ObjectFileName>
       <ProgramDataBaseFileName>.\WinRel-ARM64/</ProgramDataBaseFileName>
       <WarningLevel>Level3</WarningLevel>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <TreatSpecificWarningsAsErrors>4311;%(TreatSpecificWarningsAsErrors)</TreatSpecificWarningsAsErrors>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>

@@ -196,14 +196,11 @@ bool IsStringNumber (const string & s, const bool bSigned = false);
 // first checks if the array key is an number, and if so returns
 // a numeric less otherwise, a string less
 // a number is assumed < a string
-// std::binary_function was removed in C++17; provide a compatible base only on older standards.
+// (It once derived from std::binary_function, which C++17 removed; nothing
+// used the typedefs that base supplied.)
 #ifndef ARRAY_LESS_DEFINED
 #define ARRAY_LESS_DEFINED
-#if __cplusplus >= 201703L
 struct array_less
-#else
-struct array_less : binary_function <string, string, bool>
-#endif
   {
 
   bool operator() (const string & s1, const string & s2) const

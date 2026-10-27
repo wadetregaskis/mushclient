@@ -1,1 +1,0 @@
-Builds the resource file en.dll for use with MUSHclient.

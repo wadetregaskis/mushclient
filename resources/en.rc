@@ -1,5 +1,10 @@
 //Microsoft Developer Studio generated resource script.
 //
+// locale\en.dll's source: every menu, dialog, string table and accelerator
+// the Windows client shows.  From github.com/nickgammon/mushclient_resources;
+// see README.md here for what this copy changes and how it is built.
+// resource.h is src\resource.h (the vcxproj puts src\ on the include path).
+//
 #include "resource.h"
 
 #define APSTUDIO_READONLY_SYMBOLS
@@ -8,6 +13,14 @@
 // Generated from the TEXTINCLUDE 2 resource.
 //
 #include "afxres.h"
+
+// The NT-style checklist-box bitmap below: VC6's afxres.h numbered it 30995,
+// and today's no longer defines it at all (30994 and 30996 are its
+// neighbours), which would make it a resource NAMED "AFX_IDB_CHECKLISTBOX_NT"
+// instead of the number MFC looks it up by.
+#ifndef AFX_IDB_CHECKLISTBOX_NT
+#define AFX_IDB_CHECKLISTBOX_NT         30995
+#endif
 
 /////////////////////////////////////////////////////////////////////////////
 #undef APSTUDIO_READONLY_SYMBOLS
@@ -4696,6 +4709,8 @@ BEGIN
                                                 ID_DISPLAY_CLEAR_OUTPUT
         MENUITEM "Stop Sound Playing\tCtrl+Alt+B", 
                                                 ID_DISPLAY_STOPSOUNDPLAYING
+        MENUITEM "Stop Trigger Sounds",         ID_DISPLAY_STOPTRIGGERSOUNDS
+        MENUITEM "Stop Script Sounds",          ID_DISPLAY_STOPSCRIPTSOUNDS
         MENUITEM SEPARATOR
         MENUITEM "&Bookmark Selection\tShift+Ctrl+B", 
                                                 ID_DISPLAY_BOOKMARKSELECTION
@@ -5753,9 +5768,9 @@ AFX_IDC_VSPLITBAR       CURSOR  DISCARDABLE     "res\\splitv.cur"
 // TEXT
 //
 
-IDR_CREDITS             TEXT    DISCARDABLE     "text\\credits.txt"
-IDR_LICENSE             TEXT    DISCARDABLE     "text\\agreement.txt"
-IDR_SUBSTITUTION        TEXT    DISCARDABLE     "text\\substitutions.txt"
+IDR_CREDITS             TEXT    DISCARDABLE     "..\\src\\platform\\dialog_text\\credits.txt"
+IDR_LICENSE             TEXT    DISCARDABLE     "..\\src\\platform\\dialog_text\\agreement.txt"
+IDR_SUBSTITUTION        TEXT    DISCARDABLE     "..\\src\\platform\\dialog_text\\substitutions.txt"
 IDR_MULTIPLE_ASTERISKS  TEXT    DISCARDABLE     "text\\multiple_asterisks.txt"
 IDR_LUA_SCRIPT          TEXT    DISCARDABLE     "text\\lua_init.txt"
 
@@ -6119,6 +6134,8 @@ BEGIN
                             "Forces script source file to be reprocessed\nReload script (Shift+Ctrl+R)"
     ID_DISPLAY_CLEAR_OUTPUT "Removes all output from the output window"
     ID_DISPLAY_STOPSOUNDPLAYING "Stops the current MIDI file playing"
+    ID_DISPLAY_STOPTRIGGERSOUNDS "Stops every sound a trigger is playing"
+    ID_DISPLAY_STOPSCRIPTSOUNDS "Stops every sound a script is playing"
     ID_HELP_BUGREPORTSUGGESTION "Submit a bug report or suggestion"
     ID_HELP_GETTINGSTARTED  "Help on getting started with MUSHclient"
     ID_GAME_CONFIGURE_MUDADDRESS 

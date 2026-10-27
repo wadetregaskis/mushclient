@@ -1963,4 +1963,13 @@
   <ItemGroup>
     <ApplicationManifest Include="src\MUSHclient.exe.manifest" />
   </ItemGroup>
+  <!-- locale\en.dll, every menu, dialog and string the client shows, built
+       from resources\ into this configuration's locale\ (resources\README.md). -->
+  <ItemGroup>
+    <ProjectReference Include="resources\en.vcxproj">
+      <Project>{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemGroup>
 </Project>

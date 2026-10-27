@@ -4,6 +4,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "MUSHclient", "MUSHclient.vcxproj", "{A72BFD9B-2A5C-4509-BB92-593FF2C8CE95}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "en", "resources\en.vcxproj", "{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -29,6 +31,18 @@ Global
 		{A72BFD9B-2A5C-4509-BB92-593FF2C8CE95}.Release|ARM64.ActiveCfg = Release|ARM64
 		{A72BFD9B-2A5C-4509-BB92-593FF2C8CE95}.Release|ARM64.Build.0 = Release|ARM64
 		{A72BFD9B-2A5C-4509-BB92-593FF2C8CE95}.Release|ARM64.Deploy.0 = Release|ARM64
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Debug|Win32.ActiveCfg = Debug|Win32
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Debug|Win32.Build.0 = Debug|Win32
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Debug|x64.ActiveCfg = Debug|x64
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Debug|x64.Build.0 = Debug|x64
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Debug|ARM64.ActiveCfg = Debug|ARM64
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Debug|ARM64.Build.0 = Debug|ARM64
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Release|Win32.ActiveCfg = Release|Win32
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Release|Win32.Build.0 = Release|Win32
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Release|x64.ActiveCfg = Release|x64
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Release|x64.Build.0 = Release|x64
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Release|ARM64.ActiveCfg = Release|ARM64
+		{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}.Release|ARM64.Build.0 = Release|ARM64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

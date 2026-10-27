@@ -1827,11 +1827,21 @@ bool bSmallScreen = (iScreenX < 1024) || (iScreenY < 768);
   m_strTranslatorFile += "locale/";
 #endif
 
-  // english resource file
-  CString m_strEnglishResourceFile = m_strTranslatorFile + "EN.dll";
+  // A "_small" variant (for screens under 1024x768) is used only where it
+  // exists: the 64-bit builds ship EN.dll alone -- EN_small.dll's source was
+  // never published -- and a missing file must not stop a small screen
+  // starting.  The same for a translation.
+  const auto SmallVariant = [bSmallScreen] (const CString & strDll) -> CString
+    {
+    if (!bSmallScreen)
+      return strDll;
+    CString strSmall = strDll.Left (strDll.GetLength () - 4) + "_small.dll";
+    CFileStatus status;
+    return CFile::GetStatus (strSmall, status) ? strSmall : strDll;
+    };
 
-  if (bSmallScreen)
-    m_strEnglishResourceFile = m_strTranslatorFile + "EN_small.dll";
+  // english resource file
+  CString m_strEnglishResourceFile = SmallVariant (m_strTranslatorFile + "EN.dll");
 
   // locale-specific file
   m_strTranslatorFile += m_strLocale;     // eg. EN
@@ -1842,11 +1852,8 @@ bool bSmallScreen = (iScreenX < 1024) || (iScreenY < 768);
   // translator file is Lua
   m_strTranslatorFile += ".lua";
 
-  if (bSmallScreen)
-    m_strResourceFile += "_small";
-
   // resource file is DLL
-  m_strResourceFile += ".dll";
+  m_strResourceFile = SmallVariant (m_strResourceFile + ".dll");
 
   // try non-English one, if not EN locale
   if (m_strEnglishResourceFile.CompareNoCase (m_strResourceFile) != 0)

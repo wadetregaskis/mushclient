@@ -291,6 +291,16 @@ W '    <ResourceCompile Include="src\MUSHclient.rc">'
 W '      <AdditionalIncludeDirectories>$(SolutionDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>'
 W '    </ResourceCompile>'
 W '  </ItemGroup>'
+# locale\en.dll, which several suites load menus, accelerators and dialogs
+# from: built from resources\ into WinDebug[-<plat>]\locale\, the directory the
+# suite runs in (run_tests.ps1), exactly as for the app.
+W '  <ItemGroup>'
+W '    <ProjectReference Include="resources\en.vcxproj">'
+W '      <Project>{FF3A37C6-2CA7-4369-9D87-3C5D340F13E4}</Project>'
+W '      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>'
+W '      <LinkLibraryDependencies>false</LinkLibraryDependencies>'
+W '    </ProjectReference>'
+W '  </ItemGroup>'
 W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />'
 W '</Project>'
 

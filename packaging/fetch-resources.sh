@@ -9,6 +9,10 @@
 #
 # (This repo's README.md points at it under "Resources".)
 #
+# Its source is now also in this repository, adapted, at resources/ -- what
+# the Windows builds compile en.dll from (resources/README.md).  This script's
+# checkout is the unmodified upstream original.
+#
 # Windows loads en.dll at runtime.  The macOS port has no DLL resource loader,
 # so it needs the underlying files.  Historically they were extracted by hand —
 # src/platform/dialog_art/ is 13 bitmaps and icons copied out once, with the

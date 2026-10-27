@@ -1122,7 +1122,7 @@ TEST(DatabaseTest, CppColumnValueBandsInt64)
     EXPECT_EQ(2147483647L, (long)v.lVal);
     v = f.doc.DatabaseColumnValue("db", BIG_COL_I32MIN);
     EXPECT_EQ((int)VT_I4, (int)v.vt);
-    EXPECT_EQ(-2147483648L, (long)v.lVal);
+    EXPECT_EQ(-2147483647L - 1, (long)v.lVal);   // not -2147483648L: with a 32-bit long that literal is UNSIGNED 2^31
 
     // (b)+(d)+(f) a double holds it exactly: VT_R8.  Includes the four the old
     // magnitude band got wrong, so this list is the VARIANT-side discriminator.
@@ -1165,7 +1165,7 @@ TEST(DatabaseTest, CppColumnValuesRowBandsInt64)
     EXPECT_EQ((int)VT_I4, (int)e[BIG_COL_I32MAX - 1].vt);
     EXPECT_EQ(2147483647L, (long)e[BIG_COL_I32MAX - 1].lVal);
     EXPECT_EQ((int)VT_I4, (int)e[BIG_COL_I32MIN - 1].vt);
-    EXPECT_EQ(-2147483648L, (long)e[BIG_COL_I32MIN - 1].lVal);
+    EXPECT_EQ(-2147483647L - 1, (long)e[BIG_COL_I32MIN - 1].lVal);
 
     expect_variant_number(e[BIG_COL_P31 - 1], 2147483648.0);
     expect_variant_number(e[BIG_COL_P40 - 1], 1099511627776.0);

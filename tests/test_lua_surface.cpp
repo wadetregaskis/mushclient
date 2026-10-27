@@ -40,9 +40,10 @@ extern "C" {
 #else
 #  include "png/png.h"
 #endif       // the image-family tests emit a real RGBA PNG
+#ifndef _WIN32
 #include <sys/resource.h>  // RLIMIT_FSIZE — WindowWrite full-disk test
 #include <csignal>         // SIGXFSZ
-#include <unistd.h>        // getpid
+#endif
 
 // make_lua()/run()/run_ret()/LuaDoc/EXPECT_LUA_OK are shared with
 // test_lua_scripting.cpp (audit §2/§4).
@@ -714,6 +715,9 @@ TEST(LuaSurface, BmpImagesDecodeAndDraw)
 // full"; SIGXFSZ must be ignored or the process is killed instead of the write
 // failing.  (.bmp, not .png: the fix and the buffered-write shape are on the BMP
 // path; WritePng is a separate fopen.)
+//
+// Not on Windows: there is no RLIMIT_FSIZE to make a write fail on demand.
+#ifndef _WIN32
 TEST(LuaSurface, WindowWriteReportsAWriteFailureNotFalseSuccess)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
@@ -741,6 +745,7 @@ TEST(LuaSurface, WindowWriteReportsAWriteFailureNotFalseSuccess)
 
     EXPECT_TRUE(reported);   // the failed write was reported, not swallowed as eOK
 }
+#endif // !_WIN32
 
 // The refusals, which matter as much: a caller must be able to tell "no such
 // file" from "that is not a bitmap I can read", and a malformed header must not
@@ -1005,9 +1010,15 @@ TEST(LuaSurface, GetRecentLinesClampsACountBiggerThanTheBuffer)
     EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(2000000000) == 'a\\nb\\nc')\n"));
 #ifdef _WIN32
     // The out-of-range value is still worth asking about where it is out of
-    // range: the answer has to be a harmless empty string, not the read that
-    // started this.
-    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(3000000000) == '')\n"));
+    // range: the answer has to be harmless, not the read that started this.
+    // WHICH harmless answer depends on the CPU, because converting an
+    // out-of-range double to long is undefined and each one does its own
+    // thing: x86/x64 (cvttsd2si) give LONG_MIN, so Count is negative and the
+    // result is empty; ARM64 (fcvtzs) saturates to LONG_MAX, so Count merely
+    // exceeds the buffer and the result is all of it.
+    EXPECT_TRUE(run(f.L,
+        "local r = world.GetRecentLines(3000000000)\n"
+        "assert(r == '' or r == 'a\\nb\\nc')\n"));
 #endif
 
     // Controls.  A modest overshoot always worked (its wrapped difference stayed

@@ -459,7 +459,7 @@ TEST(XmlAttrR5, NumberDomainIsWindows32BitLong)
     EXPECT_TRUE(Get_XML_number(*a, "max", v, false));
     EXPECT_EQ(2147483647L, v);               // INT32_MAX still accepted exactly
     EXPECT_TRUE(Get_XML_number(*a, "minv", v, false));
-    EXPECT_EQ(-2147483648L, v);              // LONG_MIN's one-extra allowance
+    EXPECT_EQ(-2147483647L - 1, v);              // LONG_MIN's one-extra allowance (not -2147483648L, unsigned under a 32-bit long)
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "negover", v, false); })
         .find("too large"));                 // ...but only ONE extra
 }

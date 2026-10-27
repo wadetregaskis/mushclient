@@ -423,7 +423,11 @@ TEST(ChatProtocol, GetStampZeroExtendsLikeTheDigestAssignmentDoes) {
     ASSERT_EQ(4, wire.GetLength ());
 
     const long iStamp = sock.GetStamp (wire);
-    EXPECT_EQ(0x80000001L, iStamp);
+    // As the stamp's 32 bits.  Where long is 64-bit that is the positive value
+    // itself, and a sign-extension shows up as 0xFFFFFFFF80000001; where long
+    // is 32-bit (Windows) the value cannot be positive at all, and 0x80000001L
+    // is an UNSIGNED literal that no long can equal.
+    EXPECT_EQ(0x80000001UL, (unsigned long) iStamp);
     EXPECT_TRUE(wire.IsEmpty ());   // the 4 stamp bytes were consumed
 }
 

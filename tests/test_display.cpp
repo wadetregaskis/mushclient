@@ -318,10 +318,25 @@ TEST(WrapTest, Utf8FourByteCharCountsAsOneColumn)
     CLine* l1 = nth_line(doc, 1);
     ASSERT_NE(nullptr, l0);
     ASSERT_NE(nullptr, l1);
+#ifdef _WIN32
+    // The other side of the divergence named above, pinned rather than
+    // skipped: 16-bit wchar_t, so each emoji is a surrogate pair -- TWO units
+    // -- and three of them (six units) fill a line before the five-column
+    // wrap is seen to be passed.
+    CLine* l2 = nth_line(doc, 2);
+    ASSERT_NE(nullptr, l2);
+    EXPECT_EQ(12, l0->len);   // 3 emoji
+    EXPECT_EQ(12, l1->len);   // 3 more
+    EXPECT_EQ(4,  l2->len);   // the last one
+    EXPECT_FALSE(l0->hard_return);
+    EXPECT_FALSE(l1->hard_return);
+    EXPECT_TRUE(l2->hard_return);
+#else
     EXPECT_EQ(20, l0->len);   // 5 emoji (each counted as ONE column) = 20 bytes
     EXPECT_EQ(8,  l1->len);   // remaining 2 emoji
     EXPECT_FALSE(l0->hard_return);
     EXPECT_TRUE(l1->hard_return);
+#endif
 }
 
 // doc_shared.cpp AddToLine: "any character starting 10xxxxxx will *not* be
@@ -2859,6 +2874,28 @@ void* operator new(size_t n)
 }
 void* operator new[](size_t n) { return operator new(n); }
 
+#if defined(_WIN32) && defined(_DEBUG)
+// A Windows Debug build never reaches the operator new above for this
+// allocation: doc.cpp and ProcessPreviousLine.cpp say `#define new DEBUG_NEW`,
+// and MFC's debug operator new allocates with _malloc_dbg directly.  (Win32 has
+// passed anyway, by an unrelated allocation of the same size failing inside
+// the same try; at x64's sizeof(CLine) there is none.)  The debug CRT's
+// allocation hook does see _malloc_dbg, and refusing the allocation there is a
+// real allocation failure: MFC's operator new then throws CMemoryException,
+// exactly the exception StartNewLine's Windows arm catches.  Same exact size,
+// same one shot.
+#include <crtdbg.h>
+static int __cdecl FailSizedAllocHook (int type, void*, size_t size, int, long,
+                                       const unsigned char*, int)
+{
+    if (type == _HOOK_ALLOC && g_failNewOfSize != 0 && size == g_failNewOfSize) {
+        g_failNewOfSize = 0;
+        return FALSE;                   // the allocation fails
+    }
+    return TRUE;
+}
+#endif
+
 TEST(DisplayTest, OutOfMemoryStartingALineClosesTheWorldInsteadOfEscaping)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -2873,12 +2910,18 @@ TEST(DisplayTest, OutOfMemoryStartingALineClosesTheWorldInsteadOfEscaping)
 
     bool escaped = false;
     g_failNewOfSize = sizeof(CLine);
+#if defined(_WIN32) && defined(_DEBUG)
+    const _CRT_ALLOC_HOOK oldHook = _CrtSetAllocHook (FailSizedAllocHook);
+#endif
     try {
         feed(doc, "boom\n");            // the '\n' is what makes StartNewLine allocate
     } catch (std::bad_alloc&) {
         escaped = true;
     }
     g_failNewOfSize = 0;
+#if defined(_WIN32) && defined(_DEBUG)
+    _CrtSetAllocHook (oldHook);
+#endif
 
     // The discriminator: without the std::bad_alloc arm the exception comes all
     // the way out here, and neither of the next two assertions can hold.

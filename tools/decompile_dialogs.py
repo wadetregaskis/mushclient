@@ -2,24 +2,23 @@
 # decompile_dialogs.py — recover MUSHclient's dialog + menu resources as .rc text.
 #
 # Why this exists: MUSHclient's MFC dialog LAYOUTS (the DIALOGEX/MENU templates)
-# are not in the public source.  MUSHclient.rc in the repo (and upstream on
-# GitHub) is a 144-line skeleton — icons/cursor/version only.  On Windows the
-# dialogs are loaded at runtime from the MFC localisation satellite DLL
-# (locale/en.dll), where the compiled RT_DIALOG / RT_MENU resources live.  The
-# macOS/wx port has no DLL-resource loader, so to render the canonical
-# dialogs/**/*.cpp natively (instead of hand-rebuilding each in wx) the wx MFC
-# shim needs those layouts.  This tool decompiles them from en.dll back to .rc
-# text, mapping numeric IDs to resource.h symbols.
+# are not in src/MUSHclient.rc, a skeleton — icons/cursor/version only.  On
+# Windows the dialogs are loaded at runtime from the MFC localisation satellite
+# DLL (locale/en.dll), where the compiled RT_DIALOG / RT_MENU resources live;
+# that DLL's source is resources/en.rc, built by resources/en.vcxproj.  The
+# macOS/wx port has no DLL-resource loader and no Windows resource compiler,
+# so to render the canonical dialogs/**/*.cpp natively (instead of
+# hand-rebuilding each in wx) the wx MFC shim needs those layouts as text it
+# can parse.  This tool decompiles them from en.dll back to .rc text, mapping
+# numeric IDs to resource.h symbols.
 #
-# Source of en.dll: unpack the official installer (GPL software):
-#   curl -O http://www.gammon.com.au/files/mushclient/mushclient506.exe
-#   7z x mushclient506.exe -o/tmp/mc           # NSIS installer
-#   ->  /tmp/mc/locale/en.dll
-#
-# Usage:
+# Decompile the en.dll built from resources/en.rc, NOT 5.06's: this
+# repository has changed dialogs since (resources/README.md), and the two
+# .rc files must say the same thing.  On Windows:
 #   pip install pefile
-#   python3 tools/decompile_dialogs.py /tmp/mc/locale/en.dll src/resource.h \
+#   python3 tools/decompile_dialogs.py WinRel-x64/locale/en.dll src/resource.h \
 #           src/platform/mushclient_dialogs.rc
+# A dialog change is made in resources/en.rc, then carried here this way.
 #
 # Output is NOT compiled by the Windows resource compiler (Windows uses en.dll);
 # it is bundled into the .app and parsed by the wx dialog loader.
@@ -49,6 +48,12 @@ def main(dll, resh, out):
             id2sym.setdefault(val, name)
     for name, val in defines:
         id2sym.setdefault(val, name)
+    # Menus likewise: IDR_/IDM_ (e.g. id 319 is IDR_PANETYPE, a menu, as well
+    # as IDD_GLOBAL_PREFSP13, a dialog).
+    menu2sym = {}
+    for name, val in defines:
+        if name.startswith(("IDR_", "IDM_")):
+            menu2sym.setdefault(val, name)
     STD = {1: "IDOK", 2: "IDCANCEL", 3: "IDABORT", 4: "IDRETRY", 5: "IDIGNORE",
            6: "IDYES", 7: "IDNO", 9: "IDHELP", 0xFFFF: "IDC_STATIC"}
 
@@ -173,7 +178,7 @@ def main(dll, resh, out):
     dlgs, menus, dlginits = res(5), res(4), res(240)
     L = [
         "// MUSHclient dialog + menu resources, decompiled from the MFC localisation",
-        "// DLL (MUSHclient 5.06 locale/en.dll, RT_DIALOG + RT_MENU) by",
+        "// DLL (locale/en.dll, built from resources/en.rc; RT_DIALOG + RT_MENU) by",
         "// tools/decompile_dialogs.py.  Numeric IDs mapped to resource.h symbols.",
         "//",
         "// NOT part of the Windows resource compile (Windows loads these from the",
@@ -214,10 +219,10 @@ def main(dll, resh, out):
                 L.append("END")
                 L.append("")
     for rid in sorted(menus):
-        L.append(f"{sym(rid)} MENU")
+        L.append(f"{menu2sym.get(rid) or sym(rid)} MENU")
         L.append("BEGIN"); L.extend(parse_menu(menus[rid])); L.append("END"); L.append("")
 
-    open(out, "w", encoding="latin-1").write("\n".join(L))
+    open(out, "w", encoding="utf-8").write("\n".join(L))
     print(f"wrote {out}: {len(dlgs)} dialogs, {len(menus)} menus, "
           f"{len(dlginits)} dlginit, {len(L)} lines")
 

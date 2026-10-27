@@ -1,5 +1,5 @@
 // MUSHclient dialog + menu resources, decompiled from the MFC localisation
-// DLL (MUSHclient 5.06 locale/en.dll, RT_DIALOG + RT_MENU) by
+// DLL (locale/en.dll, built from resources/en.rc; RT_DIALOG + RT_MENU) by
 // tools/decompile_dialogs.py.  Numeric IDs mapped to resource.h symbols.
 //
 // NOT part of the Windows resource compile (Windows loads these from the
@@ -19,7 +19,7 @@ BEGIN
     CONTROL "&License ...", IDC_LICENSE, "Button", 0x50010000, 195, 149, 50, 14
     CONTROL "", IDC_LOGO, "Static", 0x50000003, 9, 6, 20, 20
     CONTROL "MUSHclient", IDC_STATIC, "Static", 0x50020000, 43, 4, 39, 8
-    CONTROL "Authors: Nick Gammon & Wade Tregaskis\nCopyright © 2007-2026. All rights reserved worldwide.", IDC_STATIC, "Static", 0x50020000, 43, 24, 196, 18
+    CONTROL "Authors: Nick Gammon && Wade Tregaskis\nCopyright © 2007-2026. All rights reserved worldwide.", IDC_STATIC, "Static", 0x50020000, 43, 24, 196, 18
     CONTROL "Version (entered at runtime)", IDC_VERSION_LABEL, "Static", 0x50020000, 89, 4, 105, 8
     CONTROL "Distributed as FreeWare.", IDC_STATIC, "Static", 0x50020000, 4, 106, 123, 10
     CONTROL "Support:", IDC_STATIC, "Static", 0x50020002, 7, 53, 28, 8
@@ -2826,7 +2826,7 @@ BEGIN
   END
 END
 
-ID_VIEW_GAME_TOOLBAR MENU
+IDR_MAINFRAME MENU
 BEGIN
   POPUP "&File"
   BEGIN
@@ -3030,8 +3030,8 @@ BEGIN
     MENUITEM SEPARATOR
     MENUITEM "Clear Output Buffer...\tShift+Ctrl+C", ID_DISPLAY_CLEAR_OUTPUT
     MENUITEM "Stop Sound Playing\tCtrl+Alt+B", ID_DISPLAY_STOPSOUNDPLAYING
-    MENUITEM "Stop Trigger Sounds",         ID_DISPLAY_STOPTRIGGERSOUNDS
-    MENUITEM "Stop Script Sounds",          ID_DISPLAY_STOPSCRIPTSOUNDS
+    MENUITEM "Stop Trigger Sounds", ID_DISPLAY_STOPTRIGGERSOUNDS
+    MENUITEM "Stop Script Sounds", ID_DISPLAY_STOPSCRIPTSOUNDS
     MENUITEM SEPARATOR
     MENUITEM "&Bookmark Selection\tShift+Ctrl+B", ID_DISPLAY_BOOKMARKSELECTION
     MENUITEM "&Go To Bookmark\tCtrl+B", ID_DISPLAY_GOTOBOOKMARK

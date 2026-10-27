@@ -43,7 +43,12 @@ if (-not (Test-Path $vcvars)) { throw "vcvarsall.bat not found under $vsroot" }
 # vcvarsall's argument is HOST_TARGET.  Win32 keeps the x86 host tools it has
 # always used; the 64-bit targets use native tools where the host matches and
 # the cross compiler where it does not.
+# The MACHINE, not this process: an x64 PowerShell under emulation on an ARM64
+# machine is told X64 by .NET and by PROCESSOR_ARCHITECTURE alike; the SYSTEM
+# environment (what a native process would inherit) says what is underneath.
 $hostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+$sysArch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -ErrorAction SilentlyContinue).PROCESSOR_ARCHITECTURE
+if ($sysArch -eq 'ARM64') { $hostArch = 'Arm64' }
 $vcvarsArg = switch ($Platform) {
   'Win32' { 'x86' }
   'x64'   { if ($hostArch -eq 'Arm64') { 'arm64_x64' } else { 'x64' } }

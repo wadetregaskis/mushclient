@@ -93,7 +93,7 @@ param(
   [string]$OpenSslSeries = '3.5',
   [switch]$NoAsm,
   [string]$LocaleSource = '',
-  [ValidateSet('openssl', 'lua', 'luasocket', 'locale')] [string[]]$Only = @(),
+  [ValidateSet('openssl', 'lua', 'luasocket', 'upstream', 'locale', 'python', 'tcl', 'ruby', 'quickjs')] [string[]]$Only = @(),
   [string]$StageTo = '',
   [switch]$Force
 )
@@ -125,10 +125,40 @@ $LuaUrl       = "https://www.lua.org/ftp/lua-$LuaVersion.tar.gz"
 $LuaSha256    = '2640fc56a795f29d28ef15e13c34a47e223960b0240e8cb0a82d9b0738695333'   # lua.org/ftp
 $SocketTag    = 'v2.0.2'
 $SocketUrl    = "https://github.com/lunarmodules/luasocket/archive/refs/tags/$SocketTag.tar.gz"
-# Not pinned yet: nobody had downloaded it from a machine able to record the
-# hash when this was written.  VERSIONS.txt records what was used; paste that
-# hash here to pin it.
-$SocketSha256 = ''
+$SocketSha256 = '4861d1d6589462ac638c8d096085e7b4fe12bb90263c84e13bac5c89b0b67475'   # GitHub's tag archive
+
+# The embedded scripting languages: the same versions packaging/fetch-*.sh
+# bundle on macOS and Linux, give or take a patch release.
+$RubyVersion  = '4.0.5'
+$RubyUrl      = "https://cache.ruby-lang.org/pub/ruby/4.0/ruby-$RubyVersion.tar.gz"
+$RubySha256   = '7d6149079a63f8ae1d326c9fa65c6019ba2dc3155eae7b39159817911c88958e'   # cache.ruby-lang.org/pub/ruby/index.txt
+$YamlVersion  = '0.2.5'
+$YamlUrl      = "https://github.com/yaml/libyaml/releases/download/$YamlVersion/yaml-$YamlVersion.tar.gz"
+$YamlSha256   = 'c642ae9b75fee120b2d96c712538bd2cf283228d2337df2cf2988e3c02678ef4'
+# python.org's own builds, as NuGet packages: one per architecture, each the
+# complete runtime (DLL, stdlib, extension modules, headers, import library).
+$PythonVersion = '3.14.10'
+$PythonPkg     = @{ x64 = 'python'; ARM64 = 'pythonarm64' }
+$PythonSha256  = @{ x64   = 'f54ba67c9951c3d773ea47d2bb095150c037c399f0423a968bcda22809241784'
+                    ARM64 = '79cac95bc8219587eaf4b073a92162388f567a2509cd2bc497102feaf7dc8a38' }
+$TclVersion    = '8.6.16'
+$TclUrl        = "https://prdownloads.sourceforge.net/tcl/tcl$TclVersion-src.tar.gz"
+$TclSha256     = '91cb8fa61771c63c262efb553059b7c7ad6757afa5857af6265e4b0bdc2a14a5'
+$QuickJsVersion = '0.17.0'
+$QuickJsUrl     = "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v$QuickJsVersion.tar.gz"
+$QuickJsSha256  = '559bc4c420475e55c7ab4510adbc562f55d7524d75e8e89d79ce4bb02f5687d9'   # GitHub's tag archive
+# The last upstream release's installer: the source of the files a build needs
+# that are not in git (the 32-bit locale DLLs to rehost, help.db, the WinHelp
+# file, the Dina font), so a machine with no MUSHclient installed --
+# a CI runner -- can build a complete package.  Extracted with 7-Zip.
+$UpstreamUrl    = 'https://www.gammon.com.au/files/mushclient/mushclient506.exe'
+$UpstreamSha256 = 'd6ee92d30eb6e73875283e78826787cdc5309563c1688469c1128ffac0469f07'
+$UpstreamFiles  = @('locale\en.dll', 'locale\en_small.dll', 'locale\Localize_template.lua',
+                    'help.db', 'MUSHCLIENT.HLP', 'Dina.fon')
+# 7-Zip, only when none is installed (GitHub's Windows runners have one): its
+# MSI, unpacked with an administrative extract -- nothing is installed.
+$SevenZipUrl    = 'https://www.7-zip.org/a/7z2409-x64.msi'
+$SevenZipSha256 = 'ec6af1ea0367d16dde6639a89a080a524cebc4d4bedfe00ed0cac4b865a918d8'
 
 # Every name the shipped 32-bit lua5.1.dll exports (Lua 5.1.4, read from its
 # export table).  A stock 5.1.5 built with LUA_BUILD_AS_DLL exports all of
@@ -162,7 +192,7 @@ $LuaExports = @(
   'luaopen_package','luaopen_string','luaopen_table'
 )
 
-$Components = if ($Only.Count) { $Only } else { @('openssl', 'lua', 'luasocket', 'locale') }
+$Components = if ($Only.Count) { $Only } else { @('openssl', 'lua', 'luasocket', 'upstream', 'locale', 'python', 'tcl', 'ruby', 'quickjs') }
 $Versions = [ordered]@{}
 
 function Note([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
@@ -194,7 +224,12 @@ function New-Dir([string]$p) { New-Item -ItemType Directory -Force -Path $p | Ou
 # target, the cross compiler otherwise (x64 -> ARM64 is the usual case: a VM
 # on an Intel/AMD machine).
 function Import-VsEnvironment {
+  # The MACHINE, not this process: an x64 PowerShell under emulation on an ARM64
+  # machine is told X64 by .NET and by PROCESSOR_ARCHITECTURE alike; the SYSTEM
+  # environment (what a native process would inherit) says what is underneath.
   $hostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+  $sysArch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -ErrorAction SilentlyContinue).PROCESSOR_ARCHITECTURE
+  if ($sysArch -eq 'ARM64') { $hostArch = 'Arm64' }
   $vcArg = switch ($Platform) {
     'x64'   { if ($hostArch -eq 'Arm64') { 'arm64_x64' } else { 'x64' } }
     'ARM64' { if ($hostArch -eq 'Arm64') { 'arm64' } else { 'x64_arm64' } }
@@ -215,6 +250,13 @@ function Import-VsEnvironment {
   foreach ($tool in 'cl', 'link', 'lib', 'rc', 'nmake', 'dumpbin') {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "$tool not on PATH after vcvarsall $vcArg" }
   }
+  # vcvarsall does not put VS's own clang-cl (the "C++ Clang Compiler for
+  # Windows" component) on PATH; OpenSSL's ARM64 assembler is that clang-cl.
+  if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
+    $llvmHost = if ($hostArch -eq 'Arm64') { 'ARM64' } else { 'x64' }
+    $llvm = Join-Path $vs "VC\Tools\Llvm\$llvmHost\bin"
+    if (Test-Path (Join-Path $llvm 'clang-cl.exe')) { $env:PATH = "$llvm;$env:PATH" }
+  }
 }
 
 # ---------------------------------------------------------------- helpers ---
@@ -225,7 +267,9 @@ function Get-Download {
   $dest = Join-Path $Dl $Name
   if (-not (Test-Path $dest)) {
     Note "downloading $Url"
-    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile "$dest.part"
+    # A non-browser User-Agent: SourceForge answers a browser's with an HTML
+    # download page instead of the file.
+    Invoke-WebRequest -UseBasicParsing -UserAgent 'curl/8.0' -Uri $Url -OutFile "$dest.part"
     Move-Item -Force "$dest.part" $dest
   }
   $got = (Get-FileHash -Algorithm SHA256 $dest).Hash.ToLowerInvariant()
@@ -475,6 +519,349 @@ function Build-LuaSocket {
   $Versions['LuaSocket'] = "$SocketTag (github.com/lunarmodules/luasocket, sha256 $($tgz.Sha256))"
 }
 
+# ------------------------------------------------------------------ Python ---
+
+# Python for the embedded engine (src/platform/py_engine.cpp), from python.org's
+# NuGet package rather than built: it IS python.org's Windows build, and the
+# package carries the import library and headers an embedder needs.
+#
+#   bin\python3XX.dll, python3.dll   beside MUSHclient.exe (the exe imports
+#                                    python3XX.dll, so it must be there)
+#   bin\python\Lib, bin\python\DLLs  the stdlib and extension modules; the
+#                                    engine sets PyConfig.home to bin\python
+function Build-Python {
+  $stamp = Join-Path $Out '.python-version'
+  if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp) -eq $PythonVersion)) {
+    Note "Python $PythonVersion ($Platform) is up to date"
+    $Versions['Python'] = "$PythonVersion (already built)"
+    return
+  }
+  $pkg = $PythonPkg[$Platform]
+  $nupkg = Get-Download -Url "https://api.nuget.org/v3-flatcontainer/$pkg/$PythonVersion/$pkg.$PythonVersion.nupkg" `
+                        -Name "$pkg.$PythonVersion.nupkg" -Sha256 $PythonSha256[$Platform]
+  $x = Join-Path $Work 'python-pkg'
+  if (Test-Path $x) { Remove-Item -Recurse -Force $x }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [IO.Compression.ZipFile]::ExtractToDirectory($nupkg.Path, $x)
+  $tools = Join-Path $x 'tools'
+  $short = ($PythonVersion.Split('.')[0..1]) -join ''            # 3.14.10 -> 314
+  $dll = Join-Path $tools "python$short.dll"
+  Assert-Machine $dll
+
+  Get-ChildItem $OutBin -Filter 'python3*.dll' -ErrorAction SilentlyContinue | Remove-Item -Force
+  $home_ = Join-Path $OutBin 'python'
+  if (Test-Path $home_) { Remove-Item -Recurse -Force $home_ }
+  New-Dir $home_ | Out-Null
+  Copy-Item $dll, (Join-Path $tools 'python3.dll') $OutBin
+  # The runtime's own C runtime DLLs: the newest of these and VS's redist is
+  # what build-app.ps1 ships beside the exe (Ruby needs them too).
+  New-Dir (Join-Path $Out 'crt-python') | Out-Null
+  Copy-Item (Join-Path $tools 'vcruntime140*.dll') (Join-Path $Out 'crt-python')
+  Copy-Item -Recurse (Join-Path $tools 'DLLs') (Join-Path $home_ 'DLLs')
+  Copy-Item -Recurse (Join-Path $tools 'Lib') (Join-Path $home_ 'Lib')
+  # Not useful inside a MUD client: the IDE, Tk (whose DLLs the package does
+  # not even carry) and its demos.  Everything else stays, ensurepip included.
+  foreach ($d in 'idlelib', 'tkinter', 'turtledemo', 'test') {
+    $p = Join-Path $home_ "Lib\$d"
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+  }
+  # Nor pip: there is no python.exe in a MUSHclient package to run it with,
+  # and it carries launcher templates for three other architectures
+  # (distlib\t32.exe, w64-arm.exe, ...), which build-app.ps1's single-
+  # architecture check rightly refuses.  A plugin author who wants packages
+  # installs the matching python.org Python and runs pip install --user: the
+  # embedded interpreter reads the per-user site-packages.  (ensurepip's own
+  # wheel stays, for a future python.exe.)
+  Get-ChildItem (Join-Path $home_ 'Lib\site-packages') -Filter 'pip*' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force
+  $inc = Join-Path $OutInc 'python'
+  if (Test-Path $inc) { Remove-Item -Recurse -Force $inc }
+  Copy-Item -Recurse (Join-Path $tools 'include') $inc
+  Copy-Item -Force (Join-Path $tools "libs\python$short.lib") $OutLib
+  Set-Content -Path $stamp -Value $PythonVersion
+  $Versions['Python'] = "$PythonVersion (nuget.org $pkg, sha256 $($nupkg.Sha256))"
+}
+
+# --------------------------------------------------------------------- Tcl ---
+
+# Tcl 8.6 for the embedded engine (src/platform/tcl_engine.cpp), static and
+# /MT like the exe -- packaging/fetch-tcl.sh builds it static on macOS and Linux
+# too.  Its script library (init.tcl, encodings, msgs) is the one runtime file:
+#
+#   bin\tcl8.6\                         the engine points TCL_LIBRARY here
+function Build-Tcl {
+  $stamp = Join-Path $Out '.tcl-version'
+  if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp) -eq $TclVersion)) {
+    Note "Tcl $TclVersion ($Platform) is up to date"
+    $Versions['Tcl'] = "$TclVersion (already built)"
+    return
+  }
+  $tgz = Get-Download -Url $TclUrl -Name "tcl$TclVersion-src.tar.gz" -Sha256 $TclSha256
+  $src = Join-Path $Work 'tcl'
+  Expand-TarGz $tgz.Path $src
+  $inst = Join-Path $Work 'tcl-install'
+  if (Test-Path $inst) { Remove-Item -Recurse -Force $inst }
+  $win = Join-Path $src 'win'
+  # OPTS=static: tcl86ts.lib, compiled /MT.  'core' only -- the bundled
+  # packages (itcl, tdbc, thread, sqlite) are separate DLLs in 8.6 and nothing
+  # in the engine loads them.
+  #
+  # TCLSH_NATIVE: rules.vc insists on a host-runnable tclsh whenever the target
+  # is not the host's own architecture (an x64 build on an ARM64 machine counts),
+  # and the install step runs one (tools\installData.tcl).  Build the target's
+  # own tclsh first and use that: x64 runs everywhere this script does, and an
+  # ARM64 build is only ever made on ARM64 (release.yml's windows-11-arm).
+  Note "building Tcl $TclVersion ($Platform, static)"
+  $nm = @('/nologo', '-f', 'makefile.vc', 'OPTS=static', "INSTALLDIR=$inst")
+  Exec nmake ($nm + @('TCLSH_NATIVE=tclsh', 'core', 'shell', 'dlls')) $win
+  $tclsh = Get-ChildItem -Recurse $win -Filter 'tclsh86*.exe' | Select-Object -First 1
+  if (-not $tclsh) { throw "Tcl built no tclsh under $win" }
+  Exec nmake ($nm + @("TCLSH_NATIVE=$($tclsh.FullName)", 'install-binaries', 'install-libraries')) $win
+  $lib = Get-ChildItem (Join-Path $inst 'lib') -Filter 'tcl86*s*.lib' | Where-Object { $_.Name -notmatch 'stub' } |
+         Select-Object -First 1
+  if (-not $lib) { throw "Tcl installed no static library under $inst\lib" }
+  Assert-LibMachine $lib.FullName
+  Copy-Item -Force $lib.FullName (Join-Path $OutLib 'tcl86.lib')   # one name for the vcxproj
+  $inc = Join-Path $OutInc 'tcl'
+  if (Test-Path $inc) { Remove-Item -Recurse -Force $inc }
+  New-Dir $inc | Out-Null
+  Copy-Item (Join-Path $inst 'include\*.h') $inc
+  $rt = Join-Path $OutBin 'tcl8.6'
+  if (Test-Path $rt) { Remove-Item -Recurse -Force $rt }
+  Copy-Item -Recurse (Join-Path $inst 'lib\tcl8.6') $rt
+  if (-not (Test-Path (Join-Path $rt 'init.tcl'))) { throw "no init.tcl in the installed Tcl library ($rt)" }
+  Set-Content -Path $stamp -Value $TclVersion
+  $Versions['Tcl'] = "$TclVersion ($($lib.Name), sha256 $($tgz.Sha256))"
+}
+
+# ----------------------------------------------------------------- QuickJS ---
+
+# QuickJS-ng for the JavaScript engine on Windows (src/platform/qjs_engine.cpp;
+# macOS and Linux use JavaScriptCore, which Windows does not have).  Four C
+# files, compiled here with the flags its own CMakeLists.txt uses for MSVC, into
+# one static /MT library.
+function Build-QuickJs {
+  $stamp = Join-Path $Out '.quickjs-version'
+  if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp) -eq $QuickJsVersion)) {
+    Note "QuickJS-ng $QuickJsVersion ($Platform) is up to date"
+    $Versions['QuickJS'] = "$QuickJsVersion (already built)"
+    return
+  }
+  $tgz = Get-Download -Url $QuickJsUrl -Name "quickjs-ng-$QuickJsVersion.tar.gz" -Sha256 $QuickJsSha256
+  $src = Join-Path $Work 'quickjs'
+  Expand-TarGz $tgz.Path $src
+  $obj = Join-Path $Work 'quickjs-obj'
+  if (Test-Path $obj) { Remove-Item -Recurse -Force $obj }
+  New-Dir $obj | Out-Null
+  Note "building QuickJS-ng $QuickJsVersion ($Platform)"
+  # /J is its -funsigned-char; /experimental:c11atomics its MSVC atomics.  /Zl:
+  # no default-library record, so the Debug app links it against the debug CRT
+  # (as the OpenSSL libraries do) instead of LIBCMT and LIBCMTD both.
+  $files = 'dtoa', 'libregexp', 'libunicode', 'quickjs' | ForEach-Object { Join-Path $src "$_.c" }
+  Exec cl (@('/nologo', '/c', '/O2', '/MT', '/Zl', '/W1', '/Zi', '/Fdquickjs.pdb', '/std:c11', '/experimental:c11atomics', '/J',
+             '/D_GNU_SOURCE', '/DWIN32_LEAN_AND_MEAN', '/D_WIN32_WINNT=0x0601', '/D_CRT_SECURE_NO_WARNINGS') + $files) $obj
+  Exec lib (@('/nologo', "/OUT:$OutLib\quickjs.lib") + (Get-ChildItem (Join-Path $obj '*.obj') | ForEach-Object { $_.FullName }))
+  Copy-Item -Force (Join-Path $obj 'quickjs.pdb') $OutLib
+  Assert-LibMachine (Join-Path $OutLib 'quickjs.lib')
+  $inc = New-Dir (Join-Path $OutInc 'quickjs')
+  Copy-Item -Force (Join-Path $src 'quickjs.h') $inc
+  Set-Content -Path $stamp -Value $QuickJsVersion
+  $Versions['QuickJS'] = "QuickJS-ng $QuickJsVersion (sha256 $($tgz.Sha256))"
+}
+
+# -------------------------------------------------------------------- Ruby ---
+
+# Ruby for the embedded engine (src/platform/ruby_engine.cpp): built from the
+# release tarball as a native MSVC ("mswin") Ruby, the way packaging/
+# fetch-ruby.sh builds it on macOS and Linux -- one shared library plus its
+# stdlib, with psych (libyaml), zlib and openssl compiled in.
+#
+# Layout, so that the DLL finds its own library with no environment:
+#
+#   bin\<arch>-vcruntime140-ruby400.dll   beside MUSHclient.exe
+#   bin\lib\ruby\4.0.0\...                stdlib + C extensions
+#
+# Ruby on Windows computes its load path from the directory its DLL is in
+# (ruby.c ruby_init_loadpath: dirname of the DLL, less a trailing \bin, plus
+# \lib\ruby\...), which is exactly the --enable-load-relative layout the other
+# platforms ask for.
+#
+# CRT: Ruby is /MD (it needs vcruntime140.dll; build-app.ps1 ships it).  Its
+# zlib and libyaml are built /MD to match.  Its OpenSSL is the static
+# libcrypto/libssl above, which are /MT /Zl: /Zl leaves the CRT choice to the
+# final link, so the same libraries link into the /MT exe and the /MD Ruby
+# extension alike.
+function Build-RubyDeps([string]$Into) {
+  $inc = New-Dir (Join-Path $Into 'include')
+  $lib = New-Dir (Join-Path $Into 'lib')
+
+  # zlib: the repository's own copy (zlib\, 1.3.1), the one the app links.
+  $zobj = New-Dir (Join-Path $Work 'ruby-zlib-obj')
+  $zsrc = Join-Path $Repo 'zlib'
+  $zfiles = 'adler32','compress','crc32','deflate','gzclose','gzlib','gzread','gzwrite','infback',
+            'inffast','inflate','inftrees','trees','uncompr','zutil' |
+            ForEach-Object { Join-Path $zsrc "$_.c" } | Where-Object { Test-Path $_ }
+  Exec cl (@('/nologo', '/c', '/O2', '/MD', '/W1', '/D_CRT_SECURE_NO_DEPRECATE') + $zfiles) $zobj
+  Exec lib (@('/nologo', "/OUT:$lib\zlib.lib") + (Get-ChildItem (Join-Path $zobj '*.obj') | ForEach-Object { $_.FullName }))
+  Copy-Item (Join-Path $zsrc 'zlib.h'), (Join-Path $zsrc 'zconf.h') $inc
+
+  # libyaml, static (ext/psych/extconf.rb defines YAML_DECLARE_STATIC on mswin).
+  $tgz = Get-Download -Url $YamlUrl -Name "yaml-$YamlVersion.tar.gz" -Sha256 $YamlSha256
+  $ysrc = Join-Path $Work 'yaml'
+  Expand-TarGz $tgz.Path $ysrc
+  $yobj = New-Dir (Join-Path $Work 'yaml-obj')
+  $parts = $YamlVersion.Split('.')
+  Exec cl (@('/nologo', '/c', '/O2', '/MD', '/W1', '/DYAML_DECLARE_STATIC', '/D_CRT_SECURE_NO_DEPRECATE',
+             "/DYAML_VERSION_MAJOR=$($parts[0])", "/DYAML_VERSION_MINOR=$($parts[1])",
+             "/DYAML_VERSION_PATCH=$($parts[2])", "/DYAML_VERSION_STRING=\`"$YamlVersion\`"",
+             "/I$ysrc\include") +
+           (Get-ChildItem (Join-Path $ysrc 'src\*.c') | ForEach-Object { $_.FullName })) $yobj
+  Exec lib (@('/nologo', "/OUT:$lib\yaml.lib") + (Get-ChildItem (Join-Path $yobj '*.obj') | ForEach-Object { $_.FullName }))
+  Copy-Item (Join-Path $ysrc 'include\yaml.h') $inc
+
+  # OpenSSL: the static libraries built above.
+  if (-not (Test-Path (Join-Path $OutLib 'libcrypto.lib'))) { throw 'Ruby links OpenSSL: build openssl first (-Only openssl)' }
+  # libcrypto gets advapi32 folded in (lib.exe merges an import library like
+  # any other): a static OpenSSL 3 needs it (CryptoAPI entropy, the event
+  # log), and ext/openssl's link line names only crypt32, ws2_32 and user32.
+  Copy-Item -Recurse -Force (Join-Path $OutInc 'openssl') $inc
+  Exec lib @('/nologo', "/OUT:$lib\libcrypto.lib", (Join-Path $OutLib 'libcrypto.lib'), 'advapi32.lib')
+  Copy-Item (Join-Path $OutLib 'libssl.lib') $lib
+}
+
+function Build-Ruby {
+  $stamp = Join-Path $Out '.ruby-version'
+  if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp) -eq $RubyVersion)) {
+    Note "Ruby $RubyVersion ($Platform) is up to date"
+    $Versions['Ruby'] = "$RubyVersion (already built)"
+    return
+  }
+  $tgz = Get-Download -Url $RubyUrl -Name "ruby-$RubyVersion.tar.gz" -Sha256 $RubySha256
+  $src = Join-Path $Work 'ruby'
+  Expand-TarGz $tgz.Path $src
+  $rdeps = Join-Path $Work 'ruby-deps'
+  if (Test-Path $rdeps) { Remove-Item -Recurse -Force $rdeps }
+  Build-RubyDeps $rdeps
+
+  $bld = Join-Path $Work 'ruby-build'
+  $inst = Join-Path $Work 'ruby-install'
+  foreach ($d in $bld, $inst) { if (Test-Path $d) { Remove-Item -Recurse -Force $d } }
+  New-Dir $bld | Out-Null
+
+  # No host Ruby: the release tarball carries nearly every generated file, and
+  # win32\Makefile.sub falls back to tool\missing-baseruby.bat without one.
+  # The exception is ext/ripper, whose ripper.c is generated from parse.y by
+  # a Ruby script; ripper is the parser-as-a-library behind irb and rdoc, which
+  # a MUD client's embedded interpreter has no use for, so it is left out
+  # rather than paying for a two-stage bootstrap.
+  # --with-opt-dir in forward slashes: mkmf hands it to each extension's
+  # checks through a Ruby string, and C:\Users\... arrived there as
+  # -IC:Users..., so zlib.h and yaml.h were "not found" and the two extensions
+  # quietly skipped.
+  Note "configuring Ruby $RubyVersion ($Platform)"
+  Exec cmd.exe @('/c', (Join-Path $src 'win32\configure.bat'), "--prefix=$inst", "--with-opt-dir=$($rdeps.Replace('\', '/'))",
+                 '--disable-install-doc', '--without-baseruby', '--without-ext=ripper') $bld
+  Note "building Ruby $RubyVersion ($Platform) -- nmake is serial, this takes a while"
+  Exec nmake @('/nologo') $bld
+  Exec nmake @('/nologo', 'install-nodoc') $bld
+
+  $dll = Get-ChildItem (Join-Path $inst 'bin\*ruby*.dll') | Select-Object -First 1
+  if (-not $dll) { throw "Ruby installed no DLL under $inst\bin" }
+  Assert-Machine $dll.FullName
+  $implib = Join-Path $inst ("lib\" + [IO.Path]::GetFileNameWithoutExtension($dll.Name) + '.lib')
+  if (-not (Test-Path $implib)) { throw "no import library $implib" }
+  foreach ($ext in 'zlib', 'psych', 'openssl') {
+    if (-not (Get-ChildItem -Recurse (Join-Path $inst 'lib\ruby') -Filter "$ext.so" -ErrorAction SilentlyContinue)) {
+      throw "Ruby was built without its $ext extension (see $bld\ext\$ext\mkmf.log)"
+    }
+  }
+
+  # Stage: DLL + lib\ruby beside it, headers and the import library for the app.
+  Get-ChildItem $OutBin -Filter '*ruby*.dll' -ErrorAction SilentlyContinue | Remove-Item -Force
+  $rbLib = Join-Path $OutBin 'lib\ruby'
+  if (Test-Path $rbLib) { Remove-Item -Recurse -Force $rbLib }
+  New-Dir (Split-Path $rbLib) | Out-Null
+  Copy-Item $dll.FullName $OutBin
+  Copy-Item -Recurse (Join-Path $inst 'lib\ruby') $rbLib
+  # The .gem archives of the bundled gems, which are installed beside them
+  # already: only `gem pristine` would read these.
+  Get-ChildItem (Join-Path $rbLib 'gems\*\cache') -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+  # The import library MUSHclient links is NOT Ruby's own.  The DLL also
+  # exports some 150 POSIX, CRT and Winsock names as aliases of its rb_w32_*
+  # wrappers -- accept, connect, close, fclose, getenv, Sleep, ... -- and
+  # linking Ruby's import library would let any of the client's own calls to
+  # those bind to Ruby's versions instead of the CRT's or ws2_32's (the link
+  # only noticed getenv and strerror, as duplicates).  So: Ruby's generated
+  # .def, cut to Ruby's own namespaces (it marks the DATA exports itself),
+  # made into the import library.
+  $def = Join-Path $bld ([IO.Path]::GetFileNameWithoutExtension($dll.Name) + '.def')
+  if (-not (Test-Path $def)) { throw "no export definition file $def" }
+  $keep = @("LIBRARY $($dll.Name)")
+  foreach ($l in Get-Content $def) {
+    if ($l -match '^\s*(VERSION|EXPORTS)\b') { $keep += $l; continue }
+    if ($l -match '^\s*([A-Za-z_]\w*)' -and $Matches[1] -match '^(rb_|ruby_|rbimpl_|st_|onig|Onig|ONIG|RUBY_|Init_)') { $keep += $l }
+  }
+  $apiDef = Join-Path $Work 'ruby-api.def'
+  Set-Content -Path $apiDef -Value $keep -Encoding ASCII
+  Exec lib @('/nologo', "/DEF:$apiDef", "/MACHINE:$Machine", "/OUT:$(Join-Path $OutLib 'ruby.lib')")
+  Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $OutLib 'ruby.exp')
+  # Headers: include\ruby-4.0.0 as include\ruby, and its per-architecture
+  # subdirectory (x64-mswin64_140\ruby\config.h and friends) as include\ruby-arch,
+  # so MUSHclient.engines.props can name both without knowing the triple.
+  $rbInc = Join-Path $OutInc 'ruby'
+  $rbArch = Join-Path $OutInc 'ruby-arch'
+  foreach ($d in $rbInc, $rbArch) { if (Test-Path $d) { Remove-Item -Recurse -Force $d } }
+  Copy-Item -Recurse (Get-ChildItem (Join-Path $inst 'include') -Directory | Select-Object -First 1).FullName $rbInc
+  $archDir = Get-ChildItem $rbInc -Directory | Where-Object { $_.Name -match 'mswin' } | Select-Object -First 1
+  if (-not $archDir) { throw "no <arch>-mswin* directory under $rbInc" }
+  Move-Item $archDir.FullName $rbArch
+  Set-Content -Path (Join-Path $Out 'ruby-dll.txt') -Value $dll.Name
+  Set-Content -Path $stamp -Value $RubyVersion
+  $Versions['Ruby'] = "$RubyVersion ($($dll.Name), sha256 $($tgz.Sha256)); libyaml $YamlVersion"
+}
+
+# --------------------------------------------------------------- upstream ---
+
+# packaging\windows\deps\upstream\ (architecture-neutral): the files of the
+# 5.06 release that a build needs and git does not carry.  See $UpstreamFiles.
+$UpstreamDir = Join-Path $Deps 'upstream'
+
+function Find-SevenZip {
+  $c = Get-Command 7z -ErrorAction SilentlyContinue
+  if ($c) { return $c.Source }
+  foreach ($p in $env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
+    if ($p -and (Test-Path (Join-Path $p '7-Zip\7z.exe'))) { return Join-Path $p '7-Zip\7z.exe' }
+  }
+  $local = Join-Path $Deps '_tools\7-Zip\Files\7-Zip\7z.exe'
+  if (Test-Path $local) { return $local }
+  $msi = Get-Download -Url $SevenZipUrl -Name '7z.msi' -Sha256 $SevenZipSha256
+  Note 'unpacking 7-Zip (administrative extract: nothing is installed)'
+  $target = Join-Path $Deps '_tools\7-Zip'
+  $p = Start-Process msiexec.exe -ArgumentList @('/a', "`"$($msi.Path)`"", '/qn', "TARGETDIR=`"$target`"") -Wait -PassThru
+  if ($p.ExitCode -ne 0 -or -not (Test-Path $local)) { throw "could not unpack 7-Zip from $($msi.Path) (msiexec exit $($p.ExitCode))" }
+  $local
+}
+
+function Build-Upstream {
+  $stamp = Join-Path $UpstreamDir '.sha256'
+  if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp) -eq $UpstreamSha256)) {
+    Note 'upstream 5.06 files are up to date'
+    $Versions['upstream'] = '5.06 (already extracted)'
+    return
+  }
+  $exe = Get-Download -Url $UpstreamUrl -Name 'mushclient506.exe' -Sha256 $UpstreamSha256
+  $7z = Find-SevenZip
+  if (Test-Path $UpstreamDir) { Remove-Item -Recurse -Force $UpstreamDir }
+  New-Dir $UpstreamDir | Out-Null
+  Note "extracting $($UpstreamFiles.Count) files from the 5.06 installer"
+  Exec $7z (@('x', '-y', '-bso0', '-bsp0', "-o$UpstreamDir", $exe.Path) + $UpstreamFiles)
+  foreach ($f in $UpstreamFiles) {
+    if (-not (Test-Path (Join-Path $UpstreamDir $f))) { throw "the 5.06 installer had no $f" }
+  }
+  Set-Content -Path $stamp -Value $UpstreamSha256
+  $Versions['upstream'] = "5.06 installer (sha256 $UpstreamSha256)"
+}
+
 # ------------------------------------------------------- resource DLLs ---
 
 # en.dll and en_small.dll are resource-only DLLs (MUSHclient.cpp LoadLibrary's
@@ -666,7 +1053,7 @@ public static class MushResRehost
 
 function Find-LocaleSource {
   if ($LocaleSource) { return $LocaleSource }
-  $candidates = @((Join-Path $Repo 'WinRel\locale'), (Join-Path $Repo 'WinDebug\locale'))
+  $candidates = @((Join-Path $UpstreamDir 'locale'), (Join-Path $Repo 'WinRel\locale'), (Join-Path $Repo 'WinDebug\locale'))
   if (${env:ProgramFiles(x86)}) { $candidates += Join-Path ${env:ProgramFiles(x86)} 'MUSHclient\locale' }
   foreach ($c in $candidates) {
     if ((Test-Path (Join-Path $c 'en.dll')) -and (Test-Path (Join-Path $c 'en_small.dll'))) { return $c }
@@ -715,6 +1102,11 @@ function Build-Locale {
 # -------------------------------------------------------------------- main ---
 
 Note "MUSHclient 64-bit dependencies: $Platform -> $Out"
+# Ruby's and Tcl's makefiles run tools they have just built, or generated, by
+# bare name from the current directory ("cmd /c verconf.bat", nmakehlp.exe).
+# NoDefaultCurrentDirectoryInExePath -- which some shells and agents set --
+# turns every one of those into "not recognized".  This process only.
+$env:NoDefaultCurrentDirectoryInExePath = $null
 New-Dir $Work | Out-Null
 New-Dir $Out | Out-Null
 Import-VsEnvironment
@@ -722,7 +1114,13 @@ Import-VsEnvironment
 if ($Components -contains 'openssl')   { Build-OpenSsl }
 if ($Components -contains 'lua')       { Build-Lua }
 if ($Components -contains 'luasocket') { Build-LuaSocket }
+# locale rehosts the upstream release's DLLs unless -LocaleSource names others.
+if ($Components -contains 'upstream' -or ($Components -contains 'locale' -and -not $LocaleSource)) { Build-Upstream }
 if ($Components -contains 'locale')    { Build-Locale }
+if ($Components -contains 'python')    { Build-Python }
+if ($Components -contains 'tcl')       { Build-Tcl }
+if ($Components -contains 'quickjs')   { Build-QuickJs }
+if ($Components -contains 'ruby')      { Build-Ruby }
 
 $report = @("MUSHclient $Platform dependencies, built $(Get-Date -Format s) by packaging\windows\fetch-deps.ps1",
             "compiler: MSVC $env:VCToolsVersion, Windows SDK $env:WindowsSDKVersion")
@@ -736,6 +1134,10 @@ if ($StageTo) {
   $dest = if ([System.IO.Path]::IsPathRooted($StageTo)) { $StageTo } else { Join-Path $Repo $StageTo }
   New-Dir $dest | Out-Null
   Copy-Item -Recurse -Force (Join-Path $OutBin '*') $dest
+  # The VC++ runtime python3XX.dll and the Ruby DLL import (a package ships
+  # the redistributable's own copies; build-app.ps1).
+  $crt = Join-Path $Out 'crt-python'
+  if (Test-Path $crt) { Copy-Item -Force (Join-Path $crt '*.dll') $dest }
   Note "runtime DLLs copied to $dest"
 }
 Note 'done'

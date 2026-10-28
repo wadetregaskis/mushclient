@@ -115,7 +115,7 @@ now pins it.
 
 ---
 
-## 5 — Shift+Return / Alt+Return insert a line break instead of sending
+## 5 — Shift+Return (and Option+Return on macOS) insert a line break instead of sending
 
 **Files:** `sendvw.cpp` (`CSendView::PreTranslateMessage`),
 `platform/wx_world_child.cpp` (`CWorldChildFrame::OnInputKeyDown`).
@@ -125,8 +125,14 @@ modifier check. The command window is `ES_MULTILINE` and can hold several
 lines, but no keystroke could ever *put* one there — the only way to get a
 newline into it was to paste one.
 
-**Now:** Shift+Return and Alt+Return (Option+Return on macOS) insert a line
-break at the caret. Plain Return still always sends, unchanged.
+**Now:** Shift+Return (and Option+Return on macOS) inserts a line break at the
+caret. Plain Return still always sends, unchanged.
+
+**Not Alt+Return on Windows.** It did the same at first, but Alt+Enter is the
+Windows accelerator for Game > Configure > All Configuration (the menu says so),
+and with the command window focused — nearly always — the line break took the
+key first, so that menu shortcut never worked. The port's World Properties is
+Cmd+, so Option+Return collides with nothing there.
 
 **Why:** the multi-line command window is already there and already sends
 line-by-line on Return; the only thing missing was a way to compose those lines
@@ -136,7 +142,7 @@ try did nothing (Windows) or, before `265b1ac`, was unreachable.
 
 **Placement note.** On Windows this sits in the *view's*
 `PreTranslateMessage`, which `WalkPreTranslateTree` runs before the frame
-translates accelerators — so it wins over a script-bound Shift/Alt+Return. On
+translates accelerators — so it wins over a script-bound Shift+Return. On
 macOS `FireAcceleratorIfMatch` is deliberately checked first (scripts override
 any key), so there the script would win. This differs only for someone who binds
 Shift+Return or Alt+Return through the Lua `Accelerator()` API; it was not worth
@@ -789,7 +795,7 @@ traces differ at exactly these four points and nowhere else —
 | 1 — Alt+Up with `north` typed, `north` newest | `north` | `northeast` |
 | 2 — Alt+Down past the newest match | `no` restored | bar blanked |
 | 3 — ordinary Down past the newest entry | `abc` restored, then blank | blank at once |
-| 5 — Shift+Return / Alt+Return | `\r\n` inserted, nothing sent | sent |
+| 5 — Shift+Return | `\r\n` inserted, nothing sent | sent |
 
 Entry 5's two specific hazards are both answered. `ES_MULTILINE` +
 `ReplaceSel("\r\n")` does put a real line break in the control — the bar read

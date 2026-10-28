@@ -303,9 +303,9 @@ void CGenPropertyPage::OnAddItem(CDialog & dlg)
   // resort the list
   SortItems ();
 
-  // redraw the list
-  if (GetFilterFlag ())
-    m_bReloadList = true;      // full reload because it may have changed filter requirements
+  // redraw the list: a full reload, because the new item may change what the
+  // filter shows, and so the "N items." summary counts it (as after a delete)
+  m_bReloadList = true;
 
 // get dispatch id from the script and put it into the item
 

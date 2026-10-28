@@ -760,7 +760,7 @@ dialog round-trip through `CPrefsP14`, its XML attribute `new_activity_sound`, a
 script accessor (`methods_info.cpp` case 9).
 
 **Deliberately left in place:** `IDD_PREFS_P2` — the dialog template in
-`platform/mushclient_dialogs.rc` and its `resource.h` define — now referenced by no code,
+`resources/en.rc` and its `resource.h` define — now referenced by no code,
 kept as inert resource data to keep the divergence minimal (the port's `.rc` parser only
 builds a template on demand, so an unreferenced one costs nothing). `ePageSounds` is
 already commented out at `doc.h:392` and at its one other (also commented) use, and is

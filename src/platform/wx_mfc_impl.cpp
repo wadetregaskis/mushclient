@@ -1372,7 +1372,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                      wxT("Close All Notepad Windows"));
     append_canon_section(editMenu, SEC_EDIT);   // Paste To World, Reload Names, Unique ID, Colour Picker, …
     editMenu->Append(32974 /*ID_EDIT_COPYASHTML*/, wxT("Copy as &HTML\tCtrl+Alt+C"));
-    // Canonical Edit-menu entry (mushclient_dialogs.rc:2956), missing until now:
+    // Canonical Edit-menu entry (IDR_MUSHCLTYPE, resources/en.rc), missing until now:
     // depending on the world's "ctrl_backspace_deletes_last_word" option this
     // either recalls the last word of the previous command (the default) or
     // deletes the word before the caret.  Its canonical handler is on the
@@ -1421,7 +1421,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(32272 /*ID_REPEAT_LAST_COMMAND*/,  wxT("&Repeat Last Command"));
     // "Quit From This World" sends the world's MAC_QUIT macro (default "QUIT")
     // after confirming, and suppresses auto-reconnect.  Canonically it sits in
-    // the Input menu beside Repeat Last Command (mushclient_dialogs.rc:3008);
+    // the Input menu beside Repeat Last Command (IDR_MUSHCLTYPE, resources/en.rc);
     // the port folds that menu into Game, so it goes here.
     //
     // NO ACCELERATOR, deliberately: the canonical one is Shift+Ctrl+Q, and wx
@@ -1436,7 +1436,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // No Ctrl+F accelerator here — the inline find bar already binds it.
     wxMenu* displayMenu = new wxMenu();
     // The six scroll commands Windows' Display menu opens with
-    // (mushclient_dialogs.rc:3013-3018), in the same order.  They scroll the
+    // (IDR_MUSHCLTYPE, resources/en.rc), in the same order.  They scroll the
     // output without taking the caret out of the command bar, which is why
     // CSendView owns them upstream (sendvw.cpp:53-58 -> CMUSHView::OnTest*).
     // The port had none of them: four were reachable only as hard-coded keys
@@ -1534,7 +1534,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // Accelerators here follow one rule: a chord that already MEANS something
     // in MUSHclient must not mean something else on the port.  Shift+Ctrl+A is
     // Game ▸ Auto Say and Shift+Ctrl+I is Configure ▸ Info in the canonical
-    // resource (mushclient_dialogs.rc:3014, 3083), so Aliases and Timers take
+    // resource (IDR_MUSHCLTYPE, resources/en.rc), so Aliases and Timers take
     // the resource's own Shift+Ctrl+9 / Shift+Ctrl+0 and hand those chords back
     // to the commands they belong to.  Ctrl+T is bound to nothing anywhere in
     // the resource, so Triggers keeps it as a macOS-native addition.
@@ -1543,7 +1543,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     cfgMenu->Append(ID_MENU_CFG_TIMERS,    wxT("T&imers…\tShift+Ctrl+0"));
     cfgMenu->AppendSeparator();
     // Shift+Ctrl+7 is what the canonical menu resource gives this command
-    // (mushclient_dialogs.rc:3077, ID_GAME_CONFIGURE_VARIABLES).  The port had
+    // (IDR_MUSHCLTYPE, resources/en.rc: ID_GAME_CONFIGURE_VARIABLES).  The port had
     // invented Ctrl+Shift+V, which is ALSO the canonical accelerator for
     // Edit ▸ Paste To World (rc:2955) -- so the two commands claimed one key
     // and exactly one of them got it, silently.  The three Configure items

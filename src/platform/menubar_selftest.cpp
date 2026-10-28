@@ -448,7 +448,7 @@ int RunMenuBarSelfTest()
     }
 
     // ── the six scroll commands Windows' Display menu opens with ────────────
-    // mushclient_dialogs.rc:3013-3018.  The port carried NONE of them: four
+    // IDR_MUSHCLTYPE, resources/en.rc.  The port carried NONE of them: four
     // were reachable only as hard-coded keys in the command bar, and Line Up /
     // Line Down existed nowhere at all.  The ids are the canonical ID_TEST_*
     // ones, so world.DoCommand and any accelerator that names them reach the

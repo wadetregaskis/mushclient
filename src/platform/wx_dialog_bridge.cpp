@@ -61,27 +61,28 @@ wxString FindResource(const wxString& name)
 
 } // namespace
 
-// Map a Win32 image-resource id to its bundled dialog-art filename.  These files
-// come from nickgammon/mushclient_resources (res/ + MUSHclient.rc) and are
-// bundled into Contents/Resources/dialog_art/.  Returns "" for ids with no art.
-static wxString DialogArtFile(int resId)
+// The bundled image file for a Win32 icon or bitmap resource id, or "" if there
+// is none.  The build converts every ICON and BITMAP in resources/en.rc into
+// art/icon/<id>.ico and art/bitmap/<id>.bmp (tools/port_resources.py), which
+// are bundled into Contents/Resources/ (beside the executable on Linux).  An
+// icon wins over a bitmap with the same id, except for IDR_MAINFRAME (128):
+// its icon is the app's, for which the port has a high-resolution stand-in,
+// MUSHclient.png, and its bitmap is a toolbar strip.
+static wxString DialogArtPath(int resId)
 {
-    switch (resId) {
-        case 103: return wxT("litebulb.bmp");   // IDB_LIGHTBULB  (Tip-of-the-Day bulb)
-        case 128: return wxT("MUSHclient.png");  // IDR_MAINFRAME  (app icon / About logo)
-        case 129: return wxT("doc.ico");         // IDR_MUSHCLTYPE (tray default)
-        case 288: return wxT("Cdrom01.ico");     // IDI_ICON1
-        case 289: return wxT("Wrench.ico");      // IDI_ICON2
-        case 290: return wxT("Clock05.ico");     // IDI_ICON3
-        case 291: return wxT("Earth.ico");       // IDI_ICON4
-        case 292: return wxT("Graph08.ico");     // IDI_ICON5
-        case 293: return wxT("Handshak.ico");    // IDI_ICON6
-        case 294: return wxT("Mail16b.ico");     // IDI_ICON7
-        case 295: return wxT("Net01.ico");       // IDI_ICON8
-        case 296: return wxT("Point11.ico");     // IDI_ICON9
-        case 297: return wxT("Clip07.ico");      // IDI_ICON10
-        default:  return wxString();
+    const wxChar sep = wxFILE_SEP_PATH;
+    wxString candidates[] = {
+        wxString::Format(wxT("art%cicon%c%d.ico"), sep, sep, resId),
+        wxString::Format(wxT("art%cbitmap%c%d.bmp"), sep, sep, resId),
+    };
+    if (resId == 128)
+        candidates[0] = wxT("MUSHclient.png");
+    for (const wxString& c : candidates) {
+        const wxString path = FindResource(c);
+        if (wxFileName::FileExists(path))
+            return path;
     }
+    return wxString();
 }
 
 // Load a bundled dialog-art image (BMP / ICO) by Win32 resource id.  Returns an
@@ -90,14 +91,12 @@ static wxString DialogArtFile(int resId)
 // wx_mfc_impl.cpp).
 wxBitmap LoadDialogArt(int resId)
 {
-    wxString file = DialogArtFile(resId);
-    if (file.empty()) return wxBitmap();
     // Image handlers are registered once in the app's OnInit (wx_app.cpp) — doing
     // it here lazily was fragile (see that comment).  Suppress wx's error log
     // around the load so a missing/odd art file degrades to "no image" instead of
     // popping an error dialog ("Unknown image data format") at the user.
-    wxString path = FindResource(wxT("dialog_art") + wxString(wxFILE_SEP_PATH) + file);
-    if (!wxFileName::FileExists(path)) return wxBitmap();
+    const wxString path = DialogArtPath(resId);
+    if (path.empty()) return wxBitmap();
     wxImage img;
     wxLogNull noLog;
     if (!img.LoadFile(path)) return wxBitmap();

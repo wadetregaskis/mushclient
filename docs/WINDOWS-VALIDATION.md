@@ -1798,7 +1798,7 @@ with a middle-click callback still fires (that path is unchanged on both platfor
 `wxChoice`/`wxComboBox`, so the five colour drop-downs listed the strings
 `Custom1 … Custom16` / `Other ...` instead of painting each row in the colour it stands
 for. `CColourComboBox::DrawItem` is correct and Windows runs it; the port never called
-it. The complete set of owner-draw templates in `platform/mushclient_dialogs.rc`:
+it. The complete set of owner-draw templates in `resources/en.rc`:
 
 | Dialog | Control | Style | Class |
 |---|---|---|---|

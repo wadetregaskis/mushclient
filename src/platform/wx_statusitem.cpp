@@ -80,7 +80,7 @@
 
 // ── The icon ──────────────────────────────────────────────────────────────
 // The same choice CMainFrame::AddTrayIcon makes, over the same art the Dock
-// icon already uses (platform/dialog_art, bundled into Contents/Resources):
+// icon already uses (resources/en.rc's icons, bundled into Contents/Resources):
 // index 10 with a filename means the user's own file, 1..9 are the shipped
 // novelty icons IDI_ICON1..9, and anything else is the default IDR_MUSHCLTYPE.
 //

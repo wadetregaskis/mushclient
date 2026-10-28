@@ -1,8 +1,9 @@
 // platform/wx_dialog_resource.cpp — see wx_dialog_resource.h.
 //
-// A small, forgiving parser for the subset of .rc syntax our decompiler emits
-// (tools/decompile_dialogs.py): DIALOGEX blocks of generic CONTROL statements,
-// and MENU blocks of POPUP/MENUITEM. Not a general .rc parser.
+// A small, forgiving parser for the subset of .rc syntax tools/port_resources.py
+// emits when the build converts the compiled resources/en.rc: DIALOGEX blocks
+// of generic CONTROL statements, and MENU blocks of POPUP/MENUITEM.  Not a
+// general .rc parser; en.rc itself is compiled by llvm-rc.
 
 #ifndef _WIN32
 
@@ -128,7 +129,7 @@ int RcResources::ResolveSymbol(const std::string& name, bool* found) const
 {
     if (found) *found = true;
     // Standard MFC/Windows IDs live in afxres.h/winuser.h, not resource.h, so
-    // resolve them here (matching tools/decompile_dialogs.py's table).
+    // resolve them here (matching tools/port_resources.py's table).
     if (name == "IDC_STATIC") return -1;
     if (name == "IDOK")       return 1;
     if (name == "IDCANCEL")   return 2;
@@ -242,8 +243,8 @@ bool RcResources::ParseRc(const std::string& rc)
                     // A genuine id collision between two distinct DIALOGEX blocks
                     // would silently discard the first one here with no
                     // diagnostic -- warn so it is at least noticed (the .rc is
-                    // machine-generated; a future decompile_dialogs.py bug or a
-                    // hand-edit could reintroduce one).
+                    // generated; a future port_resources.py bug could
+                    // reintroduce one).
                     if (m_dialogs.count(curDlg.id))
                         std::fprintf(stderr,
                             "wx_dialog_resource: dialog id %d ('%s') overwrites "
@@ -356,12 +357,12 @@ size_t RcResources::ControlCount() const
 }
 
 #ifdef WX_DIALOG_RESOURCE_TEST
-// Standalone test: parse resource.h + the recovered .rc, print stats, and
-// assert the shapes a future decompiler regen or .rc hand-edit must not
-// silently break.  Registered with ctest (tests/CMakeLists.txt) so this,
-// the parser's own harness, actually runs instead of being a comment.
+// Standalone test: parse resource.h + the generated .rc, print stats, and
+// assert the shapes a change to en.rc or its conversion must not silently
+// break.  Registered with ctest (tests/CMakeLists.txt) so this, the parser's
+// own harness, actually runs instead of being a comment.
 //   c++ -std=c++17 -DWX_DIALOG_RESOURCE_TEST platform/wx_dialog_resource.cpp -o /tmp/rctest
-//   /tmp/rctest resource.h platform/mushclient_dialogs.rc
+//   /tmp/rctest resource.h build/resources/port/mushclient_dialogs.rc
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -420,7 +421,7 @@ int main(int argc, char** argv)
     // cannot tell a correctly-labelled block from a mislabelled one that just
     // happens to share the value -- so also grep the raw .rc TEXT for the
     // DIALOGEX header actually carrying the right symbol, and NOT the wrong
-    // one, which is the part a decompiler regen or hand-edit can silently break.
+    // one, which is the part a change to port_resources.py could silently break.
     auto checkDialog = [&](const char* symbol, const char* caption, const char* wrongSymbol)
     {
         bool found;

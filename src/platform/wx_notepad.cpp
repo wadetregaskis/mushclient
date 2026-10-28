@@ -191,7 +191,7 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     edit->Append(wxID_SELECTALL, wxT("Select &All\tCtrl+A"));
     edit->AppendSeparator();
     // Canonical label + accelerator, from the IDR_NORMALTYPE Edit popup in the
-    // recovered resources (mushclient_dialogs.rc: "ASCII Art...\tShift+Ctrl+A",
+    // resources (resources/en.rc: "ASCII Art...\tShift+Ctrl+A",
     // ID_EDIT_ASCIIART).
     edit->Append(ID_NP_EDIT_ASCIIART, wxT("ASCII &Art...\tShift+Ctrl+A"));
     edit->AppendSeparator();

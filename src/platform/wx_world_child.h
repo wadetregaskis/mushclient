@@ -261,7 +261,7 @@ public:
     static const char* const kAccelClearScreen;       // Ctrl-Cmd-L
 
     // ── the Display menu's six scroll commands ──────────────────────────────
-    // Windows' Display menu opens with them (mushclient_dialogs.rc:3013-3018):
+    // Windows' Display menu opens with them (IDR_MUSHCLTYPE, resources/en.rc):
     // Start / Page Up / Page Down / End / Line Up / Line Down, all handled by
     // CSendView (sendvw.cpp:53-58) so they work while the caret stays in the
     // command bar.  ONE definition, shared by the menu items and by the

@@ -100,7 +100,7 @@ static NSImage* McPlaceholderImage(CGFloat side)
     return [img autorelease];
 }
 
-// The user's chosen icon (a .ico/.png out of Contents/Resources/dialog_art),
+// The user's chosen icon (a .ico/.png out of Contents/Resources/art),
 // scaled to the menu bar's height.  NOT a template image: these are colour
 // artwork — the whole point of the "Tray Icon" preference is to pick one — and
 // -setTemplate: renders by alpha only, which turns a document icon into an

@@ -136,7 +136,7 @@ void CColourButton::OnRButtonDown(UINT nFlags, CPoint point)
   // FALSE), so IDR_COLOUR_POPUP's two items never arrive and the popup would
   // come up empty.  Build them by hand, exactly as the tray and regexp menus
   // already do off Windows (mainfrm.cpp, dialogs/EditDlg.cpp).  The labels and
-  // the order are IDR_COLOUR_POPUP's own (platform/mushclient_dialogs.rc).
+  // the order are IDR_COLOUR_POPUP's own (resources/en.rc).
   // docs/UPSTREAM-DIVERGENCES.md 23.
 	CMenu* pPopup = menu.GetSubMenu(0);
   pPopup->AppendMenu (MF_STRING | MF_ENABLED, ID_POPUP_COPYCOLOUR, "&Copy");

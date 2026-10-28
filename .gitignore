@@ -118,7 +118,6 @@ packaging/tcl/
 packaging/ruby/
 packaging/openssl/
 packaging/wx/
-packaging/resources/
 # 64-bit Windows dependencies built by packaging/windows/fetch-deps.ps1
 packaging/windows/deps/
 .claude-audit/

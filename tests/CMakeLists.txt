@@ -131,15 +131,17 @@ mc_test(test_mc_test_framework)
 # mushcore_testsupport, or wxWidgets to test.  Its own -DWX_DIALOG_RESOURCE_TEST
 # main() was previously only a "build this by hand" comment; this registers
 # that same harness (now asserting, not just printing) as an ordinary ctest so
-# a future decompiler regen or hand-edit of the .rc that drops/mislabels a
-# dialog fails ctest instead of shipping silently.
+# a change to resources/en.rc, llvm-rc or tools/port_resources.py that
+# drops/mislabels a dialog fails ctest instead of shipping silently.  It reads
+# the .rc the build generates (resources/CMakeLists.txt), as the app does.
 add_executable(test_wx_dialog_resource ../src/platform/wx_dialog_resource.cpp)
 target_compile_definitions(test_wx_dialog_resource PRIVATE WX_DIALOG_RESOURCE_TEST)
 target_compile_options(test_wx_dialog_resource PRIVATE ${MC_TEST_COMPILE_OPTIONS})
+add_dependencies(test_wx_dialog_resource port_resources)
 add_test(NAME test_wx_dialog_resource
          COMMAND test_wx_dialog_resource
                  ${CMAKE_SOURCE_DIR}/src/resource.h
-                 ${CMAKE_SOURCE_DIR}/src/platform/mushclient_dialogs.rc)
+                 ${MC_PORT_RESOURCES_DIR}/mushclient_dialogs.rc)
 
 # ── Source lint: no non-ASCII in narrow string literals ─────────────────────
 # Note()/Tell()/DisplayMsg() take BYTES, decoded with the world's encoding — so

@@ -172,7 +172,7 @@ pcre * program;
   dlg.DoModal ();
 #else
   // Same information, in a real message box.  IDD_REGEXP_PROBLEM *is* among the
-  // recovered dialog templates (platform/mushclient_dialogs.rc), so on its own
+  // recovered dialog templates (resources/en.rc), so on its own
   // that would be no obstacle -- but this file is CORE_SOURCES, compiled once
   // into mushcore and linked by BOTH mushgui (which carries CRegexpProblemDlg,
   // in mushgui_adapters) and the headless test executables (which do not).

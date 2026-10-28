@@ -57,7 +57,7 @@ static const int ID_CLEAR      = wxID_HIGHEST + 100;
 
 // ── Canonical ids carried by the context menu ────────────────────────────────
 // Windows' own output-window popup is CG_IDR_POPUP_MUSHVIEW
-// (platform/mushclient_dialogs.rc:2767).  Its items are canonical MFC command
+// (resources/en.rc).  Its items are canonical MFC command
 // ids, and they are spelled out here — numerically, because this file is
 // wx-side and pulls in neither resource.h nor mfc_ui.h, the same reason ID_COPY
 // above is a literal.  The menu ITEM carries the canonical id (so
@@ -4103,7 +4103,7 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
 
     // ── 7. this world and this session ───────────────────────────────────────
     // Windows' own slot: MENUITEM "&Log session...", ID_FILE_LOGSESSION in
-    // CG_IDR_POPUP_MUSHVIEW (mushclient_dialogs.rc:2781).  It is the SAME
+    // CG_IDR_POPUP_MUSHVIEW (resources/en.rc).  It is the SAME
     // command as File ▸ Log Session and as the Connection menu's Start/Stop
     // Logging arm — all three dispatch 32117 to the document, so there is one
     // session log per world and one implementation of it.

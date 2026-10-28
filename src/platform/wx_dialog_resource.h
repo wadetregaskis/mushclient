@@ -1,7 +1,7 @@
 // platform/wx_dialog_resource.h
 //
-// Parsed in-memory form of the recovered MFC dialog/menu resources
-// (platform/mushclient_dialogs.rc, decompiled from the localisation DLL).
+// Parsed in-memory form of the MFC dialog/menu resources (mushclient_dialogs.rc,
+// which the build generates from resources/en.rc: resources/CMakeLists.txt).
 // The wx MFC-dialog shim consumes these templates: CDialog::DoModal() looks up
 // its IDD here and builds a wxDialog with controls keyed by their (numeric)
 // resource ID.  Symbolic IDs in the .rc are resolved to the same numeric values

@@ -64,11 +64,12 @@ All third-party libraries needed for _core_ functionality (PCRE, libpng, SQLite,
 
 * **CMake** 3.14 or later
 * A modern C++ compiler supporting C++14 or C++17 (`clang++` or `g++`)
+* **llvm-rc** (LLVM's resource compiler), which builds the dialogs, menus and art from `resources/en.rc`, the same source Windows uses: Homebrew's `llvm`, or Debian/Ubuntu's `llvm` and `clang` (below)
 
 **On Linux (Debian / Ubuntu):**
 ```bash
 sudo apt update
-sudo apt install build-essential cmake ninja-build libwxgtk3.2-dev liblua5.1-0-dev libasound2-dev
+sudo apt install build-essential cmake ninja-build libwxgtk3.2-dev liblua5.1-0-dev libasound2-dev llvm clang
 ```
 *(Optional development packages for additional scripting engines: `libperl-dev`, `libjavascriptcoregtk-4.1-dev`, `tcl-dev`, `ruby-dev`)*
 
@@ -79,7 +80,7 @@ sudo apt install build-essential cmake ninja-build libwxgtk3.2-dev liblua5.1-0-d
   ```
 * Install dependencies via [Homebrew](https://brew.sh/):
   ```bash
-  brew install cmake wxwidgets libpng lua@5.1 openssl@3
+  brew install cmake wxwidgets libpng lua@5.1 openssl@3 llvm
   ```
 
 ---

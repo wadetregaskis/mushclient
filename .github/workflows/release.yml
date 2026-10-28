@@ -81,6 +81,12 @@ jobs:
             packaging/python/Python.framework
           key: macos-deps-${{ hashFiles('packaging/fetch-*.sh') }}
 
+      # llvm-rc compiles resources/en.rc, the dialogs, menus and art (packaging/
+      # README.md, "Dialogs, menus and art").  A build tool only: the app does
+      # not link or bundle anything of it.
+      - name: Build tools (llvm-rc)
+        run: brew install llvm
+
       - name: Build the app (universal, macOS 11+)
         run: packaging/build-app.sh --no-dmg
 
@@ -169,6 +175,7 @@ jobs:
             build-essential cmake ninja-build pkg-config xz-utils dpkg-dev file patchelf \
             libwxgtk3.2-dev liblua5.1-0-dev libasound2-dev libssl-dev zlib1g-dev libffi-dev \
             libperl-dev libjavascriptcoregtk-4.1-dev \
+            llvm clang \
             xvfb xauth
 
       - name: Cache the from-source runtimes
@@ -274,6 +281,12 @@ jobs:
       # from the extracted package.  NSIS is fetched (pinned) if absent.
       - name: Package (installer + zip)
         run: packaging\windows\build-app.ps1 -Arch ${{ matrix.arch }} -Version $env:VERSION -SkipDeps -OutDir out
+
+      # The macOS and Linux builds compile resources/en.rc with llvm-rc; this
+      # checks, against the en.res rc.exe has just built, that what they get
+      # from it is exactly what Windows gets.
+      - name: Port resources match rc.exe's
+        run: python tests\check_port_resources.py WinRel-${{ matrix.platform }}\en_dll\en.res
 
       - name: Discworld edition
         if: inputs.discworld

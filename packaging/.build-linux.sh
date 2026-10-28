@@ -140,8 +140,13 @@ if command -v strip >/dev/null 2>&1; then
     strip --strip-unneeded "$STAGE_APP/MUSHclient" 2>/dev/null || true
 fi
 
-# Copy runtime resource files and directories alongside the binary
-cp "$REPO/src/platform/mushclient_dialogs.rc" "$STAGE_APP/"
+# Copy runtime resource files and directories alongside the binary.  The
+# dialogs, menus and art are resources/en.rc's, converted by the build
+# (resources/CMakeLists.txt) into $BUILD_DIR/resources/port/.
+PORT_RES="$BUILD_DIR/resources/port"
+[ -f "$PORT_RES/mushclient_dialogs.rc" ] || die "no $PORT_RES/mushclient_dialogs.rc: the build should have made it"
+cp "$PORT_RES/mushclient_dialogs.rc"          "$STAGE_APP/"
+cp -R "$PORT_RES/art"                         "$STAGE_APP/"
 cp "$REPO/src/resource.h"                     "$STAGE_APP/"
 cp "$REPO/res/tips.txt"                       "$STAGE_APP/"
 cp "$REPO/res/names.txt"                      "$STAGE_APP/"
@@ -154,14 +159,6 @@ for dir in lua fonts spell names; do
     fi
 done
 
-for dir in dialog_art toolbar_art; do
-    if [ -d "$REPO/src/platform/$dir" ]; then
-        cp -R "$REPO/src/platform/$dir" "$STAGE_APP/"
-    elif [ -d "$REPO/$dir" ]; then
-        cp -R "$REPO/$dir" "$STAGE_APP/"
-    fi
-done
-
 if [ -d "$REPO/src/platform/dialog_text" ]; then
     cp -R "$REPO/src/platform/dialog_text" "$STAGE_APP/text"
 fi
@@ -170,10 +167,9 @@ if [ -d "$REPO/worlds" ]; then
     cp -R "$REPO/worlds" "$STAGE_APP/"
 fi
 
-# Application icon
-if [ -f "$REPO/src/platform/dialog_art/MUSHclient.png" ]; then
-    cp "$REPO/src/platform/dialog_art/MUSHclient.png" "$STAGE_APP/mushclient.png"
-fi
+# Application icon: the desktop entry's, and the one the app itself loads for
+# IDR_MAINFRAME (wx_dialog_bridge.cpp)
+cp "$REPO/src/platform/MUSHclient.png" "$STAGE_APP/"
 
 # Bundle scripting runtime libraries and stdlibs if present
 # 1. Tcl script library
@@ -370,7 +366,7 @@ if [ -d "$HOME/.local/share/applications" ] || mkdir -p "$HOME/.local/share/appl
 Name=MUSHclient
 Comment=MUD/MUSH/MOO client with scripting
 Exec=$STAGE_APP/mushclient.sh %F
-Icon=$STAGE_APP/mushclient.png
+Icon=$STAGE_APP/MUSHclient.png
 Terminal=false
 Type=Application
 Categories=Game;RolePlaying;Network;
@@ -434,10 +430,10 @@ EOF
         chmod 755 "$INSTALL_BIN/mushclient"
 
         # Resources in /usr/share/mushclient
-        for item in mushclient_dialogs.rc resource.h tips.txt names.txt spellchecker.lua LICENSE; do
+        for item in mushclient_dialogs.rc resource.h MUSHclient.png tips.txt names.txt spellchecker.lua LICENSE; do
             [ -f "$STAGE_APP/$item" ] && cp "$STAGE_APP/$item" "$INSTALL_SHARE/"
         done
-        for dir in lua dialog_art toolbar_art text fonts spell names worlds userdata-seed tcl8.6; do
+        for dir in lua art text fonts spell names worlds userdata-seed tcl8.6; do
             [ -d "$STAGE_APP/$dir" ] && cp -R "$STAGE_APP/$dir" "$INSTALL_SHARE/"
         done
         [ -f "$STAGE_APP/default-world" ] && cp "$STAGE_APP/default-world" "$INSTALL_SHARE/"
@@ -451,9 +447,9 @@ EOF
         # Desktop entry and icon
         sed "s|^Exec=.*|Exec=mushclient %F|" "$STAGE_APP/mushclient.desktop" > "$INSTALL_DESKTOP/mushclient.desktop"
         chmod 644 "$INSTALL_DESKTOP/mushclient.desktop"
-        if [ -f "$STAGE_APP/mushclient.png" ]; then
-            cp "$STAGE_APP/mushclient.png" "$INSTALL_ICON/mushclient.png"
-            cp "$STAGE_APP/mushclient.png" "$INSTALL_PIXMAP/mushclient.png"
+        if [ -f "$STAGE_APP/MUSHclient.png" ]; then
+            cp "$STAGE_APP/MUSHclient.png" "$INSTALL_ICON/mushclient.png"
+            cp "$STAGE_APP/MUSHclient.png" "$INSTALL_PIXMAP/mushclient.png"
         fi
 
         # Control file

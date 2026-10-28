@@ -37,6 +37,10 @@ CMUSHclientDoc* wx_doc_from_frame(wxFrame* frame);
 bool wx_canonical_menu_ui_state(int id, CMUSHclientDoc* doc,
                                 bool& enabled, int& checked);
 
+// The activity bar's six interchangeable strips, by style (a global
+// preference): mainfrm.cpp's table, the one Windows loads them by.
+extern int ActivityToolBarResourceNames [6];
+
 // MFC/AFX standard command ids.  These live in afxres.h, not resource.h, and the
 // port already routes them by number elsewhere (wx_mfc_impl.cpp) — same values.
 #define MC_ID_FILE_NEW      0xE100
@@ -141,14 +145,14 @@ const TbButton kActivity[] = {
     { ID_BTN_WORLDS_WORLD0, eWorldSwitch, 10, true, "World 10" },
 };
 
-struct BarSpec { const TbButton* buttons; size_t count; const char* art; };
+struct BarSpec { const TbButton* buttons; size_t count; int art; };   // art: a BITMAP id
 
 const BarSpec& Spec (int which)
 {
     static const BarSpec specs[] = {
-        { kStandard, WXSIZEOF(kStandard), "standard.bmp" },
-        { kWorld,    WXSIZEOF(kWorld),    "world.bmp"    },
-        { kActivity, WXSIZEOF(kActivity), nullptr /*chosen by style*/ },
+        { kStandard, WXSIZEOF(kStandard), IDR_MAINFRAME    },
+        { kWorld,    WXSIZEOF(kWorld),    IDR_GAME_TOOLBAR },
+        { kActivity, WXSIZEOF(kActivity), 0 /*chosen by style: ActivityStrip*/ },
     };
     return specs[which];
 }
@@ -190,18 +194,18 @@ namespace {
 
 // ── Art ───────────────────────────────────────────────────────────────────
 
-// Same two-candidate search the dialog bridge uses (wx_dialog_bridge.cpp):
-// the bundle's Resources dir, then alongside the executable.
-wxString FindArt (const wxString& file)
+// A strip is a BITMAP resource of resources/en.rc, which the build converts
+// into art/bitmap/<id>.bmp (tools/port_resources.py).  Same two-candidate
+// search the dialog bridge uses (wx_dialog_bridge.cpp): the bundle's
+// Resources dir, then alongside the executable.
+wxString FindArt (int bitmapId)
 {
-    const wxString rel = wxString(wxT("toolbar_art")) + wxFILE_SEP_PATH + file;
-    const wxString relPlat = wxString(wxT("src")) + wxFILE_SEP_PATH + wxT("platform") + wxFILE_SEP_PATH + rel;
+    const wxString rel = wxString::Format(wxT("art%cbitmap%c%d.bmp"),
+                                          wxFILE_SEP_PATH, wxFILE_SEP_PATH, bitmapId);
     const wxString exeDir = wxFileName(wxStandardPaths::Get().GetExecutablePath()).GetPath();
     wxString candidates[] = {
         wxStandardPaths::Get().GetResourcesDir() + wxFILE_SEP_PATH + rel,
         exeDir + wxFILE_SEP_PATH + rel,
-        exeDir + wxFILE_SEP_PATH + relPlat,
-        exeDir + wxFILE_SEP_PATH + wxT("..") + wxFILE_SEP_PATH + relPlat,
     };
     for (const wxString& c : candidates)
         if (wxFileName::FileExists(c))
@@ -217,14 +221,21 @@ wxString FindArt (const wxString& file)
 const int kTileW = 16, kTileH = 15;
 const int kKeyR  = 192, kKeyG = 192, kKeyB = 192;
 
-wxImage LoadStrip (const wxString& file)
+wxImage LoadStrip (int bitmapId)
 {
-    const wxString path = FindArt(file);
+    const wxString path = FindArt(bitmapId);
     if (path.empty()) return wxImage();
     wxImage img;
     wxLogNull noLog;    // a bad/missing strip degrades to "no bar", not a dialog
     if (!img.LoadFile(path)) return wxImage();
     return img;
+}
+
+// The activity strip for a style; styles are clamped to 0..5 by the callers,
+// as mainfrm.cpp OnCreate clamps them.
+int ActivityStrip (unsigned style)
+{
+    return ActivityToolBarResourceNames[style < 6 ? style : 0];
 }
 
 // Cut tile `index` out of a strip and return it as a toolbar-ready bitmap.
@@ -513,17 +524,15 @@ wxToolBar* CWorldToolBars::Build (Which which)
 {
     const BarSpec& spec = Spec(which);
 
-    wxString artFile;
+    int art = spec.art;
     if (which == eActivity) {
         // Six interchangeable strips; the choice is a global preference.
         unsigned style = App.m_iActivityButtonBarStyle;
         if (style > 5) style = 0;          // same clamp as mainfrm.cpp OnCreate
-        artFile = wxString::Format(wxT("activity_style%u.bmp"), style);
-    } else {
-        artFile = wxString::FromUTF8(spec.art);
+        art = ActivityStrip(style);
     }
 
-    const wxImage strip = LoadStrip(artFile);
+    const wxImage strip = LoadStrip(art);
     if (!strip.IsOk())
         return nullptr;                    // no art → no bar, rather than blanks
 
@@ -761,7 +770,7 @@ void CWorldToolBars::ReloadActivityStyle ()
     unsigned style = App.m_iActivityButtonBarStyle;
     if (style > 5) style = 0;
     const wxImage strip =
-        LoadStrip(wxString::Format(wxT("activity_style%u.bmp"), style));
+        LoadStrip(ActivityStrip(style));
     if (!strip.IsOk()) return;
 
     // Force every button to be re-imaged on the next UpdateState.
@@ -846,7 +855,7 @@ void CWorldToolBars::UpdateState (CMUSHclientDoc* activeDoc)
     static wxImage cachedStrip;
     static unsigned cachedStyle = (unsigned) -1;
     if (cachedStyle != style) {
-        cachedStrip = LoadStrip(wxString::Format(wxT("activity_style%u.bmp"), style));
+        cachedStrip = LoadStrip(ActivityStrip(style));
         cachedStyle = style;
     }
 

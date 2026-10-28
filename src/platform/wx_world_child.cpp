@@ -4771,7 +4771,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     //     does not run when Ctrl is down (`GetKeyState (VK_CONTROL) >= 0`);
     //   * Alt+Arrow, when the gate declines, still reaches the history via the
     //     Alt+Up / Alt+Down accelerators on ID_KEYS_PREVCOMMAND /
-    //     ID_KEYS_NEXTCOMMAND (mushclient_dialogs.rc:3005-3006), so gating it
+    //     ID_KEYS_NEXTCOMMAND (IDR_MUSHCLTYPE, resources/en.rc), so gating it
     //     here would take away a working key rather than restore one.
     if ((code == WXK_UP || code == WXK_DOWN) && inp == m_input && m_doc &&
         !evt.AltDown() && !evt.RawControlDown() && !m_doc->CommandCaretAtEdge()) {

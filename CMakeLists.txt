@@ -116,6 +116,13 @@ include_directories(
 # ── Compile definitions ───────────────────────────────────────────────────
 add_compile_definitions(HAVE_CONFIG_H)  # for PCRE config.h
 
+# ── Dialogs, menus and art (macOS / Linux) ────────────────────────────────
+# Compiled from resources/en.rc, Windows' own source for them, with llvm-rc:
+# the port_resources target, its output in MC_PORT_RESOURCES_DIR.
+if(NOT WIN32)
+    add_subdirectory(resources)
+endif()
+
 # ── Find system libraries (macOS / Linux) ─────────────────────────────────
 if(NOT WIN32)
     find_package(OpenSSL QUIET)
@@ -1293,7 +1300,7 @@ if(NOT WIN32)
                 MACOSX_BUNDLE_ICON_FILE       "MUSHclient.icns"
             )
             set(_mushgui_res_dir "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources")
-            # The app icon (built from platform/dialog_art/MUSHclient.png via
+            # The app icon (built from platform/MUSHclient.png via
             # iconutil) → Contents/Resources, named by CFBundleIconFile above, so
             # the Dock, Cmd-Tab switcher and Finder show MUSHclient's icon.
             add_custom_command(TARGET mushgui POST_BUILD
@@ -1319,22 +1326,22 @@ if(NOT WIN32)
                 "${CMAKE_SOURCE_DIR}/lua"
                 "${_mushgui_res_dir}/lua"
             COMMENT "Bundling lua/ modules")
+        # resources/en.rc's dialogs, menus, bitmaps and icons, as converted by
+        # the port_resources target (resources/CMakeLists.txt).
+        add_dependencies(mushgui port_resources)
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
-                "${CMAKE_SOURCE_DIR}/src/platform/mushclient_dialogs.rc"
+                "${MC_PORT_RESOURCES_DIR}/mushclient_dialogs.rc"
                 "${CMAKE_SOURCE_DIR}/src/resource.h"
+                "${CMAKE_SOURCE_DIR}/src/platform/MUSHclient.png"
                 "${_mushgui_res_dir}/"
-            COMMENT "Bundling dialog resources (mushclient_dialogs.rc + resource.h)")
+            COMMENT "Bundling dialog resources (mushclient_dialogs.rc + resource.h) and the app icon")
         add_custom_command(TARGET mushgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${_mushgui_res_dir}/art"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/src/platform/dialog_art"
-                "${_mushgui_res_dir}/dialog_art"
-            COMMENT "Bundling dialog art (image statics + icons)")
-        add_custom_command(TARGET mushgui POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/src/platform/toolbar_art"
-                "${_mushgui_res_dir}/toolbar_art"
-            COMMENT "Bundling toolbar art (Standard/World/Activity bars)")
+                "${MC_PORT_RESOURCES_DIR}/art"
+                "${_mushgui_res_dir}/art"
+            COMMENT "Bundling art (dialog images, icons, toolbar strips)")
         add_custom_command(TARGET mushgui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/src/platform/dialog_text"

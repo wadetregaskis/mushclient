@@ -39,6 +39,8 @@ packaging/build-app.sh --with-discworld
 - C++14 compiler (`g++` or `clang++`)
 - wxWidgets 3.2+ GTK3 development headers (`apt install libwxgtk3.2-dev` or `libwxgtk3.0-gtk3-dev`)
 - Lua 5.1 development library (`apt install liblua5.1-0-dev`)
+- llvm-rc and clang, which compile `resources/en.rc` (`apt install llvm clang`):
+  see [Dialogs, menus and art](#dialogs-menus-and-art-resourcesenrc)
 - Optional scripting runtimes: Python 3, Perl (`libperl-dev`), JavaScriptCore (`libjavascriptcoregtk-4.1-dev`), Tcl (`tcl-dev`), Ruby (`ruby-dev`)
 - For `.deb` creation: `dpkg-deb` (standard on Debian/Ubuntu)
 
@@ -106,8 +108,11 @@ your Apple Developer ID (see below).
 - Xcode command-line tools (`xcode-select --install`)
 - Rosetta 2 on an Apple Silicon Mac (`softwareupdate --install-rosetta`): Ruby's
   Intel half is built natively under it, and it runs the Intel half's tests
-- Nothing from Homebrew for a package.  A *development* build (plain CMake) uses
-  `brew install wxwidgets lua@5.1` and any OpenSSL CMake finds, 3.x or 4.x.
+- Homebrew's LLVM, for `llvm-rc`, which compiles `resources/en.rc`
+  (`brew install llvm`): see [Dialogs, menus and art](#dialogs-menus-and-art-resourcesenrc).
+  Nothing of it ends up in the package.  Otherwise nothing from Homebrew for a
+  package.  A *development* build (plain CMake) uses `brew install wxwidgets
+  lua@5.1` and any OpenSSL CMake finds, 3.x or 4.x.
 - For notarization: an Apple Developer account + a *Developer ID Application*
   certificate in your login keychain
 
@@ -357,79 +362,35 @@ Notes:
 
 ---
 
-## Upstream Windows resources (`fetch-resources.sh`)
+## Dialogs, menus and art (`resources/en.rc`)
 
-MUSHclient's dialog layouts, menus, bitmaps, icons and cursors come from the
-project that compiles into `locale/en.dll` —
-<https://github.com/nickgammon/mushclient_resources>.  Since 2026-10 its source
-is also **in this repository**, adapted, at [`resources/`](../resources/README.md),
-which is what the Windows builds compile `en.dll` from; this script's pinned
-checkout is the unmodified original.  Windows loads that DLL at runtime; the
-macOS port has no DLL resource loader, so it needs the underlying files.
+Every dialog layout, menu, bitmap and icon comes from one source,
+[`resources/en.rc`](../resources/README.md): Nick Gammon's
+[mushclient_resources](https://github.com/nickgammon/mushclient_resources),
+imported into this repository and brought up to date.  Windows compiles it with
+`rc.exe` into `locale/en.dll`.  The macOS and Linux builds compile the same file
+with **`llvm-rc`**, LLVM's work-alike (`resources/CMakeLists.txt`), and
+`tools/port_resources.py` converts the result into what the app bundles: the
+dialog and menu templates as `mushclient_dialogs.rc`, which the wx dialog
+bridge parses, and every bitmap and icon as `art/bitmap/<id>.bmp` and
+`art/icon/<id>.ico`.  A change to a dialog or an icon is made in `en.rc` (or
+`resources/res/`), and every platform picks it up on its next build.
 
-```bash
-packaging/fetch-resources.sh          # pinned checkout into packaging/resources/
-MC_RESOURCES_REV=master packaging/fetch-resources.sh
-```
+`llvm-rc` is a build-time tool only: `brew install llvm` on macOS (CMake finds
+Homebrew's keg-only copy itself), `apt install llvm clang` on Debian or Ubuntu
+(`llvm-rc` uses clang to preprocess).  Without it, CMake stops and says so;
+`-DMC_LLVM_RC=/path/to/llvm-rc` names one elsewhere.
+`resources/llvm-rc/afxres.h` stands in for the Windows SDK headers `en.rc`
+includes, which the port does not have.
 
-**This is not required to build.** Unlike the language runtimes, dialog art is
-not optional at runtime — the About box and the Tray/Taskbar page need it — so
-the files the port actually uses stay committed under `src/platform/dialog_art/`,
-and that is what CMake bundles. A plain `git clone && cmake && make` with no
-network must keep working. Run this script when you need art the port does not
-bundle yet.
+The two compilers are held to the same answer on Windows, where both exist:
+`tests/check_port_resources.py` compiles `en.rc` with `llvm-rc` exactly as the
+port does and fails unless converting it gives the same files, byte for byte, as
+converting `rc.exe`'s own `en.res`.  The release workflow's Windows jobs run it.
 
-Pinned by commit, not by branch: an unpinned clone would make builds
-unreproducible, the same reason `fetch-tcl.sh` pins `TCL_VERSION`.
-
-**Licence.** This is Nick Gammon's artwork, redistributed inside the `.app`
-exactly as the Windows build redistributes it inside `en.dll`. Pinning the
-revision here makes that provenance explicit rather than implicit in git
-history.
-
-### Direction of travel
-
-Two things in that checkout are better than what the port uses today, in
-increasing order of effort:
-
-1. **Art the port has never had.** e.g. the activity button bar
-   (`IDB_ACTIVITY_TOOLBAR_0..5`), whose six 480×15 4-bit strips — 30 tiles of
-   16×15 each — are `res/bitmap1.bmp` and `res/mc activity 0..4.bmp`. Note the
-   mapping is not in step: `_0` is `bitmap1.bmp`, `_1`…`_5` are
-   `mc activity 0`…`4`.
-
-   **THE ART NEEDS REDOING BEFORE THIS BAR CAN BE BUILT — there is no plan for
-   that yet, and that is what blocks the feature, not the code.** These are
-   1990s Windows toolbar assets: 16×15 tiles at 4 bits per pixel (16 colours),
-   authored for a 96 dpi 1× display. On a Retina screen every button would be
-   point-doubled — soft edges, visible stair-stepping — and a 16-colour palette
-   next to the rest of the macOS UI looks like what it is. Upscaling will not
-   rescue them; 16×15 has no detail to recover, and the magenta-key transparency
-   convention of the era does not survive resampling cleanly.
-
-   What "redone" has to mean, whenever someone takes it on: vector or @2x/@3x
-   raster sources at the sizes macOS actually asks for, with the palette
-   reconsidered rather than sampled. Until then, the sensible options are to
-   leave the bar out (where it is today) or to draw it from SF Symbols and
-   accept that it will not look like the Windows original.
-
-   Tracked as settings-audit item 54 — "Activity button bar style (Style 1..6)"
-   — which cannot be honoured while there is no bar to style.
-
-2. **The canonical `.rc` itself.** `src/platform/mushclient_dialogs.rc` is
-   *decompiled* from a shipped `en.dll` by `tools/decompile_dialogs.py`, with
-   numeric ids mapped back to `src/resource.h` symbols by inference. The
-   `MUSHclient.rc` in this checkout is the real source of those same templates —
-   true symbol names, real `DLGINIT`, no decompiler heuristics. Sourcing the
-   port from it directly is the long-term goal and would be strictly better
-   provenance. It is also a migration across all 116 dialogs, so it wants its
-   own diff-by-diff pass with GUI verification rather than being done as a side
-   effect. Nothing in the build reads this checkout yet.
-
-The port does **not** need to build `en.dll` or load resources from a library to
-get there — it parses `.rc` text directly (`wx_dialog_resource.cpp`), so
-"consume the upstream resource project" means "read its `.rc` and its `res/`",
-not "reproduce the Windows DLL".
+The one image the port has that `en.rc` does not is `src/platform/MUSHclient.png`,
+a high-resolution stand-in for the app icon (`IDR_MAINFRAME`), from which the
+macOS `.icns` is also made.
 
 ---
 

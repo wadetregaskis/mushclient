@@ -1332,12 +1332,51 @@ if ((INT_PTR) ShellExecute (Frame, _T("open"), MUSHCLIENT_FUNCTIONS_URL, NULL, N
 
 
 
-void CMainFrame::OnViewResetToolbars() 
+// The three toolbars along the top, each docked to the right of the one before.
+// The dock bar wraps a row that is too full, so as many share a row as the
+// window is wide enough for -- rather than one row each, which is what docking
+// without a rectangle gives, and which takes three rows for bars that are
+// narrow enough for most windows to hold two or three of them on one.
+// (Elsewhere, an empty inline in platform/mainfrm_stub.h.)
+#ifdef _WIN32
+void CMainFrame::DockToolBarsSideBySide ()
+  {
+  CControlBar * bars [] = { &m_wndToolBar, &m_wndGameToolBar, &m_wndActivityToolBar };
+  CControlBar * pPrevious = NULL;
+  CRect rect;
+
+  for (CControlBar * pBar : bars)
+    {
+    if (!pBar->m_hWnd)
+      continue;
+
+    RecalcLayout (TRUE);
+    if (pPrevious)
+      {
+      // just docked at the top, so horizontal: its own width along
+      pPrevious->GetWindowRect (&rect);
+      rect.OffsetRect (rect.Width (), 0);
+      }
+    else
+      {
+      // the start of the top row
+      pBar->GetWindowRect (&rect);
+      rect = CRect (CPoint (0, 0), rect.Size ());
+      ClientToScreen (rect);
+      }
+    DockControlBar (pBar, AFX_IDW_DOCKBAR_TOP, rect);
+
+    // a hidden bar takes no room, so the next one goes where it would have
+    if (pBar->IsWindowVisible ())
+      pPrevious = pBar;
+    }
+  }   // end of CMainFrame::DockToolBarsSideBySide
+#endif // _WIN32
+
+void CMainFrame::OnViewResetToolbars()
 {
 
-	DockControlBar(&m_wndToolBar, AFX_IDW_DOCKBAR_TOP);
-	DockControlBar(&m_wndGameToolBar, AFX_IDW_DOCKBAR_TOP);
-	DockControlBar(&m_wndActivityToolBar, AFX_IDW_DOCKBAR_TOP);
+  DockToolBarsSideBySide ();
 
   if (m_wndInfoBar.m_hWnd)
     DockControlBar(&m_wndInfoBar, AFX_IDW_DOCKBAR_BOTTOM);

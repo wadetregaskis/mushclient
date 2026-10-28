@@ -7,6 +7,7 @@
 #include <wx/wx.h>
 #include <wx/toolbar.h>
 #include <wx/aui/framemanager.h>
+#include <wx/aui/dockart.h>     // wxAuiDockArt metrics: a pane's width
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
 #include <wx/config.h>
@@ -299,6 +300,54 @@ std::set<CWorldToolBars*>& Instances ()
     return s;
 }
 
+// Bumped when the meaning of the stored arrangement changes.  2: the default
+// became all three on one row, wrapped to the window (see wx_toolbar.h).
+const wxChar* const kLayoutKey     = wxT("/toolbars/layout");
+const int           kLayoutVersion = 2;
+
+// The arrangement nobody has rearranged: all three on one row, in declaration
+// order, which the wrap turns into as many side by side as the window takes.
+void DefaultPlacements (CWorldToolBars::Placement place[CWorldToolBars::eBarCount])
+{
+    for (int i = 0; i < CWorldToolBars::eBarCount; ++i) {
+        place[i].row   = 0;
+        place[i].order = i;
+    }
+}
+
+// Rows compacted from 0 and orders restarted within each row, ties broken by
+// bar index -- one spelling for each picture, so that comparing two
+// arrangements compares what they look like.
+void Canonicalise (CWorldToolBars::Placement place[CWorldToolBars::eBarCount])
+{
+    const int n = CWorldToolBars::eBarCount;
+    int idx[CWorldToolBars::eBarCount];
+    for (int i = 0; i < n; ++i) idx[i] = i;
+    std::sort(idx, idx + n, [place](int a, int b) {
+        if (place[a].row   != place[b].row)   return place[a].row   < place[b].row;
+        if (place[a].order != place[b].order) return place[a].order < place[b].order;
+        return a < b;
+    });
+    int outRow = -1, outOrder = 0, prevRow = INT_MIN;
+    CWorldToolBars::Placement out[CWorldToolBars::eBarCount];
+    for (int k = 0; k < n; ++k) {
+        const int i = idx[k];
+        if (place[i].row != prevRow) { prevRow = place[i].row; ++outRow; outOrder = 0; }
+        out[i].row   = outRow;
+        out[i].order = outOrder++;
+    }
+    for (int i = 0; i < n; ++i) place[i] = out[i];
+}
+
+bool SamePlacements (const CWorldToolBars::Placement a[CWorldToolBars::eBarCount],
+                     const CWorldToolBars::Placement b[CWorldToolBars::eBarCount])
+{
+    for (int i = 0; i < CWorldToolBars::eBarCount; ++i)
+        if (a[i].row != b[i].row || a[i].order != b[i].order)
+            return false;
+    return true;
+}
+
 void LoadPlacements ()
 {
     if (s_placeLoaded) return;
@@ -306,19 +355,29 @@ void LoadPlacements ()
 
     const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
     wxConfigBase& cfg = *cfgOwner;
+    CWorldToolBars::Placement def[CWorldToolBars::eBarCount];
+    DefaultPlacements(def);
+    bool oldDefault = true;     // exactly what layout 1 started with
     for (int i = 0; i < CWorldToolBars::eBarCount; ++i) {
-        // The canonical arrangement is one bar per row, in declaration order —
-        // which is also what Windows' OnViewResetToolbars produces.
-        cfg.Read(RowKey(i),   &s_place[i].row,   i);
-        cfg.Read(OrderKey(i), &s_place[i].order, 0);
+        cfg.Read(RowKey(i),   &s_place[i].row,   def[i].row);
+        cfg.Read(OrderKey(i), &s_place[i].order, def[i].order);
         // A config file can be hand-edited or written by a future version with
         // more bars; a row number outside the strip would put a bar somewhere
         // no drag could reach it from.
         if (s_place[i].row   < 0 || s_place[i].row   >= CWorldToolBars::eBarCount)
-            s_place[i].row = i;
+            s_place[i].row = def[i].row;
         if (s_place[i].order < 0 || s_place[i].order >= CWorldToolBars::eBarCount)
-            s_place[i].order = 0;
+            s_place[i].order = def[i].order;
+        if (s_place[i].row != i || s_place[i].order != 0)
+            oldDefault = false;
     }
+    // Layout 1's default was one bar per row, and View > Reset Toolbar Locations
+    // saved it, so a file holding exactly that is far more likely to be the old
+    // default than a choice; it becomes the new one.  Once only: a layout-2
+    // file holding it is somebody's choice and is kept.
+    if (cfg.ReadLong(kLayoutKey, 1) < kLayoutVersion && oldDefault)
+        DefaultPlacements(s_place);
+    Canonicalise(s_place);
 }
 
 void SavePlacements ()
@@ -329,6 +388,7 @@ void SavePlacements ()
         cfg.Write(RowKey(i),   s_place[i].row);
         cfg.Write(OrderKey(i), s_place[i].order);
     }
+    cfg.Write(kLayoutKey, kLayoutVersion);
     cfg.Flush();
 }
 
@@ -386,13 +446,16 @@ CWorldToolBars::CWorldToolBars (wxFrame* frame, wxBoxSizer* sizer)
                 .Floatable(false)
                 .Show(m_visible[i]));
     }
-    m_mgr->Update();
+    // Wrapped to whatever width there is yet: a world window has not laid its
+    // strip out at this point, so this is the frame's width, and the size event
+    // below re-wraps once the strip has a width of its own.
+    //
     // The frame has no sizer yet when a world window builds its bars (it calls
-    // SetSizer after us), so this Layout is a no-op there and the frame's own
-    // first layout does the job.  In a selftest, where the sizer is already
+    // SetSizer after us), so the Layout inside is a no-op there and the frame's
+    // own first layout does the job.  In a selftest, where the sizer is already
     // attached, it is what gives the strip its height before anything is asked
     // about it.
-    SyncStripHeight();
+    ApplyPlacements(s_place, true);
 
     for (int i = 0; i < eBarCount; ++i) {
         const BarSpec& spec = Spec(i);
@@ -416,6 +479,20 @@ CWorldToolBars::CWorldToolBars (wxFrame* frame, wxBoxSizer* sizer)
             if (!*alive) return;
             m_pollPending = false;
             PollLayout();
+        });
+    });
+    // A wider or narrower window re-wraps the bars.  On the FRAME, because
+    // wxAuiManager handles the strip's own size event without passing it on;
+    // and deferred, because the frame's handler -- which sizes the strip -- runs
+    // after this one.  Bound on the frame, so the alive token as well.
+    m_frame->Bind(wxEVT_SIZE, [this, alive = m_alive](wxSizeEvent& evt) {
+        evt.Skip();
+        if (!*alive || m_reflowPending) return;
+        m_reflowPending = true;
+        m_frame->CallAfter([this, alive] {
+            if (!*alive) return;
+            m_reflowPending = false;
+            Reflow();
         });
     });
 
@@ -571,9 +648,10 @@ void CWorldToolBars::SetBarVisible (Which which, bool show)
         wxAuiPaneInfo& pane = m_mgr->GetPane(m_bars[which]);
         if (pane.IsOk()) {
             pane.Show(show);
-            m_mgr->Update();      // drops the now-empty row, or puts it back
+            // Re-wrapped: a bar going away can let the next one up into its
+            // row, and one coming back can push others down.
+            ApplyPlacements(s_place, true);
         }
-        SyncStripHeight();
     }
     const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
     wxConfigBase& cfg = *cfgOwner;
@@ -592,12 +670,11 @@ void CWorldToolBars::ResetLocations ()
     for (int i = 0; i < eBarCount; ++i)
         SetBarVisible(static_cast<Which>(i), true);
 
-    Placement canonical[eBarCount];
-    for (int i = 0; i < eBarCount; ++i) {
-        canonical[i].row   = i;
-        canonical[i].order = 0;
-    }
-    SetArrangement(canonical);
+    // Side by side, as Windows' CMainFrame::DockToolBarsSideBySide docks them;
+    // see wx_toolbar.h.
+    Placement def[eBarCount];
+    DefaultPlacements(def);
+    SetArrangement(def);
 }
 
 // ── Arrangement ───────────────────────────────────────────────────────────
@@ -674,39 +751,153 @@ void CWorldToolBars::ReadPlacements (Placement out[eBarCount]) const
     }
 }
 
-void CWorldToolBars::ApplyPlacements (const Placement place[eBarCount])
+void CWorldToolBars::ApplyPlacements (const Placement place[eBarCount], bool force)
 {
     if (!m_mgr) return;
+
+    Placement wrapped[eBarCount];
+    bool      shown  [eBarCount];
+    WrapToWidth(place, wrapped, shown);
+
+    // The size event fires on every step of a live resize, and most steps
+    // change no wrap; an Update for each would be a repaint for nothing.
+    if (!force && m_laidOut) {
+        bool same = true;
+        for (int i = 0; i < eBarCount; ++i)
+            if (shown[i] != m_wrappedShown[i] ||
+                (shown[i] && (wrapped[i].row   != m_wrapped[i].row ||
+                              wrapped[i].order != m_wrapped[i].order)))
+                same = false;
+        if (same) return;
+    }
+
     for (int i = 0; i < eBarCount; ++i) {
+        m_wrapped[i]      = wrapped[i];
+        m_wrappedShown[i] = shown[i];
         if (!m_bars[i]) continue;
         wxAuiPaneInfo& p = m_mgr->GetPane(m_bars[i]);
         if (!p.IsOk()) continue;
-        p.Row(place[i].row).Position(place[i].order);
+        p.Row(wrapped[i].row).Position(wrapped[i].order);
     }
     m_mgr->Update();
+    // What wxAuiManager made of it, rather than the wrap itself, is what a later
+    // drag is measured against: then nothing about how it numbers its rows can
+    // look like the user's doing.
+    ReadShown(m_shown, m_shownShown);
+    m_laidOut = true;
     SyncStripHeight();
 }
 
-void CWorldToolBars::PublishPlacements ()
+void CWorldToolBars::ReadShown (Placement out[eBarCount], bool shown[eBarCount]) const
 {
-    if (s_publishing) return;
+    // ReadPlacements numbers the shown bars from row 0 among themselves, so
+    // their entries are comparable from one call to the next whatever the
+    // hidden ones are doing.
+    ReadPlacements(out);
+    for (int i = 0; i < eBarCount; ++i) {
+        shown[i] = false;
+        if (!m_bars[i] || !m_mgr) continue;
+        const wxAuiPaneInfo& p = m_mgr->GetPane(m_bars[i]);
+        shown[i] = p.IsOk() && p.IsShown();
+    }
+}
 
-    Placement now[eBarCount];
-    ReadPlacements(now);
+void CWorldToolBars::WrapToWidth (const Placement place[eBarCount],
+                                  Placement out[eBarCount],
+                                  bool shown[eBarCount]) const
+{
+    const int avail = AvailableWidth();
 
-    bool changed = false;
+    int idx[eBarCount];
+    for (int i = 0; i < eBarCount; ++i) {
+        idx[i]   = i;
+        shown[i] = m_bars[i] != nullptr && m_visible[i];
+    }
+    std::sort(idx, idx + eBarCount, [place](int a, int b) {
+        if (place[a].row   != place[b].row)   return place[a].row   < place[b].row;
+        if (place[a].order != place[b].order) return place[a].order < place[b].order;
+        return a < b;
+    });
+
+    // Each row asked for starts a row; within one, a bar that would run past
+    // the edge starts another -- unless it is first on its row, where a bar
+    // wider than the window is better clipped than moved down to be clipped
+    // anyway.
+    int row = -1, order = 0, x = 0, prevRow = INT_MIN;
+    for (int k = 0; k < eBarCount; ++k) {
+        const int i = idx[k];
+        if (!shown[i]) continue;
+        const int w = PaneWidth(i);
+        if (place[i].row != prevRow || (x > 0 && x + w > avail)) {
+            prevRow = place[i].row;
+            ++row;
+            order = 0;
+            x     = 0;
+        }
+        out[i].row   = row;
+        out[i].order = order++;
+        x += w;
+    }
+    // Hidden bars below the shown ones, each on a row of its own: they take no
+    // room, and showing one re-wraps anyway.
+    for (int k = 0; k < eBarCount; ++k) {
+        const int i = idx[k];
+        if (shown[i]) continue;
+        out[i].row   = ++row;
+        out[i].order = 0;
+    }
+}
+
+int CWorldToolBars::PaneWidth (int which) const
+{
+    // What wxAuiManager gives a toolbar pane along a top dock
+    // (GetPanePositionsAndSizes): its best width, with the gripper beside it
+    // and a border either side.
+    const wxAuiPaneInfo& p = m_mgr->GetPane(m_bars[which]);
+    int w = p.IsOk() ? p.best_size.x : -1;
+    if (w <= 0)
+        w = m_bars[which]->GetBestSize().x;
+    if (wxAuiDockArt* art = m_mgr->GetArtProvider())
+        w += art->GetMetric(wxAUI_DOCKART_GRIPPER_SIZE)
+           + 2 * art->GetMetric(wxAUI_DOCKART_PANE_BORDER_SIZE);
+    return w;
+}
+
+int CWorldToolBars::AvailableWidth () const
+{
+    // The frame's width, not the strip's.  The strip is an wxEXPAND row of the
+    // frame's sizer and so normally the same, but its minimum is the AUI
+    // layout's widest row, and a sizer may hold it at that in a narrower frame
+    // -- a width that depends on the wrap it is meant to decide, which can
+    // settle on a wrap that is clipped.  No width yet: one bar per row, which is
+    // never clipped, and the first size event re-wraps.
+    return std::max(m_frame->GetClientSize().x, 0);
+}
+
+void CWorldToolBars::Adopt (const Placement place[eBarCount])
+{
+    Placement want[eBarCount];
     for (int i = 0; i < eBarCount; ++i)
-        if (now[i].row != s_place[i].row || now[i].order != s_place[i].order)
-            changed = true;
+        want[i] = place[i];
+    Canonicalise(want);
+
+    const bool changed = !SamePlacements(want, s_place);
+    if (changed) {
+        for (int i = 0; i < eBarCount; ++i)
+            s_place[i] = want[i];
+        SavePlacements();
+    }
+
+    // Forced here even when nothing changed: a bar dropped onto a row with no
+    // room for it leaves the arrangement as it was, and this is what moves it
+    // back to where the wrap puts it.
+    ApplyPlacements(s_place, true);
+
     if (!changed) return;
-
-    for (int i = 0; i < eBarCount; ++i)
-        s_place[i] = now[i];
-    SavePlacements();
-
     // Windows has one set of bars on one main frame, so rearranging them is
     // global.  Push it to the other world windows, exactly as the View ▸
-    // Toolbars handler pushes a visibility toggle (wx_mfc_impl.cpp:1832).
+    // Toolbars handler pushes a visibility toggle (wx_mfc_impl.cpp:1832);
+    // each wraps it to its own width.
     s_publishing = true;
     for (CWorldToolBars* other : Instances())
         if (other != this)
@@ -738,8 +929,14 @@ int CWorldToolBars::StripHeight () const
 
 CWorldToolBars::Placement CWorldToolBars::GetPlacement (Which which) const
 {
+    return s_place[which];
+}
+
+CWorldToolBars::Placement CWorldToolBars::GetShownPlacement (Which which) const
+{
     Placement all[eBarCount];
-    ReadPlacements(all);
+    bool      shown[eBarCount];
+    ReadShown(all, shown);
     return all[which];
 }
 
@@ -752,15 +949,38 @@ void CWorldToolBars::SetArrangement (const Placement place[eBarCount])
         want[i].row   = std::max(0, std::min(place[i].row,   eBarCount - 1));
         want[i].order = std::max(0, std::min(place[i].order, eBarCount - 1));
     }
-    ApplyPlacements(want);
-    PublishPlacements();
+    Adopt(want);
+}
+
+void CWorldToolBars::Reflow ()
+{
+    ApplyPlacements(s_place);
 }
 
 void CWorldToolBars::PollLayout ()
 {
     if (s_publishing) return;
     SyncStripHeight();
-    PublishPlacements();
+    if (!m_laidOut) return;
+
+    // Anything other than what this window laid out is a drop.
+    Placement now[eBarCount];
+    bool      shown[eBarCount];
+    ReadShown(now, shown);
+    bool dropped = false;
+    for (int i = 0; i < eBarCount; ++i)
+        if (shown[i] != m_shownShown[i] ||
+            (shown[i] && (now[i].row   != m_shown[i].row ||
+                          now[i].order != m_shown[i].order)))
+            dropped = true;
+    if (!dropped) return;
+
+    // The picture dropped becomes the arrangement, rows the wrap made
+    // included: once the user has moved a bar, the rows they see are the rows
+    // they chose.
+    Placement place[eBarCount];
+    ReadPlacements(place);
+    Adopt(place);
 }
 
 void CWorldToolBars::ReloadActivityStyle ()

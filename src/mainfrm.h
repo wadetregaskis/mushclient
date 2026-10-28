@@ -131,6 +131,9 @@ public:
 	CMyToolBar    m_wndGameToolBar;
 	CMyToolBar    m_wndActivityToolBar;
 
+  // first run, and View > Reset Toolbar Locations
+  void DockToolBarsSideBySide ();
+
   CDialogBar  m_wndInfoBar;
 
   CHARFORMAT  m_defaultInfoBarFormat;

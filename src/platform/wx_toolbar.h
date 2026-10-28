@@ -40,6 +40,21 @@
 // therefore carries numbers a 600-px window cannot reproduce, and two windows
 // of different widths would push conflicting layouts at each other forever.  A
 // row and an order are the same on any width.
+//
+// ── Sharing rows as far as the width allows (2026-10-28) ──────────────
+// The stored arrangement is what the user ASKED for; what a window SHOWS is
+// that arrangement wrapped to the window's width.  A row whose bars do not all
+// fit carries on onto the next row, as CDockBar wraps a too-full dock row on
+// Windows, and the wrap is redone whenever the window is resized — so it is
+// never saved or pushed, and every window wraps the same arrangement for its
+// own width.  The default (and Reset Toolbar Locations) is all three on ONE
+// row, which therefore shows as many bars side by side as the window can take:
+// the bars are narrow, and one per row wasted two rows of most windows.  The
+// Windows build docks them the same way (CMainFrame::DockToolBarsSideBySide).
+//
+// A drag is told apart from a wrap by comparing what wxAuiManager shows with
+// what this window last laid out: only a difference is the user's doing, and
+// then the picture they dropped becomes the arrangement.
 
 #pragma once
 
@@ -61,6 +76,8 @@ public:
     // Where a bar sits in the strip: which row of it, and where along that row,
     // counted from 0 at the left.  That is the whole of the drag state — the
     // strip is one top dock, so there is no direction, size or float rectangle.
+    // Used both for the arrangement (the rows asked for) and for what a window
+    // shows (those rows wrapped to its width).
     struct Placement { int row = 0; int order = 0; };
 
     // Builds the bars inside a strip inserted at the top of `sizer`, restoring
@@ -76,7 +93,17 @@ public:
     void ResetLocations ();
 
     // ── Drag state ──────────────────────────────────────────────────
+    // The arrangement: the same in every window, and what is saved.
     Placement GetPlacement (Which which) const;
+    // Where this window shows the bar — the arrangement wrapped to its width.
+    // Meaningless for a hidden bar.
+    Placement GetShownPlacement (Which which) const;
+
+    // Re-wrap the arrangement to the strip's current width.  The frame's size
+    // event calls this (deferred, so the frame has laid the strip out first);
+    // public so that the selftest can resize a frame that is never shown and
+    // say when it is done, rather than depend on a hidden frame's size events.
+    void Reflow ();
 
     // Put the bars where this says — which is all a completed drag amounts to.
     // The GESTURE belongs to wxAuiManager and is not ours to test: there is no
@@ -113,9 +140,20 @@ private:
     // failed to build keep the shared record's value rather than being renumbered
     // out of existence.
     void       ReadPlacements  (Placement out[eBarCount]) const;
-    void       ApplyPlacements (const Placement place[eBarCount]);
-    // Save + push to the other world windows, but only if something moved.
-    void       PublishPlacements ();
+    // Just the shown bars of that, for telling a drag from this window's own
+    // layout; shown[i] says which entries mean anything.
+    void       ReadShown       (Placement out[eBarCount], bool shown[eBarCount]) const;
+    // The arrangement wrapped to the strip's width, for the shown bars.
+    void       WrapToWidth     (const Placement place[eBarCount],
+                                Placement out[eBarCount], bool shown[eBarCount]) const;
+    int        PaneWidth       (int which) const;
+    int        AvailableWidth  () const;
+    // Lay `place` out here, wrapped.  Skipped when the wrap comes out as it
+    // last did, unless `force` — after a drop, which may have left the bars in
+    // a picture the wrap would not produce (three crammed onto a full row).
+    void       ApplyPlacements (const Placement place[eBarCount], bool force = false);
+    // Make `place` the arrangement: save it and lay it out in every window.
+    void       Adopt           (const Placement place[eBarCount]);
     // The frame owns the strip's height (it is a sizer row), so re-lay the frame
     // out when the AUI layout changes what the strip needs.
     void       SyncStripHeight ();
@@ -139,6 +177,16 @@ private:
 
     int         m_stripHeight  = -1;    // last wanted height acted on; -1 = never
     bool        m_pollPending  = false; // a deferred PollLayout is already queued
+    bool        m_reflowPending = false; // a deferred Reflow is already queued
+
+    // What this window last laid out: the wrap it computed (to skip a relayout
+    // that would change nothing) and what wxAuiManager then reported (to tell
+    // a drag from that layout).  m_laidOut is false until the first layout.
+    bool        m_laidOut = false;
+    Placement   m_wrapped     [eBarCount];
+    bool        m_wrappedShown[eBarCount];
+    Placement   m_shown       [eBarCount];
+    bool        m_shownShown  [eBarCount];
     // Makes that deferred call a no-op if this object is gone before it runs.
     std::shared_ptr<bool> m_alive;
 

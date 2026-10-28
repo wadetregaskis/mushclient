@@ -1100,3 +1100,36 @@ user had changed nothing.
 and again from a later callback, with the world's own `SetVariable` as the
 control. It fails both with the old unconditional line and with the flag never
 set. Windows: type-checked only, so it needs a Windows run.
+
+## 26 — The three toolbars start side by side, and wrap to the window
+
+**Where:** `mainfrm.cpp`, `CMainFrame::DockToolBarsSideBySide` (first run, and
+View ▸ Reset Toolbar Locations); `platform/wx_toolbar.cpp`, the arrangement and
+its wrap (`CWorldToolBars::WrapToWidth`).
+
+**Upstream:** the first run docked the Standard and Game bars side by side and
+floated the Activity bar over the middle of the window at (500, 70), and Reset
+Toolbar Locations docked all three with no position, which gives each a row of
+its own. The port's default and reset were one per row too.
+
+**Now:** both build the same picture: all three on one row along the top, as
+many side by side as the window is wide enough for. On Windows that is MFC's
+dock bar doing it. Narrow the window and it moves a bar that does not fit onto a
+row of its own. It does not move it back when the window widens again, and in a
+very narrow window it clips the second bar rather than move it. The port has no
+dock bar, so `CWorldToolBars` wraps the row itself, both ways, whenever the
+window is resized. The
+wrap is not saved: what is saved is the arrangement asked for (rows, and the
+order within them), which a drag still changes, and every window wraps that to
+its own width. An arrangement the port saved before this change that is exactly
+the old one-per-row default is read as the new default, once.
+
+**Why:** the bars are narrow. One per row spent two rows of almost every window
+on toolbars that a typical window can show on one.
+
+**Verification:** `menubar_selftest.cpp` ("the three toolbars start on one
+row…" onwards) drives the wrap at a wide and a narrow width, reordering,
+merging, hiding and showing, and the push to a second world window. This has not
+been run on macOS or Linux. Windows: checked by hand. First run puts all three
+on one row; narrowing moves the Activity bar down; Reset Toolbar Locations puts
+it back on the one row.

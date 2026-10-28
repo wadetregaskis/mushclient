@@ -259,6 +259,9 @@ public:
     void OnUpdateBtnWorldsWorld8(CCmdUI*);
     void OnUpdateBtnWorldsWorld9(CCmdUI*);
     void OnViewResetToolbars();
+    // The bars here are each world window's CWorldToolBars, which start side
+    // by side and re-wrap themselves (wx_toolbar.h); nothing to dock.
+    void DockToolBarsSideBySide() {}
     void OnViewAlwaysontop();
     void OnUpdateViewAlwaysontop(CCmdUI*);
     void OnViewFullscreenmode();

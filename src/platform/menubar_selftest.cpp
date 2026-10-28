@@ -2156,25 +2156,61 @@ int RunMenuBarSelfTest()
         tbHost->SetSizer(tbSizer);
         CWorldToolBars* bars = new CWorldToolBars(tbHost, tbSizer);
 
-        check(bars->GetPlacement(kStd).row == 0 &&
-              bars->GetPlacement(kWld).row == 1 &&
-              bars->GetPlacement(kAct).row == 2,
-              "the three toolbars start one per row, in canonical order");
+        // Width seams.  The frames here are never shown, so their size events
+        // are not something to rely on: resize, lay out, and say when -- which
+        // is all the frame's own size handler does, deferred.
+        auto setWidth = [](wxFrame* f, CWorldToolBars* b, int w) {
+            f->SetClientSize(wxSize(w, 600));
+            f->Layout();
+            b->Reflow();
+        };
+        auto shownRow = [](CWorldToolBars* b, CWorldToolBars::Which w) {
+            return b->GetShownPlacement(w).row;
+        };
+        // Wider than all three bars together, and narrower than any one.
+        const int kWide = 4000, kNarrow = 40;
 
+        check(bars->GetPlacement(kStd).row == 0 && bars->GetPlacement(kStd).order == 0 &&
+              bars->GetPlacement(kWld).row == 0 && bars->GetPlacement(kWld).order == 1 &&
+              bars->GetPlacement(kAct).row == 0 && bars->GetPlacement(kAct).order == 2,
+              "the three toolbars start on one row, in canonical order (2026-10-28)");
+
+        // That row as shown: all of it where the window is wide enough...
+        setWidth(tbHost, bars, kWide);
+        check(shownRow(bars, kStd) == 0 && shownRow(bars, kWld) == 0 &&
+              shownRow(bars, kAct) == 0,
+              "...and a window wide enough shows them side by side");
+        const int oneRow = bars->StripHeight();
+
+        // ...and wrapped where it is not.  This is the half that fails if the
+        // bars are simply laid out as asked: three on one row of a 40-px window
+        // are two and a half bars clipped off.
+        setWidth(tbHost, bars, kNarrow);
+        check(shownRow(bars, kStd) == 0 && shownRow(bars, kWld) == 1 &&
+              shownRow(bars, kAct) == 2,
+              "...and a window too narrow for any two wraps them one per row");
         const int threeRows = bars->StripHeight();
         // Tall enough for three rows of the 16x15 toolbar art.  "> 0" would
         // have been satisfied by the strip's default 20 px -- i.e. by a frame
         // that was never laid out at all, which is one of the ways this can
         // break.
-        checkf(threeRows >= 3 * 15,
-               std::string("the toolbar strip is three rows tall (")
-                   + std::to_string(threeRows) + " px)");
+        checkf(threeRows >= 3 * 15 && threeRows > oneRow,
+               std::string("...and the strip grows to three rows (")
+                   + std::to_string(oneRow) + " -> " + std::to_string(threeRows) + " px)");
+        // The wrap belongs to this window's width.  Saved, a narrow window
+        // would push one bar per row on every wider one.
+        check(bars->GetPlacement(kWld).row == 0 && bars->GetPlacement(kAct).row == 0,
+              "...without the wrap becoming the arrangement");
+        setWidth(tbHost, bars, kWide);
+        check(shownRow(bars, kAct) == 0 && bars->StripHeight() == oneRow,
+              "...so widening the window puts them back on one row");
 
         // A pure REORDER: still one bar per row, different order.  The height
         // must NOT move.  This is the pair that tells a reorder from a merge --
         // an implementation that quietly ignored row numbers would satisfy the
         // height half and fail the placement half, and one that rebuilt the
         // strip from scratch every time would do the reverse.
+        setWidth(tbHost, bars, kNarrow);
         {
             Place p[CWorldToolBars::eBarCount];
             p[kStd] = { 1, 0 };
@@ -2184,10 +2220,18 @@ int RunMenuBarSelfTest()
         }
         check(bars->GetPlacement(kAct).row == 0 &&
               bars->GetPlacement(kStd).row == 1 &&
-              bars->GetPlacement(kWld).row == 2,
+              bars->GetPlacement(kWld).row == 2 &&
+              shownRow(bars, kAct) == 0 && shownRow(bars, kStd) == 1 &&
+              shownRow(bars, kWld) == 2,
               "the rows can be reordered");
         check(bars->StripHeight() == threeRows,
               "...and reordering three rows leaves the strip the same height");
+        // Rows asked for are kept however wide the window: only a row too FULL
+        // is changed by the width.
+        setWidth(tbHost, bars, kWide);
+        check(shownRow(bars, kAct) == 0 && shownRow(bars, kStd) == 1 &&
+              shownRow(bars, kWld) == 2 && bars->StripHeight() == threeRows,
+              "...and a wide window keeps rows that were asked for");
 
         // The tip's own case: the World bar dragged up alongside the Standard
         // one.  Two rows need less height than three, so if the strip did not
@@ -2202,10 +2246,11 @@ int RunMenuBarSelfTest()
         check(bars->GetPlacement(kStd).row   == 0 &&
               bars->GetPlacement(kWld).row   == 0 &&
               bars->GetPlacement(kStd).order == 0 &&
-              bars->GetPlacement(kWld).order == 1,
+              bars->GetPlacement(kWld).order == 1 &&
+              shownRow(bars, kWld) == 0 && shownRow(bars, kAct) == 1,
               "two bars can share one row, in a known left-to-right order");
         const int twoRows = bars->StripHeight();
-        checkf(twoRows < threeRows,
+        checkf(twoRows < threeRows && twoRows > oneRow,
                std::string("...and the strip gives back the row they saved (")
                    + std::to_string(threeRows) + " -> " + std::to_string(twoRows) + ")");
 
@@ -2215,12 +2260,14 @@ int RunMenuBarSelfTest()
         // everybody's saved arrangement, and nothing else would notice.
         {
             const std::unique_ptr<wxConfigBase> cfg = OpenAppConfig();
-            int row = -1, order = -1;
-            cfg->Read(wxT("/toolbars/row1"),   &row,   -1);
-            cfg->Read(wxT("/toolbars/order1"), &order, -1);
-            checkf(row == 0 && order == 1,
+            int row = -1, order = -1, layout = -1;
+            cfg->Read(wxT("/toolbars/row1"),   &row,    -1);
+            cfg->Read(wxT("/toolbars/order1"), &order,  -1);
+            cfg->Read(wxT("/toolbars/layout"), &layout, -1);
+            checkf(row == 0 && order == 1 && layout == 2,
                    std::string("the arrangement is saved to preferences (row=")
-                       + std::to_string(row) + " order=" + std::to_string(order) + ")");
+                       + std::to_string(row) + " order=" + std::to_string(order)
+                       + " layout=" + std::to_string(layout) + ")");
         }
 
         // A second strip, standing in for a second world window.  Windows has
@@ -2232,9 +2279,11 @@ int RunMenuBarSelfTest()
         wxBoxSizer* tbSizer2 = new wxBoxSizer(wxVERTICAL);
         tbHost2->SetSizer(tbSizer2);
         CWorldToolBars* bars2 = new CWorldToolBars(tbHost2, tbSizer2);
+        setWidth(tbHost2, bars2, kWide);
 
-        check(bars2->GetPlacement(kWld).row   == 0 &&
-              bars2->GetPlacement(kWld).order == 1,
+        check(shownRow(bars2, kWld) == 0 &&
+              bars2->GetShownPlacement(kWld).order == 1 &&
+              shownRow(bars2, kAct) == 1,
               "a world window opened later starts with the arrangement in use");
 
         // Second half, and the one that fails if nothing is pushed: rearrange
@@ -2246,24 +2295,31 @@ int RunMenuBarSelfTest()
             p[kAct] = { 1, 1 };
             bars2->SetArrangement(p);
         }
-        check(bars->GetPlacement(kAct).row   == 1 &&
-              bars->GetPlacement(kAct).order == 1 &&
-              bars->GetPlacement(kWld).row   == 1,
+        check(shownRow(bars, kAct) == 1 &&
+              bars->GetShownPlacement(kAct).order == 1 &&
+              shownRow(bars, kWld) == 1,
               "rearranging one world window rearranges the others too");
+
+        // ...each wrapped to its own width: the narrow one shows one per row,
+        // and that does not reach the wide one.
+        setWidth(tbHost2, bars2, kNarrow);
+        check(shownRow(bars2, kAct) == 2 && shownRow(bars, kAct) == 1,
+              "...and each window wraps the arrangement to its own width");
+        setWidth(tbHost2, bars2, kWide);
 
         // View ▸ Reset Toolbar Locations, in every window at once.
         bars->ResetLocations();
-        check(bars->GetPlacement(kStd).row == 0 &&
-              bars->GetPlacement(kWld).row == 1 &&
-              bars->GetPlacement(kAct).row == 2 &&
-              bars->StripHeight() == threeRows,
-              "Reset Toolbar Locations puts them back one per row");
-        check(bars2->GetPlacement(kWld).row == 1 &&
-              bars2->GetPlacement(kAct).row == 2,
+        check(bars->GetPlacement(kWld).row == 0 &&
+              bars->GetPlacement(kAct).row == 0 &&
+              shownRow(bars, kAct) == 0 &&
+              bars->StripHeight() == oneRow,
+              "Reset Toolbar Locations puts them back side by side");
+        check(shownRow(bars2, kWld) == 0 && shownRow(bars2, kAct) == 0,
               "...and that reaches the other world windows as well");
 
         // Hiding a bar takes its row with it -- View > Toolbars and the drag
         // arrangement share one strip, and this is where they could disagree.
+        setWidth(tbHost, bars, kNarrow);
         bars->SetBarVisible(kAct, false);
         checkf(bars->StripHeight() < threeRows,
                std::string("hiding a bar gives up its row (")
@@ -2273,12 +2329,17 @@ int RunMenuBarSelfTest()
         check(bars->StripHeight() == threeRows,
               "...and showing it again takes the row back");
 
+        // Hiding the FIRST bar lets the others move up a row each: the wrap is
+        // redone, not the hidden bar's row merely left empty.
+        bars->SetBarVisible(kStd, false);
+        check(shownRow(bars, kWld) == 0 && shownRow(bars, kAct) == 1,
+              "hiding a bar lets the ones after it move up");
+
         // Regression: hiding a bar that is NOT last renumbers the visible bars
         // into lower rows, and the hidden bar used to keep its old ABSOLUTE row
         // -- so Standard (row 0) and World (renumbered 1 -> 0) both read
         // (row 0, order 0), and re-showing Standard docked it on top of World.
         // Every bar must have a DISTINCT (row, order) even while one is hidden.
-        bars->SetBarVisible(kStd, false);
         {
             const Place a = bars->GetPlacement(kStd);
             const Place b = bars->GetPlacement(kWld);
@@ -2290,6 +2351,8 @@ int RunMenuBarSelfTest()
                   "a hidden bar does not collide with a renumbered visible bar");
         }
         bars->SetBarVisible(kStd, true);   // restore before teardown
+        check(shownRow(bars, kStd) == 0 && shownRow(bars, kWld) == 1,
+              "...and showing it again puts it back first");
 
         delete bars2;             // both before their hosts: see the block above
         delete bars;

@@ -916,52 +916,23 @@ BOOL CMUSHclientApp::InitInstance()
   if (firsttime)
     {
 
-    // fix up tool bars
-    Frame.RecalcLayout(TRUE);
-	  CRect rectBar;
-    CMyToolBar * pToolBar;
-    
-    // main toolbar
-    pToolBar = &Frame.m_wndToolBar;
-    if (pToolBar)   // assuming we can find it
-      {
-	    pToolBar->GetWindowRect(&rectBar);
-      CRect rect (0, 0, rectBar.right - rectBar.left, rectBar.bottom - rectBar.top);
-      Frame.ClientToScreen (rect);
-      Frame.DockControlBar (pToolBar, AFX_IDW_DOCKBAR_TOP, rect);
-
-      // put game toolbar next to it
-      Frame.ScreenToClient (rect);
-      OffsetRect (rect, 265, 0);
-
-      pToolBar = &Frame.m_wndGameToolBar;
-
-      if (pToolBar)   // assuming we can find it
-        {
-	      pToolBar->GetWindowRect(&rectBar);
-        Frame.ClientToScreen (rect);
-        Frame.DockControlBar (pToolBar, AFX_IDW_DOCKBAR_TOP, rect);
-        }  // toolbar found
-
-      // and the activity bar next to that -- docked, as View > Reset Toolbar
-      // Locations leaves it, not floating over the middle of the window
-      pToolBar = &Frame.m_wndActivityToolBar;
-      if (pToolBar)   // assuming we can find it
-        {
-        Frame.RecalcLayout (TRUE);
-        Frame.m_wndGameToolBar.GetWindowRect (&rectBar);
-        rectBar.OffsetRect (rectBar.Width (), 0);
-        Frame.DockControlBar (pToolBar, AFX_IDW_DOCKBAR_TOP, rectBar);
-        } // toolbar found
-      } // toolbar found
+    // fix up tool bars: side by side along the top, the activity bar too --
+    // not floating over the middle of the window
+    Frame.DockToolBarsSideBySide ();
 
     CWelcomeDlg dlg;
 
     dlg.m_strMessage.Format ("%s",
       (LPCTSTR) Translate ("I notice that this is the first time you have used"
                            " MUSHclient on this PC."));
-
     dlg.DoModal ();
+
+#ifdef _WIN32
+    // Its own box: the welcome dialog's message is one line tall.
+    if (!s_strImportedFrom5.IsEmpty ())
+      TMessageBox (s_strImportedFrom5 + "\r\n\r\nMUSHclient 6 keeps its settings, "
+                   "worlds and logs in " + UserData_Directory (), MB_ICONINFORMATION);
+#endif
 
     db_write_int ("control", "First time", 0);	
 

@@ -694,52 +694,33 @@ CString strCurrent;
 }
 
 
-bool CTextView::SetText(const char * sText) 
+bool CTextView::SetText(const char * sText)
   {
   try
     {
     int nLen = strlen (sText);
 
-	  LPVOID hText = LocalAlloc(LMEM_MOVEABLE, (nLen+1)*sizeof(TCHAR));
-	  if (hText == NULL)
-		  AfxThrowMemoryException();
+    // SetWindowText, not a LocalAlloc'd buffer handed over with EM_SETHANDLE
+    // (once the NT path): the version 6 edit control, which the manifest
+    // brings, keeps its text as Unicode and reads such a buffer as UTF-16, so
+    // every recall window and notepad made by CreateTextWindow showed CJK-like
+    // garbage.  SetWindowText converts for an ANSI window on every version.
+    // Unlike the handle, it is held to the control's text limit (CEditView's
+    // is about 1 MB), which a big recall can exceed.
+    if ((UINT) nLen > GetEditCtrl().GetLimitText ())
+      GetEditCtrl().SetLimitText (nLen);
+    BOOL bResult = ::SetWindowText(m_hWnd, sText);
 
-	  LPTSTR lpszText = (LPTSTR)LocalLock(hText);
-	  ASSERT(lpszText != NULL);
+    // make sure that SetWindowText was successful
+    if (!bResult || ::GetWindowTextLength(m_hWnd) < nLen)
+      AfxThrowMemoryException();
 
-    strcpy (lpszText, sText);
+    // remove old shadow buffer
+    delete[] m_pShadowBuffer;
+    m_pShadowBuffer = NULL;
+    m_nShadowSize = 0;
 
-#ifndef _UNICODE
-	  if (bWin95 || bWin98)
-	  {
-		  // set the text with SetWindowText, then free
-		  BOOL bResult = ::SetWindowText(m_hWnd, lpszText);
-		  LocalUnlock(hText);
-		  LocalFree(hText);
-
-		  // make sure that SetWindowText was successful
-		  if (!bResult || ::GetWindowTextLength(m_hWnd) < nLen)
-			  AfxThrowMemoryException();
-
-		  // remove old shadow buffer
-		  delete[] m_pShadowBuffer;
-		  m_pShadowBuffer = NULL;
-		  m_nShadowSize = 0;
-
-		  ASSERT_VALID(this);
-	  }    // end of Win95
-    else
-#endif
-
-      {   // not Win95
-	    LocalUnlock(hText);
-	    HLOCAL hOldText = GetEditCtrl().GetHandle();
-	    ASSERT(hOldText != NULL);
-	    LocalFree(hOldText);
-	    GetEditCtrl().SetHandle((HLOCAL)(DWORD_PTR)hText);
-	    Invalidate();
-	    ASSERT_VALID(this);
-      }   // end of not Win95
+    ASSERT_VALID(this);
 
     } // end of try
 

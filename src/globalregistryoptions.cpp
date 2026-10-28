@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "user_data.h"     // UserData_DefaultPreference
 
 #include "option_table_offsetof.h"
 
@@ -175,7 +176,15 @@ static CString PosixAlphaGlobalDefault (const char * name, const CString & rawDe
 int CMUSHclientApp::PopulateDatabase (void)
   {
 
+#ifdef _WIN32
+  // Not on Windows: that key is MUSHclient 5's, and SetRegistryKey would also
+  // have sent the rest of this session's profile -- recent files, toolbar
+  // positions -- there instead of to MUSHclient.ini.  6.00 starts from its own
+  // defaults, and UserData_ImportVersion5 then reads what 5.x had, the key
+  // included, translating as it goes.
+#else
   SetRegistryKey ("Gammon Software Solutions");
+#endif
 
   int i;
   int db_rc = SQLITE_OK;
@@ -187,9 +196,13 @@ int CMUSHclientApp::PopulateDatabase (void)
     iDefault = PosixNumericGlobalDefault (GlobalOptionsTable [i].pName, iDefault);
 #endif
 
+#ifdef _WIN32
+    const int Value = iDefault;
+#else
     const int Value = GetProfileInt ("Global prefs",
                                 GlobalOptionsTable [i].pName,
                                 iDefault);
+#endif
 
     db_rc = db_execute ((LPCTSTR) CFormat ("INSERT INTO prefs (name, value) VALUES ('%s', %i)",
                         GlobalOptionsTable [i].pName, Value), true);
@@ -209,14 +222,18 @@ int CMUSHclientApp::PopulateDatabase (void)
     
 
     CString strDefault = AlphaGlobalOptionsTable [i].sDefault;
-#ifndef _WIN32
+#ifdef _WIN32
+    // The user's folders in the data folder, the program's files in its own.
+    strDefault = UserData_DefaultPreference (AlphaGlobalOptionsTable [i].pName, strDefault);
+    CString strValue = strDefault;
+#else
     // Root writable user-data directories under the per-user data dir (macOS).
     strDefault = PosixAlphaGlobalDefault (AlphaGlobalOptionsTable [i].pName, strDefault);
-#endif
 
     CString strValue = GetProfileString ("Global prefs",
-                                        AlphaGlobalOptionsTable [i].pName, 
-                                        strDefault);     
+                                        AlphaGlobalOptionsTable [i].pName,
+                                        strDefault);
+#endif
 
     strValue.Replace ("'", "''");  // fix up quotes
 
@@ -280,6 +297,10 @@ void CMUSHclientApp::LoadGlobalsFromDatabase (void)
     // always agree on where user data lives.
     else
       strDefault = PosixAlphaGlobalDefault (AlphaGlobalOptionsTable [i].pName, strDefault);
+#else
+    // likewise, with PopulateDatabase's Windows defaults
+    else
+      strDefault = UserData_DefaultPreference (AlphaGlobalOptionsTable [i].pName, strDefault);
 #endif
 
     db_simple_query ((LPCTSTR) CFormat (

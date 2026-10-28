@@ -21,6 +21,7 @@
 
 #include "winplace.h"
 #include "StatLink.h"
+#include "user_data.h"
 
 #include "dialogs/welcome.h"
 #include "dialogs/welcome1.h"
@@ -69,6 +70,11 @@ static TCHAR BASED_CODE szCtrlBars[] = _T("CtrlBars");
 
 char working_dir [_MAX_PATH];
 char file_browsing_dir [_MAX_PATH];
+
+#ifdef _WIN32
+// what the first run copied from a MUSHclient 5, for the welcome dialog
+static CString s_strImportedFrom5;
+#endif
 
 bool bWinNT;
 bool bWin95;
@@ -272,7 +278,13 @@ BOOL CMUSHclientApp::InitInstance()
 #endif
 
   // stupid cursor disappears under Parallels
-  g_hCursorIbeam = CopyCursor(AfxGetApp()->LoadCursor (IDC_MY_IBEAM));  
+  g_hCursorIbeam = CopyCursor(AfxGetApp()->LoadCursor (IDC_MY_IBEAM));
+
+#ifdef _WIN32
+  // %APPDATA%\MUSHclient\, or beside the exe for a portable copy -- made the
+  // current directory, so it is the working directory captured next
+  UserData_SetUp (ExtractDirectory (m_strMUSHclientFileName));
+#endif
 
 // find the working directory at startup time
 
@@ -326,23 +338,12 @@ BOOL CMUSHclientApp::InitInstance()
   CFileStatus	status;
 
 #ifdef _WIN32
-  // initially look in MUSHclient working directory for database
-  m_PreferencesDatabaseName = working_dir;
+  // In the data folder, and only there.  Not the application directory as
+  // well: that is where a MUSHclient 5 kept its database, and 6.00 installed
+  // over one would otherwise open the old one -- read-only, under Program Files.
+  (void) status;
+  m_PreferencesDatabaseName = UserData_Directory ();
   m_PreferencesDatabaseName += PREFERENCES_DATABASE_FILE;
-
-  // if not there, try application directory
-  if (!CFile::GetStatus(m_PreferencesDatabaseName.c_str (), status))
-    {
-    CString strTemp;
-    strTemp = ExtractDirectory (App.m_strMUSHclientFileName);
-    strTemp += PREFERENCES_DATABASE_FILE;
-
-    // if actually in the application directory, switch to using that
-    if (CFile::GetStatus(strTemp, status))
-      m_PreferencesDatabaseName = strTemp;
-
-    // if not, leave in the working directory
-    }
 #else
   // On macOS/POSIX the preferences database lives in the per-user settings
   // directory (~/Library/Preferences/MUSHclient/ etc.); sqlite3_open() creates
@@ -427,11 +428,16 @@ BOOL CMUSHclientApp::InitInstance()
       }
 
     // copy from registry to database for legacy support
+    // (on Windows: this version's defaults; then a MUSHclient 5's settings)
     if (PopulateDatabase () != SQLITE_OK)
       {
       db_execute ("ROLLBACK", true);
       return FALSE;        // SQL error
       }
+
+#ifdef _WIN32
+    s_strImportedFrom5 = UserData_ImportVersion5 (db, m_pszProfileName);
+#endif
 
     db_execute ("COMMIT", true);
 
@@ -2253,7 +2259,7 @@ bool CMUSHclientApp::HelpAvailable (bool showWarning)
     if (showWarning)
       {
       // the MUSHclient_Help plugin reads help.db, which only some packages have
-      if (GetFileAttributes (CString (working_dir) + "help.db") != INVALID_FILE_ATTRIBUTES)
+      if (GetFileAttributes (ExtractDirectory (m_strMUSHclientFileName) + "help.db") != INVALID_FILE_ATTRIBUTES)
         TMessageBox("Supplied help file is not compatible with Windows 10 and above.\r\n\r\n"
                     "Suggest you install the plugin \"MUSHclient_Help\" for browsing the help file, "
                     "and then type \"mchelp <subject>\"."

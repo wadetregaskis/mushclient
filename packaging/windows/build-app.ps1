@@ -254,6 +254,15 @@ if (-not (Test-Path (Join-Path $tree 'MUSHclient.exe'))) { throw "the extracted 
 foreach ($m in Select-String -Path (Join-Path $Repo 'install\mushclient.nsi') -Pattern '^\s*CreateDirectory\s+"\$INSTDIR\\([^"]+)"') {
   New-Dir (Join-Path $tree $m.Matches[0].Groups[1].Value) | Out-Null
 }
+# What makes the zip a portable copy: with this beside the exe, settings,
+# worlds and logs stay in this folder, rather than in %APPDATA%\MUSHclient\
+# as an installed copy's do (src/user_data.h).  Only here, never in the
+# installer, whose copy lives under Program Files and cannot write there.
+Set-Content -Encoding ascii -Path (Join-Path $tree 'portable.txt') -Value @(
+  'This copy of MUSHclient is portable: it keeps its settings, worlds, plugins'
+  'and logs in this folder, beside MUSHclient.exe.  Delete this file to have it'
+  'keep them in %APPDATA%\MUSHclient\ instead, as an installed copy does.'
+)
 
 # ── 5. self-containment ───────────────────────────────────────────────────────
 Note 'checking the package is self-contained'

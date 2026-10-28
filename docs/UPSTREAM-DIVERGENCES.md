@@ -1133,3 +1133,70 @@ merging, hiding and showing, and the push to a second world window. This has not
 been run on macOS or Linux. Windows: checked by hand. First run puts all three
 on one row; narrowing moves the Activity bar down; Reset Toolbar Locations puts
 it back on the one row.
+
+## 27 — Settings, worlds and logs live in a folder of the user's; 5.x is imported, not shared
+
+**Where:** `user_data.h` / `user_data.cpp` (Windows), called from
+`CMUSHclientApp::InitInstance`; `PopulateDatabase` and `LoadGlobalsFromDatabase`
+(`globalregistryoptions.cpp`); `install/mushclient.nsi`;
+`packaging/windows/build-app.ps1` (the zip's `portable.txt`).
+
+**Upstream:** everything MUSHclient writes goes in the folder it runs from:
+the preferences database, `MUSHclient.ini`, worlds, plugin state, logs, the
+spell database. The installer also wrote the world, plugin and log folders'
+names into `HKCU\Software\Gammon Software Solutions\MUSHclient\Global prefs`,
+and a new preferences database copies that key. Under Program Files this only
+ever worked because Windows virtualised the 32-bit, manifest-less 5.x, sending
+its writes to `%LOCALAPPDATA%\VirtualStore`. A 64-bit program gets no such
+redirection, and neither does any program with a manifest. So an installed 6.00
+could not write its preferences database, and the folder names it copied from 5.x
+pointed back into Program Files.
+
+**Now:** an installed copy keeps what it writes in `%APPDATA%\MUSHclient\` and
+runs with that as its current directory. That matches the port, which has always
+used `~/Library/Application Support/MUSHclient/` on macOS and `~/.local/share/` on
+Linux. The bundled plugins and worlds (and the Discworld edition's
+`quow_plugins\`) are copied there the first time each version runs, never over a
+file that is already there. A portable copy (the zip, marked by `portable.txt`)
+keeps everything beside the exe, as before. 6.00 neither reads nor writes 5.x's
+registry key or folder as it runs. 6.00's installer uses keys of its own
+(`HKCU\Software\MUSHclient`, the "MUSHclient 6" uninstall entry and Start menu
+folder), so it no longer takes over a 5.x installed alongside it, and
+uninstalling 6.00 no longer deletes 5.x's settings.
+
+The first time 6.00 runs, when it creates its preferences database, it looks for
+a 5.x. It checks the folder 5.x's installer recorded, then `Program Files
+(x86)\MUSHclient` and `Program Files\MUSHclient`, each with its VirtualStore
+shadow (the shadow's copy wins). From that installation it copies:
+
+- worlds, scripts, sounds and `quow_plugins\`;
+- the global preferences, from 5.x's database, or from the registry if 5.x was
+  too old to have one;
+- window positions;
+- the recent-files list;
+- words added to its spell checker.
+
+Paths that pointed into the old folder are translated as they are copied. The
+user's own files go to the new data folder and the program's files to its own
+folder, in the preferences and inside world files. Logs are left where they are,
+and the welcome dialog says where. 5.x's folder is only read: its databases are
+opened from temporary copies.
+
+**Why:** MUSHclient 6 does not promise that its files and settings can be shared
+with 5.x. Sharing them would also mean writing into Program Files, which it
+cannot do.
+
+**Verification:** `tests/win/test_user_data.cpp` covers path translation, the
+copy rules, and a full import from a fake 5.x and its shadow. The import test
+includes checking that the old folder gains no files. Checked by hand on a
+machine with 5.06 installed and its VirtualStore shadow present, running the
+payload of an installer with no `portable.txt`:
+
+- the preferences were imported from the shadow, with every path preference
+  translated;
+- the spell database was built in the data folder;
+- a world saved, and a session logged, into the new folders;
+- 5.06's files, its shadow and its registry key were byte-for-byte unchanged,
+  and nothing was written beside the exe.
+
+The installer itself has not been run: it needs elevation.

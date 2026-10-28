@@ -284,6 +284,7 @@ W '    <ClCompile Include="tests\win\test_notepad_win.cpp" />'
 W '    <ClCompile Include="tests\win\test_menu_rules_win.cpp" />'
 W '    <ClCompile Include="tests\win\test_win_transport.cpp" />'
 W '    <ClCompile Include="tests\win\test_win_worldview.cpp" />'
+W '    <ClCompile Include="tests\win\test_user_data.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'

@@ -768,6 +768,7 @@
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\user_data.cpp" />
     <ClCompile Include="src\winplace.cpp">
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -1911,6 +1912,7 @@
   <ItemGroup>
     <ClInclude Include="src\line_position_index.h" />
     <ClInclude Include="src\option_table_offsetof.h" />
+    <ClInclude Include="src\user_data.h" />
     <ClInclude Include="src\scripting\db_int64.h" />
     <ClInclude Include="src\dialogs\global_prefs\GlobalPrefsSheet.h" />
     <ClInclude Include="luacom\LuaAux.h" />

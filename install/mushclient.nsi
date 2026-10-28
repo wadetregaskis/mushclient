@@ -120,9 +120,17 @@ OutFile ${OUTFILE}
 ; The default installation directory
 InstallDir ${PROGDIR}\MUSHclient
 
+; This version's own keys and Start menu folder: MUSHclient 5 used
+; "Gammon Software Solutions\MUSHclient", the "MUSHclient" uninstall entry and a
+; "MUSHclient" Start menu folder, and 6.00 sharing them would take over -- and on
+; uninstalling, delete -- a 5.x installed alongside it.
+!define REGKEY    "Software\MUSHclient"
+!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient 6"
+!define SMDIR     "$SMPROGRAMS\MUSHclient 6"
+
 ; Registry key to check for directory (so if you install again, it will
 ; overwrite the old one automatically)
-InstallDirRegKey HKCU "SOFTWARE\Gammon Software Solutions\MUSHclient\General Options" "InstallDir"
+InstallDirRegKey HKCU "${REGKEY}" "InstallDir"
 
 ; The text to prompt the user to enter a directory
 ComponentText "This will install MUSHclient on your computer. Select which optional components that you want installed."
@@ -241,51 +249,28 @@ Section "-MUSHclient program (required)"
   File /r "${DEPS}\bin\tcl8.6"
 !endif
 
-  ; Write the installation path into the registry
-  WriteRegStr HKCU "Software\Gammon Software Solutions\MUSHclient\General Options" "InstallDir" $INSTDIR
+  ; Write the installation path into the registry -- 6.00's own key, not
+  ; 5.x's "Gammon Software Solutions\MUSHclient": 6.00 does not share settings
+  ; with 5.x, and does not install over it unless told to
+  WriteRegStr HKCU "${REGKEY}" "InstallDir" $INSTDIR
 
-  ; Write the uninstall keys for Windows
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient" "DisplayName" "${APPNAME}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient" "Publisher" "Nick Gammon"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient" "UninstallString" "$INSTDIR\uninstall.exe"
+  ; Write the uninstall keys for Windows (likewise 6.00's own, so a 5.x
+  ; alongside keeps its entry in Apps)
+  WriteRegStr HKLM "${UNINSTKEY}" "DisplayName" "${APPNAME}"
+  WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "Nick Gammon"
+  WriteRegStr HKLM "${UNINSTKEY}" "UninstallString" "$INSTDIR\uninstall.exe"
 
-  ; directory for world files (worlds subdirectory)
-
-    ReadRegStr $1 HKCU "Software\Gammon Software Solutions\MUSHclient\Global prefs" "DefaultWorldFileDirectory"
-
-    ; no existing directory - create one
-    StrCmp $1 "" 0 NoCreateWorldDirectory
-    WriteRegStr HKCU "Software\Gammon Software Solutions\MUSHclient\Global prefs" "DefaultWorldFileDirectory" "$INSTDIR\worlds\"
-    CreateDirectory "$INSTDIR\worlds"
-
-    ; not needed
-    NoCreateWorldDirectory:
-
-
-  ; directory for plugin files (worlds\plugins subdirectory)
-
-    ReadRegStr $1 HKCU "Software\Gammon Software Solutions\MUSHclient\Global prefs" "PluginsDirectory"
-
-    ; no existing directory - create one
-    StrCmp $1 "" 0 NoCreatePluginsDirectory
-    WriteRegStr HKCU "Software\Gammon Software Solutions\MUSHclient\Global prefs" "PluginsDirectory" "$INSTDIR\worlds\plugins\"
-    CreateDirectory "$INSTDIR\worlds\plugins"
-    CreateDirectory "$INSTDIR\worlds\plugins\state"
-
-    ; not needed
-    NoCreatePluginsDirectory:
-
-  ; directory for log files (logs subdirectory)
-
-    ReadRegStr $1 HKCU "Software\Gammon Software Solutions\MUSHclient\Global prefs" "DefaultLogFileDirectory"
-
-    ; no existing directory - create one
-    StrCmp $1 "" 0 NoCreateLogDirectory
-    WriteRegStr HKCU "Software\Gammon Software Solutions\MUSHclient\Global prefs" "DefaultLogFileDirectory" "$INSTDIR\logs\"
-    CreateDirectory "$INSTDIR\logs"
-
-    ; not needed
-    NoCreateLogDirectory:
+  ; The folders a portable copy -- the zip, which build-app.ps1 makes from this
+  ; installer's payload -- keeps the user's files in.  An installed copy keeps
+  ; them in %APPDATA%\MUSHclient\ instead (src/user_data.h), since a program
+  ; under Program Files cannot write beside itself; 6.00 no longer writes the
+  ; folders' names into the registry, where they were 5.x's preferences and
+  ; pointed 5.x into this folder.  The bundled plugins under worlds\ are copied
+  ; from here into the data folder when this version first runs.
+  CreateDirectory "$INSTDIR\worlds"
+  CreateDirectory "$INSTDIR\worlds\plugins"
+  CreateDirectory "$INSTDIR\worlds\plugins\state"
+  CreateDirectory "$INSTDIR\logs"
 
   ;
   ;  directory for locale information
@@ -673,7 +658,10 @@ SectionEnd
 ; The Discworld edition: Quow's plugins and maps (packaging\discworld-plugins,
 ; staged by packaging/fetch-discworld-plugins.sh), where they look for each
 ; other -- the plugins in worlds\plugins, the maps in quow_plugins\maps
-; relative to the install directory -- and a ready-made Discworld world.
+; relative to the current directory -- and a ready-made Discworld world.  An
+; installed copy runs in %APPDATA%\MUSHclient\, and copies all three there on
+; its first run (src/user_data.cpp, Seed), the mapper's database being one it
+; writes to; a portable one runs here.
 Section "-Discworld plugins and maps (required)"
   SectionIn 1 2 3  ; typical, full, compact
 
@@ -697,11 +685,11 @@ Section "Start Menu Shortcuts"
   ; Which section type it is in
   SectionIn 1 2   ; typical, full
 
-  SetOutPath "$SMPROGRAMS\MUSHclient"
+  SetOutPath "${SMDIR}"
   SetOutPath $INSTDIR
-  CreateShortCut "$SMPROGRAMS\MUSHclient\MUSHclient.lnk" "$INSTDIR\MUSHclient.exe" "" "$INSTDIR\MUSHclient.exe" 0
-  CreateShortCut "$SMPROGRAMS\MUSHclient\Read Me.lnk" "$INSTDIR\Readme.txt" "" "$INSTDIR\Readme.txt" 0
-  CreateShortCut "$SMPROGRAMS\MUSHclient\Uninstall MUSHclient.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
+  CreateShortCut "${SMDIR}\MUSHclient.lnk" "$INSTDIR\MUSHclient.exe" "" "$INSTDIR\MUSHclient.exe" 0
+  CreateShortCut "${SMDIR}\Read Me.lnk" "$INSTDIR\Readme.txt" "" "$INSTDIR\Readme.txt" 0
+  CreateShortCut "${SMDIR}\Uninstall MUSHclient.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
 SectionEnd
 
 ; uninstall stuff
@@ -716,9 +704,10 @@ FunctionEnd
 ; special uninstall section.
 Section Uninstall
 
-  ; remove registry keys
-  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MUSHclient"
-  DeleteRegKey HKCU "Software\Gammon Software Solutions\MUSHclient"
+  ; remove registry keys -- this version's; a 5.x's are its own business.
+  ; (Its settings and worlds, in %APPDATA%\MUSHclient\, are the user's: kept.)
+  DeleteRegKey HKLM "${UNINSTKEY}"
+  DeleteRegKey HKCU "${REGKEY}"
 
   ; remove files
 
@@ -1028,8 +1017,8 @@ Section Uninstall
   Delete $INSTDIR\uninstall.exe
 
   ; remove shortcuts, if any.
-  Delete "$SMPROGRAMS\MUSHclient\*.lnk"
-  RMDir "$SMPROGRAMS\MUSHclient"
+  Delete "${SMDIR}\*.lnk"
+  RMDir "${SMDIR}"
 
   ; delete worlds, lua and logs directory, if empty
   RMDir  "$INSTDIR\worlds"

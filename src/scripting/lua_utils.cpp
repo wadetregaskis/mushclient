@@ -51,6 +51,7 @@
 #include "../dialogs/LuaChooseListMulti.h"
 #include "../dialogs/FunctionListDlg.h"
 #include "../Dmetaph.h"
+#include "../user_data.h"   // UserData_Directory: data_directory on Windows
 #ifdef _WIN32
 #include <direct.h>
 #include <wingdi.h>
@@ -1001,10 +1002,15 @@ static int info (lua_State *L)
   MakeTableItem (L, "resource_directory", ExtractDirectory (App.m_strMUSHclientFileName));
 #endif
   // Writable data directory: App Support/MUSHclient/ on macOS/Linux (the .app
-  // bundle is read-only), the executable's directory on Windows.  Used e.g. by
+  // bundle is read-only), %APPDATA%\MUSHclient\ on Windows -- or the
+  // executable's directory for a portable copy (user_data.h).  Used e.g. by
   // spellchecker.lua to put its writable spell.sqlite somewhere it can create it.
 #ifdef _WIN32
-  MakeTableItem (L, "data_directory", ExtractDirectory (App.m_strMUSHclientFileName));
+  // Before UserData_SetUp -- a test host never runs InitInstance -- the
+  // executable's directory, which is what this always was.
+  MakeTableItem (L, "data_directory", UserData_Directory ().IsEmpty ()
+                                        ? ExtractDirectory (App.m_strMUSHclientFileName)
+                                        : UserData_Directory ());
 #else
   MakeTableItem (L, "data_directory", CString (PortableUserDataDir ().c_str ()));
 #endif

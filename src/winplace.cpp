@@ -24,6 +24,11 @@ static char BASED_CODE THIS_FILE[] = __FILE__;
 
 CWindowPlacement::CWindowPlacement()
 {
+   // Zeroed: GetProfileWP's defaults are these fields, so for a key never saved
+   // (a world's first open) Restore used to apply whatever was on the stack, and
+   // a world could open far off-screen.  An empty rcNormalPosition fails
+   // Restore's intersect test instead, and the window keeps its default place.
+   memset (static_cast <WINDOWPLACEMENT *> (this), 0, sizeof (WINDOWPLACEMENT));
    // Note: "length" is inherited from WINDOWPLACEMENT
    length = sizeof(WINDOWPLACEMENT);
 }

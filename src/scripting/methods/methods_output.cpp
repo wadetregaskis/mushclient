@@ -671,6 +671,16 @@ void windowPositionHelper (CString & str, const RECT & r)
 
 void CMUSHclientDoc::SetTitle(LPCTSTR Title)
 {
+#ifdef _WIN32
+  // MFC naming the document after its file: that is MFC's own title, not the
+  // custom one (see CMUSHclientDoc::SetPathName)
+  if (m_bFrameworkTitle)
+    {
+    CDocument::SetTitle (Title);
+    return;
+    }
+#endif
+
 	m_strWindowTitle = Title;
 
   // propagate to the world's IWorldView (WV-3: the wx MDI child frame, or

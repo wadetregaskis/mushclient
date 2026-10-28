@@ -1629,6 +1629,12 @@ public:
   CString m_strWordUnderMenu;   // word under menu in output window
 
   CString m_strWindowTitle;     // for SetTitle
+#ifdef _WIN32
+  // True while MFC titles the document after its file (SetPathName).  MFC
+  // does that through CDocument's virtual SetTitle, which world.SetTitle
+  // overrides here, so it would become the script's custom window title.
+  bool    m_bFrameworkTitle = false;
+#endif
   CString m_strMainWindowTitle; // for SetMainTitle
 
   CTime m_timeFadeCancelled;    // when we last scrolled up and cancelled faded text
@@ -3105,6 +3111,10 @@ public:
 	protected:
 	virtual BOOL SaveModified();
 	//}}AFX_VIRTUAL
+	public:
+#ifdef _WIN32
+	virtual void SetPathName(LPCTSTR lpszPathName, BOOL bAddToMRU = TRUE);
+#endif
 
 // Implementation
 public:

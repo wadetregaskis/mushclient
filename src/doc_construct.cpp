@@ -822,6 +822,15 @@ BOOL CMUSHclientDoc::OnNewDocument()
 	if (!CDocument::OnNewDocument())
 		return FALSE;
 
+#ifdef _WIN32
+  // MFC has just titled the new document "MUSHcl<n>" (SetDefaultTitle)
+  // through the virtual SetTitle, which world.SetTitle overrides, so that
+  // became the custom window title: windows and tabs said "MUSHcl1" rather
+  // than the world's name until it connected.  No custom title, then (and
+  // MFC's own stays empty, as it always was here).
+  SetTitle ("");
+#endif
+
   SetDefaults (false);        // set up numeric/boolean defaults
   SetAlphaDefaults (false);   // set up alpha defaults
 

@@ -1089,7 +1089,28 @@ pCmdUI->Enable (m_logfile != NULL);
 pCmdUI->SetText("LOG");
 }
 
-BOOL CMUSHclientDoc::OnOpenDocument(LPCTSTR lpszPathName) 
+#ifdef _WIN32
+// CDocument::SetPathName titles the document after the file through the
+// virtual SetTitle -- which is world.SetTitle here, and so used to set the
+// script's custom window title: a world opened from "dw.mcl" was titled "dw"
+// rather than by its name until it connected.  Flag it as MFC's own.
+void CMUSHclientDoc::SetPathName(LPCTSTR lpszPathName, BOOL bAddToMRU)
+  {
+  m_bFrameworkTitle = true;
+  try
+    {
+    CDocument::SetPathName (lpszPathName, bAddToMRU);
+    }
+  catch (...)
+    {
+    m_bFrameworkTitle = false;
+    throw;
+    }
+  m_bFrameworkTitle = false;
+  } // end of CMUSHclientDoc::SetPathName
+#endif // _WIN32
+
+BOOL CMUSHclientDoc::OnOpenDocument(LPCTSTR lpszPathName)
 {
 	if (!CDocument::OnOpenDocument(lpszPathName))
 		return FALSE;

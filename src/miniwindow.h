@@ -87,7 +87,14 @@ class CMiniWindow
   private:
 
     CDC * pdc;                // our offscreen device context
-  	CBitmap *   m_oldBitmap;  // bitmap originally found in CMyMemDC
+    // The bitmap pdc started with, selected back before m_Bitmap is deleted.
+    // Windows keeps its handle: the CBitmap MFC's SelectObject returns for it
+    // is a temporary, which MFC deletes at its next idle-time cleanup.
+#ifdef _WIN32
+    HGDIOBJ     m_hOldBitmap = NULL;
+#else
+    CBitmap *   m_oldBitmap = NULL;
+#endif
     CBitmap *   m_Bitmap;     // where it all happens
     // pdc adopted as a pal::ISurface for the S3 migration (docs/PAL.md).
     pal::SurfaceId m_surfaceId = pal::SurfaceId::None;

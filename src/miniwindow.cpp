@@ -18,7 +18,6 @@
 
 // constructor
 CMiniWindow::CMiniWindow ()  :
-          m_oldBitmap (NULL),
           m_Bitmap (NULL),
           m_iWidth (0), m_iHeight (0),
           m_iPosition (0), m_iFlags (0),
@@ -49,7 +48,11 @@ CMiniWindow::~CMiniWindow ()  // destructor
   // get rid of old one if any
   if (m_Bitmap)
     {
+#ifdef _WIN32
+    ::SelectObject (pdc->m_hDC, m_hOldBitmap);    // swap old one back
+#else
     pdc->SelectObject(m_oldBitmap);    // swap old one back
+#endif
     m_Bitmap->DeleteObject ();        // delete the one we made
     delete m_Bitmap;
     }
@@ -199,7 +202,11 @@ void CMiniWindow::Create (long Left, long Top, long Width, long Height,
   // get rid of old one if any
   if (m_Bitmap)
     {
+#ifdef _WIN32
+    ::SelectObject (pdc->m_hDC, m_hOldBitmap);    // swap old one back
+#else
     pdc->SelectObject(m_oldBitmap);    // swap old one back
+#endif
     m_Bitmap->DeleteObject ();
     delete m_Bitmap;
     }
@@ -225,7 +232,11 @@ void CMiniWindow::Create (long Left, long Top, long Width, long Height,
   // On a 72 dpi display the scale is 1 and this is byte-for-byte the old path.
   m_Bitmap->CreateCanvasBitmap (MAX (m_iWidth, 1), MAX (m_iHeight, 1));
 #endif
+#ifdef _WIN32
+  m_hOldBitmap = pdc->SelectObject (m_Bitmap)->GetSafeHandle ();
+#else
   m_oldBitmap = pdc->SelectObject (m_Bitmap);
+#endif
   pdc->SetWindowOrg(0, 0);
 
   pdc->FillSolidRect (0, 0, m_iWidth, m_iHeight, m_iBackgroundColour);

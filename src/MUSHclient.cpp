@@ -943,14 +943,15 @@ BOOL CMUSHclientApp::InitInstance()
         Frame.DockControlBar (pToolBar, AFX_IDW_DOCKBAR_TOP, rect);
         }  // toolbar found
 
-      // float the activity bar
+      // and the activity bar next to that -- docked, as View > Reset Toolbar
+      // Locations leaves it, not floating over the middle of the window
       pToolBar = &Frame.m_wndActivityToolBar;
       if (pToolBar)   // assuming we can find it
         {
-        pToolBar->GetWindowRect(&rectBar);
-        CPoint point (500, 70);
-        Frame.ClientToScreen (&point);
-        Frame.FloatControlBar (pToolBar, point, CBRS_ALIGN_LEFT);
+        Frame.RecalcLayout (TRUE);
+        Frame.m_wndGameToolBar.GetWindowRect (&rectBar);
+        rectBar.OffsetRect (rectBar.Width (), 0);
+        Frame.DockControlBar (pToolBar, AFX_IDW_DOCKBAR_TOP, rectBar);
         } // toolbar found
       } // toolbar found
 
@@ -2273,13 +2274,22 @@ void CMUSHclientApp::WorkOutFixedFont ()
 bool CMUSHclientApp::HelpAvailable (bool showWarning)
   {
 #ifdef _WIN32
-  if (os_version.dwPlatformId == VER_PLATFORM_WIN32_NT && os_version.dwMajorVersion >= 10)
+  // ... nor, before it, without the help file, which the packages do not ship
+  // (asking WinHelp for it gets "Failed to launch help." and a web page)
+  if ((os_version.dwPlatformId == VER_PLATFORM_WIN32_NT && os_version.dwMajorVersion >= 10) ||
+      !m_pszHelpFilePath || GetFileAttributes (m_pszHelpFilePath) == INVALID_FILE_ATTRIBUTES)
     {
     if (showWarning)
-      TMessageBox("Supplied help file is not compatible with Windows 10 and above.\r\n\r\n"
-                  "Suggest you install the plugin \"MUSHclient_Help\" for browsing the help file, "
-                  "and then type \"mchelp <subject>\"."
-                  "\r\n\r\nOr, view the online help at: http://mushclient.com/scripts/doc.php", MB_ICONINFORMATION);
+      {
+      // the MUSHclient_Help plugin reads help.db, which only some packages have
+      if (GetFileAttributes (CString (working_dir) + "help.db") != INVALID_FILE_ATTRIBUTES)
+        TMessageBox("Supplied help file is not compatible with Windows 10 and above.\r\n\r\n"
+                    "Suggest you install the plugin \"MUSHclient_Help\" for browsing the help file, "
+                    "and then type \"mchelp <subject>\"."
+                    "\r\n\r\nOr, view the online help at: http://mushclient.com/scripts/doc.php", MB_ICONINFORMATION);
+      else
+        TMessageBox("The help is online, at: http://mushclient.com/scripts/doc.php", MB_ICONINFORMATION);
+      }
     return false;
     }
 

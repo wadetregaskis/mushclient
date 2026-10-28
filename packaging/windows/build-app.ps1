@@ -247,6 +247,13 @@ foreach ($junk in '$PLUGINSDIR', '$TEMP', 'uninstall.exe', '[NSIS].nsi') {
   if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
 }
 if (-not (Test-Path (Join-Path $tree 'MUSHclient.exe'))) { throw "the extracted payload has no MUSHclient.exe ($tree)" }
+# The directories the installer creates empty (worlds\plugins\state, logs,
+# sounds) are CreateDirectory instructions, not payload, so 7-Zip extracts
+# none of them.  The client needs them: closing a world whose plugins save
+# state otherwise stops on "The plugins 'save state' folder ... does not exist".
+foreach ($m in Select-String -Path (Join-Path $Repo 'install\mushclient.nsi') -Pattern '^\s*CreateDirectory\s+"\$INSTDIR\\([^"]+)"') {
+  New-Dir (Join-Path $tree $m.Matches[0].Groups[1].Value) | Out-Null
+}
 
 # ── 5. self-containment ───────────────────────────────────────────────────────
 Note 'checking the package is self-contained'

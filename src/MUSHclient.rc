@@ -130,6 +130,19 @@ IDR_NORMALTYPE          ICON    DISCARDABLE     "res\\MUSHclient.ico"
 
 
 
+/////////////////////////////////////////////////////////////////////////////
+//
+// Manifest
+//
+// Embedded here rather than by the manifest tool, which the project turns
+// off (GenerateManifest).  Without it Windows treats the client as written
+// for Windows 8 -- GetVersionEx reports 6.2, so HelpAvailable thinks WinHelp
+// still exists -- and it gets the pre-XP common controls.
+
+LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "MUSHclient.exe.manifest"
+
+
 #ifndef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
 //

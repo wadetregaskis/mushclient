@@ -1960,8 +1960,11 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 
+  <!-- src\MUSHclient.exe.manifest is embedded by src\MUSHclient.rc, not by the
+       manifest tool (GenerateManifest is off): an ApplicationManifest item here
+       was silently ignored, and the exe went without one. -->
   <ItemGroup>
-    <ApplicationManifest Include="src\MUSHclient.exe.manifest" />
+    <None Include="src\MUSHclient.exe.manifest" />
   </ItemGroup>
   <!-- locale\en.dll, every menu, dialog and string the client shows, built
        from resources\ into this configuration's locale\ (resources\README.md). -->

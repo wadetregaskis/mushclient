@@ -1,31 +1,76 @@
 #!/usr/bin/env python3
-# decompile_dialogs.py — recover MUSHclient's dialog + menu resources as .rc text.
+# port_resources.py — the macOS/Linux port's resources, from a compiled en.rc.
 #
-# Why this exists: MUSHclient's MFC dialog LAYOUTS (the DIALOGEX/MENU templates)
-# are not in src/MUSHclient.rc, a skeleton — icons/cursor/version only.  On
-# Windows the dialogs are loaded at runtime from the MFC localisation satellite
-# DLL (locale/en.dll), where the compiled RT_DIALOG / RT_MENU resources live;
-# that DLL's source is resources/en.rc, built by resources/en.vcxproj.  The
-# macOS/wx port has no DLL-resource loader and no Windows resource compiler,
-# so to render the canonical dialogs/**/*.cpp natively (instead of
-# hand-rebuilding each in wx) the wx MFC shim needs those layouts as text it
-# can parse.  This tool decompiles them from en.dll back to .rc text, mapping
-# numeric IDs to resource.h symbols.
+# resources/en.rc is the one source of MUSHclient's dialogs, menus, bitmaps and
+# icons.  Windows compiles it into locale/en.dll (resources/en.vcxproj) and MFC
+# loads from that at run time.  The wx port has no DLL-resource loader, so its
+# build (resources/CMakeLists.txt) compiles the same en.rc with llvm-rc and
+# hands the resulting .res to this tool, which writes, into <outdir>:
 #
-# Decompile the en.dll built from resources/en.rc, NOT 5.06's: this
-# repository has changed dialogs since (resources/README.md), and the two
-# .rc files must say the same thing.  On Windows:
-#   pip install pefile
-#   python3 tools/decompile_dialogs.py WinRel-x64/locale/en.dll src/resource.h \
-#           src/platform/mushclient_dialogs.rc
-# A dialog change is made in resources/en.rc, then carried here this way.
+#   mushclient_dialogs.rc   every dialog template (DIALOGEX), its combo-box
+#                           presets (DLGINIT) and every menu, as the simple .rc
+#                           text the wx dialog bridge parses
+#                           (src/platform/wx_dialog_resource.cpp), numeric ids
+#                           mapped back to resource.h symbols
+#   art/bitmap/<id>.bmp     every BITMAP, as a .bmp file
+#   art/icon/<id>.ico       every ICON, as a .ico file
 #
-# Output is NOT compiled by the Windows resource compiler (Windows uses en.dll);
-# it is bundled into the .app and parsed by the wx dialog loader.
+# Any .res will do, rc.exe's included: tests/check_port_resources.py converts
+# both compilers' output on Windows and requires them to come out the same.
+#
+#   python3 tools/port_resources.py <en.res> <resource.h> <outdir>
 
-import pefile, struct, re, sys
+import os, struct, re, sys
 
-def main(dll, resh, out):
+def read_res(path):
+    """{type: {name: data}} from a .res file: a sequence of RESOURCEHEADERs,
+    each followed by its data, every entry DWORD-aligned."""
+    b = open(path, "rb").read()
+    def name(o):                    # ordinal (0xFFFF prefix), or UTF-16 string
+        if struct.unpack_from("<H", b, o)[0] == 0xFFFF:
+            return struct.unpack_from("<H", b, o + 2)[0], o + 4
+        s = []
+        while True:
+            c = struct.unpack_from("<H", b, o)[0]; o += 2
+            if not c:
+                break
+            s.append(chr(c))
+        return "".join(s), o
+    allres = {}
+    o = 0
+    while o < len(b):
+        size, hsize = struct.unpack_from("<II", b, o)
+        t, p = name(o + 8)
+        n, p = name(p)
+        if size:                    # the leading empty entry marks a 32-bit .res
+            allres.setdefault(t, {})[n] = b[o + hsize:o + hsize + size]
+        o = (o + hsize + size + 3) & ~3
+    return allres
+
+def bitmap_file(dib):
+    """An RT_BITMAP resource (a DIB without its file header) as a .bmp file."""
+    hsize, _w, _h, _planes, bits, comp = struct.unpack_from("<IiiHHI", dib, 0)
+    used = struct.unpack_from("<I", dib, 32)[0] if hsize >= 36 else 0
+    colours = used or (1 << bits if bits <= 8 else 0)
+    masks = 12 if hsize == 40 and comp == 3 else 0      # BI_BITFIELDS
+    off = 14 + hsize + masks + 4 * colours
+    return struct.pack("<2sIHHI", b"BM", 14 + len(dib), 0, 0, off) + dib
+
+def icon_file(group, icons):
+    """An RT_GROUP_ICON resource and the RT_ICON images it names as a .ico
+    file: the same directory, with each entry's resource id replaced by the
+    offset of its image, and the images after it in order."""
+    _res, typ, count = struct.unpack_from("<HHH", group, 0)
+    images = [struct.unpack_from("<12sH", group, 6 + 14 * i) for i in range(count)]
+    out = [struct.pack("<HHH", 0, typ, count)]
+    off = 6 + 16 * count
+    for entry, rid in images:
+        out.append(entry + struct.pack("<I", off))
+        off += len(icons[rid])
+    out += [icons[rid] for _entry, rid in images]
+    return b"".join(out)
+
+def main(res_path, resh, outdir):
     # resource.h assigns many numeric ids to more than one symbol across
     # unrelated Win32 resource-type namespaces (dialog/menu/string/command), so
     # a bare "first definition wins" can label a real DIALOGEX block with a
@@ -163,28 +208,16 @@ def main(dll, resh, out):
             recs.append((idCtrl, msg, data.split(b"\x00")[0].decode("latin-1", "replace")))
         return recs
 
-    pe = pefile.PE(dll)
-
-    def res(tid):
-        d = {}
-        for e in pe.DIRECTORY_ENTRY_RESOURCE.entries:
-            if e.id != tid:
-                continue
-            for de in e.directory.entries:
-                ds = de.directory.entries[0].data.struct
-                d[de.id] = pe.get_data(ds.OffsetToData, ds.Size)
-        return d
+    allres = read_res(res_path)
+    res = lambda tid: allres.get(tid, {})
 
     dlgs, menus, dlginits = res(5), res(4), res(240)
     L = [
-        "// MUSHclient dialog + menu resources, decompiled from the MFC localisation",
-        "// DLL (locale/en.dll, built from resources/en.rc; RT_DIALOG + RT_MENU) by",
-        "// tools/decompile_dialogs.py.  Numeric IDs mapped to resource.h symbols.",
-        "//",
-        "// NOT part of the Windows resource compile (Windows loads these from the",
-        "// localisation DLL at runtime).  This file is bundled into the macOS .app",
-        "// and parsed by the wx MFC-dialog shim so the canonical dialogs/**/*.cpp",
-        "// render natively.  Regenerate with tools/decompile_dialogs.py.",
+        "// MUSHclient's dialog and menu resources, for the macOS/Linux port.",
+        "// GENERATED at build time from resources/en.rc (compiled by llvm-rc) by",
+        "// tools/port_resources.py: edit en.rc, not this.  Numeric ids are mapped",
+        "// back to resource.h symbols.  Parsed by the wx dialog bridge so that the",
+        "// canonical dialogs/**/*.cpp render natively.",
         '#include "resource.h"',
         '#include "afxres.h"',
         "",
@@ -222,11 +255,25 @@ def main(dll, resh, out):
         L.append(f"{menu2sym.get(rid) or sym(rid)} MENU")
         L.append("BEGIN"); L.extend(parse_menu(menus[rid])); L.append("END"); L.append("")
 
-    open(out, "w", encoding="utf-8").write("\n".join(L))
-    print(f"wrote {out}: {len(dlgs)} dialogs, {len(menus)} menus, "
-          f"{len(dlginits)} dlginit, {len(L)} lines")
+    os.makedirs(outdir, exist_ok=True)
+    with open(os.path.join(outdir, "mushclient_dialogs.rc"), "w",
+              encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(L))
+
+    # Named by number: an id is often a bitmap AND an icon (IDR_MAINFRAME is
+    # the toolbar strip and the app icon), so the type is the directory.
+    for sub in ("bitmap", "icon"):
+        os.makedirs(os.path.join(outdir, "art", sub), exist_ok=True)
+    bitmaps, groups, icons = res(2), res(14), res(3)
+    for rid, dib in bitmaps.items():
+        open(os.path.join(outdir, "art", "bitmap", f"{rid}.bmp"), "wb").write(bitmap_file(dib))
+    for rid, group in groups.items():
+        open(os.path.join(outdir, "art", "icon", f"{rid}.ico"), "wb").write(icon_file(group, icons))
+
+    print(f"wrote {outdir}: {len(dlgs)} dialogs, {len(menus)} menus, "
+          f"{len(dlginits)} dlginit, {len(bitmaps)} bitmaps, {len(groups)} icons")
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
-        sys.exit("usage: decompile_dialogs.py <en.dll> <resource.h> <out.rc>")
+        sys.exit("usage: port_resources.py <en.res> <resource.h> <outdir>")
     main(sys.argv[1], sys.argv[2], sys.argv[3])

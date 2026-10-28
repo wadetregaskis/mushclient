@@ -5232,42 +5232,42 @@ END
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDR_MAINFRAME           ICON    DISCARDABLE     "res\\MUSHclient.ico"
-IDR_MUSHCLTYPE          ICON    DISCARDABLE     "res\\doc.ico"
-IDR_NORMALTYPE          ICON    DISCARDABLE     "res\\idr_main.ico"
-IDI_ICON1               ICON    DISCARDABLE     "res\\Cdrom01.ico"
-IDI_ICON2               ICON    DISCARDABLE     "res\\Wrench.ico"
-IDI_ICON3               ICON    DISCARDABLE     "res\\Clock05.ico"
-IDI_ICON4               ICON    DISCARDABLE     "res\\Earth.ico"
-IDI_ICON5               ICON    DISCARDABLE     "res\\Graph08.ico"
-IDI_ICON6               ICON    DISCARDABLE     "res\\Handshak.ico"
-IDI_ICON7               ICON    DISCARDABLE     "res\\Mail16b.ico"
-IDI_ICON8               ICON    DISCARDABLE     "res\\Net01.ico"
-IDI_ICON9               ICON    DISCARDABLE     "res\\Point11.ico"
-IDI_ICON10              ICON    DISCARDABLE     "res\\Clip07.ico"
+IDR_MAINFRAME           ICON    DISCARDABLE     "res/MUSHclient.ico"
+IDR_MUSHCLTYPE          ICON    DISCARDABLE     "res/doc.ico"
+IDR_NORMALTYPE          ICON    DISCARDABLE     "res/idr_main.ico"
+IDI_ICON1               ICON    DISCARDABLE     "res/Cdrom01.ico"
+IDI_ICON2               ICON    DISCARDABLE     "res/Wrench.ico"
+IDI_ICON3               ICON    DISCARDABLE     "res/Clock05.ico"
+IDI_ICON4               ICON    DISCARDABLE     "res/Earth.ico"
+IDI_ICON5               ICON    DISCARDABLE     "res/Graph08.ico"
+IDI_ICON6               ICON    DISCARDABLE     "res/Handshak.ico"
+IDI_ICON7               ICON    DISCARDABLE     "res/Mail16b.ico"
+IDI_ICON8               ICON    DISCARDABLE     "res/Net01.ico"
+IDI_ICON9               ICON    DISCARDABLE     "res/Point11.ico"
+IDI_ICON10              ICON    DISCARDABLE     "res/Clip07.ico"
 
 /////////////////////////////////////////////////////////////////////////////
 //
 // Bitmap
 //
 
-IDB_LIGHTBULB           BITMAP  DISCARDABLE     "res\\litebulb.bmp"
-IDR_MAINFRAME           BITMAP  DISCARDABLE     "res\\toolbar1.bmp"
-IDR_GAME_TOOLBAR        BITMAP  DISCARDABLE     "res\\game_too.bmp"
-IDR_ACTIVITY_TOOLBAR    BITMAP  DISCARDABLE     "res\\activity_toolbar.bmp"
-IDR_ACTIVITYIMAGES      BITMAP  MOVEABLE PURE   "res\\Drives.bmp"
-IDB_NICK                BITMAP  DISCARDABLE     "res\\nick.bmp"
-IDB_SPLASH              BITMAP  DISCARDABLE     "res\\Splsh16.bmp"
-IDB_ACTIVITY_TOOLBAR_1  BITMAP  DISCARDABLE     "res\\mc activity 0.bmp"
-IDB_ACTIVITY_TOOLBAR_2  BITMAP  DISCARDABLE     "res\\mc activity 1.bmp"
-IDB_ACTIVITY_TOOLBAR_3  BITMAP  DISCARDABLE     "res\\mc activity 2.bmp"
-IDB_ACTIVITY_TOOLBAR_4  BITMAP  DISCARDABLE     "res\\mc activity 3.bmp"
-IDB_ACTIVITY_TOOLBAR_5  BITMAP  DISCARDABLE     "res\\mc activity 4.bmp"
-IDB_ACTIVITY_TOOLBAR_0  BITMAP  DISCARDABLE     "res\\bitmap1.bmp"
-26567                   BITMAP  MOVEABLE PURE   "res\\3dcheck.bmp"
-AFX_IDB_CHECKLISTBOX_95 BITMAP  DISCARDABLE     "res\\95check.bmp"
-AFX_IDB_CHECKLISTBOX_NT BITMAP  DISCARDABLE     "res\\ntcheck.bmp"
-AFX_IDB_MINIFRAME_MENU  BITMAP  DISCARDABLE     "res\\minifwnd.bmp"
+IDB_LIGHTBULB           BITMAP  DISCARDABLE     "res/litebulb.bmp"
+IDR_MAINFRAME           BITMAP  DISCARDABLE     "res/toolbar1.bmp"
+IDR_GAME_TOOLBAR        BITMAP  DISCARDABLE     "res/game_too.bmp"
+IDR_ACTIVITY_TOOLBAR    BITMAP  DISCARDABLE     "res/activity_toolbar.bmp"
+IDR_ACTIVITYIMAGES      BITMAP  MOVEABLE PURE   "res/drives.bmp"
+IDB_NICK                BITMAP  DISCARDABLE     "res/nick.bmp"
+IDB_SPLASH              BITMAP  DISCARDABLE     "res/Splsh16.bmp"
+IDB_ACTIVITY_TOOLBAR_1  BITMAP  DISCARDABLE     "res/mc activity 0.bmp"
+IDB_ACTIVITY_TOOLBAR_2  BITMAP  DISCARDABLE     "res/mc activity 1.bmp"
+IDB_ACTIVITY_TOOLBAR_3  BITMAP  DISCARDABLE     "res/mc activity 2.bmp"
+IDB_ACTIVITY_TOOLBAR_4  BITMAP  DISCARDABLE     "res/mc activity 3.bmp"
+IDB_ACTIVITY_TOOLBAR_5  BITMAP  DISCARDABLE     "res/mc activity 4.bmp"
+IDB_ACTIVITY_TOOLBAR_0  BITMAP  DISCARDABLE     "res/bitmap1.bmp"
+26567                   BITMAP  MOVEABLE PURE   "res/3dcheck.bmp"
+AFX_IDB_CHECKLISTBOX_95 BITMAP  DISCARDABLE     "res/95check.bmp"
+AFX_IDB_CHECKLISTBOX_NT BITMAP  DISCARDABLE     "res/ntcheck.bmp"
+AFX_IDB_MINIFRAME_MENU  BITMAP  DISCARDABLE     "res/minifwnd.bmp"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -5671,6 +5671,11 @@ END
 // Toolbar
 //
 
+// MFC's TOOLBAR statement is rc.exe's alone: llvm-rc, which compiles this
+// file for the macOS/Linux port (llvm-rc/afxres.h), has no such statement.
+// The port lays its toolbars out itself, so it needs none of these.
+#ifndef MC_RC_NO_TOOLBARS
+
 IDR_MAINFRAME TOOLBAR DISCARDABLE  16, 15
 BEGIN
     BUTTON      ID_FILE_NEW
@@ -5731,36 +5736,38 @@ BEGIN
     BUTTON      ID_BTN_WORLDS_WORLD0
 END
 
+#endif // MC_RC_NO_TOOLBARS
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
 // Cursor
 //
 
-ID_FINGER_CURSOR        CURSOR  DISCARDABLE     "res\\id_finge.cur"
-AFX_IDC_MAGNIFY         CURSOR  DISCARDABLE     "res\\magnify.cur"
-AFX_IDC_CONTEXTHELP     CURSOR  DISCARDABLE     "res\\help.cur"
-AFX_IDC_HSPLITBAR       CURSOR  DISCARDABLE     "res\\splith.cur"
-AFX_IDC_MOVE4WAY        CURSOR  DISCARDABLE     "res\\move4way.cur"
-AFX_IDC_NODROPCRSR      CURSOR  DISCARDABLE     "res\\nodrop.cur"
-AFX_IDC_SMALLARROWS     CURSOR  DISCARDABLE     "res\\sarrows.cur"
-AFX_IDC_TRACK4WAY       CURSOR  DISCARDABLE     "res\\trck4way.cur"
-AFX_IDC_TRACKNESW       CURSOR  DISCARDABLE     "res\\trcknesw.cur"
-AFX_IDC_TRACKNS         CURSOR  DISCARDABLE     "res\\trckns.cur"
-AFX_IDC_TRACKNWSE       CURSOR  DISCARDABLE     "res\\trcknwse.cur"
-AFX_IDC_TRACKWE         CURSOR  DISCARDABLE     "res\\trckwe.cur"
-AFX_IDC_VSPLITBAR       CURSOR  DISCARDABLE     "res\\splitv.cur"
+ID_FINGER_CURSOR        CURSOR  DISCARDABLE     "res/id_finge.cur"
+AFX_IDC_MAGNIFY         CURSOR  DISCARDABLE     "res/magnify.cur"
+AFX_IDC_CONTEXTHELP     CURSOR  DISCARDABLE     "res/help.cur"
+AFX_IDC_HSPLITBAR       CURSOR  DISCARDABLE     "res/splith.cur"
+AFX_IDC_MOVE4WAY        CURSOR  DISCARDABLE     "res/move4way.cur"
+AFX_IDC_NODROPCRSR      CURSOR  DISCARDABLE     "res/nodrop.cur"
+AFX_IDC_SMALLARROWS     CURSOR  DISCARDABLE     "res/sarrows.cur"
+AFX_IDC_TRACK4WAY       CURSOR  DISCARDABLE     "res/trck4way.cur"
+AFX_IDC_TRACKNESW       CURSOR  DISCARDABLE     "res/trcknesw.cur"
+AFX_IDC_TRACKNS         CURSOR  DISCARDABLE     "res/trckns.cur"
+AFX_IDC_TRACKNWSE       CURSOR  DISCARDABLE     "res/trcknwse.cur"
+AFX_IDC_TRACKWE         CURSOR  DISCARDABLE     "res/trckwe.cur"
+AFX_IDC_VSPLITBAR       CURSOR  DISCARDABLE     "res/splitv.cur"
 
 /////////////////////////////////////////////////////////////////////////////
 //
 // TEXT
 //
 
-IDR_CREDITS             TEXT    DISCARDABLE     "..\\src\\platform\\dialog_text\\credits.txt"
-IDR_LICENSE             TEXT    DISCARDABLE     "..\\src\\platform\\dialog_text\\agreement.txt"
-IDR_SUBSTITUTION        TEXT    DISCARDABLE     "..\\src\\platform\\dialog_text\\substitutions.txt"
-IDR_MULTIPLE_ASTERISKS  TEXT    DISCARDABLE     "text\\multiple_asterisks.txt"
-IDR_LUA_SCRIPT          TEXT    DISCARDABLE     "text\\lua_init.txt"
+IDR_CREDITS             TEXT    DISCARDABLE     "../src/platform/dialog_text/credits.txt"
+IDR_LICENSE             TEXT    DISCARDABLE     "../src/platform/dialog_text/agreement.txt"
+IDR_SUBSTITUTION        TEXT    DISCARDABLE     "../src/platform/dialog_text/substitutions.txt"
+IDR_MULTIPLE_ASTERISKS  TEXT    DISCARDABLE     "text/multiple_asterisks.txt"
+IDR_LUA_SCRIPT          TEXT    DISCARDABLE     "text/lua_init.txt"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -6401,7 +6408,7 @@ END
 //
 // Generated from the TEXTINCLUDE 3 resource.
 //
-#include "res\MUSHclient.rc2"  // non-Microsoft Visual C++ edited resources
+#include "res/mushclient.rc2"  // non-Microsoft Visual C++ edited resources
 
 #define _AFX_NO_OLE_RESOURCES
 #define _AFX_NO_TRACKER_RESOURCES

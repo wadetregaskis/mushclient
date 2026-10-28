@@ -1468,9 +1468,9 @@
 #define ID_EDIT_ASCIIART                32961
 #define ID_POPUP_DELETETHIS             32962
 #define ID_DISPLAY_GOTOLINE             32963
-#define ID_FILE_CTRL_P                  -32572
+#define ID_FILE_CTRL_P                  32964
 #define ID_FILE_CTRL_N                  32965
-#define ID_EDIT_CTRL_Z                  -32570
+#define ID_EDIT_CTRL_Z                  32966
 #define ID_DEBUG_WORLD_INPUT            32967
 #define ID_EDIT_COLOURPICKER            32968
 #define ID_DISPLAY_ECHOCOMMANDS         32969

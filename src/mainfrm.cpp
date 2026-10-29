@@ -2175,8 +2175,22 @@ void CMainFrame::AddTrayIcon (void)
  
   } // end of CMainFrame::AddTrayIcon
 
-LRESULT CMainFrame::WindowProc(UINT message, WPARAM wParam, LPARAM lParam) 
+LRESULT CMainFrame::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
 {
+
+#ifdef _WIN32
+ // Explorer restarted (a crash, or an update): every tray icon is gone with
+ // the old taskbar, and with the icon placement "tray" the window could then
+ // be reached only by Alt+Tab.  Explorer broadcasts this when it is back.
+ static const UINT s_uTaskbarCreated = ::RegisterWindowMessage ("TaskbarCreated");
+ if (message == s_uTaskbarCreated && s_uTaskbarCreated != 0)
+   {
+   if (App.m_iIconPlacement == ICON_PLACEMENT_TRAY ||
+       App.m_iIconPlacement == ICON_PLACEMENT_BOTH)
+     AddTrayIcon ();
+   return 0;
+   }
+#endif
 
  if (message == WM_USER_TRAY_ICON_MESSAGE)
    {

@@ -96,6 +96,17 @@ build's engine selftest passes 471/471 (19 skipped).
 - The GDI adapter's 32-bit surface ids wrapped after 2^32 image draws and could
   reuse a live miniwindow's; ids in use are skipped.
 
+### Windows UI shell
+- A notepad's "file changed on disk" message shared WM_USER + 1001 with the
+  script-file one and nothing handled it: the reload question never came.
+  Upstream. Checked in the client.
+- The Activity List, sorted by anything but Seq ascending, rebuilt itself on
+  every update (rows looked up by view number), losing its selection; and
+  Popup ▸ Close left the freed world's row selected. Upstream.
+- With the icon in the tray, an Explorer restart removed it for good
+  (`TaskbarCreated` was not handled). Upstream. Not exercised here: restarting
+  Explorer on this machine was not something to do unasked.
+
 ## Performance (measured in the running client, ARM64, Release)
 
 `tools/bench.lua`, run in Game ▸ Immediate, times `Simulate`, triggers, notes,
@@ -156,6 +167,10 @@ callback string copies; `SortTriggers` per add.
   **DNS cancel under Wine**
   (`WSACancelAsyncRequest` is a stub there), **MCCP + reconnect from a trigger**,
   **IPv4 only**, **no TLS handshake timeout** — recorded, low impact, or 5.x's.
+- **Window tabs at the bottom** use `TCS_BOTTOM`, which Common Controls v6 does
+  not support: they draw as top tabs on a bottom bar, and `CMDITabs`' classic
+  edge painting mismatches the themed border (top too). Cosmetic, tabs off by
+  default; a proper fix is owner-drawn bottom tabs.
 - **Port-only toolbar selftest** "a hidden bar does not collide…" became
   vacuous when `GetPlacement` moved to the stored arrangement.
 - Nothing port-side in this pass has been compiled (Mac/Enchant spell engines,

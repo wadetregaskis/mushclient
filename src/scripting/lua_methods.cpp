@@ -2942,7 +2942,8 @@ static int L_GetXMLEntity (lua_State *L)
 //----------------------------------------
 static int L_GetFrame (lua_State *L)
   {
-  lua_pushlightuserdata (L, (void *) doc (L)->GetFrame ());
+  // widened as Windows widens a handle: sign-extended (GetFrame's comment)
+  lua_pushlightuserdata (L, (void *) (LONG_PTR) doc (L)->GetFrame ());
   return 1;  // number of result fields
   } // end of L_GetFrame
 

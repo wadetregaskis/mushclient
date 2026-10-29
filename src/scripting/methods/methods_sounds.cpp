@@ -6,6 +6,7 @@
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../errors.h"
+#include "../../user_data.h"   // UserData_Directory: the user's sounds
 
 // Implements:
 
@@ -160,13 +161,21 @@ int i;
 
     strName.Replace ("/", "\\");  // convert forward to backslash
 
-    // without a full pathname, assume in sounds directory under MUSHclient.exe
+    // without a full pathname, assume in a sounds directory: the user's (where
+    // GetInfo (74) says, and an import from 5.x puts its sounds) and failing
+    // that the one under MUSHclient.exe.  The same folder in a portable copy.
     if (!(
         isalpha ((unsigned char) strName [0]) &&
         strName [1] == ':'               // eg. c: blah
-        ) &&      
+        ) &&
         strName [0] != '\\')          // eg. \mydir\blah or \\server\blah
-      strName = ExtractDirectory (App.m_strMUSHclientFileName) + "sounds\\" + strName;
+      {
+      const CString strUsers = UserData_Directory () + "sounds\\" + strName;
+      if (GetFileAttributes (strUsers) != INVALID_FILE_ATTRIBUTES)
+        strName = strUsers;
+      else
+        strName = ExtractDirectory (App.m_strMUSHclientFileName) + "sounds\\" + strName;
+      }
 
     if (strName.GetLength () > 127)
       return eBadParameter;

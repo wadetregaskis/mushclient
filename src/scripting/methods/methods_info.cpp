@@ -12,6 +12,7 @@
 #include "../../winplace.h"
 #include "png/png.h"
 #include "../errors.h"
+#include "../../user_data.h"   // UserData_Directory: the user's sounds
 #ifdef _WIN32
 #include <direct.h>
 #endif
@@ -534,10 +535,13 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case   71: SetUpVariantString (vaResult, App.m_strFixedPitchFont); break;
     case   72: SetUpVariantString (vaResult, MUSHCLIENT_VERSION); break;
     case   73: SetUpVariantString (vaResult, __DATE__ " " __TIME__); break;
-    case   74: SetUpVariantString (vaResult, ExtractDirectory (App.m_strMUSHclientFileName) +
+    case   74: SetUpVariantString (vaResult,
 #ifdef _WIN32
-              "sounds\\"); break;
+              // the user's sounds, in the data folder (user_data.h): where an
+              // import puts 5.x's, and where PlaySound looks first
+              UserData_Directory () + "sounds\\"); break;
 #else
+              ExtractDirectory (App.m_strMUSHclientFileName) +
               "sounds/"); break;
 #endif
     case   75: SetUpVariantString (vaResult, m_IAC_subnegotiation_data.c_str ()); break;

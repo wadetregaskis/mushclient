@@ -1882,9 +1882,16 @@ void CMUSHclientDoc:: SavePrefsP23 (CPrefsP23 &page23)
       ChatStopAcceptingCalls ();
     } // end need to stop accepting calls
 
-  // change chat name if necessary
+  // change chat name if necessary -- but a world with no chat name adopting
+  // the default LoadPrefsP23 offered is not a change to announce: before
+  // that default moved onto the page, loading wrote it here silently, and a
+  // new world said "Your chat name changed from <no name> to Name-not-set".
 
-  if (page23.m_strOurChatName != m_strOurChatName)
+  CString strDefaultChatName = m_name.IsEmpty () ? CString (DEFAULT_CHAT_NAME) : m_name;
+
+  if (m_strOurChatName.IsEmpty () && page23.m_strOurChatName == strDefaultChatName)
+    ;   // adopted quietly, as it always was
+  else if (page23.m_strOurChatName != m_strOurChatName)
      ChatNameChange (page23.m_strOurChatName);
 
   m_strOurChatName                   = page23.m_strOurChatName                   ;

@@ -250,3 +250,40 @@ TEST(PrefsChange, ChatAcceptTickShowsThePreferenceNotTheSocket)
     EXPECT_TRUE(doc.m_bAcceptIncomingChatConnections);
     doc.ChatStopAcceptingCalls();
 }
+
+// ── A world with no chat name adopts the default without announcing it ──────
+//
+// UPSTREAM-BUGS 95 moved LoadPrefsP23's defaulting off the document and onto
+// the page, so SavePrefsP23 saw "Name-not-set" against an empty name and
+// called ChatNameChange: every new world printed "Your chat name changed from
+// <no name> to Name-not-set" in red.  Loading used to adopt it silently, and
+// so does saving now; a name the user actually changes is still announced
+// (ChatNameChange is what marks the document modified, so that is the probe).
+TEST(PrefsChange, ADefaultChatNameIsAdoptedQuietly)
+{
+    CMUSHclientDoc doc;
+    CPrefsP23 page23;
+    doc.m_IncomingChatPort = 45123;     // not 4050: don't squat a real one
+
+    ASSERT_TRUE(doc.m_strOurChatName.IsEmpty());
+    doc.m_name.Empty();
+    doc.LoadPrefsP23(page23);
+    doc.SetModifiedFlag(FALSE);
+    doc.SavePrefsP23(page23);
+    EXPECT_TRUE(doc.m_strOurChatName == DEFAULT_CHAT_NAME);
+    EXPECT_FALSE(doc.IsModified());
+
+    // the character's name is the default when there is one
+    doc.m_strOurChatName.Empty();
+    doc.m_name = "Rincewind";
+    doc.LoadPrefsP23(page23);
+    doc.SavePrefsP23(page23);
+    EXPECT_TRUE(doc.m_strOurChatName == "Rincewind");
+    EXPECT_FALSE(doc.IsModified());
+
+    // and a real change is still announced
+    page23.m_strOurChatName = "Twoflower";
+    doc.SavePrefsP23(page23);
+    EXPECT_TRUE(doc.m_strOurChatName == "Twoflower");
+    EXPECT_TRUE(doc.IsModified());
+}

@@ -2706,6 +2706,16 @@ functions assign to `pageNN.*` and nothing else, checked by walking each body
 for a bare `m_… =`. So this is one page's slip, not a pattern — but it is the
 page every sheet loads.
 
+**Follow-up (2026-10-29).** The fix had a side effect on OK: `SavePrefsP23`
+calls `ChatNameChange` whenever the page's name differs from the document's,
+and an empty name now always did, so every *new* world printed "Your chat name
+changed from <no name> to Name-not-set" in red. Loading used to adopt the
+default silently. Saving now does too: a world with no chat name taking exactly
+the default `LoadPrefsP23` offered is not announced (nor marked modified by
+`ChatNameChange`); a name the user types still is. Seen on the running Windows
+client creating a world; pinned by `PrefsChange.ADefaultChatNameIsAdoptedQuietly`
+(`tests/win/test_prefs_pages.cpp`).
+
 ## 96 — A short chat file block writes heap memory into the user's file
 
 **Where:** `chatsock.cpp`, `CChatSocket::Process_File_block`.

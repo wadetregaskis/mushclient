@@ -264,3 +264,13 @@ them both to 0; an emulation function will be used. */
 #define SUPPORT_UTF8 1
 
 #define SUPPORT_UCP 1
+
+// MUSHclient: the JIT (pcre_jit_compile.c, which includes sljit/) on Windows
+// only.  8.45's sljit maps its code MAP_JIT on macOS but never calls
+// pthread_jit_write_protect_np, so under the hardened runtime on Apple silicon
+// writing the code faults; the port keeps the interpreter.  regexp.cpp and
+// lrexlib.c ask for the JIT through src/pcre_jit.h; a pattern it cannot
+// compile is interpreted as before.
+#if defined(_WIN32) && !defined(SUPPORT_JIT)
+#define SUPPORT_JIT 1
+#endif

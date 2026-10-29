@@ -49,7 +49,7 @@ class t_regexp
     if (m_program) 
       pcre_free (m_program); 
     if (m_extra) 
-      pcre_free (m_extra); 
+      pcre_free_study (m_extra);   // it may hold JIT code
     };  // destructor
 
   // compiled by EvaluateTrigger from a trigger's pattern with its variables

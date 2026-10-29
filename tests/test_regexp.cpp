@@ -403,11 +403,23 @@ TEST(RegexpTest, RecallTextDoesNotLeakItsCompiledRegexp) {
     }
 
     auto rss = [] () -> long {
+#ifdef _WIN32
+        // The debug CRT's live bytes, where a leaked t_regexp and its PCRE
+        // program would sit.  Not the working set: under the x64 and x86
+        // emulators on ARM64 Windows, each freshly JIT-compiled pattern is
+        // translated anew and the translations are cached, so the working set
+        // climbs ~0.4 KB per compile with nothing leaked (the CRT heap stays
+        // flat, and so does the working set of a native ARM64 build).
+        _CrtMemState st;
+        _CrtMemCheckpoint(&st);
+        return (long) ((st.lSizes[_NORMAL_BLOCK] + st.lSizes[_CLIENT_BLOCK]) / 1024);   // KB
+#else
         // ru_maxrss is a high-water mark, which is what we want: it cannot
         // fall back and hide a leak that has already happened.
         struct rusage ru;
         getrusage(RUSAGE_SELF, &ru);
         return (long) ru.ru_maxrss;      // bytes on macOS, KB on Linux
+#endif
     };
 
     auto recall = [&] () {
@@ -429,6 +441,65 @@ TEST(RegexpTest, RecallTextDoesNotLeakItsCompiledRegexp) {
 #endif
     EXPECT_LT(after - before, budget);
 }
+
+// ── The JIT (pcre/config.h builds it on Windows only) ────────────────────
+
+// regcomp asks pcre_study for the JIT (pcre_jit.h); where it is built in,
+// every trigger and alias pattern runs compiled.  Elsewhere the same call
+// leaves the pattern interpreted and changes nothing else.
+TEST(RegexpTest, PatternsAreJitCompiledWhereTheJitIsBuiltIn) {
+    Regexp r("^You (?:hit|miss) (\\w+)");
+    int jit = -1;
+    ASSERT_EQ(0, pcre_fullinfo(r->m_program, r->m_extra, PCRE_INFO_JIT, &jit));
+#ifdef _WIN32
+    EXPECT_EQ(1, jit);
+#else
+    EXPECT_EQ(0, jit);
+#endif
+    EXPECT_TRUE(regexec(r.get(), "You hit the troll"));
+    EXPECT_EQ(std::string("the"), r->GetWildcard(1));
+}
+
+#ifdef _WIN32
+// Each repeat of the group is a recursion of the interpreter on the machine
+// stack, so this line overflows a Debug build's 1 MB main-thread stack -- an
+// access violation that took the client down.  Under the JIT the backtracking
+// lives on the pattern's own stack (pcre_jit.h), and the line simply matches.
+// (No portable twin: off Windows this pattern is interpreted, and would crash.)
+TEST(RegexpTest, ALineTooDeepForTheInterpreterMatchesUnderTheJit) {
+    std::string s;
+    for (int i = 0; i < 20000; i++)
+        s += (i & 1) ? 'b' : 'a';
+    s += 'c';
+    Regexp r("^(?:a|b)*c$");
+    EXPECT_TRUE(regexec(r.get(), s.c_str()));
+    EXPECT_EQ(0, r->m_iExecutionError);
+    EXPECT_EQ(s, r->GetWildcard(0));
+}
+
+// A match that outgrows even the JIT's stack is a runtime error like the match
+// limit: reported, the program dropped, no match -- never a crash, and never a
+// rerun in the interpreter, which is shallower still.  The pattern's stack is
+// swapped for the smallest PCRE makes, so a modest line outgrows it.
+TEST(RegexpTest, AMatchTooDeepForTheJitStackIsAnErrorNotACrash) {
+    std::string s;
+    for (int i = 0; i < 1000; i++)
+        s += (i & 1) ? 'b' : 'a';
+    s += 'c';
+    pcre_jit_stack* tiny = pcre_jit_stack_alloc(8 * 1024, 8 * 1024);
+    ASSERT_NE(nullptr, tiny);
+    {
+        Regexp r("^(?:a|b)*c$");
+        pcre_assign_jit_stack(r->m_extra, NULL, tiny);
+        EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
+        EXPECT_EQ(PCRE_ERROR_JIT_STACKLIMIT, r->m_iExecutionError);
+        EXPECT_EQ(nullptr, r->m_program);
+        EXPECT_EQ(std::string("JIT Stack Limit"),
+                  std::string((LPCTSTR) Convert_PCRE_Runtime_Error(PCRE_ERROR_JIT_STACKLIMIT)));
+    }
+    pcre_jit_stack_free(tiny);
+}
+#endif
 
 
 MC_TEST_MAIN()

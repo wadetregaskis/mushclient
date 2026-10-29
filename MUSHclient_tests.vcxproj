@@ -1181,6 +1181,16 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|ARM64&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="pcre\pcre_jit_compile.c">
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|x64&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|ARM64&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;"></PrecompiledHeader>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|x64&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|ARM64&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;"></PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="pcre\pcre_maketables.c">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|x64&apos;">HAVE_CONFIG_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>

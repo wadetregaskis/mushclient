@@ -12,7 +12,7 @@ performance survey, measured in the running client.
 **Method.** Reviewers read each area adversarially and reported findings with
 failure scenarios; every finding below was re-read against the code before it
 was fixed, and each Windows-reachable fix carries a test or was checked in the
-running client. Tests: 1732 pass on ARM64, x64 and Win32; the packaged ARM64
+running client. Tests: 1735 pass on ARM64, x64 and Win32 (after the JIT, below); the packaged ARM64
 build's engine selftest passes 471/471 (19 skipped).
 
 ## Fixed
@@ -166,18 +166,38 @@ in the Cow Bar) a plain line costs ~400 µs (2,484 lines/s; notes, which skip
 triggers, 114,649/s). GetTriggerInfo 37 puts it in the plugins' own patterns:
 about fifteen near-identical Cow Bar regexes built on
 `(?:\w+\b\W*?){1,8}` with look-aheads, ~6 µs each per line of backtracking.
-The client-side cure is **PCRE's JIT**, typically several times faster on such
-patterns — but the bundled `pcre/` has no `pcre_jit_compile.c` or sljit, so it
-means vendoring them (and confirming sljit's Windows ARM64 support) and a
-fallback to the interpreter on `PCRE_ERROR_JIT_STACKLIMIT`. Left for a
-decision. 400 µs a line is still 2,500 lines a second, well above what a MUD
-sends.
+**PCRE's JIT is now built in on Windows** (added after this pass, at the
+user's request). It is PCRE 8.45's own `pcre_jit_compile.c` and `sljit/`,
+byte-identical to the release archive, and sljit handles MSVC on x86, x64 and
+ARM64. Every trigger and alias pattern (`regexp.cpp`) and every Lua `rex`
+pattern (`lrexlib.c`) is compiled through `src/pcre_jit.h`. Same client, same
+Quow set, before and after:
+
+| | interpreter | JIT |
+|---|---:|---:|
+| plain lines | 2,610/s | 5,486/s |
+| +200 non-matching regex triggers | 2,461/s | 4,557/s |
+| slowest Cow Bar trigger, 30,000 attempts | 0.198 s | 0.036 s |
+| all 752 plugin triggers' matching | 8.2 s | 3.3 s |
+
+The JIT also removes a crash. The interpreter recurses on the machine stack
+about once per repeat of a group, so one long line against a pattern such as
+`^(?:a|b)*c$` overflowed the stack. In the client, a 20,001-character line
+through `rex` killed the Release build (0xC000041D); the JIT build matched it.
+The JIT backtracks on a stack of its own: up to 8 MB per thread, committed as
+used. A match that outgrows even that is `PCRE_ERROR_JIT_STACKLIMIT`, reported
+("JIT Stack Limit") and handled like the match limit. It is deliberately not
+rerun in the interpreter, which is shallower still.
+
+Not on macOS or Linux: 8.45's sljit maps its code `MAP_JIT` but never calls
+`pthread_jit_write_protect_np`, so under the hardened runtime on Apple silicon
+writing the code would fault. The port keeps the interpreter, and with it the
+deep-line crash.
 
 Not done, measured as not worth the risk now: per-trigger overhead is ~110 ns
 (two `QueryPerformanceCounter` reads for the statistics, a `strlen`, the
-`pcre_exec`), i.e. 1000 triggers ≈ 9,000 lines/s; PCRE JIT (not compiled in;
-see above); per-run double measurement in `OnDraw`; plugin
-callback string copies; `SortTriggers` per add.
+`pcre_exec`), i.e. 1000 triggers ≈ 9,000 lines/s; per-run double
+measurement in `OnDraw`; plugin callback string copies; `SortTriggers` per add.
 
 ## Not fixed, and why
 

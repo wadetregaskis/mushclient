@@ -7,6 +7,7 @@
 #include "pcre/config.h"
 #include "pcre/pcre.h"
 #include "pcre/pcre_internal.h"
+#include "pcre_jit.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -34,8 +35,8 @@ pcre_extra * extra;
     ThrowErrorException("Failed: %s at offset %d", (LPCTSTR) Translate (error), erroroffset);
     }
 
-  // study it for speed purposes
-  extra =  pcre_study(program, 0, &error);        
+  // study it for speed purposes -- and compile it, where the JIT is built in
+  extra = mc_pcre_study (program, &error);
 
   if (error)
     {
@@ -108,7 +109,7 @@ int count;
     {
     pcre_free (prog->m_program);
     prog->m_program = NULL;
-    pcre_free (prog->m_extra);
+    pcre_free_study (prog->m_extra);
     prog->m_extra = NULL;
     prog->m_iExecutionError = count; // remember reason
 #ifdef _WIN32

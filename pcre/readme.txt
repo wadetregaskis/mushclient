@@ -29,6 +29,7 @@ pcre_exec.c
 pcre_fullinfo.c
 pcre_get.c
 pcre_globals.c
+pcre_jit_compile.c
 pcre_internal.h
 pcre_maketables.c
 pcre_newline.c
@@ -43,7 +44,11 @@ pcre_xclass.c
 ucp.h
 
 
-(Note that config.h is part of the git repository)
+and the whole sljit directory (the JIT compiler pcre_jit_compile.c includes),
+and LICENCE.
+
+(Note that config.h is part of the git repository.  Its last lines enable
+the JIT, SUPPORT_JIT, on Windows only -- see the comment there.)
 
 4. Rename pcre_chartables.c.dist as pcre_chartables.c
    Rename pcre.h.generic as pcre.h

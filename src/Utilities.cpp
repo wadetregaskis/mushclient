@@ -1462,6 +1462,7 @@ const CString Convert_PCRE_Runtime_Error (const int iError)
     case PCRE_ERROR_RECURSIONLIMIT : return Translate ("Recursion Limit");
     case PCRE_ERROR_NULLWSLIMIT    : return Translate ("Null Ws Limit");
     case PCRE_ERROR_BADNEWLINE     : return Translate ("Bad Newline");
+    case PCRE_ERROR_JIT_STACKLIMIT : return Translate ("JIT Stack Limit");
     default: return Translate ("Unknown PCRE error");
     }
   } // end of Convert_PCRE_Runtime_Error

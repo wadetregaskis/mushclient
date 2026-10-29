@@ -533,6 +533,7 @@ set(PCRE_SOURCES
     pcre/pcre_version.c
     pcre/pcre_xclass.c
     pcre/pcre_chartables.c
+    pcre/pcre_jit_compile.c   # stubs here: config.h enables the JIT on Windows only
 )
 add_library(mcpcre STATIC ${PCRE_SOURCES})
 target_include_directories(mcpcre PUBLIC ${CMAKE_SOURCE_DIR}/pcre)

@@ -372,6 +372,7 @@ static const luaL_Reg posixmeta[] = {
 #define PCRE_EXP_DECL extern
 
 #include "pcre.h"
+#include "pcre_jit.h"
 
 const char pcre_handle[] = "pcre_regex_handle";
 const char pcre_typename[] = "pcre_regex";
@@ -426,7 +427,7 @@ static int Lpcre_comp(lua_State *L)
     L_lua_error(L, buf);
     }
 
-  ud->extra =  pcre_study(ud->pr, 0, &error);        
+  ud->extra = mc_pcre_study(ud->pr, &error);  /* the JIT, on Windows */
   if(error) L_lua_error(L, error);
 
   pcre_fullinfo(ud->pr, ud->extra, PCRE_INFO_CAPTURECOUNT, &ud->ncapt);
@@ -730,7 +731,7 @@ static int Lpcre_gc (lua_State *L)
   pcre2 *ud = (pcre2 *)luaL_checkudata(L, 1, pcre_handle);
   if (ud) {
     if(ud->pr)      pcre_free(ud->pr);
-    if(ud->extra)   pcre_free(ud->extra);
+    if(ud->extra)   pcre_free_study(ud->extra);  /* it may hold JIT code */
     if(ud->tables)  pcre_free((void *)ud->tables);
     if(ud->match)   free(ud->match);
   }

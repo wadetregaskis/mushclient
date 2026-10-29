@@ -52,6 +52,10 @@ class t_regexp
       pcre_free (m_extra); 
     };  // destructor
 
+  // compiled by EvaluateTrigger from a trigger's pattern with its variables
+  // expanded (CTrigger::strExpandedPattern says which) -- not by anything else
+  bool m_bFromExpansion = false;
+
   // pairs of offsets from match
   vector<int> m_vOffsets;
   // Reusable pcre_exec output buffer + cached capture count, so regexec does not

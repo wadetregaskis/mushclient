@@ -1878,6 +1878,33 @@ TEST(TriggerColourMatch, HiliteAndInverseInteractionsSurvive)
     EXPECT_EQ(0L, fires(altInverse, wantRed));
 }
 
+// An "expand variables" trigger used to recompile its pattern on every line.
+// It keeps its compiled program while the expanded pattern is unchanged, and
+// recompiles the moment a variable it uses changes it.
+TEST(TriggerTest, AnExpandVariablesTriggerRecompilesOnlyWhenItsVariableChanges)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    CTrigger* t = add_trigger(doc, "@target hits you");
+    t->bExpandVariables = TRUE;
+    doc.SetVariable("target", "orc");
+
+    feed_line(doc, "orc hits you");
+    EXPECT_EQ(1L, t->nMatched);
+    const t_regexp* compiled = t->regexp;
+    ASSERT_TRUE(compiled != nullptr);
+
+    feed_line(doc, "orc hits you");
+    feed_line(doc, "a troll hits you");
+    EXPECT_EQ(2L, t->nMatched);
+    EXPECT_TRUE(t->regexp == compiled);   // the same program: nothing recompiled
+
+    doc.SetVariable("target", "troll");
+    feed_line(doc, "orc hits you");
+    EXPECT_EQ(2L, t->nMatched);           // the new value, not the cached one
+    feed_line(doc, "troll hits you");
+    EXPECT_EQ(3L, t->nMatched);
+}
+
 MC_TEST_MAIN()
 
 // The numeric half of the recompile (methods_triggers.cpp:757-793).  Only

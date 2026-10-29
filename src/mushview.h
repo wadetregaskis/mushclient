@@ -173,9 +173,18 @@ void DrawImage (CDC* pDC, CBitmap & bitmap, const short iMode);
 // we add this to simulate a CScrollView
 void ScrollToPosition( POINT pt, const bool bSmooth );
 CPoint GetScrollPosition( ) const { return m_scroll_position; }; 
-void SetScrollSizes (SIZE sizeTotal, 
-                     const SIZE& sizePage, 
+void SetScrollSizes (SIZE sizeTotal,
+                     const SIZE& sizePage,
                      const SIZE& sizeLine);
+// The scroll bar's range and position, applied once per burst of output
+// rather than once per line (see CMUSHView::SetScrollSizes).
+void FlushScrollBar ();
+afx_msg LRESULT OnFlushScrollBar (WPARAM wParam, LPARAM lParam);
+bool m_bScrollBarPending;      // range/position below not yet given to Windows
+bool m_bScrollFlushPosted;     // WM_USER_FLUSH_SCROLLBAR is on its way
+int  m_iPendingScrollMax;
+int  m_iPendingScrollPage;
+int  m_iPendingScrollPos;
 
 bool calculate_line_and_column (const CPoint & point, 
                                 CClientDC & dc, 

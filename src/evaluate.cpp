@@ -481,50 +481,67 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
                                         NULL);    // no name substitution in match text
 
 
-        LONGLONG iOldTimeTaken = 0;
-        long iOldMatchAttempts = 0;
-
-
-        // remember time taken to execute them
-
-        if (trigger_item->regexp)
-          {
-          iOldTimeTaken = trigger_item->regexp->iTimeTaken;
-          iOldMatchAttempts = trigger_item->regexp->m_iMatchAttempts;
-          }
-
-        delete trigger_item->regexp;    // get rid of earlier regular expression
-        trigger_item->regexp = NULL;
-
       // all triggers are now regular expressions
 
-        CString strRegexp; 
+        CString strRegexp;
 
         if (trigger_item->bRegexp)
           strRegexp = strOutput;
         else
           strRegexp = ConvertToRegularExpression (strOutput);
 
-        try
-          {
-          trigger_item->regexp = regcomp (strRegexp,
-                                          (trigger_item->ignore_case  ? PCRE_CASELESS : 0) |
-                                          (trigger_item->bMultiLine  ? PCRE_MULTILINE : 0) |
-                                          (m_bUTF_8 ? PCRE_UTF8 : 0)
-                                         );
-          } // end of try
-    	  catch(CException* e)
-          {
-          e->ReportError ();
-          e->Delete ();
-          continue;
-          }   // end of catch
+        const int iFlags = (trigger_item->ignore_case  ? PCRE_CASELESS : 0) |
+                           (trigger_item->bMultiLine  ? PCRE_MULTILINE : 0) |
+                           (m_bUTF_8 ? PCRE_UTF8 : 0);
 
-        // add back execution time
-        if (trigger_item->regexp)
+        // The same pattern as last time (no variable it uses has changed),
+        // compiled and still usable: keep it.  Recompiling it -- pcre_compile
+        // and pcre_study -- for every line was the most expensive thing an
+        // expand-variables trigger did.  A pattern that failed to compile, or
+        // whose program an exec error freed, has no usable program, so it is
+        // still retried (and its error still reported) on every line, as before.
+        // (Only a program this code compiled: every other place that sets
+        // trigger_item->regexp compiles the raw, unexpanded pattern.)
+        if (!(trigger_item->regexp && trigger_item->regexp->m_program &&
+              trigger_item->regexp->m_bFromExpansion &&
+              trigger_item->iExpandedFlags == iFlags &&
+              trigger_item->strExpandedPattern == strRegexp))
           {
-          trigger_item->regexp->iTimeTaken += iOldTimeTaken;
-          trigger_item->regexp->m_iMatchAttempts += iOldMatchAttempts;
+          LONGLONG iOldTimeTaken = 0;
+          long iOldMatchAttempts = 0;
+
+          // remember time taken to execute them
+
+          if (trigger_item->regexp)
+            {
+            iOldTimeTaken = trigger_item->regexp->iTimeTaken;
+            iOldMatchAttempts = trigger_item->regexp->m_iMatchAttempts;
+            }
+
+          delete trigger_item->regexp;    // get rid of earlier regular expression
+          trigger_item->regexp = NULL;
+          trigger_item->iExpandedFlags = -1;
+
+          try
+            {
+            trigger_item->regexp = regcomp (strRegexp, iFlags);
+            } // end of try
+    	    catch(CException* e)
+            {
+            e->ReportError ();
+            e->Delete ();
+            continue;
+            }   // end of catch
+
+          // add back execution time
+          if (trigger_item->regexp)
+            {
+            trigger_item->regexp->iTimeTaken += iOldTimeTaken;
+            trigger_item->regexp->m_iMatchAttempts += iOldMatchAttempts;
+            trigger_item->regexp->m_bFromExpansion = true;
+            trigger_item->strExpandedPattern = strRegexp;
+            trigger_item->iExpandedFlags = iFlags;
+            }
           }
 
         } // end of variable substitution

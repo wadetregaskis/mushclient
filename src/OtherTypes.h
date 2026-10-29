@@ -625,6 +625,10 @@ class CTrigger : public CObject
   long  nMatched;         // how many times the trigger fired
   vector<string> wildcards;   // matching wildcards
   t_regexp * regexp;      // compiled regular expression, if needed
+  // "Expand variables": the pattern regexp was last compiled from, and with
+  // what flags, so EvaluateTrigger recompiles only when a variable changed it
+  CString strExpandedPattern;
+  int iExpandedFlags = -1;
   CTime tWhenMatched;     // when last matched
   bool bTemporary;        // if true, don't save it
   bool bIncluded;       // if true, don't save it

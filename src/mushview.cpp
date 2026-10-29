@@ -93,6 +93,9 @@ IMPLEMENT_DYNCREATE(CMUSHView, CView)
 
 BEGIN_MESSAGE_MAP(CMUSHView, CView)
   ON_WM_CONTEXTMENU()
+#ifdef _WIN32
+  ON_MESSAGE(WM_USER_FLUSH_SCROLLBAR, OnFlushScrollBar)
+#endif
   //{{AFX_MSG_MAP(CMUSHView)
   ON_COMMAND(ID_TEST_END, OnTestEnd)
   ON_COMMAND(ID_TEST_PAGEDOWN, OnTestPagedown)
@@ -274,6 +277,12 @@ BEGIN_MESSAGE_MAP(CMUSHView, CView)
 
 CMUSHView::CMUSHView()
 {
+
+  m_bScrollBarPending = false;
+  m_bScrollFlushPosted = false;
+  m_iPendingScrollMax = 0;
+  m_iPendingScrollPage = 0;
+  m_iPendingScrollPos = 0;
 
   m_selstart_line = 0;
   m_selstart_col = 0;
@@ -598,13 +607,24 @@ int iUnicodeCharacters = 0;
 
 class CMyMemDC : public CDC {
 private:
-  CBitmap m_bitmap; // Offscreen bitmap
+  CBitmap m_bitmap; // Offscreen bitmap, when the shared one is in use
   CBitmap* m_oldBitmap; // bitmap originally found in CMyMemDC
   CDC* m_pDC; // Saves CDC passed in constructor
   CRect m_rect; // Rectangle of drawing area.
   BOOL m_bMemDC; // TRUE if CDC really is a Memory DC.
+  bool m_bShared; // drawing into s_backBuffer
+
+  // One back buffer, kept from paint to paint rather than a window-sized
+  // bitmap created and destroyed for every one (several MB, at every line of
+  // output).  Every paint covers its whole rectangle, so what a previous one
+  // left in it is never seen.  A paint inside a paint (a script repainting
+  // from a drawing callback) gets a bitmap of its own: a bitmap can be in only
+  // one DC at a time.
+  static CBitmap s_backBuffer;
+  static CSize   s_backBufferSize;
+  static bool    s_backBufferInUse;
 public:
-  CMyMemDC(CDC* pDC, RECT rect) : CDC(), m_oldBitmap(NULL), m_pDC(pDC), m_rect (rect)
+  CMyMemDC(CDC* pDC, RECT rect) : CDC(), m_oldBitmap(NULL), m_pDC(pDC), m_rect (rect), m_bShared (false)
   {
     ASSERT(m_pDC != NULL); // If you asserted here, you passed in a NULL CDC.
 
@@ -613,8 +633,29 @@ public:
     if (m_bMemDC){
       // Create a Memory DC
       CreateCompatibleDC(pDC);
-      m_bitmap.CreateCompatibleBitmap(pDC, m_rect.Width(), m_rect.Height());
-      m_oldBitmap = SelectObject(&m_bitmap);
+      const CSize size (m_rect.Width(), m_rect.Height());
+      if (!s_backBufferInUse)
+        {
+        if (!s_backBuffer.GetSafeHandle () ||
+            s_backBufferSize.cx < size.cx || s_backBufferSize.cy < size.cy)
+          {
+          s_backBuffer.DeleteObject ();
+          s_backBufferSize = CSize (0, 0);
+          if (s_backBuffer.CreateCompatibleBitmap(pDC, size.cx, size.cy))
+            s_backBufferSize = size;
+          }
+        m_bShared = s_backBuffer.GetSafeHandle () != NULL;
+        }
+      if (m_bShared)
+        {
+        s_backBufferInUse = true;
+        m_oldBitmap = SelectObject(&s_backBuffer);
+        }
+      else
+        {
+        m_bitmap.CreateCompatibleBitmap(pDC, size.cx, size.cy);
+        m_oldBitmap = SelectObject(&m_bitmap);
+        }
       SetWindowOrg(m_rect.left, m_rect.top);
     } else {
       // Make a copy of the relevent parts of the current DC for printing
@@ -632,6 +673,8 @@ public:
         this, m_rect.left, m_rect.top, SRCCOPY);
       //Swap back the original bitmap.
       SelectObject(m_oldBitmap);
+      if (m_bShared)
+        s_backBufferInUse = false;
     } else {
       // All we need to do is replace the DC with an illegal value,
       // this keeps us from accidently deleting the handles associated with
@@ -646,6 +689,10 @@ public:
   // Allow usage as a pointer
   operator CMyMemDC*() {return this;}
 };
+
+CBitmap CMyMemDC::s_backBuffer;
+CSize   CMyMemDC::s_backBufferSize (0, 0);
+bool    CMyMemDC::s_backBufferInUse = false;
 
 /* modes:
 
@@ -1672,6 +1719,11 @@ lastline = pDoc->GetLastLine ();
 
 if (pt.y > ((lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ()))
   pt.y =  (lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ();
+
+// less than a screenful of output: the end is the top (as OnTestEnd has it),
+// not a negative offset that drops the text down the window until it snaps back
+if (pt.y < 0)
+  pt.y = 0;
 
 ScrollToPosition (pt, false);
 
@@ -2984,11 +3036,14 @@ lastline = pDoc->GetLastLine ();
 if (pt.y > ((lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ()))
   pt.y =  (lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ();
 
+if (pt.y < 0)     // less than a screenful: see OnTestPagedown
+  pt.y = 0;
+
 ScrollToPosition (pt, App.m_bSmoothScrolling);
 
 }
 
-void CMUSHView::OnTestLineup() 
+void CMUSHView::OnTestLineup()
 {
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
@@ -3953,6 +4008,7 @@ void CMUSHView::OnVScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar)
 {
   SCROLLINFO ScrollInfo;
 
+  FlushScrollBar ();      // what the user sees is what the bar holds
   GetScrollInfo (SB_VERT, &ScrollInfo, SIF_ALL);
 
   RemoveToolTip ();
@@ -4549,6 +4605,7 @@ int iDeltaY = m_scroll_position.y - pt.y;
 
     if (App.m_bSmoothScrolling)
       {
+      FlushScrollBar ();    // the loop below reads the bar back
       for (int i = 0; i < abs (iDeltaY); i++)
         {
         m_scroll_position.y -= iSmoothDelta;
@@ -4589,8 +4646,26 @@ int iDeltaY = m_scroll_position.y - pt.y;
 
   m_scroll_position = pt;
 
-  // update scroll bar
+  // update scroll bar -- once this burst of output is over (SetScrollSizes)
+#ifdef _WIN32
+  m_iPendingScrollPos = pt.y;
+  if (!m_bScrollBarPending)
+    {
+    // the range as it stands, so a flush with no SetScrollSizes before it
+    // keeps it
+    SCROLLINFO si;
+    si.cbSize = sizeof si;
+    si.fMask = SIF_RANGE | SIF_PAGE;
+    GetScrollInfo (SB_VERT, &si, SIF_RANGE | SIF_PAGE);
+    m_iPendingScrollMax  = si.nMax;
+    m_iPendingScrollPage = (int) si.nPage;
+    m_bScrollBarPending  = true;
+    }
+  if (!m_bScrollFlushPosted && m_hWnd && PostMessage (WM_USER_FLUSH_SCROLLBAR))
+    m_bScrollFlushPosted = true;
+#else
   SetScrollPos (SB_VERT, pt.y, pDoc->m_bScrollBarWanted);
+#endif
   m_ScrollbarPosition.cy = pt.y;
 
 
@@ -4618,12 +4693,32 @@ SCROLLINFO ScrollInfo;
 
   m_scroll_limit = sizeTotal;
 
+#ifdef _WIN32
+  // Windows: recorded, and given to the scroll bar once this burst of output
+  // is over.  Both SetScrollInfo and SetScrollPos cost a good deal with
+  // visual styles, redrawing or not, and every line that arrives changes the
+  // range and the position: measured, 2000 lines through Simulate took 5.85 s
+  // with the bar shown and 0.05 s with it hidden, and still ~0.4 s with the
+  // redraws merely deferred.  A posted message is handled before WM_PAINT, so
+  // the bar is up to date by the time anything is drawn -- and before
+  // anything reads it back (FlushScrollBar's callers).
+  (void) ScrollInfo;
+  if (!m_bScrollBarPending)
+    m_iPendingScrollPos = m_ScrollbarPosition.cy;
+  m_iPendingScrollMax  = sizeTotal.cy - 1;
+  m_iPendingScrollPage = sizePage.cy;
+  m_bScrollBarPending  = true;
+  if (!m_bScrollFlushPosted && m_hWnd && PostMessage (WM_USER_FLUSH_SCROLLBAR))
+    m_bScrollFlushPosted = true;
+  m_ScrollbarPosition.cy = m_iPendingScrollPos;
+#else
   GetScrollInfo (SB_VERT, &ScrollInfo, SIF_ALL);
   ScrollInfo.nMin = 0;
   ScrollInfo.nMax = sizeTotal.cy - 1;
   ScrollInfo.nPage = sizePage.cy;
   SetScrollInfo (SB_VERT, &ScrollInfo, pDoc->m_bScrollBarWanted);
   m_ScrollbarPosition.cy = ScrollInfo.nPos;
+#endif
 
   /*
   GetScrollInfo (SB_HORZ, &ScrollInfo, SIF_ALL);
@@ -4634,6 +4729,41 @@ SCROLLINFO ScrollInfo;
 */
 
   } // end of CMUSHView::SetScrollSizes
+
+// Give Windows the scroll bar range and position SetScrollSizes and
+// ScrollToPosition recorded, if they have not been given yet.  Posted after
+// a burst of output, and called first by anything that reads the bar back.
+void CMUSHView::FlushScrollBar ()
+  {
+#ifdef _WIN32
+  if (!m_bScrollBarPending || !m_hWnd)
+    return;
+  m_bScrollBarPending = false;
+  CMUSHclientDoc* pDoc = GetDocument();
+  SCROLLINFO si;
+  si.cbSize = sizeof si;
+  // Only what changed: re-setting the range while the user drags the thumb
+  // (this runs from inside that drag, via OnVScroll -> ScrollToPosition)
+  // disturbs the drag, where setting the position alone -- all the old code
+  // did on that path -- does not.
+  GetScrollInfo (SB_VERT, &si, SIF_RANGE | SIF_PAGE);
+  si.fMask  = SIF_POS;
+  if (si.nMin != 0 || si.nMax != m_iPendingScrollMax || (int) si.nPage != m_iPendingScrollPage)
+    si.fMask |= SIF_RANGE | SIF_PAGE;
+  si.nMin   = 0;
+  si.nMax   = m_iPendingScrollMax;
+  si.nPage  = (UINT) m_iPendingScrollPage;
+  si.nPos   = m_iPendingScrollPos;
+  SetScrollInfo (SB_VERT, &si, pDoc->m_bScrollBarWanted);
+#endif
+  }
+
+LRESULT CMUSHView::OnFlushScrollBar (WPARAM, LPARAM)
+  {
+  m_bScrollFlushPosted = false;
+  FlushScrollBar ();
+  return 0;
+  }
 
 void CMUSHView::OnLButtonDblClk(UINT nFlags, CPoint point) 
 {
@@ -5147,6 +5277,9 @@ bool bSmooth_saved = App.m_bSmoothScrolling;
     // limit to end of screen
     if (ScrollPt.y > ((lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ()))
       ScrollPt.y =  (lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ();
+
+    if (ScrollPt.y < 0)     // less than a screenful: see OnTestPagedown
+      ScrollPt.y = 0;
 
     ScrollToPosition (ScrollPt, false);
 

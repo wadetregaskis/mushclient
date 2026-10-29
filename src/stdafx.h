@@ -317,6 +317,7 @@ BOOL CheckLabel (const CString & strLabel, const bool bScript = false);
 #define WM_USER_SCRIPT_FILE_CONTENTS_CHANGED (WM_USER + 1001)
 #define WM_USER_SHOW_TIPS (WM_USER + 1003)
 #define WM_USER_SSL_FALLBACK_PROMPT (WM_USER + 1004)
+#define WM_USER_FLUSH_SCROLLBAR (WM_USER + 1005)   // CMUSHView: apply a deferred scroll bar update
 
 // tray stuff
 

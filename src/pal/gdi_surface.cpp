@@ -133,9 +133,11 @@ int GdiSurface::dpi() {
 // (e.g. Latin-1 "caf\xE9" still renders "café", not "caf?"), which an
 // unconditional CP_UTF8 path would break. The engine already rejects invalid
 // UTF-8 when Unicode=true (CalculateUTF8length -> -3), so the only bytes reaching
-// the ANSI branch are genuine legacy/ANSI text; the sole divergence from the old
-// flag is the unreachable "Unicode=false yet coincidentally-valid-UTF-8 non-ASCII"
-// input. The two-call NULL,0 sizing also fixes the old astral-char undersize bug.
+// the ANSI branch are genuine legacy/ANSI text.  "Unicode=false yet valid UTF-8"
+// is NOT unreachable -- short GBK and Big5 strings are often valid UTF-8 -- so
+// WindowText passes its flag through g_legacyText (surface_bridge.h), which
+// skips the probe: Unicode=false is ExtTextOutA, as it always was.  The
+// two-call NULL,0 sizing also fixes the old astral-char undersize bug.
 //
 // Utf8ToWide: valid UTF-8 fills `wide` and returns true; anything else -> false.
 static bool Utf8ToWide(const char* utf8, size_t len, std::vector<WCHAR>& wide) {
@@ -194,7 +196,7 @@ int GdiSurface::drawText(SurfaceId sid, FontId fid, const char* utf8, size_t len
     }
     int width = 0;
     std::vector<WCHAR> wide;
-    if (Utf8ToWide(utf8, len, wide)) {
+    if (!g_legacyText && Utf8ToWide(utf8, len, wide)) {   // Unicode=false: never (surface_bridge.h)
         ::ExtTextOutW(hdc, pt.x, pt.y, eto, prc, &wide[0], (int)wide.size(), NULL);
         SIZE sz = { 0, 0 };
         ::GetTextExtentPoint32W(hdc, &wide[0], (int)wide.size(), &sz);
@@ -217,7 +219,7 @@ Size GdiSurface::measureText(FontId fid, const char* utf8, size_t len) {
     CFont* oldFont = dc->SelectObject(f->font);
     SIZE sz = { 0, 0 };
     std::vector<WCHAR> wide;
-    if (Utf8ToWide(utf8, len, wide))         // same probe as drawText -> same metrics
+    if (!g_legacyText && Utf8ToWide(utf8, len, wide))   // same probe as drawText -> same metrics
         ::GetTextExtentPoint32W(hdc, &wide[0], (int)wide.size(), &sz);
     else
         ::GetTextExtentPoint32A(hdc, utf8, (int)len, &sz);

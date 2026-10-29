@@ -333,6 +333,11 @@ long  CMiniWindow::RectOp (short Action, long Left, long Top, long Right, long B
     {
     case 1:   // frame: 1px border via 4 solid fills (MFC FrameRect)
       {
+      // FrameRect draws nothing for a rectangle with no inside -- right left
+      // of left, or bottom above top (FixRight (-60) in a narrow window) --
+      // where four fills, which normalise, would draw it mirrored.
+      if (rc.w <= 0 || rc.h <= 0)
+        return eOK;
       const pal::BrushSpec b { pal::BrushStyle::Solid, c1 };
       srf->fillRect (sid, { rc.x, rc.y, rc.w, 1 }, b);
       srf->fillRect (sid, { rc.x, rc.y + rc.h - 1, rc.w, 1 }, b);
@@ -910,13 +915,15 @@ long CMiniWindow::Text (LPCTSTR FontId,  // which previously-created font
 
   // Draw through the surface seam (docs/PAL.md S3b). The adapter auto-detects
   // UTF-8 vs the font's legacy charset (the decided UTF-8 + charset-hint model),
-  // so the per-call Unicode flag only gates the validity guard above; rendering
-  // is byte-identical to the old ExtTextOut/ExtTextOutW + ETO_CLIPPED path. The
+  // except that Unicode=false says outright that the bytes are the font's
+  // charset (pal::LegacyTextScope); rendering is byte-identical to the old
+  // ExtTextOut/ExtTextOutW + ETO_CLIPPED path. The
   // clip box is the engine's FixRight/FixBottom-resolved rectangle, unchanged.
   const long right  = FixRight (Right);
   const long bottom = FixBottom (Bottom);
   const pal::Rect clip { (int) Left, (int) Top, (int) (right - Left), (int) (bottom - Top) };
 
+  pal::LegacyTextScope legacy (!Unicode);   // the font's charset, whatever the bytes look like
   int width = srf->drawText (m_surfaceId, it->second, Text, length,
                              { (int) Left, (int) Top }, (pal::Colour) Colour, &clip);
 
@@ -954,6 +961,7 @@ long CMiniWindow::TextWidth (LPCTSTR FontId,  // which previously-created font
 
   // Measure through the seam (docs/PAL.md S3b) — the same font metrics drawText
   // uses, so WindowTextWidth and WindowText agree.
+  pal::LegacyTextScope legacy (!Unicode);
   return srf->measureText (it->second, Text, length).w;
 
   }  // end of  CMiniWindow::TextWidth

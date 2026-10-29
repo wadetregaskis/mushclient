@@ -13,5 +13,6 @@ namespace pal {
 ISurface* g_surface = nullptr;
 SurfaceId (*g_adoptSurface)(void*, int, int) = nullptr;
 void      (*g_releaseAdoptedSurface)(SurfaceId) = nullptr;
+bool g_legacyText = false;
 
 } // namespace pal

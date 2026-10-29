@@ -178,7 +178,15 @@ public:
             {
                 CMUSHView* pmyView = (CMUSHView*)pView;
 
+                // Scrolling home measures "scrolled up?" against the scroll
+                // sizes of the buffer just emptied, so auto-pause took the
+                // clear for the user scrolling back and froze the window --
+                // and new output, which addedstuff would have followed, then
+                // stayed off the bottom.  A pause the user asked for is kept
+                // (as OnSize keeps it across the same kind of move).
+                const BOOL bWasFrozen = pmyView->m_freeze;
                 pmyView->ScrollToPosition(CPoint(0, 0), false);
+                pmyView->m_freeze = bWasFrozen;
                 pmyView->addedstuff();
             }
         }

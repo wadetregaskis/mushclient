@@ -27,4 +27,19 @@ extern ISurface* g_surface;
 extern SurfaceId (*g_adoptSurface)(void* nativeCtx, int w, int h);
 extern void      (*g_releaseAdoptedSurface)(SurfaceId);
 
+// WindowText / WindowTextWidth with Unicode=false: the bytes are in the font's
+// charset, whatever they look like.  The seam carries no such flag (the decided
+// UTF-8 + charset-hint model), and the GDI adapter otherwise PROBES for UTF-8 --
+// which a short GBK or Big5 string often passes (bytes C3 A8 are a hanzi there
+// and e-grave in UTF-8), so it drew the wrong characters where MUSHclient 5
+// drew the right ones.  So the engine says so, for the length of one call, and
+// the GDI adapter honours it; the others decode by the charset hint anyway.
+extern bool g_legacyText;
+struct LegacyTextScope
+  {
+  explicit LegacyTextScope (bool legacy) : m_old (g_legacyText) { g_legacyText = legacy; }
+  ~LegacyTextScope () { g_legacyText = m_old; }
+  bool m_old;
+  };
+
 } // namespace pal

@@ -647,6 +647,11 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
 
 
       } // previous window still exists
+    else
+      // deleted under the mouse (a plugin reloaded, say): there is nothing to
+      // cancel, but the stale id made OnMouseMove give up on every move --
+      // no tooltips, no selection -- until the next click
+      pDoc->m_sPreviousMiniWindow.erase ();
 
     } // moved to different window
 
@@ -850,6 +855,8 @@ bool MouseDownMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWi
         }   // we had previous hotspot
 
       } // previous window still exists
+    else
+      pDoc->m_sPreviousMiniWindow.erase ();   // deleted meanwhile: see Mouse_Move_MiniWindow
 
     } // moved to different window
 

@@ -680,17 +680,27 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
 
   if (regexp)
     {
+    // MUSHclient 5's shape, which every Python world script was written for:
+    // Windows' COM arm built a 1-based SAFEARRAY of MAX_WILDCARDS (10) --
+    // %1..%9, then the whole matching line -- and pywin32 handed it to the
+    // script as a tuple, dropping the lower bound.  So wildcards[0] is %1
+    // (exampscript.pys's OnStats reads its HP there) and wildcards[9] the
+    // line; a capture the pattern lacks is "".  (Lua's callbacks keep [0] as
+    // the line: a Lua table, as 5.x gave Lua.)
     vector<string> wc;                       // [0]=whole match, [1..n]=groups
     regexp->GetCallbackWildcards (bLowercaseWildcards, wc);
-    PyObject* wl = PyList_New (wc.size ());
-    if (wl)
+    const size_t kCount = MAX_WILDCARDS;     // 10: %1..%9 and the line
+    PyObject* wt = PyTuple_New (kCount);
+    if (wt)
       {
-      for (size_t i = 0; i < wc.size (); i++)
+      for (size_t i = 0; i < kCount; i++)
         {
-        const string & w = wc [i];
-        PyList_SET_ITEM (wl, i, PyUnicode_DecodeUTF8 (w.data (), w.size (), "surrogateescape"));
+        const size_t from = i + 1 < kCount ? i + 1 : 0;   // the last slot is the line
+        static const string none;
+        const string & w = from < wc.size () ? wc [from] : none;
+        PyTuple_SET_ITEM (wt, i, PyUnicode_DecodeUTF8 (w.data (), w.size (), "surrogateescape"));
         }
-      PyList_Append (argl, wl); Py_DECREF (wl);
+      PyList_Append (argl, wt); Py_DECREF (wt);
       }
     }
 

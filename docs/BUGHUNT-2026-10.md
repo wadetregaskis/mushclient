@@ -76,6 +76,11 @@ build's engine selftest passes 471/471 (19 skipped).
   5.x JScript callback (`exampscript.js` included) read its wildcards one off.
   It now gives 5.x's shape (`%1…%9`, then the whole line, 1-based); direct
   indexing is unchanged. Selftest added.
+- **Python callbacks got Lua's `[whole, %1, …]`** where 5.x ActivePython
+  (pywin32) gave a tuple with `wildcards[0] == %1` — which `exampscript.pys`
+  assumes. Decided by the user after this pass: match 5.x. Python now gets a
+  tuple of ten, `%1…%9` then the whole line, missing captures `""`, on every
+  platform (the port's Python shares `py_engine.cpp`). Selftest updated.
 - A missing or broken `python\` aborted the client (`Py_InitializeEx` →
   `Py_FatalError`); now an error and no engine.
 - Python source in the ANSI code page was a SyntaxError at its first accented
@@ -176,10 +181,6 @@ callback string copies; `SortTriggers` per add.
 
 ## Not fixed, and why
 
-- **Python wildcard shape** — the decision is the user's: 5.x ActivePython (via
-  pywin32) gave `wildcards[0] == %1`; the embedded engine gives Lua's
-  `[0] == whole line`, which the port's scripts already use, and
-  `exampscript.pys` expects the former. Queued.
 - **Python threads calling world methods off the UI thread** are unsynchronised;
   marshalling them is a design change.
 - **Text crossing world methods on multi-byte (CJK) or UTF-8 system code pages**

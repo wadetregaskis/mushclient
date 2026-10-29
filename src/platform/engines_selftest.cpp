@@ -962,6 +962,18 @@ void battery_mxp_callsite(const Dialect& d)
           "...and with a mapping of the parsed arguments, which the COM path drops");
 }
 
+// The positional wildcards a handler joins with '|', for a line of two
+// captures: [whole, %1, %2] in every engine but Python, which has 5.x's
+// shape -- %1..%9, then the whole line (pywin32's tuple of the COM arm's
+// 1-based SAFEARRAY), the captures the pattern lacks empty.
+static std::string JoinedWildcards(const Dialect& d, const std::string& whole,
+                                   const std::string& c1, const std::string& c2)
+{
+    if (strcmp(d.key, "python") == 0)
+        return c1 + "|" + c2 + "|||||||" + "|" + whole;
+    return whole + "|" + c1 + "|" + c2;
+}
+
 // The second real call site: a TRIGGER, matched off actual MUD output.
 //
 // battery_wildcards calls CScriptEngine directly, which proves each engine
@@ -1029,13 +1041,15 @@ void battery_trigger_callsite(const Dialect& d, bool lowercase)
     // Lua ignores the option entirely, so BOTH runs expect the raw text from it.
     const bool wantFolded = lowercase && strcmp(d.key, "lua") != 0;
 
+    const std::string raw    = JoinedWildcards(d, "GandalF shouts LOUDLY", "GandalF", "LOUDLY");
+    const std::string folded = JoinedWildcards(d, "gandalf shouts loudly", "gandalf", "loudly");
     if (wantFolded)
-        check(got == "gandalf shouts loudly|gandalf|loudly", L, what);
+        check(got == folded, L, what);
     else if (lowercase)
-        check(got == "GandalF shouts LOUDLY|GandalF|LOUDLY", L,
+        check(got == raw, L,
               "a matched trigger delivers wildcards RAW to Lua, box ticked or not");
     else
-        check(got == "GandalF shouts LOUDLY|GandalF|LOUDLY", L, what);
+        check(got == raw, L, what);
 }
 
 // ── the battery ───────────────────────────────────────────────────────────
@@ -1404,14 +1418,16 @@ void battery_wildcards(Engine& e, const Dialect& d)
         return;
     }
 
-    const std::string raw    = "GandalF shouts LOUDLY|GandalF|LOUDLY";
-    const std::string folded = "gandalf shouts loudly|gandalf|loudly";
+    const std::string raw    = JoinedWildcards(d, "GandalF shouts LOUDLY", "GandalF", "LOUDLY");
+    const std::string folded = JoinedWildcards(d, "gandalf shouts loudly", "gandalf", "loudly");
 
     e.seed("wc", "handler never ran");
     e.callRich("wc", nullptr, {}, { "tname", "GandalF shouts LOUDLY" },
                nullptr, eDontChangeAction, re, false);
     check(e.var("wc") == raw, L,
-          "wildcards arrive as [whole match, capture 1, capture 2], case intact");
+          strcmp(d.key, "python") == 0
+              ? "wildcards arrive in 5.x's shape: %1..%9, then the whole line, case intact"
+              : "wildcards arrive as [whole match, capture 1, capture 2], case intact");
 
     e.seed("wc", "handler never ran");
     e.callRich("wc", nullptr, {}, { "tname", "GandalF shouts LOUDLY" },

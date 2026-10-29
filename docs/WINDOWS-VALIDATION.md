@@ -290,10 +290,9 @@ were simply not reached — §4c-bis, §4c-septies, §4c-undecies, §4c-unvicies
 
 | Verdict | Sections |
 |---|---|
-| **Answered** | §4c, §4c-ter, §4c-quater, §4c-sexies, §4c-octies, §4c-duodecies, §4c-terdecies, §4c-quaterdecies, §4c-sexdecies, §4c-septendecies, §4c-undevicies, §4c-vicies, §4c-tervicies, §4c-quatervicies, §4c-quinvicies, §4c-sexvicies, §4c-duodetricies, §4c-undetricies, §4c-duodetricies-bis, §4c-tertricies, §4c-quatertricies |
+| **Answered** | §4c, §4c-ter, §4c-quater, §4c-sexies, §4c-octies, §4c-duodecies, §4c-terdecies, §4c-quaterdecies, §4c-sexdecies, §4c-septendecies, §4c-undevicies, §4c-vicies, §4c-tervicies, §4c-quatervicies, §4c-quinvicies, §4c-sexvicies, §4c-duodetricies, §4c-undetricies, §4c-duodetricies-bis, §4c-tertricies, §4c-quatertricies, §4c-octies-bis (decided 2026-10-29 by matching 5.x) |
 | **Partly answered** | §4a (keepalives, long idle), §4b (the workload ran; appearance under movement did not), §4c-quinquies (items 1, 3, 5), §4c-duodevicies (items 1–4), §4d |
 | **Outstanding** | §4c-bis, §4c-septies, §4c-undecies, §4c-unvicies, §4c-duovicies, §4c-septemvicies |
-| **Open question, never answered** | §4c-octies-bis |
 | **Nothing for Windows** | §4c-nonies, §4c-decies, §4c-quindecies |
 | **Round two — never built or run** | §4c-quintricies … §4c-undequinquagies (all 2026-08-19) |
 
@@ -620,9 +619,19 @@ its ANSI buffer. The seam now converts, via the new `UTF8ByteToCharOffset` /
 
 ### 4c-octies-bis. QUESTION TO ANSWER: what shape do wildcards reach a non-Lua callback in?
 
-> **STILL OPEN — nothing has answered this.**  It is the one question in
-> this document that needs a non-Lua ActiveScript engine installed, and no
-> round has had one.
+> **DECIDED (2026-10-29), by matching MUSHclient 5 rather than measuring it.**
+> The 64-bit builds replaced the COM bridges with the embedded engines, so the
+> question became which shape *those* give.  5.x's own example scripts answer
+> what scripts index: `exampscript.js` reads `VBArray(w).toArray()[0]` as %1,
+> and `exampscript.pys` reads `wildcards[0]` as %1 -- pywin32 does drop the
+> lower bound.  So: **Python** callbacks get 5.x's tuple of ten, `%1..%9`
+> then the whole line, missing captures `""` (on every platform, the port
+> included); **JScript** gets the same through `VBArray(wildcards)`, while
+> indexing the array directly keeps `[whole, %1, ...]`; Lua is unchanged.
+> Pinned by the engines selftest (battery_wildcards,
+> battery_trigger_callsite).  Perl, Tcl and Ruby keep `[whole, %1, ...]`:
+> 5.x's PerlScript and ActiveState Tcl never ran on 64-bit, and Ruby had no
+> 5.x engine.  The original question follows.
 
 Not a regression check — an **open design question** that cannot be settled off
 Windows. The port's five embedded engines hand a trigger/alias callback a

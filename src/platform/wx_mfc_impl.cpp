@@ -37,6 +37,7 @@
 #include <wx/progdlg.h>    // wxProgressDialog (CProgressDlg's port backing)
 #include <wx/display.h>    // wxDisplay (screen-size system metrics)
 #include <wx/odcombo.h>    // wxOwnerDrawnComboBox (CBS_OWNERDRAWFIXED combos)
+#include <wx/richmsgdlg.h> // wxRichMessageDialog (a changed bundled plugin: upgrade it?)
 #include <algorithm>
 #include <unordered_map>
 #include <map>
@@ -54,6 +55,9 @@
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
 #include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
+#include "bundled_files.h"  // keeping the bundled plugins up to date
+#include "version.h"        // VERSION_STRING: the seeded-version marker
+#include <strings.h>        // strcasecmp
 #include <memory>
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "platform/world_close_decision.h"  // QueryThenCloseAllWorlds — the quit pass
@@ -3414,19 +3418,47 @@ static void* hook_new_world()
     return static_cast<void*>(doc);
 }
 
-// ── First-run seeding of bundled user data ────────────────────────────────
-// A "Discworld edition" build (packaging/build-app.sh --with-discworld) ships a
-// tree under Contents/Resources/userdata-seed/ that mirrors the per-user data
-// dir: Quow's plugins (worlds/plugins/Quow*.xml) AND the mapper's data files
-// (quow_plugins/maps/ — the room database, map images and sound effects).  On
-// first run, copy anything the user doesn't already have into their writable
-// data dir, so the plugins appear in the manager and the mapper finds its maps.
-//
-// Recursive (so the maps/ subtree is seeded, not just top-level plugin files)
-// and non-destructive: directories are created and an existing file is NEVER
-// overwritten — user edits, newer versions, and the per-user
-// _quowmap_userdata.db the plugin creates for itself all survive a reinstall.
-// No-op for a normal build (no userdata-seed dir present).
+// ── Seeding the user's data dir with the bundled files ────────────────────
+// Every build ships a tree under Contents/Resources/userdata-seed/ (beside the
+// executable on Linux) that mirrors the per-user data dir: the bundled plugins
+// (worlds/plugins/, from packaging/bundled-plugins.txt) and, in the Discworld
+// edition, Quow's plugins, the mapper's data files (quow_plugins/maps/ -- the
+// room database, map images and sound effects) and a ready-made world.  They
+// are copied into the user's writable data dir, so the plugins appear in the
+// manager and the mapper finds its maps -- and kept up to date there, a file
+// the user changed only with their say-so (bundled_files.h, shared with the
+// Windows build).  Once per version: that is when they can change.  Files the
+// bundle never had, like the per-user _quowmap_userdata.db the mapper creates
+// for itself, are never touched.
+namespace {
+
+// A bundled file the user changed, and this version has a new one of: ask,
+// with the choice to have it remembered for that file.
+bundled::Answer AskAboutChangedFile (const std::string & relative, const std::string & name)
+{
+    const bool plugin = relative.find ("plugins/") != std::string::npos &&
+                        relative.size () > 4 &&
+                        strcasecmp (relative.c_str () + relative.size () - 4, ".xml") == 0;
+    const std::string file = relative.substr (relative.find_last_of ('/') + 1);
+    const wxString what = plugin ? wxT("plugin") : wxT("file");
+    const std::string called = name == relative ? relative
+                                                : "\xE2\x80\x9C" + name + "\xE2\x80\x9D (" + relative + ")";
+    wxRichMessageDialog dlg (nullptr,
+        wxString::FromUTF8 ("MUSHclient " VERSION_STRING " comes with a new version of " + called +
+                            ", but your copy has been changed since MUSHclient installed it.\n\n"
+                            "If you upgrade it, your copy is kept beside it, as " + file + ".backup."),
+        wxT("MUSHclient"), wxYES_NO | wxNO_DEFAULT | wxICON_INFORMATION);
+    dlg.SetExtendedMessage (wxEmptyString);
+    dlg.SetYesNoLabels (wxT("Upgrade"), wxT("Keep Mine"));
+    dlg.ShowCheckBox (wxT("Don\xE2\x80\x99t ask again about this ") + what);
+    bundled::Answer answer;
+    answer.upgrade  = dlg.ShowModal () == wxID_YES;
+    answer.remember = dlg.IsCheckBoxChecked ();
+    return answer;
+}
+
+} // namespace
+
 static void SeedBundledUserData()
 {
     namespace fs = std::filesystem;
@@ -3441,32 +3473,37 @@ static void SeedBundledUserData()
             const fs::path exeDir (std::string (wxFileName (wxStandardPaths::Get ().GetExecutablePath ()).GetPath ().utf8_str ()));
             src = exeDir / "userdata-seed";
             if (!fs::is_directory (src))
-                return;   // ordinary build — nothing bundled to seed
+                return;   // a development build -- nothing bundled to seed
         }
 
-        const fs::path dstRoot (PortableUserDataDir ());
-        int seeded = 0;
-        std::error_code ec;
-        for (fs::recursive_directory_iterator it (src, ec), end; !ec && it != end;
-             it.increment (ec))
+        const std::string dataDir = PortableUserDataDir ();
+        if (dataDir.empty ())
+            return;
+        const fs::path marker = fs::path (dataDir) / "seeded-version.txt";
         {
-            std::error_code fec;
-            if (!it->is_regular_file (fec) || fec)
-                continue;
-            const fs::path rel = fs::relative (it->path (), src, fec);
-            if (fec || rel.empty ())
-                continue;
-            const fs::path target = dstRoot / rel;
-            if (fs::exists (target, fec))
-                continue;   // keep the user's existing copy
-            fs::create_directories (target.parent_path (), fec);
-            std::error_code cec;
-            if (fs::copy_file (it->path (), target, cec) && !cec)
-                ++seeded;
+            std::ifstream in (marker);
+            std::string seeded;
+            std::getline (in, seeded);
+            if (seeded == VERSION_STRING)
+                return;
         }
-        if (seeded)
-            fprintf (stderr, "[plugins] seeded %d bundled file(s) into %s\n",
-                     seeded, dstRoot.string ().c_str ());
+
+        // Every top-level folder of the seed tree, as the Windows build names
+        // its own two (worlds, quow_plugins).
+        std::vector<std::string> subtrees;
+        for (const fs::directory_entry & e : fs::directory_iterator (src))
+            if (e.is_directory ())
+                subtrees.push_back (e.path ().filename ().string ());
+
+        std::string from = src.string ();
+        if (from.back () != '/')
+            from += '/';
+        const bundled::Stats stats = bundled::Sync (from, dataDir, subtrees,
+                                                    dataDir + "bundled-files.txt",
+                                                    AskAboutChangedFile);
+        std::ofstream (marker, std::ios::trunc) << VERSION_STRING;
+        fprintf (stderr, "[plugins] bundled files: %d copied, %d upgraded, %d kept as changed, in %s\n",
+                 stats.copied, stats.upgraded, stats.kept, dataDir.c_str ());
     }
     catch (const std::exception & ex)
     {
@@ -3500,7 +3537,7 @@ static int hook_init_instance()
     App.m_nCmdShow  = SW_SHOWNORMAL;
 
     // Stage any bundled plugins + mapper data BEFORE InitInstance so worlds
-    // auto-opened during startup already see them (Discworld edition only).
+    // auto-opened during startup already see them, upgraded where they were.
     SeedBundledUserData();
 
     int ok = App.InitInstance() != FALSE ? 1 : 0;

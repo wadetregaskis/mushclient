@@ -617,6 +617,7 @@ if(NOT WIN32)
         src/doc_shared.cpp
         src/utilities_shared.cpp
         src/legacy_import.cpp      # importing a MUSHclient 5 (legacy_import.h)
+        src/bundled_files.cpp      # keeping the bundled plugins up to date
         src/notepad_convert_shared.cpp
         # Notepad family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 1).
         # These were mushgui_adapters-only and the headless build faked the whole

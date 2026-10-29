@@ -1158,10 +1158,9 @@ pointed back into Program Files.
 runs with that as its current directory. That matches the port, which has always
 used `~/Library/Application Support/MUSHclient/` on macOS and `~/.local/share/` on
 Linux. The bundled plugins and worlds (and the Discworld edition's
-`quow_plugins\`) are copied there the first time each version runs, never over a
-file that is already there. A portable copy (the zip, marked by `portable.txt`)
-keeps everything beside the exe, as before. 6.00 neither reads nor writes 5.x's
-registry key or folder as it runs. 6.00's installer uses keys of its own
+`quow_plugins\`) are copied there, and kept up to date there (#28). A portable
+copy (the zip, marked by `portable.txt`) keeps everything beside the exe, as
+before. 6.00 neither reads nor writes 5.x's registry key or folder as it runs. 6.00's installer uses keys of its own
 (`HKCU\Software\MUSHclient`, the "MUSHclient 6" uninstall entry and Start menu
 folder), so it no longer takes over a 5.x installed alongside it, and
 uninstalling 6.00 no longer deletes 5.x's settings.
@@ -1239,3 +1238,54 @@ present, running the payload of an installer with no `portable.txt`:
 
 Not run: the installer itself, which needs elevation, and the macOS and Linux
 search, for want of a Mac or Linux machine here.
+
+## 28 — Bundled plugins are upgraded in the user's data folder, asking about changed ones
+
+**Where:** `bundled_files.h` / `bundled_files.cpp` (both builds), called from
+`Seed` in `user_data.cpp` (Windows) and `SeedBundledUserData` in
+`platform/wx_mfc_impl.cpp`, each of which asks its own way.
+
+**Upstream:** the bundled plugins live in the program's folder and an upgrade
+overwrites them, so a user who edited one loses the edit without warning.
+6.00 copies them into the user's data folder (#27). At first it copied only the
+files the user did not already have, so an upgrade would never have delivered a
+fixed plugin to anyone who had run an older version.
+
+**Now:** each copy is recorded, as a hash, in `bundled-files.txt` in the data
+folder. When a new version first runs:
+
+- **a copy the user has not changed** is replaced with the new version, unasked;
+- **a copy the user has changed** is replaced only if they say so. They are asked,
+  file by file: upgrade (their copy is kept beside it, as `<name>.backup`) or keep
+  theirs. A "Don't ask again about this plugin" box remembers the answer for
+  that plugin, in the same file;
+- **a copy the user deleted** stays deleted;
+- **a world file** is never replaced: once used, it is the user's;
+- files the bundle never had are not touched. These include the user's own plugins
+  and the per-user database Quow's mapper keeps beside its maps.
+
+This covers the Discworld edition's world, mapper and maps as well as the
+plugins. The port seeded on every launch before; it now does so once per
+version, as Windows does. Without that, a deletion could not be told from a file
+not yet copied.
+
+**Why:** a bug fixed in a bundled plugin should reach users. A change of their
+own should not be lost to an upgrade without their say-so.
+
+**Verification:** `tests/test_bundled_files.cpp`, on every platform, plays
+versions 1 to 4 against one data folder:
+
+- unchanged, changed, deleted, new and world files;
+- remembered answers;
+- copies made before the manifest existed;
+- plugin names.
+
+On Windows, checked by hand with two plugins edited in the data folder and the
+version marker set back:
+
+- the dialog appeared for each;
+- "Keep my copy" with the box ticked was remembered, and not asked again at the
+  next upgrade;
+- "Upgrade" replaced the copy and kept the edit as `.backup`.
+
+The macOS and Linux dialog (a `wxRichMessageDialog`) has not been run.

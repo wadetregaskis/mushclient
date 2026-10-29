@@ -4332,6 +4332,7 @@ BEGIN
         MENUITEM "P&rint Setup...",             ID_FILE_PRINT_SETUP
         MENUITEM SEPARATOR
         MENUITEM "&Global Preferences...\tCtrl+Alt+G", ID_FILE_PREFERENCES
+        MENUITEM "Import from MUSHclient &5...", ID_FILE_IMPORT_MUSHCLIENT5
         MENUITEM SEPARATOR
         MENUITEM "Recent File",                 ID_FILE_MRU_FILE1, GRAYED
         MENUITEM SEPARATOR
@@ -4473,6 +4474,7 @@ BEGIN
         MENUITEM "P&rint Setup...",             ID_FILE_PRINT_SETUP
         MENUITEM SEPARATOR
         MENUITEM "&Global Preferences...",      ID_FILE_PREFERENCES
+        MENUITEM "Import from MUSHclient &5...", ID_FILE_IMPORT_MUSHCLIENT5
         MENUITEM "Windows Socket Info...",      ID_FILE_WINSOCK
         MENUITEM SEPARATOR
         MENUITEM "Recent File",                 ID_FILE_MRU_FILE1, GRAYED
@@ -4575,6 +4577,7 @@ BEGIN
         MENUITEM "Print Se&tup...",             ID_FILE_PRINT_SETUP
         MENUITEM SEPARATOR
         MENUITEM "&Global Preferences...\tCtrl+Alt+G", ID_FILE_PREFERENCES
+        MENUITEM "Import from MUSHclient &5...", ID_FILE_IMPORT_MUSHCLIENT5
         MENUITEM "&Log Session...\tShift+Ctrl+J", ID_FILE_LOGSESSION
         MENUITEM "&Reload Defaults\tCtrl+Alt+R", ID_FILE_RELOADDEFAULTS
         MENUITEM "&World Properties...\tAlt+Enter", ID_GAME_PREFERENCES
@@ -4974,6 +4977,7 @@ BEGIN
         MENUITEM "P&rint Setup...",             ID_FILE_PRINT_SETUP
         MENUITEM SEPARATOR
         MENUITEM "&Global Preferences...",      ID_FILE_PREFERENCES
+        MENUITEM "Import from MUSHclient &5...", ID_FILE_IMPORT_MUSHCLIENT5
         MENUITEM SEPARATOR
         MENUITEM "Recent File",                 ID_FILE_MRU_FILE1, GRAYED
         MENUITEM SEPARATOR
@@ -5090,6 +5094,7 @@ BEGIN
         MENUITEM "P&rint Setup...",             ID_FILE_PRINT_SETUP
         MENUITEM SEPARATOR
         MENUITEM "&Global Preferences...\tCtrl+Alt+G", ID_FILE_PREFERENCES
+        MENUITEM "Import from MUSHclient &5...", ID_FILE_IMPORT_MUSHCLIENT5
         MENUITEM SEPARATOR
         MENUITEM "Recent File",                 ID_FILE_MRU_FILE1, GRAYED
         MENUITEM SEPARATOR
@@ -6019,6 +6024,7 @@ BEGIN
     ID_EDIT_PASTETOMUSH     "Sends the contents of the clipboard directly to the current world"
     ID_VIEW_GAMETOOLBAR     "Show or hide the world toolbar\nToggle World ToolBar"
     ID_FILE_PREFERENCES     "Global program preferences\nProgram preferences"
+    ID_FILE_IMPORT_MUSHCLIENT5 "Copies the settings, worlds and plugins of a MUSHclient 5 installation\nImport from MUSHclient 5"
     ID_GAME_IMMEDIATE       "Allows testing of scripts\nImmediate"
     ID_DISPLAY_FIND         "Finds data in the display area\nFind (Ctrl+F)"
     ID_DISPLAY_FINDAGAIN    "Repeats the last find"

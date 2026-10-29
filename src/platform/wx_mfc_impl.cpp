@@ -959,6 +959,8 @@ struct CanonMenuCmd {
 static const CanonMenuCmd kCanonCmds[] = {
   // ── File ──
   { SEC_FILE, 32980, "&Import\xE2\x80\xA6\tCtrl+Alt+I",      'D', false, true  }, // ID_FILE_IMPORT
+  // CMUSHclientApp::ImportFromVersion5 (legacy_import.h): from a Wine prefix here
+  { SEC_FILE, 33056, "Import from MUSHclient 5\xE2\x80\xA6", 'A', false, false }, // ID_FILE_IMPORT_MUSHCLIENT5
   // Checkable: OnUpdateFileLogsession does SetCheck (m_logfile != NULL)
   // (doc.cpp:1008), and the tick is how Windows says a session is being logged.
   // Declaring it uncheckable here forced `checked` back to -1 in

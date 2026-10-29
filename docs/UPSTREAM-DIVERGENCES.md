@@ -1136,9 +1136,11 @@ it back on the one row.
 
 ## 27 — Settings, worlds and logs live in a folder of the user's; 5.x is imported, not shared
 
-**Where:** `user_data.h` / `user_data.cpp` (Windows), called from
-`CMUSHclientApp::InitInstance`; `PopulateDatabase` and `LoadGlobalsFromDatabase`
-(`globalregistryoptions.cpp`); `install/mushclient.nsi`;
+**Where:** `user_data.h` / `user_data.cpp` (Windows: the data folder), called
+from `CMUSHclientApp::InitInstance`; `legacy_import.h` / `legacy_import.cpp`
+(both builds: finding and importing a 5.x) and
+`CMUSHclientApp::ImportFromVersion5`; `PopulateDatabase` and
+`LoadGlobalsFromDatabase` (`globalregistryoptions.cpp`); `install/mushclient.nsi`;
 `packaging/windows/build-app.ps1` (the zip's `portable.txt`).
 
 **Upstream:** everything MUSHclient writes goes in the folder it runs from:
@@ -1164,39 +1166,76 @@ registry key or folder as it runs. 6.00's installer uses keys of its own
 folder), so it no longer takes over a 5.x installed alongside it, and
 uninstalling 6.00 no longer deletes 5.x's settings.
 
-The first time 6.00 runs, when it creates its preferences database, it looks for
-a 5.x. It checks the folder 5.x's installer recorded, then `Program Files
-(x86)\MUSHclient` and `Program Files\MUSHclient`, each with its VirtualStore
-shadow (the shadow's copy wins). From that installation it copies:
+Instead, 6.00 offers to import a 5.x. It never imports unasked: someone may want
+to start afresh.
 
-- worlds, scripts, sounds and `quow_plugins\`;
-- the global preferences, from 5.x's database, or from the registry if 5.x was
-  too old to have one;
+- **First run:** if it finds a 5.x, it asks once, after the welcome dialog.
+- **File ▸ Import from MUSHclient 5:** available on both builds at any time. It
+  offers the 5.x it found, or a folder of the user's choosing: 5.x's own
+  folder, or a Wine prefix or bottle with one in it.
+  - Before importing it says what happens to what is already there: the global
+    preferences and world window positions are replaced, and files are copied in
+    beside the user's, a file of the same name being kept, not replaced.
+
+Where it looks:
+
+- **Windows:** the folder 5.x's installer recorded, then `Program Files
+  (x86)\MUSHclient` and `Program Files\MUSHclient`, each with its VirtualStore
+  shadow (the shadow's copy wins).
+- **macOS and Linux,** where 5.x only ever ran under Wine: `$WINEPREFIX` and
+  `~/.wine`.
+  - On macOS also CrossOver's bottles, and Wineskin and Porting Kit wrappers.
+    Not Whisky's bottles: they are in another app's container, and reading one
+    makes macOS ask permission, which an unasked search must not do. One can
+    still be chosen by hand. (The app is not sandboxed, so nothing else it reads
+    prompts.)
+  - On Linux also winetricks, PlayOnLinux, Bottles and Lutris prefixes.
+  - In each prefix: the folder 5.x's installer recorded in the prefix's
+    `user.reg`, then `Program Files (x86)` and `Program Files`.
+
+What it copies:
+
+- worlds, scripts, sounds and `quow_plugins\`, never over a file already there;
+- the global preferences, from 5.x's database, or from the registry (the real
+  one, or the prefix's `user.reg`) if 5.x was too old to have one;
 - window positions;
-- the recent-files list;
+- the recent-files list (Windows; the port keeps its own);
 - words added to its spell checker.
 
 Paths that pointed into the old folder are translated as they are copied. The
 user's own files go to the new data folder and the program's files to its own
-folder, in the preferences and inside world files. Logs are left where they are,
-and the welcome dialog says where. 5.x's folder is only read: its databases are
-opened from temporary copies.
+folder, in the preferences and inside world files. A preference naming one of
+5.x's own files that 6.00 does not have keeps 6.00's default. Under Wine, any
+other drive path becomes the path on this machine that the prefix's drive
+mapping gives it. Logs are left where they are, and the message after an import
+says where. 5.x's folder is only read: its databases are opened from temporary
+copies.
 
 **Why:** MUSHclient 6 does not promise that its files and settings can be shared
 with 5.x. Sharing them would also mean writing into Program Files, which it
 cannot do.
 
-**Verification:** `tests/win/test_user_data.cpp` covers path translation, the
-copy rules, and a full import from a fake 5.x and its shadow. The import test
-includes checking that the old folder gains no files. Checked by hand on a
-machine with 5.06 installed and its VirtualStore shadow present, running the
-payload of an installer with no `portable.txt`:
+**Verification:** `tests/test_legacy_import.cpp`, on every platform, covers:
 
-- the preferences were imported from the shadow, with every path preference
+- reading `user.reg`;
+- path translation, including Wine drive mapping;
+- finding a 5.x in a prefix;
+- full imports from a fake prefix, from 5.x's database and from the registry;
+- the old folder gaining no files.
+
+`tests/win/test_user_data.cpp` covers a native Windows 5.x with its shadow.
+Checked by hand on a machine with 5.06 installed and its VirtualStore shadow
+present, running the payload of an installer with no `portable.txt`:
+
+- the first run's offer;
+- File ▸ Import from MUSHclient 5, its warning, the folder picker and its
+  refusal of a folder with no 5.x;
+- the preferences imported from the shadow, with every path preference
   translated;
-- the spell database was built in the data folder;
+- the spell database built in the data folder;
 - a world saved, and a session logged, into the new folders;
-- 5.06's files, its shadow and its registry key were byte-for-byte unchanged,
-  and nothing was written beside the exe.
+- 5.06's files, its shadow and its registry key byte-for-byte unchanged, and
+  nothing written beside the exe.
 
-The installer itself has not been run: it needs elevation.
+Not run: the installer itself, which needs elevation, and the macOS and Linux
+search, for want of a Mac or Linux machine here.

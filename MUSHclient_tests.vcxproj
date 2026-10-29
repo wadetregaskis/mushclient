@@ -506,6 +506,7 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\legacy_import.cpp" />
     <ClCompile Include="src\user_data.cpp" />
     <ClCompile Include="src\winplace.cpp">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -1493,6 +1494,7 @@
     <ClCompile Include="tests\test_hashing.cpp" />
     <ClCompile Include="tests\test_hyperlink.cpp" />
     <ClCompile Include="tests\test_info.cpp" />
+    <ClCompile Include="tests\test_legacy_import.cpp" />
     <ClCompile Include="tests\test_lua_scripting.cpp" />
     <ClCompile Include="tests\test_lua_surface.cpp" />
     <ClCompile Include="tests\test_mcdatetime.cpp" />

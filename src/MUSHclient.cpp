@@ -22,6 +22,7 @@
 #include "winplace.h"
 #include "StatLink.h"
 #include "user_data.h"
+#include "legacy_import.h"
 
 #include "dialogs/welcome.h"
 #include "dialogs/welcome1.h"
@@ -71,11 +72,6 @@ static TCHAR BASED_CODE szCtrlBars[] = _T("CtrlBars");
 char working_dir [_MAX_PATH];
 char file_browsing_dir [_MAX_PATH];
 
-#ifdef _WIN32
-// what the first run copied from a MUSHclient 5, for the welcome dialog
-static CString s_strImportedFrom5;
-#endif
-
 bool bWinNT;
 bool bWin95;
 bool bWin98;
@@ -121,6 +117,7 @@ BEGIN_MESSAGE_MAP(CMUSHclientApp, CWinApp)
 	ON_COMMAND(ID_FILE_NEW, OnFileNew)
 	ON_COMMAND(ID_HELP_GETTINGSTARTED, OnHelpGettingstarted)
 	ON_COMMAND(ID_EDIT_COLOURPICKER, OnEditColourpicker)
+	ON_COMMAND(ID_FILE_IMPORT_MUSHCLIENT5, OnFileImportFromVersion5)
 	//}}AFX_MSG_MAP
 	// Standard file based document commands
 	ON_COMMAND(ID_FILE_NEW, CWinApp::OnFileNew)
@@ -428,16 +425,13 @@ BOOL CMUSHclientApp::InitInstance()
       }
 
     // copy from registry to database for legacy support
-    // (on Windows: this version's defaults; then a MUSHclient 5's settings)
+    // (on Windows: this version's defaults -- a MUSHclient 5's settings are
+    // offered later, by ImportFromVersion5)
     if (PopulateDatabase () != SQLITE_OK)
       {
       db_execute ("ROLLBACK", true);
       return FALSE;        // SQL error
       }
-
-#ifdef _WIN32
-    s_strImportedFrom5 = UserData_ImportVersion5 (db, m_pszProfileName);
-#endif
 
     db_execute ("COMMIT", true);
 
@@ -933,14 +927,10 @@ BOOL CMUSHclientApp::InitInstance()
                            " MUSHclient on this PC."));
     dlg.DoModal ();
 
-#ifdef _WIN32
-    // Its own box: the welcome dialog's message is one line tall.
-    if (!s_strImportedFrom5.IsEmpty ())
-      TMessageBox (s_strImportedFrom5 + "\r\n\r\nMUSHclient 6 keeps its settings, "
-                   "worlds and logs in " + UserData_Directory (), MB_ICONINFORMATION);
-#endif
+    db_write_int ("control", "First time", 0);
 
-    db_write_int ("control", "First time", 0);	
+    // once: a MUSHclient 5 found, the offer to import it
+    ImportFromVersion5 (true);
 
     }   // end of first time
 
@@ -1692,9 +1682,152 @@ CColourPickerDlg dlg;
     return;
 
 //  putontoclipboard (dlg.m_strMXPname);
-  
+
 
 }
+
+// ── Importing a MUSHclient 5 ───────────────────────────────────────────────
+
+void CMUSHclientApp::OnFileImportFromVersion5 ()
+  {
+  ImportFromVersion5 (false);
+  }
+
+namespace {
+
+// The folders an import copies into and finds the program's own files in:
+// where this version keeps the user's files, and its read-only resources.
+void ImportFolders (std::string & dataDir, std::string & programDir)
+  {
+#ifdef _WIN32
+  dataDir    = (LPCTSTR) UserData_Directory ();
+  programDir = (LPCTSTR) UserData_ProgramDirectory ();
+#else
+  dataDir    = PortableUserDataDir ();
+  programDir = (LPCTSTR) ExtractDirectory (App.m_strMUSHclientFileName);
+#if defined (__APPLE__)
+  programDir += "../Resources/";
+#endif
+#endif
+  }
+
+// The folder to import from, chosen by hand; empty if they cancelled.
+std::string ChooseFolder ()
+  {
+  const char * title = "Choose MUSHclient 5's folder, or the Wine prefix or bottle it ran in";
+#ifdef _WIN32
+  CFolderPickerDialog dlg (NULL, 0, Frame.GetSafeHwnd () ? &Frame : NULL);
+  dlg.m_ofn.lpstrTitle = title;
+  if (dlg.DoModal () != IDOK)
+    return "";
+  return (LPCTSTR) dlg.GetPathName ();
+#else
+  std::string folder;
+  if (g_wxhook_directorypicker)
+    if (char * picked = g_wxhook_directorypicker (title, getenv ("HOME")))
+      {
+      folder = picked;
+      free (picked);
+      }
+  return folder;
+#endif
+  }
+
+// What an import does to what is already here.  It has to be said before an
+// import from the menu, when there may be a good deal already here; the first
+// run's offer comes before there is anything to lose.
+const char * const kWhatImportReplaces =
+  "Your global preferences and the positions of your world windows will be "
+  "replaced with MUSHclient 5's.\r\n\r\n"
+  "Its worlds, plugins, plugin state, scripts and sounds are copied in beside "
+  "yours. Where you already have a file of the same name, yours is kept, not "
+  "replaced. Its logs are not copied.";
+
+}   // namespace
+
+void CMUSHclientApp::ImportFromVersion5 (const bool bFirstRun)
+  {
+  std::string dataDir, programDir;
+  ImportFolders (dataDir, programDir);
+  const std::vector<legacy::Install> found = legacy::Find (dataDir, programDir);
+
+  legacy::Install old;
+  if (bFirstRun)
+    {
+    // Offered, never done unasked: they may well want to start afresh.
+    if (found.empty ())
+      return;
+    old = found [0];
+    if (TMessageBox (CFormat ("MUSHclient 5 was found in:\r\n\r\n%s\r\n\r\n"
+                              "Would you like to copy its settings, worlds and plugins "
+                              "into MUSHclient 6? MUSHclient 5 itself is left as it is.\r\n\r\n"
+                              "You can also do this later, with File > Import from MUSHclient 5.",
+                              legacy::Where (old).c_str ()),
+                     MB_YESNO | MB_ICONQUESTION) != IDYES)
+      return;
+    }
+  else
+    {
+    bool chosen = false;
+    if (!found.empty ())
+      {
+      old = found [0];
+      const int answer = TMessageBox (CFormat (
+          "Import from the MUSHclient 5 in:\r\n\r\n%s\r\n\r\n%s\r\n\r\n"
+          "Choose No to pick a different folder.",
+          legacy::Where (old).c_str (), kWhatImportReplaces),
+          MB_YESNOCANCEL | MB_ICONQUESTION);
+      if (answer == IDCANCEL)
+        return;
+      chosen = answer == IDYES;
+      }
+    if (!chosen)
+      {
+      if (found.empty () &&
+          TMessageBox ("No MUSHclient 5 was found in the usual places.\r\n\r\n"
+                       "Would you like to choose its folder? For one that ran under Wine, "
+                       "you can choose the Wine prefix or bottle instead.",
+                       MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+      const std::string folder = ChooseFolder ();
+      if (folder.empty ())
+        return;
+      if (!legacy::FromFolder (folder, old))
+        {
+        TMessageBox (CFormat ("There is no MUSHclient 5 in %s, nor in a Wine prefix there.",
+                              folder.c_str ()), MB_ICONEXCLAMATION);
+        return;
+        }
+      if (TMessageBox (CFormat ("Import from the MUSHclient 5 in:\r\n\r\n%s\r\n\r\n%s",
+                                legacy::Where (old).c_str (), kWhatImportReplaces),
+                       MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+      }
+    }
+
+  CWaitCursor wait;
+  db_execute ("BEGIN TRANSACTION", true);
+  const legacy::Result result = legacy::Import (old, db, dataDir, programDir);
+  db_execute ("COMMIT", true);
+
+  if (!result.Anything ())
+    {
+    TMessageBox (CFormat ("Nothing was found to import in %s.", legacy::Where (old).c_str ()),
+                 MB_ICONEXCLAMATION);
+    return;
+    }
+
+  // Into the running program too: otherwise the old values in memory would be
+  // written back over the imported ones when it next saves them.
+  LoadGlobalsFromDatabase ();
+  for (const std::string & file : result.recentFiles)   // oldest first
+    AddToRecentFileList (file.c_str ());
+
+  TMessageBox (CFormat ("%s\r\n\r\nMUSHclient 6 keeps its settings, worlds and logs in %s\r\n\r\n"
+                        "Some settings take effect the next time MUSHclient starts.",
+                        legacy::Describe (old, result).c_str (), dataDir.c_str ()),
+               MB_ICONINFORMATION);
+  }
 
         /*
 STDMETHODIMP_(ULONG) CMUSHclientApp::XLocalClass::AddRef()

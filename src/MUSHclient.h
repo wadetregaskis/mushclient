@@ -296,6 +296,9 @@ public:
   void LoadGlobalsFromDatabase (void);
   void SaveGlobalsToDatabase (void);
   int PopulateDatabase (void);
+  // Offer (first run: only if one is found) to import a MUSHclient 5's
+  // settings and files -- legacy_import.h
+  void ImportFromVersion5 (const bool bFirstRun);
   void ShowGlobalOptions (CMUSHclientDoc * pDoc);
   VARIANT GetGlobalOption(LPCTSTR Name);
   VARIANT GetGlobalOptionList();
@@ -349,6 +352,7 @@ public:
 	afx_msg void OnFileNew();
 	afx_msg void OnHelpGettingstarted();
 	afx_msg void OnEditColourpicker();
+	afx_msg void OnFileImportFromVersion5();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
 

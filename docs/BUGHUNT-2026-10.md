@@ -12,7 +12,7 @@ performance survey, measured in the running client.
 **Method.** Reviewers read each area adversarially and reported findings with
 failure scenarios; every finding below was re-read against the code before it
 was fixed, and each Windows-reachable fix carries a test or was checked in the
-running client. Tests: 1730 pass on ARM64, x64 and Win32; the packaged ARM64
+running client. Tests: 1732 pass on ARM64, x64 and Win32; the packaged ARM64
 build's engine selftest passes 471/471 (19 skipped).
 
 ## Fixed

@@ -86,12 +86,38 @@ bool IsDir (const std::string & s)
   return fs::is_directory (P (s), ec);
   }
 
-bool IsUserFolder (const std::string & name)
+// The user folder `name` is, spelt as this version spells it ("Worlds" ->
+// "worlds": a case-sensitive file system would otherwise have two), or null.
+const char * UserFolder (const std::string & name)
   {
   for (const char * p : kUserFolders)
     if (EqualNoCase (name, p))
-      return true;
+      return p;
+  return nullptr;
+  }
+
+// A file name as UTF-8, which every name has.  Not path::string (): on Windows
+// that is the ANSI code page, and MSVC's throws for a name it cannot spell --
+// a Japanese one on a Western machine, say -- which would end the program.
+std::string U8 (const fs::path & p)
+  {
+  const auto s = p.u8string ();   // std::string in C++17, std::u8string after
+  return std::string (s.begin (), s.end ());
+  }
+
+// A symbolic link, or on Windows a junction (which is_symlink does not count):
+// either could lead anywhere, including round again.
+bool IsLink (const fs::directory_entry & entry)
+  {
+  std::error_code ec;
+  if (entry.is_symlink (ec))
+    return true;
+#ifdef _WIN32
+  const DWORD a = GetFileAttributesW (entry.path ().c_str ());
+  return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
   return false;
+#endif
   }
 
 // Whether a folder holds a file of this name, in any case: 5.x's installer
@@ -100,10 +126,75 @@ bool HasFileNoCase (const std::string & dir, const std::string & name)
   {
   std::error_code ec;
   for (fs::directory_iterator it (P (dir), ec), end; !ec && it != end; it.increment (ec))
-    if (EqualNoCase (it->path ().filename ().string (), name))
+    if (EqualNoCase (U8 (it->path ().filename ()), name))
       return true;
   return false;
   }
+
+#ifndef _WIN32
+// 5.x's text is in the Windows code page -- Western, as good as always -- and
+// this platform's is UTF-8.  Valid UTF-8 (ASCII included) is left as it is.
+std::string FromWindowsText (const std::string & s)
+  {
+  bool ascii = true;
+  for (unsigned char c : s)
+    if (c >= 0x80)
+      ascii = false;
+  if (ascii)
+    return s;
+  // valid UTF-8 already?
+  size_t i = 0;
+  bool utf8 = true;
+  while (i < s.size () && utf8)
+    {
+    const unsigned char c = (unsigned char) s [i];
+    const int n = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : -1;
+    if (n < 0)
+      utf8 = false;
+    for (int k = 1; utf8 && k <= n; k++)
+      if (i + k >= s.size () || ((unsigned char) s [i + k] & 0xC0) != 0x80)
+        utf8 = false;
+    i += n + 1;
+    }
+  if (utf8)
+    return s;
+  // cp1252's 0x80-0x9F; the rest of its upper half is Latin-1's
+  static const unsigned short k80 [32] = {
+    0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F,
+    0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178 };
+  std::string out;
+  for (unsigned char c : s)
+    {
+    const unsigned u = c < 0x80 ? c : c < 0xA0 ? k80 [c - 0x80] : c;
+    if (u < 0x80)
+      out += (char) u;
+    else if (u < 0x800)
+      {
+      out += (char) (0xC0 | (u >> 6));
+      out += (char) (0x80 | (u & 0x3F));
+      }
+    else
+      {
+      out += (char) (0xE0 | (u >> 12));
+      out += (char) (0x80 | ((u >> 6) & 0x3F));
+      out += (char) (0x80 | (u & 0x3F));
+      }
+    }
+  return out;
+  }
+
+// Settings that name this platform's fonts, or size them for its screens: a
+// Windows MUSHclient's FixedSys is no font here.
+bool IsWindowsFontPreference (const std::string & name)
+  {
+  for (const char * p : { "DefaultInputFont", "DefaultOutputFont", "NotepadFont", "FixedPitchFont",
+                          "PrinterFont", "DefaultInputFontHeight", "DefaultOutputFontHeight",
+                          "NotepadFontSize", "FixedPitchFontSize", "PrinterFontSize" })
+    if (EqualNoCase (name, p))
+      return true;
+  return false;
+  }
+#endif
 
 bool ReadWholeFile (const fs::path & name, std::string & contents)
   {
@@ -248,6 +339,11 @@ void ApplyPreference (sqlite3 * db, const std::string & name, std::string value,
                       const Install & old,
                       const std::string & dataDir, const std::string & programDir)
   {
+#ifndef _WIN32
+  if (IsWindowsFontPreference (name))
+    return;               // this platform's default, which suits it
+  value = FromWindowsText (value);
+#endif
   if (IsPathListPreference (name.c_str ()))
     value = TranslateList (value, old, dataDir, programDir);
   else if (IsPathPreference (name.c_str ()))
@@ -460,7 +556,23 @@ std::string ReadQuoted (const std::string & s, size_t & i)
         ++i;
         ++digits;
         }
-      out += v < 256 ? (char) v : '?';
+      // a UTF-16 unit; as UTF-8, this side's encoding (a surrogate pair's
+      // halves become '?': names in the registry outside the BMP are a rarity)
+      if (v < 0x80)
+        out += (char) v;
+      else if (v >= 0xD800 && v < 0xE000)
+        out += '?';
+      else if (v < 0x800)
+        {
+        out += (char) (0xC0 | (v >> 6));
+        out += (char) (0x80 | (v & 0x3F));
+        }
+      else
+        {
+        out += (char) (0xE0 | (v >> 12));
+        out += (char) (0x80 | ((v >> 6) & 0x3F));
+        out += (char) (0x80 | (v & 0x3F));
+        }
       }
     else
       out += e;
@@ -590,7 +702,8 @@ std::vector<Install> Find (const std::string & dataDir, const std::string & prog
     // ask the user's permission, and this search runs unasked.  A bottle there
     // can still be chosen through File > Import from MUSHclient 5.
     addEach (h + "/Library/Application Support/CrossOver/Bottles");
-    for (const std::string apps : { h + "/Applications/Wineskin", h + "/Applications" })
+    for (const std::string apps : { h + "/Applications/Wineskin", h + "/Applications",
+                                    std::string ("/Applications/Wineskin"), std::string ("/Applications") })
       {
       std::error_code ec;
       for (fs::directory_iterator it (P (apps), ec), end; !ec && it != end; it.increment (ec))
@@ -614,16 +727,22 @@ std::vector<Install> Find (const std::string & dataDir, const std::string & prog
   return found;
   }
 
-bool FromFolder (const std::string & folderIn, Install & old)
+bool FromFolder (const std::string & folderIn, Install & old, const std::string & programDir)
   {
   const std::string folder = Slash (folderIn);
 
-  // a Wine prefix or bottle: the 5.x in it
-  const std::vector<Install> inPrefix = InPrefix (folder, "");
-  if (!inPrefix.empty ())
+  // a Wine prefix or bottle: the 5.x in it -- or a Wineskin or Porting Kit
+  // wrapper, whose prefix is inside the app (chosen as the app, or a folder
+  // part way down to the prefix)
+  for (const std::string & prefix : { folder, folder + "Contents/SharedSupport/prefix/",
+                                      folder + "SharedSupport/prefix/", folder + "prefix/" })
     {
-    old = inPrefix [0];
-    return true;
+    const std::vector<Install> inPrefix = InPrefix (prefix, programDir);
+    if (!inPrefix.empty ())
+      {
+      old = inPrefix [0];
+      return true;
+      }
     }
 
   // 5.x's own folder
@@ -656,7 +775,8 @@ bool FromFolder (const std::string & folderIn, Install & old)
       break;
       }
 #endif
-  return true;
+  // not 6.00's own folder, unless a 5.x once ran there
+  return programDir.empty () || Qualifies (old, programDir);
   }
 
 // ── Translating ───────────────────────────────────────────────────────────
@@ -690,51 +810,110 @@ std::string TranslatePath (const std::string & path, const Install & old,
     {
     if (!StartsNoCase (full, root))
       continue;
-    const std::string rest = full.substr (root.size ());
+    std::string rest = full.substr (root.size ());
     if (rest.compare (0, 2, "..") == 0)
       return MapWindowsPath (full, old);   // out of the old folder: kept
-    const bool user = rest.empty () || IsUserFolder (rest.substr (0, rest.find ('\\')));
+    const size_t slash = rest.find ('\\');
+    const char * folder = UserFolder (rest.substr (0, slash));
+    const bool user = rest.empty () || folder;
+    if (folder)
+      rest = folder + (slash == std::string::npos ? "" : rest.substr (slash));
     const std::string native = Native (rest);
-    if (!user && Exists (programDir + native))
+    if (user)
+      return dataDir + native;
+    // the program's: this version's own, if it has one...
+    if (Exists (programDir + native))
       return programDir + native;
-    if (!user && pResolved)
+    // ...else the old one's, where it still is (one of the user's files
+    // beside 5.x's, which is not copied): there, not somewhere it is not
+    for (const std::string & here : Roots (old))
+      if (Exists (here + native))
+        return here + native;
+    if (pResolved)
       *pResolved = false;
     return dataDir + native;
     }
 
-  return MapWindowsPath (path, old);       // somewhere of the user's choosing
+  // Somewhere of the user's choosing, made a path on this machine.  Under
+  // Wine a drive with no mapping is nowhere here.
+  const std::string mapped = MapWindowsPath (full, old);
+  if (pResolved && !old.prefix.empty () && mapped == full)
+    *pResolved = false;
+  return mapped == full ? path : mapped;
   }
 
 std::string TranslateText (const std::string & text, const Install & old,
                            const std::string & dataDir, const std::string & programDir)
   {
   const std::string lower = Lower (text);
-  std::vector<std::string> roots;
-  if (!old.shadow.empty ())
-    roots.push_back (Lower (old.shadow));
-  roots.push_back (Lower (old.windowsFolder));
+
+  // Each root as written plainly (C:\MUSHclient\), with forward slashes
+  // (C:/MUSHclient/) and as a script's string literal writes it
+  // (C:\\MUSHclient\\): a path found in one form goes back in the same form.
+  enum Form { ePlain, eForward, eDoubled };
+  struct Root { std::string text; Form form; };
+  std::vector<Root> roots;
+  for (const std::string & r : { old.shadow, old.windowsFolder })
+    {
+    if (r.empty ())
+      continue;
+    std::string forward = Lower (r), doubled;
+    std::replace (forward.begin (), forward.end (), '\\', '/');
+    for (char c : Lower (r))
+      doubled += c == '\\' ? std::string ("\\\\") : std::string (1, c);
+    roots.push_back ({ doubled, eDoubled });   // before plain, which it contains
+    roots.push_back ({ Lower (r), ePlain });
+    roots.push_back ({ forward, eForward });
+    }
 
   std::string out;
   size_t i = 0;
   while (i < text.size ())
     {
     size_t best = std::string::npos;
-    for (const std::string & r : roots)
+    Form form = ePlain;
+    for (const Root & r : roots)
       {
-      const size_t k = r.empty () ? std::string::npos : lower.find (r, i);
+      const size_t k = lower.find (r.text, i);
       if (k < best)
+        {
         best = k;
+        form = r.form;
+        }
       }
     if (best == std::string::npos)
       break;
-    // A path runs to whatever ends a quoted string, an XML value, a line or
-    // one of MUSHclient's "*"-separated lists.  Not to a space: "Program
-    // Files" has one.
+    // A path runs to whatever ends a quoted string, an XML value or entity
+    // (a world file writes a quote in text as &quot;), a line or one of
+    // MUSHclient's "*"-separated lists.  Not to a space: "Program Files" has
+    // one.
     size_t end = best;
-    while (end < text.size () && !strchr ("\"'<>\r\n\t*|", text [end]))
+    while (end < text.size () && !strchr ("\"'<>&\r\n\t*|", text [end]))
       end++;
+    std::string found = text.substr (best, end - best);
+    if (form == eDoubled)
+      {
+      std::string single;
+      for (size_t k = 0; k < found.size (); k++)
+        {
+        single += found [k];
+        if (found [k] == '\\' && k + 1 < found.size () && found [k + 1] == '\\')
+          k++;
+        }
+      found = single;
+      }
+    std::string translated = TranslatePath (found, old, dataDir, programDir);
+    if (form == eForward)
+      std::replace (translated.begin (), translated.end (), '\\', '/');
+    else if (form == eDoubled)
+      {
+      std::string doubled;
+      for (char c : translated)
+        doubled += c == '\\' ? std::string ("\\\\") : std::string (1, c);
+      translated = doubled;
+      }
     out += text.substr (i, best - i);
-    out += TranslatePath (text.substr (best, end - best), old, dataDir, programDir);
+    out += translated;
     i = end;
     }
   out += text.substr (i);
@@ -762,14 +941,17 @@ bool IsPathListPreference (const char * pName)
 
 // ── Copying ───────────────────────────────────────────────────────────────
 
-int CopyTree (const std::string & from, const std::string & to,
-              const Install * pOld,
-              const std::string & dataDir, const std::string & programDir,
-              int * pWorlds)
+namespace {
+
+// CopyTree, in paths rather than strings, so that a file is copied under the
+// name it has, whatever the code page could spell.
+int CopyPaths (const fs::path & src, const fs::path & dst,
+               const Install * pOld,
+               const std::string & dataDir, const std::string & programDir,
+               int * pWorlds, const ReplaceableFn & replaceable, int depth)
   {
   std::error_code ec;
-  const fs::path src = P (from), dst = P (to);
-  if (!fs::is_directory (src, ec))
+  if (depth > 32 || !fs::is_directory (src, ec))
     return 0;
   fs::create_directories (dst, ec);
 
@@ -778,27 +960,28 @@ int CopyTree (const std::string & from, const std::string & to,
     {
     std::error_code fec;
     const fs::path & path = it->path ();
-    const std::string name = path.filename ().string ();
-    // not through a link: it could lead anywhere, including round again
-    if (it->is_symlink (fec))
+    const fs::path target = dst / path.filename ();
+    if (IsLink (*it))
       continue;
     if (it->is_directory (fec))
       {
-      n += CopyTree (path.string (), (dst / name).string (), pOld, dataDir, programDir, pWorlds);
+      n += CopyPaths (path, target, pOld, dataDir, programDir, pWorlds, replaceable, depth + 1);
       continue;
       }
     if (!it->is_regular_file (fec))
       continue;
-    const fs::path target = dst / name;
-    if (fs::exists (target, fec))
-      continue;           // never over a file already there
-    const bool world = IsWorldFile (name);
+    const bool world = IsWorldFile (U8 (path.filename ()));
+    // Never over a file already there -- but a world file still exactly as
+    // this version installed it holds nothing of theirs, and 5.x's is theirs.
+    if (fs::exists (target, fec) &&
+        !(world && replaceable && replaceable (target)))
+      continue;
     bool ok;
     std::string text;
     if (world && pOld && ReadWholeFile (path, text))
       ok = WriteWholeFile (target, TranslateText (text, *pOld, dataDir, programDir));
     else
-      ok = fs::copy_file (path, target, fs::copy_options::none, fec) && !fec;
+      ok = fs::copy_file (path, target, fs::copy_options::overwrite_existing, fec) && !fec;
     if (ok)
       {
       n++;
@@ -807,6 +990,16 @@ int CopyTree (const std::string & from, const std::string & to,
       }
     }
   return n;
+  }
+
+}   // namespace
+
+int CopyTree (const std::string & from, const std::string & to,
+              const Install * pOld,
+              const std::string & dataDir, const std::string & programDir,
+              int * pWorlds, const ReplaceableFn & replaceable)
+  {
+  return CopyPaths (P (from), P (to), pOld, dataDir, programDir, pWorlds, replaceable, 0);
   }
 
 // ── The registry ──────────────────────────────────────────────────────────
@@ -869,12 +1062,15 @@ RegistryValues ReadRegistry (const Install & old, const std::string & key)
   HKEY hKey;
   if (RegOpenKeyExA (HKEY_CURRENT_USER, key.c_str (), 0, KEY_READ, &hKey) != ERROR_SUCCESS)
     return values;
+  // as long as the longest of them: a WorldList can run to many kilobytes
+  DWORD maxName = 0, maxData = 0;
+  RegQueryInfoKeyA (hKey, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &maxName, &maxData, NULL, NULL);
+  std::vector<char> name (maxName + 2);
+  std::vector<BYTE> data (maxData + 2);
   for (DWORD i = 0; ; i++)
     {
-    char name [256];
-    BYTE data [8192];
-    DWORD nameLen = sizeof name, dataLen = sizeof data - 1, type;
-    const LONG rc = RegEnumValueA (hKey, i, name, &nameLen, NULL, &type, data, &dataLen);
+    DWORD nameLen = (DWORD) name.size (), dataLen = (DWORD) data.size () - 1, type;
+    const LONG rc = RegEnumValueA (hKey, i, name.data (), &nameLen, NULL, &type, data.data (), &dataLen);
     if (rc == ERROR_NO_MORE_ITEMS)
       break;
     if (rc != ERROR_SUCCESS)
@@ -882,11 +1078,11 @@ RegistryValues ReadRegistry (const Install & old, const std::string & key)
     if (type == REG_SZ || type == REG_EXPAND_SZ)
       {
       data [dataLen] = 0;
-      values.push_back (std::make_pair (std::string (name), std::string ((const char *) data)));
+      values.push_back (std::make_pair (std::string (name.data ()), std::string ((const char *) data.data ())));
       }
     else if (type == REG_DWORD && dataLen == sizeof (DWORD))
-      values.push_back (std::make_pair (std::string (name),
-                                        std::to_string (* (DWORD *) data)));
+      values.push_back (std::make_pair (std::string (name.data ()),
+                                        std::to_string (* (DWORD *) data.data ())));
     }
   RegCloseKey (hKey);
 #endif
@@ -896,7 +1092,8 @@ RegistryValues ReadRegistry (const Install & old, const std::string & key)
 // ── Importing ─────────────────────────────────────────────────────────────
 
 Result Import (const Install & old, sqlite3 * db,
-               const std::string & dataDir, const std::string & programDir)
+               const std::string & dataDir, const std::string & programDir,
+               const ReplaceableFn & replaceable)
   {
   Result result;
 
@@ -909,7 +1106,7 @@ Result Import (const Install & old, sqlite3 * db,
       continue;           // can be huge, and are only read: left where they are
     for (const std::string & root : Roots (old))
       result.files += CopyTree (root + folder, dataDir + folder, &old,
-                                dataDir, programDir, &result.worlds);
+                                dataDir, programDir, &result.worlds, replaceable);
     }
 
   result.prefs       = ImportPreferences (old, db, dataDir, programDir);
@@ -940,10 +1137,17 @@ std::string Where (const Install & old)
 
 std::string Describe (const Install & old, const Result & result)
   {
-  std::string what = "Your settings have";
-  if (result.worlds)
-    what = "Your settings and " + std::to_string (result.worlds) + " world file" +
-           (result.worlds == 1 ? "" : "s") + " have";
+  const std::string worlds = std::to_string (result.worlds) + " world file" +
+                             (result.worlds == 1 ? "" : "s");
+  std::string what;
+  if (result.prefs && result.worlds)
+    what = "Your settings and " + worlds + " have";
+  else if (result.prefs)
+    what = "Your settings have";
+  else if (result.worlds)
+    what = "Your " + worlds + " have";
+  else
+    what = "Your files have";
   std::string s = what + " been copied from MUSHclient 5, in " + Where (old) +
                   ", which has been left as it was.";
   for (const std::string & root : Roots (old))

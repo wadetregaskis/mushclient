@@ -92,5 +92,12 @@ private:
 
 ISpellEngine * CreatePlatformSpellEngine ()
 {
+    // No dictionaries at all and every word would pass: the built-in lists
+    // are better than that.
+    @autoreleasepool
+    {
+        if ([[[NSSpellChecker sharedSpellChecker] availableLanguages] count] == 0)
+            return nullptr;
+    }
     return new CMacSpellEngine ();
 }

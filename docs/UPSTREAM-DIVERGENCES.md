@@ -1113,10 +1113,14 @@ Toolbar Locations docked all three with no position, which gives each a row of
 its own. The port's default and reset were one per row too.
 
 **Now:** both build the same picture: all three on one row along the top, as
-many side by side as the window is wide enough for. On Windows that is MFC's
-dock bar doing it. Narrow the window and it moves a bar that does not fit onto a
-row of its own. It does not move it back when the window widens again, and in a
-very narrow window it clips the second bar rather than move it. The port has no
+many side by side as the window is wide enough for. On Windows,
+`DockToolBarsSideBySide` docks each bar beside the one before, or at the start
+of a new row if it would not fit: MFC's dock bar keeps a bar that starts inside
+the window where it is, cut off at the edge, so it cannot be left to wrap them.
+After that it is MFC's dock bar. Narrow the window and it moves a bar that does
+not fit onto a row of its own. It does not move it back when the window widens
+again, and in a very narrow window it clips the second bar rather than move it.
+The port has no
 dock bar, so `CWorldToolBars` wraps the row itself, both ways, whenever the
 window is resized. The
 wrap is not saved: what is saved is the arrangement asked for (rows, and the
@@ -1173,8 +1177,14 @@ to start afresh.
   offers the 5.x it found, or a folder of the user's choosing: 5.x's own
   folder, or a Wine prefix or bottle with one in it.
   - Before importing it says what happens to what is already there: the global
-    preferences and world window positions are replaced, and files are copied in
-    beside the user's, a file of the same name being kept, not replaced.
+    preferences (the worlds and plugins opened at startup among them) and world
+    window positions are replaced, the recent files go to the top of the File
+    menu, and files are copied in beside the user's, a file of the same name
+    being kept, not replaced -- except a world file still exactly as 6.00
+    installed it, which holds nothing of theirs. (6.00 seeds its bundled worlds
+    before the first run's offer, and a Discworld player's own `Discworld.mcl`
+    is the point of importing.) Any other bundled file of the same name stays
+    6.00's, which is at least as new.
 
 Where it looks:
 
@@ -1194,7 +1204,9 @@ Where it looks:
 
 What it copies:
 
-- worlds, scripts, sounds and `quow_plugins\`, never over a file already there;
+- worlds, scripts, sounds and `quow_plugins\`, never over a file already there
+  but for an untouched bundled world, under the names they have (a name the
+  ANSI code page cannot spell included), and never through a link or junction;
 - the global preferences, from 5.x's database, or from the registry (the real
   one, or the prefix's `user.reg`) if 5.x was too old to have one;
 - window positions;
@@ -1203,12 +1215,24 @@ What it copies:
 
 Paths that pointed into the old folder are translated as they are copied. The
 user's own files go to the new data folder and the program's files to its own
-folder, in the preferences and inside world files. A preference naming one of
-5.x's own files that 6.00 does not have keeps 6.00's default. Under Wine, any
-other drive path becomes the path on this machine that the prefix's drive
-mapping gives it. Logs are left where they are, and the message after an import
+folder, in the preferences and inside world files -- written plainly, with
+forward slashes, or doubled as a script's string literal has them, and each put
+back the way it was written. A file in the old folder that is neither (a world
+kept beside 5.x's exe, a script of the user's in its `lua\`) is pointed at where
+it still is. A preference naming one of 5.x's own files that 6.00 does not have
+keeps 6.00's default. Under Wine, any other drive path becomes the path on this
+machine that the prefix's drive mapping gives it, a drive with no mapping
+counting as nowhere; text 5.x wrote in the Windows code page becomes UTF-8; and
+5.x's fonts and font sizes are not imported, being Windows'. Logs are left where they are, and the message after an import
 says where. 5.x's folder is only read: its databases are opened from temporary
 copies.
+
+The data folder's path comes from the shell in UTF-16 and is converted to the
+ANSI code page MUSHclient speaks. A user name that code page cannot spell gets
+the folder's short (8.3) name instead. Every database is opened with its name
+converted to the UTF-8 that SQLite expects (`sqlite_path.h`), so a profile like
+`C:\Users\José\` works. A portable copy keeps its folder preferences relative
+(`.\worlds\`), so it still works from another drive letter.
 
 **Why:** MUSHclient 6 does not promise that its files and settings can be shared
 with 5.x. Sharing them would also mean writing into Program Files, which it
@@ -1255,19 +1279,32 @@ fixed plugin to anyone who had run an older version.
 folder. When a new version first runs:
 
 - **a copy the user has not changed** is replaced with the new version, unasked;
-- **a copy the user has changed** is replaced only if they say so. They are asked,
-  file by file: upgrade (their copy is kept beside it, as `<name>.backup`) or keep
+- **a copy the user has changed** is replaced only if they say so, and they are
+  asked only when there is something new to offer: a version that ships the
+  same file as before leaves their copy alone, unasked. Asked, file by file:
+  upgrade (their copy is kept beside it, as `<name>.backup`, or
+  `<name>.backup2` and so on rather than overwrite an earlier one) or keep
   theirs. A "Don't ask again about this plugin" box remembers the answer for
-  that plugin, in the same file;
+  that plugin, in the same file. If the backup cannot be made, their copy is
+  kept;
+- only plugins and scripts are asked about. Any other file that differs from what
+  was given -- the mapper's room database, say -- is data a plugin wrote, and is
+  kept;
 - **a copy the user deleted** stays deleted;
 - **a world file** is never replaced: once used, it is the user's;
+- plugin state (`plugins\state\`) is never treated as bundled, though a program
+  folder that was once a 5.x's has some;
 - files the bundle never had are not touched. These include the user's own plugins
   and the per-user database Quow's mapper keeps beside its maps.
 
-This covers the Discworld edition's world, mapper and maps as well as the
-plugins. The port seeded on every launch before; it now does so once per
-version, as Windows does. Without that, a deletion could not be told from a file
-not yet copied.
+Files are written beside their destination and renamed over it, so a crash or a
+full disk leaves the old file or the new one. This covers the Discworld
+edition's world, mapper and maps as well as the plugins. It runs when the
+version, or a fingerprint of the bundled files (their count, sizes and newest
+time), differs from the last run's -- so a new build of the same version, a
+release candidate followed by the release, delivers its files too. The port
+seeded on every launch before; now it does so only then, as Windows does.
+Without that, a deletion could not be told from a file not yet copied.
 
 **Why:** a bug fixed in a bundled plugin should reach users. A change of their
 own should not be lost to an upgrade without their say-so.
@@ -1307,10 +1344,14 @@ database. `userdict.txt` was never written, so a rebuilt database lost the word.
 **Now:** where the operating system has a spell checker, it decides which words
 are right and what to suggest, in the user's languages:
 
-- **Windows:** `ISpellChecker`, in the user's locale.
-- **macOS:** `NSSpellChecker`, with the languages chosen in System Settings.
-- **Linux:** Enchant, usually Hunspell, in `$LANG`'s language. It is loaded with
-  `dlopen`, so the build and the package do not depend on it.
+- **Windows:** `ISpellChecker`, in the languages the user reads Windows in, then
+  the regional format's language, then English. Not the regional format first:
+  an English speaker in Germany may well have German dates and numbers.
+- **macOS:** `NSSpellChecker`, with the languages chosen in System Settings (if
+  it has none at all, the built-in lists).
+- **Linux:** Enchant, usually Hunspell, in the locale's language (`LC_ALL`,
+  `LC_MESSAGES`, `LANG`, with `$LANGUAGE`'s list first, as gettext has it). It is
+  loaded with `dlopen`, so the build and the package do not depend on it.
 
 Where there is none (no Enchant, or no dictionary for the language), the
 built-in word lists are used as before. MUSHclient keeps a dictionary of its own
@@ -1325,7 +1366,11 @@ the dialog's "Add" is now two buttons:
 `AddSpellCheckWord` adds to MUSHclient's. With a system spell checker the 55,000
 words are not loaded at all, which also saves the first run's database build.
 Words added before this version, which were only in the database, are carried
-over into `userdict.txt`. The script API (`SpellCheck`, `SpellCheckDlg`,
+over into `userdict.txt`, once: the database is then renamed
+`spell-before-6.sqlite`, so that a word later deleted from `userdict.txt` stays
+deleted. A word the system dictionary refuses goes into MUSHclient's instead,
+with a message, rather than looking added. Off Windows, the bytes of a UTF-8
+character count as letters, so an accented word is checked whole. The script API (`SpellCheck`, `SpellCheckDlg`,
 `AddSpellCheckWord`, `Metaphone`, `EditDistance`) is unchanged, and so is the
 dialog apart from the button.
 

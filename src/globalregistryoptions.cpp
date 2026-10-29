@@ -2,6 +2,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "user_data.h"     // UserData_DefaultPreference
+#include "sqlite_path.h"   // ANSI file names for sqlite3_open
 
 #include "option_table_offsetof.h"
 
@@ -353,7 +354,13 @@ void CMUSHclientApp::SaveGlobalsToDatabase (void)
   if (db)
     sqlite3_close(db);
 
+#ifdef _WIN32
+  char * utf8 = sqlite_path_utf8 (m_PreferencesDatabaseName.c_str ());  // a profile folder can be non-ASCII
+  int db_rc = sqlite3_open (utf8 ? utf8 : m_PreferencesDatabaseName.c_str (), &db);
+  free (utf8);
+#else
   int db_rc = sqlite3_open(m_PreferencesDatabaseName.c_str (), &db);
+#endif
 
   if( db_rc )
     {

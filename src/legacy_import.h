@@ -11,7 +11,8 @@
 // since the search runs unasked; anything else can be chosen by hand.
 //
 // What is copied: worlds, scripts, sounds and quow_plugins\ (the Discworld
-// mapper's data), never over a file already there; the global preferences and
+// mapper's data), never over a file already there (except a world file this
+// version installed and the user has not touched); the global preferences and
 // world window positions, which replace 6.00's; the recent files list; and the
 // words added to its spell checker.  Every path that pointed into the old
 // folder is translated -- in the preferences, and inside world files -- the
@@ -25,6 +26,8 @@
 
 #pragma once
 
+#include <filesystem>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,8 +49,9 @@ struct Install
 std::vector<Install> Find (const std::string & dataDir, const std::string & programDir);
 
 // A folder the user chose: 5.x's own folder, or a Wine prefix or bottle with a
-// 5.x in it.  False if it is neither.
-bool FromFolder (const std::string & folder, Install & old);
+// 5.x in it (or, on macOS, a Wineskin wrapper).  False if it is neither --
+// 6.00's own folder included, unless a 5.x once ran there.
+bool FromFolder (const std::string & folder, Install & old, const std::string & programDir = "");
 
 // The installations of 5.x in one Wine prefix.
 std::vector<Install> InPrefix (const std::string & prefix, const std::string & programDir);
@@ -68,13 +72,20 @@ std::string TranslateText (const std::string & text, const Install & old,
 bool IsPathPreference (const char * pName);
 bool IsPathListPreference (const char * pName);   // "*"-separated paths
 
+// Whether a world file already in the data folder holds nothing of the user's
+// -- it is exactly as this version installed it (bundled_files.h) -- and so
+// may be replaced with 5.x's.
+typedef std::function<bool (const std::filesystem::path & file)> ReplaceableFn;
+
 // Copy a folder's files into another, recursively, never over a file already
-// there; a world file is rewritten with TranslateText on the way when `pOld`
-// is given.  Returns how many were copied; `pWorlds` counts the world files.
+// there (but for a world file `replaceable` says may go); a world file is
+// rewritten with TranslateText on the way when `pOld` is given.  Links and
+// junctions are not followed.  Returns how many were copied; `pWorlds` counts
+// the world files.
 int CopyTree (const std::string & from, const std::string & to,
               const Install * pOld = nullptr,
               const std::string & dataDir = "", const std::string & programDir = "",
-              int * pWorlds = nullptr);
+              int * pWorlds = nullptr, const ReplaceableFn & replaceable = nullptr);
 
 // The values under one key of 5.x's registry: the real one on Windows, the
 // prefix's user.reg under Wine.  DWORDs as decimal.
@@ -96,7 +107,8 @@ struct Result
 // PopulateDatabase has filled) and the data folder.  The caller wraps it in a
 // transaction, and re-reads the preferences after.
 Result Import (const Install & old, sqlite3 * db,
-               const std::string & dataDir, const std::string & programDir);
+               const std::string & dataDir, const std::string & programDir,
+               const ReplaceableFn & replaceable = nullptr);
 
 // For a message: the folder, without its trailing separator.
 std::string Where (const Install & old);

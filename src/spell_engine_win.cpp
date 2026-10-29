@@ -18,6 +18,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <spellcheck.h>
+#include <vector>
 
 #include "spell_engine.h"
 
@@ -105,14 +106,32 @@ ISpellEngine * CreatePlatformSpellEngine ()
                                 IID_PPV_ARGS (&factory))))
     return NULL;   // before Windows 8, or COM not initialised
 
-  // The user's own language, else its language without the region, else
-  // English -- which every Windows with the spell checker has.
+  // The languages the user reads Windows in, best first -- which is what they
+  // write in, rather than the regional format (dates and numbers), which an
+  // English speaker in Germany may well have set to German -- then that
+  // format's language, each also without its region, then English, which
+  // every Windows with the spell checker has.
+  std::vector<std::wstring> candidates;
+  auto add = [&candidates] (const std::wstring & language) {
+    if (language.empty ())
+      return;
+    candidates.push_back (language);
+    const size_t dash = language.find (L'-');
+    if (dash != std::wstring::npos)
+      candidates.push_back (language.substr (0, dash));
+  };
+  ULONG count = 0, size = 0;
+  if (GetUserPreferredUILanguages (MUI_LANGUAGE_NAME, &count, NULL, &size) && size > 0)
+    {
+    std::vector<wchar_t> list (size);
+    if (GetUserPreferredUILanguages (MUI_LANGUAGE_NAME, &count, list.data (), &size))
+      for (const wchar_t * p = list.data (); *p; p += wcslen (p) + 1)   // double-NUL-terminated
+        add (p);
+    }
   wchar_t locale [LOCALE_NAME_MAX_LENGTH] = L"";
   GetUserDefaultLocaleName (locale, LOCALE_NAME_MAX_LENGTH);
-  std::wstring candidates [3] = { locale, locale, L"en-US" };
-  const size_t dash = candidates [1].find (L'-');
-  if (dash != std::wstring::npos)
-    candidates [1].resize (dash);
+  add (locale);
+  add (L"en-US");
 
   ISpellEngine * engine = NULL;
   for (const std::wstring & language : candidates)

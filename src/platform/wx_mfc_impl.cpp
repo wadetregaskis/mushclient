@@ -3434,19 +3434,19 @@ namespace {
 
 // A bundled file the user changed, and this version has a new one of: ask,
 // with the choice to have it remembered for that file.
-bundled::Answer AskAboutChangedFile (const std::string & relative, const std::string & name)
+bundled::Answer AskAboutChangedFile (const std::string & relative, const std::string & name,
+                                     const std::string & backup)
 {
     const bool plugin = relative.find ("plugins/") != std::string::npos &&
                         relative.size () > 4 &&
                         strcasecmp (relative.c_str () + relative.size () - 4, ".xml") == 0;
-    const std::string file = relative.substr (relative.find_last_of ('/') + 1);
     const wxString what = plugin ? wxT("plugin") : wxT("file");
     const std::string called = name == relative ? relative
                                                 : "\xE2\x80\x9C" + name + "\xE2\x80\x9D (" + relative + ")";
     wxRichMessageDialog dlg (nullptr,
         wxString::FromUTF8 ("MUSHclient " VERSION_STRING " comes with a new version of " + called +
                             ", but your copy has been changed since MUSHclient installed it.\n\n"
-                            "If you upgrade it, your copy is kept beside it, as " + file + ".backup."),
+                            "If you upgrade it, your copy is kept beside it, as " + backup + "."),
         wxT("MUSHclient"), wxYES_NO | wxNO_DEFAULT | wxICON_INFORMATION);
     dlg.SetExtendedMessage (wxEmptyString);
     dlg.SetYesNoLabels (wxT("Upgrade"), wxT("Keep Mine"));
@@ -3479,15 +3479,6 @@ static void SeedBundledUserData()
         const std::string dataDir = PortableUserDataDir ();
         if (dataDir.empty ())
             return;
-        const fs::path marker = fs::path (dataDir) / "seeded-version.txt";
-        {
-            std::ifstream in (marker);
-            std::string seeded;
-            std::getline (in, seeded);
-            if (seeded == VERSION_STRING)
-                return;
-        }
-
         // Every top-level folder of the seed tree, as the Windows build names
         // its own two (worlds, quow_plugins).
         std::vector<std::string> subtrees;
@@ -3498,10 +3489,23 @@ static void SeedBundledUserData()
         std::string from = src.string ();
         if (from.back () != '/')
             from += '/';
+
+        // The version, and what the bundled files look like: a new build of
+        // the same version (a release candidate, then the release) can bring
+        // new ones.
+        const std::string version = std::string (VERSION_STRING) + "\n" + bundled::Fingerprint (from, subtrees);
+        const fs::path marker = fs::path (dataDir) / "seeded-version.txt";
+        {
+            std::ifstream in (marker, std::ios::binary);
+            std::ostringstream ss;
+            ss << in.rdbuf ();
+            if (ss.str () == version)
+                return;
+        }
         const bundled::Stats stats = bundled::Sync (from, dataDir, subtrees,
                                                     dataDir + "bundled-files.txt",
                                                     AskAboutChangedFile);
-        std::ofstream (marker, std::ios::trunc) << VERSION_STRING;
+        std::ofstream (marker, std::ios::binary | std::ios::trunc) << version;
         fprintf (stderr, "[plugins] bundled files: %d copied, %d upgraded, %d kept as changed, in %s\n",
                  stats.copied, stats.upgraded, stats.kept, dataDir.c_str ());
     }

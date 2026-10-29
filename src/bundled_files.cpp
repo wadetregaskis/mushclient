@@ -39,15 +39,33 @@ bool ReadWholeFile (const fs::path & name, std::string & contents)
   return true;
   }
 
+// Written beside it and renamed over it, so that a crash or a full disk
+// leaves the old file or the new one, never half of the new one.
 bool WriteWholeFile (const fs::path & name, const std::string & contents)
   {
   std::error_code ec;
   fs::create_directories (name.parent_path (), ec);
-  std::ofstream f (name, std::ios::binary | std::ios::trunc);
-  if (!f)
+  fs::path temp = name;
+  temp += ".new~";
+    {
+    std::ofstream f (temp, std::ios::binary | std::ios::trunc);
+    if (!f)
+      return false;
+    f.write (contents.data (), (std::streamsize) contents.size ());
+    f.close ();
+    if (!f)
+      {
+      fs::remove (temp, ec);
+      return false;
+      }
+    }
+  fs::rename (temp, name, ec);
+  if (ec)
+    {
+    fs::remove (temp, ec);
     return false;
-  f.write (contents.data (), (std::streamsize) contents.size ());
-  return (bool) f;
+    }
+  return true;
   }
 
 // FNV-1a: telling one version of a file from another, not resisting anyone.
@@ -109,6 +127,42 @@ bool EndsWithNoCase (const std::string & s, const char * suffix)
   return true;
   }
 
+// Plugins and scripts: what a user edits, and can be asked about.  Anything
+// else that differs from what was given -- a database, a map -- is data a
+// plugin wrote, not an edit to weigh against a new version.
+bool AsksAbout (const std::string & key)
+  {
+  for (const char * ext : { ".xml", ".lua", ".js", ".pys", ".py", ".pl", ".pls",
+                            ".vbs", ".tcl", ".rb" })
+    if (EndsWithNoCase (key, ext))
+      return true;
+  return false;
+  }
+
+// Where their copy goes when it is upgraded: <name>.backup, or, not to lose
+// an earlier one, <name>.backup2 and so on.
+fs::path BackupFor (const fs::path & mine)
+  {
+  std::error_code ec;
+  for (int i = 1; i < 100; i++)
+    {
+    fs::path backup = mine;
+    backup += i == 1 ? std::string (".backup") : ".backup" + std::to_string (i);
+    if (!fs::exists (backup, ec))
+      return backup;
+    }
+  fs::path backup = mine;
+  backup += ".backup";
+  return backup;
+  }
+
+// A plugin's saved state: written by the plugin, and never bundled -- though
+// a program folder that was once a MUSHclient 5's has some.
+bool IsPluginState (const std::string & key)
+  {
+  return key.find ("plugins/state/") != std::string::npos;
+  }
+
 std::string NameFor (const std::string & key, const std::string & contents)
   {
   if (EndsWithNoCase (key, ".xml"))
@@ -154,6 +208,41 @@ std::string PluginName (const std::string & xml)
   return "";
   }
 
+bool Untouched (const std::string & manifestName, const std::string & to, const fs::path & file)
+  {
+  const fs::path relative = file.lexically_relative (fs::path (to));
+  if (relative.empty () || *relative.begin () == "..")
+    return false;
+  const Manifest manifest = Load (manifestName);
+  const auto known = manifest.find (relative.generic_string ());
+  std::string contents;
+  return known != manifest.end () && !known->second.hash.empty () &&
+         ReadWholeFile (file, contents) && Hash (contents) == known->second.hash;
+  }
+
+std::string Fingerprint (const std::string & from, const std::vector<std::string> & subtrees)
+  {
+  uint64_t files = 0, bytes = 0;
+  long long newest = 0;
+  for (const std::string & sub : subtrees)
+    {
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it (fs::path (from) / sub, ec), end; !ec && it != end; it.increment (ec))
+      {
+      std::error_code fec;
+      if (!it->is_regular_file (fec) ||
+          IsPluginState ((fs::path (sub) / it->path ().lexically_relative (fs::path (from) / sub)).generic_string ()))
+        continue;
+      files++;
+      bytes += (uint64_t) it->file_size (fec);
+      const long long t = (long long) it->last_write_time (fec).time_since_epoch ().count ();
+      if (!fec && t > newest)
+        newest = t;
+      }
+    }
+  return std::to_string (files) + " " + std::to_string (bytes) + " " + std::to_string (newest);
+  }
+
 Stats Sync (const std::string & from, const std::string & to,
             const std::vector<std::string> & subtrees,
             const std::string & manifestName,
@@ -175,6 +264,8 @@ Stats Sync (const std::string & from, const std::string & to,
         continue;
       const fs::path relative = fs::path (sub) / it->path ().lexically_relative (root);
       const std::string key = relative.generic_string ();
+      if (IsPluginState (key))
+        continue;
       const fs::path mine = fs::path (to) / relative;
       const bool world = EndsWithNoCase (key, ".mcl");
 
@@ -218,32 +309,40 @@ Stats Sync (const std::string & from, const std::string & to,
         continue;
         }
 
-      const bool unchanged = known != manifest.end () && !known->second.hash.empty () &&
-                             known->second.hash == theirHash;
+      const bool given = known != manifest.end () && !known->second.hash.empty ();
+      const bool unchanged = given && known->second.hash == theirHash;
+      const fs::path backup = BackupFor (mine);
       bool upgrade;
       if (unchanged)
         upgrade = true;                      // nothing of theirs to lose
+      else if (given && known->second.hash == shippedHash)
+        upgrade = false;                     // changed, but there is nothing new to offer
+      else if (!AsksAbout (key))
+        upgrade = false;                     // a plugin's data, not an edit
       else if (known != manifest.end () && known->second.choice == "upgrade")
         upgrade = true;
       else if (known != manifest.end () && known->second.choice == "keep")
         upgrade = false;
       else
         {
-        const Answer answer = ask ? ask (fs::path (relative).make_preferred ().string (), NameFor (key, theirs))
+        const Answer answer = ask ? ask (fs::path (relative).make_preferred ().string (), NameFor (key, theirs),
+                                         backup.filename ().string ())
                                   : Answer ();
         upgrade = answer.upgrade;
         if (answer.remember)
           manifest [key].choice = answer.upgrade ? "upgrade" : "keep";
         }
 
+      // Never replace their copy without the backup promised them.
+      if (upgrade && !unchanged)
+        {
+        fs::copy_file (mine, backup, fs::copy_options::overwrite_existing, fec);
+        if (fec)
+          upgrade = false;
+        }
+
       if (upgrade)
         {
-        if (!unchanged)
-          {
-          fs::path backup = mine;
-          backup += ".backup";
-          fs::copy_file (mine, backup, fs::copy_options::overwrite_existing, fec);
-          }
         if (WriteWholeFile (mine, shipped))
           {
           manifest [key].hash = shippedHash;

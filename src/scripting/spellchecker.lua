@@ -20,6 +20,15 @@ local IGNORE_IMBEDDED_NUMBERS = false -- ignore words with numbers in them? true
 -- this is the pattern we use to find "words" in the text to be spell-checked
 local pattern = "%a+'?[%a%d]+" -- regexp to give us a word with a possible single imbedded quote
 
+-- Off Windows text is UTF-8, whose letters beyond ASCII are several bytes
+-- that %a does not match: an accented "cafe" would be checked as "caf".  So every byte
+-- of a multi-byte character counts as part of a word there.  (Windows speaks
+-- the ANSI code page, whose letters %a already knows, and whose high bytes
+-- include punctuation, like curly quotes, that must not.)
+if package.config:sub (1, 1) ~= "\\" then
+  pattern = "[%a\128-\255]+'?[%a%d\128-\255]+"
+end -- not Windows
+
 -- Dictionaries are read-only and bundled next to the executable (app_directory).
 -- The user dictionary and the compiled spell.sqlite get WRITTEN, so they live in
 -- a writable data directory (App Support on macOS/Linux; the app dir on Windows).
@@ -121,9 +130,22 @@ local function add_user_word (word)
     return
   end -- nothing to add
   user_words [make_upper (word)] = true
-  local f = io.open (directory .. userdict, "a")
+  -- not run on to the end of a last line with no newline (Notepad's way)
+  local newline = ""
+  local f = io.open (directory .. userdict, "rb")
   if f then
-    f:write (word, "\n")
+    if f:seek ("end") > 0 then
+      f:seek ("end", -1)
+      local last = f:read (1)
+      if last ~= "\n" and last ~= "\r" then
+        newline = "\n"
+      end -- no newline at the end
+    end -- not empty
+    f:close ()
+  end -- opened
+  f = io.open (directory .. userdict, "a")
+  if f then
+    f:write (newline, word, "\n")
     f:close ()
   end -- opened
   if db then
@@ -190,6 +212,12 @@ local function checkword_and_suggest (word)
     end -- word found
     suggestions = utils.spell_suggest (word) or {}
   else
+
+  -- MUSHclient's own dictionary first: a word can be in userdict.txt and not
+  -- yet in the database, which reads it only when first built
+  if user_word (word) then
+    return word, "ok"
+  end -- one of theirs
 
   -- table of suggestions, based on the metaphone
   local keyed_suggestions = {}
@@ -262,7 +290,15 @@ local function checkword_and_suggest (word)
 
   -- add to the system's dictionary, shared with every other program
   if action == "addsystem" then
-    utils.spell_add_word (word)
+    if not utils.spell_add_word (word) then
+      -- kept somewhere, rather than looking added and asked about next time
+      add_user_word (word)
+      if utils.msgbox then
+        utils.msgbox ("The system dictionary would not take \"" .. word ..
+                      "\", so it has been added to MUSHclient's own dictionary instead.",
+                      "Spell check", "ok", "!")
+      end -- can say so
+    end -- system refused
     return word, "ok"
   end -- adding to the system
   
@@ -317,6 +353,10 @@ local function checkword (word)
     end -- not found
     return
   end -- system spell checker
+
+  if user_word (word) then
+    return
+  end -- one of theirs
 
   -- get first metaphone
   local m = utils.metaphone (word, METAPHONE_LENGTH)
@@ -395,17 +435,25 @@ local function init ()
   if system then
     -- No database: the system checks the words.  But a word added before
     -- this version, when Add put it only in the database, is carried over
-    -- into userdict.txt (one already there is left as it is).
+    -- into userdict.txt (one already there is left as it is) -- once: the
+    -- database is then put aside, so a word they later delete from
+    -- userdict.txt stays deleted, and should the built-in lists be needed
+    -- again they are rebuilt from userdict.txt.  A database that cannot be
+    -- read is left alone; it is not needed here.
     local old = io.open (directory .. "spell.sqlite", "rb")
     if old then
       old:close ()
-      local olddb = sqlite3.open (directory .. "spell.sqlite")
-      if olddb then
+      local migrated = pcall (function ()
+        local olddb = assert (sqlite3.open (directory .. "spell.sqlite"))
         for row in olddb:rows ("SELECT DISTINCT name FROM words WHERE user = 1") do
           add_user_word (row [1])
         end -- each added word
         olddb:close ()
-      end -- opened
+      end)
+      if migrated then
+        os.remove (directory .. "spell-before-6.sqlite")
+        os.rename (directory .. "spell.sqlite", directory .. "spell-before-6.sqlite")
+      end -- carried over
     end -- have one
     return
   end -- system spell checker

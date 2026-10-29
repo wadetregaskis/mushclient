@@ -1332,18 +1332,22 @@ if ((INT_PTR) ShellExecute (Frame, _T("open"), MUSHCLIENT_FUNCTIONS_URL, NULL, N
 
 
 
-// The three toolbars along the top, each docked to the right of the one before.
-// The dock bar wraps a row that is too full, so as many share a row as the
-// window is wide enough for -- rather than one row each, which is what docking
-// without a rectangle gives, and which takes three rows for bars that are
-// narrow enough for most windows to hold two or three of them on one.
+// The three toolbars along the top, each docked to the right of the one before
+// while it fits, and at the start of a new row when it does not -- rather than
+// one row each, which is what docking without a rectangle gives, and which
+// takes three rows for bars that are narrow enough for most windows to hold two
+// or three of them on one.  The dock bar does not wrap a bar for us: one that
+// starts inside the window stays there, cut off at its edge.
 // (Elsewhere, an empty inline in platform/mainfrm_stub.h.)
 #ifdef _WIN32
 void CMainFrame::DockToolBarsSideBySide ()
   {
   CControlBar * bars [] = { &m_wndToolBar, &m_wndGameToolBar, &m_wndActivityToolBar };
   CControlBar * pPrevious = NULL;
-  CRect rect;
+  CRect rect, client;
+
+  GetClientRect (&client);
+  ClientToScreen (&client);
 
   for (CControlBar * pBar : bars)
     {
@@ -1351,19 +1355,18 @@ void CMainFrame::DockToolBarsSideBySide ()
       continue;
 
     RecalcLayout (TRUE);
+    const CSize size = pBar->CalcFixedLayout (FALSE, TRUE);   // its size docked along the top
     if (pPrevious)
       {
-      // just docked at the top, so horizontal: its own width along
-      pPrevious->GetWindowRect (&rect);
-      rect.OffsetRect (rect.Width (), 0);
+      // just docked at the top, so horizontal: beside it, or below if no room
+      CRect previous;
+      pPrevious->GetWindowRect (&previous);
+      rect = CRect (CPoint (previous.right, previous.top), size);
+      if (rect.right > client.right)
+        rect = CRect (CPoint (client.left, previous.bottom), size);
       }
     else
-      {
-      // the start of the top row
-      pBar->GetWindowRect (&rect);
-      rect = CRect (CPoint (0, 0), rect.Size ());
-      ClientToScreen (rect);
-      }
+      rect = CRect (client.TopLeft (), size);   // the start of the top row
     DockControlBar (pBar, AFX_IDW_DOCKBAR_TOP, rect);
 
     // a hidden bar takes no room, so the next one goes where it would have

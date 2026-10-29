@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include "../src/sqlite_path.h"   /* ANSI file names, on Windows */
 
 #ifdef LUA_52
     #include "..\..\lua52\src\lua.h"
@@ -1727,9 +1728,14 @@ static int lsqlite_do_open(lua_State *L, const char *filename) {
         }
     }
 #else
-    if (sqlite3_open(filename, &db->db) == SQLITE_OK) {
-        /* database handle already in the stack - return it */
-        return 1;
+    {
+        char *utf8 = sqlite_path_utf8(filename);
+        const int rc = sqlite3_open(utf8 ? utf8 : filename, &db->db);
+        free(utf8);
+        if (rc == SQLITE_OK) {
+            /* database handle already in the stack - return it */
+            return 1;
+        }
     }
 #endif
 

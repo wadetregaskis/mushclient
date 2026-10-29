@@ -41,12 +41,27 @@ void MakeDirs (CString strDir)
     SHCreateDirectoryEx (NULL, strDir, NULL);
   }
 
+// In the ANSI code page, which is what the rest of MUSHclient speaks.  A
+// folder whose name it cannot spell -- a user name in another script -- is
+// given by its short (8.3) name instead, which it can.
 CString KnownFolder (int csidl)
   {
-  char path [MAX_PATH];
-  if (FAILED (SHGetFolderPath (NULL, csidl | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, path)))
+  wchar_t path [MAX_PATH];
+  if (FAILED (SHGetFolderPathW (NULL, csidl | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, path)))
     return "";
-  return WithSlash (path);
+  for (int attempt = 0; attempt < 2; attempt++)
+    {
+    char ansi [MAX_PATH * 2];
+    BOOL lossy = FALSE;
+    if (WideCharToMultiByte (CP_ACP, WC_NO_BEST_FIT_CHARS, path, -1, ansi, sizeof ansi, NULL, &lossy) > 0 &&
+        !lossy)
+      return WithSlash (ansi);
+    wchar_t shortPath [MAX_PATH];
+    if (attempt > 0 || GetShortPathNameW (path, shortPath, MAX_PATH) == 0)
+      break;
+    wcscpy_s (path, shortPath);
+    }
+  return "";
   }
 
 // The program's folder playing a 5.x's: the defaults, and the bundled files
@@ -112,18 +127,18 @@ const PCWSTR kTdInformationIcon  = MAKEINTRESOURCEW (-3);  // TD_INFORMATION_ICO
 // A task dialog, for its "don't ask again" box; comctl32's, looked up rather
 // than linked, with a plain Yes/No for want of it.  Before the main window
 // exists, so owned by nothing.
-bundled::Answer AskAboutChangedFile (const std::string & relative, const std::string & name)
+bundled::Answer AskAboutChangedFile (const std::string & relative, const std::string & name,
+                                     const std::string & backup)
   {
   const bool plugin = relative.find ("plugins\\") != std::string::npos &&
                       relative.size () > 4 &&
                       _stricmp (relative.c_str () + relative.size () - 4, ".xml") == 0;
-  const std::string file = relative.substr (relative.find_last_of ('\\') + 1);
   const std::string what = plugin ? "plugin" : "file";
   const std::string content =
     "MUSHclient " VERSION_STRING " comes with a new version of " +
     (name == relative ? relative : "\"" + name + "\" (" + relative + ")") +
     ", but your copy has been changed since MUSHclient installed it.\n\n"
-    "If you upgrade it, your copy is kept beside it, as " + file + ".backup.";
+    "If you upgrade it, your copy is kept beside it, as " + backup + ".";
 
   bundled::Answer answer;
   typedef HRESULT (WINAPI * TaskDialogIndirectFn) (const McTaskDialogConfig *, int *, int *, BOOL *);
@@ -175,6 +190,11 @@ bundled::Answer AskAboutChangedFile (const std::string & relative, const std::st
 void Seed ()
   {
   const CString strMarker = s_strDataDir + "seeded-version.txt";
+  const std::string data = (LPCTSTR) s_strDataDir, prog = (LPCTSTR) s_strProgramDir;
+  const std::vector<std::string> subtrees = { "worlds", "quow_plugins" };
+  // The version, and what the bundled files look like: a new build of the
+  // same version (a release candidate, then the release) can bring new ones.
+  const std::string version = std::string (VERSION_STRING) + "\n" + bundled::Fingerprint (prog, subtrees);
   std::string seeded;
     {
     std::ifstream f ((LPCTSTR) strMarker, std::ios::binary);
@@ -182,15 +202,14 @@ void Seed ()
     ss << f.rdbuf ();
     seeded = ss.str ();
     }
-  if (seeded == VERSION_STRING)
+  if (seeded == version)
     return;
   // World files are translated on the way, as an import's are.  The bundled
   // ones hold only relative paths, which this leaves alone -- but 6.00
   // installed into a 5.x's own folder finds that 5.x's worlds here too, and
   // they hold paths into this folder that belong in the data folder now.
   const legacy::Install program = ProgramAsInstall ();
-  const std::string data = (LPCTSTR) s_strDataDir, prog = (LPCTSTR) s_strProgramDir;
-  bundled::Sync (prog, data, { "worlds", "quow_plugins" }, data + "bundled-files.txt",
+  bundled::Sync (prog, data, subtrees, data + "bundled-files.txt",
                  AskAboutChangedFile,
                  [&] (const std::string & text) {
                    return legacy::TranslateText (text, program, data, prog);
@@ -198,7 +217,7 @@ void Seed ()
   MakeDirs (s_strDataDir + "worlds\\plugins\\state");
   MakeDirs (s_strDataDir + "logs");
   MakeDirs (s_strDataDir + "sounds");
-  std::ofstream ((LPCTSTR) strMarker, std::ios::binary | std::ios::trunc) << VERSION_STRING;
+  std::ofstream ((LPCTSTR) strMarker, std::ios::binary | std::ios::trunc) << version;
   }
 
 }   // namespace
@@ -242,7 +261,9 @@ const CString & UserData_ProgramDirectory ()
 
 CString UserData_DefaultPreference (const char * pName, const CString & strDefault)
   {
-  if (!legacy::IsPathPreference (pName) || s_strProgramDir.IsEmpty ())
+  // A portable copy keeps them relative to its folder (the current
+  // directory), so that it still works from another drive letter.
+  if (s_bPortable || !legacy::IsPathPreference (pName) || s_strProgramDir.IsEmpty ())
     return strDefault;
   return legacy::TranslatePath ((LPCTSTR) strDefault, ProgramAsInstall (),
                                 (LPCTSTR) s_strDataDir, (LPCTSTR) s_strProgramDir).c_str ();

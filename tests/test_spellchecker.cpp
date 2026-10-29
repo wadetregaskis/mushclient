@@ -168,6 +168,38 @@ TEST(SpellChecker, AddToSystemTeachesTheEngine)
   fs::remove_all (fs::path (dir));
   }
 
+TEST(SpellChecker, AnAddedWordDoesNotRunOnToALastLineWithNoNewline)
+  {
+  // Notepad leaves the last line unterminated; "Gandalfgrue" would be the
+  // result, and neither word would be known.
+  const std::string dir = Temp ();
+  std::ofstream (fs::path (dir + "userdict.txt"), std::ios::binary) << "Gandalf";
+  lua_State * L = Load (dir);
+  Run (L, "answer = 'add'; spellcheck ('a grue')");
+  const std::string dict = Get (dir + "userdict.txt");   // CRLF on Windows: text mode
+  EXPECT_TRUE (dict.find ("Gandalfgrue") == std::string::npos);
+  EXPECT_TRUE (dict.find ("grue") != std::string::npos);
+  lua_close (L);
+  // and both are known next time
+  L = Load (dir);
+  EXPECT_EQ (std::string (""), Result (L, "table.concat (spellcheck_string ('Gandalf grue'), ' ')"));
+  lua_close (L);
+  fs::remove_all (fs::path (dir));
+  }
+
+TEST(SpellChecker, AWordTheSystemWillNotTakeGoesInMUSHclientsDictionary)
+  {
+  // rather than looking added, and being asked about again next time
+  const std::string dir = Temp ();
+  lua_State * L = Load (dir);
+  Run (L, "utils.spell_add_word = function () return false end\n"
+          "answer = 'addsystem'; spellcheck ('a grue')");
+  EXPECT_TRUE (Get (dir + "userdict.txt").find ("grue") != std::string::npos);
+  EXPECT_EQ (std::string (""), Result (L, "table.concat (spellcheck_string ('grue'), ' ')"));
+  lua_close (L);
+  fs::remove_all (fs::path (dir));
+  }
+
 TEST(SpellChecker, AddSpellCheckWordUsesMUSHclientsDictionary)
   {
   const std::string dir = Temp ();

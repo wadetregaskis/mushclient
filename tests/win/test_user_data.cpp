@@ -98,7 +98,8 @@ TEST(UserDataTranslate, PathsIntoTheOldFolderOrItsShadowMoveToTheirNewHomes)
 
   EXPECT_EQ (std::string ("D:\\Data\\MUSHclient\\worlds\\"),
              legacy::TranslatePath ("C:\\Old\\MUSHclient\\worlds\\", old, data, program));
-  EXPECT_EQ (std::string ("D:\\Data\\MUSHclient\\Worlds\\plugins\\state\\"),
+  // the user's folder as this version spells it, whatever 5.x wrote
+  EXPECT_EQ (std::string ("D:\\Data\\MUSHclient\\worlds\\plugins\\state\\"),
              legacy::TranslatePath ("c:\\old\\MUSHCLIENT\\Worlds\\plugins\\state\\", old, data, program));
   EXPECT_EQ (std::string ("D:\\Data\\MUSHclient\\scripts\\mine.lua"),
              legacy::TranslatePath ("C:\\Shadow\\MUSHclient\\scripts\\mine.lua", old, data, program));

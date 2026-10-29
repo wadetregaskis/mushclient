@@ -7,6 +7,7 @@
 #include "../../doc.h"
 #include "../../mushview.h"
 #include "../errors.h"
+#include "../../sqlite_path.h"   // ANSI file names for sqlite3_open
 #include "../db_int64.h"
 
 // Implements:
@@ -94,7 +95,9 @@ long CMUSHclientDoc::DatabaseOpen(LPCTSTR Name, LPCTSTR Filename, long Flags)
     }
 
 #ifdef _WIN32
-	int rc = sqlite3_open_v2 (Filename, &pDatabase->db, Flags, NULL);
+	char * utf8 = sqlite_path_utf8 (Filename);   // ANSI, as GetInfo's folders are
+	int rc = sqlite3_open_v2 (utf8 ? utf8 : Filename, &pDatabase->db, Flags, NULL);
+	free (utf8);
 #else
 	// Plugins routinely pass Windows-style backslash paths; POSIX needs '/'.
 	int rc = sqlite3_open_v2 (PortableFilePath (Filename).c_str (), &pDatabase->db, Flags, NULL);

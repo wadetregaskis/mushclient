@@ -963,6 +963,12 @@ void CWorldToolBars::PollLayout ()
     SyncStripHeight();
     if (!m_laidOut) return;
 
+    // wxAuiManager moves a toolbar live while it is dragged; a picture taken
+    // mid-drag is not a drop, and adopting it would re-wrap the bar out from
+    // under the pointer, over and over, for as long as the drag went on.
+    // The drop is picked up by the first poll after the button goes up.
+    if (wxGetMouseState().LeftIsDown()) return;
+
     // Anything other than what this window laid out is a drop.
     Placement now[eBarCount];
     bool      shown[eBarCount];
@@ -980,6 +986,20 @@ void CWorldToolBars::PollLayout ()
     // they chose.
     Placement place[eBarCount];
     ReadPlacements(place);
+
+    // A bar that is hidden (or not built here) keeps its place in the
+    // arrangement -- at the end of the row it was on, or of the last row --
+    // rather than the fresh row of its own ReadPlacements gives it so that it
+    // collides with nothing: adopted, that row would leave it alone on the
+    // bottom row when shown again, however wide the window.
+    int lastRow = -1;
+    for (int i = 0; i < eBarCount; ++i)
+        if (shown[i]) lastRow = std::max(lastRow, place[i].row);
+    for (int i = 0; i < eBarCount; ++i)
+        if (!shown[i]) {
+            place[i].row   = std::max(0, std::min(s_place[i].row, lastRow));
+            place[i].order = eBarCount + s_place[i].order;   // after the shown ones
+        }
     Adopt(place);
 }
 

@@ -10,9 +10,12 @@
 // the data folder, and when a new version runs:
 //
 //   - a copy the user has not changed is replaced with the new version;
-//   - a copy the user has changed is not touched without asking: they choose,
-//     plugin by plugin, to upgrade it (their copy is kept beside it, as
-//     <name>.backup) or keep theirs, and can have the choice remembered;
+//   - a copy the user has changed is not touched without asking, if this
+//     version brings a new one: they choose, plugin by plugin, to upgrade it
+//     (their copy is kept beside it, as <name>.backup) or keep theirs, and can
+//     have the choice remembered.  Only plugins and scripts are asked about;
+//     any other file that differs -- the mapper's database, say -- is data a
+//     plugin wrote, and is kept;
 //   - a copy the user deleted stays deleted;
 //   - a world file is never replaced: once used, it is the user's.
 //
@@ -20,6 +23,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -33,8 +37,10 @@ struct Answer
   };
 
 // What to ask about one changed file: its path relative to the data folder,
-// and something to call it by -- a plugin's name, or the path.
-typedef std::function<Answer (const std::string & relative, const std::string & name)> AskFn;
+// something to call it by -- a plugin's name, or the path -- and the name
+// (beside it) their copy would be kept as, if upgraded.
+typedef std::function<Answer (const std::string & relative, const std::string & name,
+                              const std::string & backup)> AskFn;
 
 // A world file's contents as they should be copied (translated, say); empty
 // for as they are.
@@ -54,6 +60,16 @@ Stats Sync (const std::string & from, const std::string & to,
             const std::vector<std::string> & subtrees,
             const std::string & manifest,
             const AskFn & ask, const TransformFn & transformWorld = nullptr);
+
+// Whether `file`, in `to`, is exactly as Sync last copied it there: nothing of
+// the user's would be lost by replacing it.
+bool Untouched (const std::string & manifest, const std::string & to,
+                const std::filesystem::path & file);
+
+// Something that changes whenever the files under `subtrees` of `from` might
+// have: a new version, or a new build of the same one.  Cheap -- sizes and
+// times, not contents -- so it can be checked at every start.
+std::string Fingerprint (const std::string & from, const std::vector<std::string> & subtrees);
 
 // The name a plugin file gives itself (<plugin name="...">), or empty.
 std::string PluginName (const std::string & xml);

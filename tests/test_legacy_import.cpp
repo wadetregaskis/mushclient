@@ -380,4 +380,141 @@ TEST(LegacyImport, NothingThereImportsNothing)
   Remove (prefix); Remove (data);
   }
 
+// ── The bug hunt's cases ──────────────────────────────────────────────────
+
+TEST(LegacyTranslate, APathInAWorldFileEndsWhereItsQuoteDoes)
+  {
+  // In element text a world file writes a quote as &quot;: the path stops
+  // there, not at the end of the line, which would take in the rest of the
+  // script -- and off Windows turn its backslashes ("\n") into slashes.
+  const Install old = WineInstall (N ("\\wine\\"));
+  const std::string data = N ("\\data\\");
+  const std::string text =
+    "<send>PlaySound (0, &quot;C:\\Program Files (x86)\\MUSHclient\\sounds\\x.wav&quot;, false) print (\"\\n\")</send>";
+  const std::string expect =
+    "<send>PlaySound (0, &quot;" + data + N ("sounds\\x.wav") + "&quot;, false) print (\"\\n\")</send>";
+  EXPECT_EQ (expect, legacy::TranslateText (text, old, data, N ("\\prog\\")));
+  }
+
+TEST(LegacyTranslate, APathKeepsTheFormItWasWrittenIn)
+  {
+  // forward slashes stay forward; a script's doubled backslashes stay doubled
+  const Install old = WineInstall (N ("\\wine\\"));
+  const std::string data = "/data/";
+  EXPECT_EQ (std::string ("dofile (\"/data/scripts/x.lua\")"),
+             legacy::TranslateText ("dofile (\"C:/Program Files (x86)/MUSHclient/scripts/x.lua\")",
+                                    old, data, "/prog/"));
+#ifdef _WIN32
+  EXPECT_EQ (std::string ("dofile (\"D:\\\\data\\\\scripts\\\\x.lua\")"),
+             legacy::TranslateText ("dofile (\"C:\\\\Program Files (x86)\\\\MUSHclient\\\\scripts\\\\x.lua\")",
+                                    old, "D:\\data\\", "D:\\prog\\"));
+#endif
+  }
+
+TEST(LegacyTranslate, AUserFolderIsSpeltAsThisVersionSpellsIt)
+  {
+  // "Worlds" and "worlds" are two folders on a case-sensitive file system,
+  // and the import copies into "worlds"
+  const Install old = WineInstall (N ("\\wine\\"));
+  const std::string data = N ("\\data\\");
+  EXPECT_EQ (data + N ("worlds\\X.mcl"),
+             legacy::TranslatePath ("C:\\Program Files (x86)\\MUSHclient\\Worlds\\X.mcl", old, data, N ("\\prog\\")));
+  }
+
+TEST(LegacyTranslate, AFileOnlyThe5xFolderHasIsFoundThere)
+  {
+  // A world kept beside 5.x's exe, or a script in its lua folder that this
+  // version does not have: not copied, so pointed at where it still is.
+  const std::string prefix  = Temp ("prefix_o");
+  const std::string program = Temp ("program_o");
+  const std::string data    = Temp ("data_o");
+  const Install old = WineInstall (prefix);
+  Put (old.folder + "MyMud.mcl", "<world/>");
+  Put (old.folder + N ("lua\\mine.lua"), "x");
+  bool resolved = false;
+  EXPECT_EQ (old.folder + "MyMud.mcl",
+             legacy::TranslatePath ("C:\\Program Files (x86)\\MUSHclient\\MyMud.mcl", old, data, program, &resolved));
+  EXPECT_TRUE (resolved);
+  EXPECT_EQ (old.folder + N ("lua\\mine.lua"),
+             legacy::TranslatePath ("lua\\mine.lua", old, data, program, &resolved));
+  EXPECT_TRUE (resolved);
+  // and a drive Wine has no mapping for is nowhere on this machine
+  legacy::TranslatePath ("D:\\Unmapped\\x.txt", old, data, program, &resolved);
+  EXPECT_FALSE (resolved);
+  Remove (prefix); Remove (program); Remove (data);
+  }
+
+TEST(LegacyRegistry, WineEscapesBecomeUTF8)
+  {
+  const std::string reg =
+    "[Software\\\\Gammon Software Solutions\\\\MUSHclient\\\\General Options] 1\n"
+    "\"InstallDir\"=\"C:\\\\Users\\\\Jos\\xe9\\\\MUSHclient\\\\\"\n";
+  const legacy::RegistryValues v =
+    legacy::ParseWineRegistry (reg, "Software\\Gammon Software Solutions\\MUSHclient\\General Options");
+  ASSERT_EQ ((size_t) 1, v.size ());
+  EXPECT_EQ (std::string ("C:\\Users\\Jos\xC3\xA9\\MUSHclient\\"), v [0].second);
+  }
+
+TEST(LegacyCopy, AnUntouchedBundledWorldMakesWayFor5xs)
+  {
+  // 6.00 seeds its Discworld world before the first run offers the import;
+  // the user's 5.x world, with their triggers in it, is what they want.  A
+  // file the predicate does not clear -- or any file but a world -- stays.
+  const std::string from = Temp ("copy_from"), to = Temp ("copy_to");
+  Put (from + N ("worlds\\Discworld.mcl"), "theirs");
+  Put (from + N ("worlds\\Edited.mcl"), "theirs too");
+  Put (from + N ("worlds\\plugins\\P.xml"), "their plugin");
+  Put (to + N ("worlds\\Discworld.mcl"), "seeded");
+  Put (to + N ("worlds\\Edited.mcl"), "seeded, then edited");
+  Put (to + N ("worlds\\plugins\\P.xml"), "seeded plugin");
+  int worlds = 0;
+  legacy::CopyTree (from + "worlds", to + "worlds", nullptr, "", "", &worlds,
+                    [] (const fs::path & file) {
+                      return file.filename () != "Edited.mcl";   // as the manifest would say
+                    });
+  EXPECT_EQ (std::string ("theirs"), Get (to + N ("worlds\\Discworld.mcl")));
+  EXPECT_EQ (std::string ("seeded, then edited"), Get (to + N ("worlds\\Edited.mcl")));
+  EXPECT_EQ (std::string ("seeded plugin"), Get (to + N ("worlds\\plugins\\P.xml")));
+  EXPECT_EQ (1, worlds);
+  Remove (from); Remove (to);
+  }
+
+TEST(LegacyCopy, AFileNamedInAnotherScriptIsCopiedNotFatal)
+  {
+  // On Windows a name the ANSI code page cannot spell used to throw out of
+  // path::string () -- and out of the program, mid-import.
+  const std::string from = Temp ("copy_wide_from"), to = Temp ("copy_wide_to");
+  const fs::path name = fs::u8path ("\xE6\x97\xA5\xE6\x9C\xAC.wav");   // "Japan", in Japanese
+  fs::create_directories (fs::path (from) / "sounds");
+  std::ofstream (fs::path (from) / "sounds" / name, std::ios::binary) << "x";
+  int n = 0;
+  bool threw = false;
+  try
+    {
+    n = legacy::CopyTree (from + "sounds", to + "sounds");
+    }
+  catch (...)
+    {
+    threw = true;
+    }
+  EXPECT_FALSE (threw);
+  EXPECT_EQ (1, n);
+  std::error_code ec;
+  EXPECT_TRUE (fs::exists (fs::path (to) / "sounds" / name, ec));
+  Remove (from); Remove (to);
+  }
+
+TEST(LegacyFind, ThisVersionsOwnFolderIsNotA5x)
+  {
+  // unless a 5.x once ran there and left its database
+  const std::string program = Temp ("program_self");
+  Put (program + "MUSHclient.exe", "MZ");
+  Install chosen;
+  EXPECT_FALSE (legacy::FromFolder (program, chosen, program));
+  EXPECT_TRUE  (legacy::FromFolder (program, chosen));          // no program folder to compare
+  MakeDb (program + "mushclient_prefs.sqlite", kSchema);
+  EXPECT_TRUE  (legacy::FromFolder (program, chosen, program));
+  Remove (program);
+  }
+
 MC_TEST_MAIN()

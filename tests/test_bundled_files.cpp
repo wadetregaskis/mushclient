@@ -73,11 +73,13 @@ struct Asker
   bundled::Answer answer;
   std::vector<std::string> asked;      // relative paths
   std::vector<std::string> names;
+  std::vector<std::string> backups;
   bundled::AskFn fn ()
     {
-    return [this] (const std::string & relative, const std::string & name) {
+    return [this] (const std::string & relative, const std::string & name, const std::string & backup) {
       asked.push_back (relative);
       names.push_back (name);
+      backups.push_back (backup);
       return answer;
     };
     }
@@ -149,6 +151,7 @@ TEST(BundledFiles, AnUpgradeReplacesWhatTheUserLeftAloneAndAsksAboutTheRest)
   EXPECT_EQ (Plugin ("Edited", "3"), Get (data + N ("worlds/plugins/Edited.xml")));
   EXPECT_EQ (Plugin ("Edited", "1") + "<!-- mine -->",
              Get (data + N ("worlds/plugins/Edited.xml.backup")));
+  EXPECT_EQ (std::string ("Edited.xml.backup"), ask.backups [0]);
 
   // ── and now it is the shipped one again, unchanged: upgraded unasked ──
   Put (ship + N ("worlds/plugins/Edited.xml"), Plugin ("Edited", "4"));
@@ -176,7 +179,7 @@ TEST(BundledFiles, ARememberedChoiceIsNotAskedAgain)
   Put (ship + N ("worlds/plugins/Keep.xml"),    Plugin ("Keep", "2"));
   Put (ship + N ("worlds/plugins/Upgrade.xml"), Plugin ("Upgrade", "2"));
   bundled::Sync (ship, data, trees, manifest,
-                 [] (const std::string & relative, const std::string &) {
+                 [] (const std::string & relative, const std::string &, const std::string &) {
                    bundled::Answer a;
                    a.upgrade  = relative.find ("Upgrade") != std::string::npos;
                    a.remember = true;
@@ -194,8 +197,11 @@ TEST(BundledFiles, ARememberedChoiceIsNotAskedAgain)
   EXPECT_TRUE (ask.asked.empty ());
   EXPECT_EQ (std::string ("mine, keep, again"), Get (data + N ("worlds/plugins/Keep.xml")));
   EXPECT_EQ (Plugin ("Upgrade", "3"), Get (data + N ("worlds/plugins/Upgrade.xml")));
-  EXPECT_EQ (std::string ("mine, replace, again"),
+  // a second backup does not overwrite the first
+  EXPECT_EQ (std::string ("mine, replace"),
              Get (data + N ("worlds/plugins/Upgrade.xml.backup")));
+  EXPECT_EQ (std::string ("mine, replace, again"),
+             Get (data + N ("worlds/plugins/Upgrade.xml.backup2")));
 
   Remove (ship); Remove (data);
   }
@@ -216,6 +222,63 @@ TEST(BundledFiles, ACopyThatPredatesTheManifestIsAskedAboutIfItDiffers)
   EXPECT_EQ (N ("worlds/plugins/Other.xml"), ask.asked [0]);
   EXPECT_EQ (Plugin ("Other", "1"), Get (data + N ("worlds/plugins/Other.xml")));
   Remove (ship); Remove (data);
+  }
+
+TEST(BundledFiles, AChangedCopyIsNotAskedAboutWhenThereIsNothingNew)
+  {
+  // They changed a plugin; the next version ships the same one as before.
+  // There is nothing to offer them, so nothing to ask -- at this version or
+  // any later one that still ships it unchanged.
+  const std::string ship = Temp ("ship_n"), data = Temp ("data_n");
+  const std::string manifest = data + "bundled-files.txt";
+  Put (ship + N ("worlds/plugins/Same.xml"), Plugin ("Same", "1"));
+  Asker ask;
+  bundled::Sync (ship, data, { "worlds" }, manifest, ask.fn ());
+  Put (data + N ("worlds/plugins/Same.xml"), "mine");
+  bundled::Sync (ship, data, { "worlds" }, manifest, ask.fn ());
+  bundled::Sync (ship, data, { "worlds" }, manifest, ask.fn ());
+  EXPECT_TRUE (ask.asked.empty ());
+  EXPECT_EQ (std::string ("mine"), Get (data + N ("worlds/plugins/Same.xml")));
+
+  // and when a new one does come, they are asked
+  Put (ship + N ("worlds/plugins/Same.xml"), Plugin ("Same", "2"));
+  bundled::Sync (ship, data, { "worlds" }, manifest, ask.fn ());
+  EXPECT_EQ ((size_t) 1, ask.asked.size ());
+  Remove (ship); Remove (data);
+  }
+
+TEST(BundledFiles, DataAPluginWroteIsKeptUnasked)
+  {
+  // The mapper writes its database beside its maps; a new map database in
+  // the next version is not a reason to ask about, or replace, theirs.  A
+  // plugin's state is never bundled at all, even where the program's folder
+  // has some (a MUSHclient 5's, installed over).
+  const std::string ship = Temp ("ship_d"), data = Temp ("data_d");
+  const std::string manifest = data + "bundled-files.txt";
+  const std::vector<std::string> trees = { "worlds", "quow_plugins" };
+  Put (ship + N ("quow_plugins/maps/rooms.db"), "maps 1");
+  Put (ship + N ("worlds/plugins/state/abc-state.xml"), "<state 1>");
+  Asker ask;
+  bundled::Sync (ship, data, trees, manifest, ask.fn ());
+  EXPECT_EQ (std::string ("<missing>"), Get (data + N ("worlds/plugins/state/abc-state.xml")));
+  Put (data + N ("quow_plugins/maps/rooms.db"), "maps 1, with their notes");
+  Put (ship + N ("quow_plugins/maps/rooms.db"), "maps 2");
+  const bundled::Stats s = bundled::Sync (ship, data, trees, manifest, ask.fn ());
+  EXPECT_TRUE (ask.asked.empty ());
+  EXPECT_EQ (1, s.kept);
+  EXPECT_EQ (std::string ("maps 1, with their notes"), Get (data + N ("quow_plugins/maps/rooms.db")));
+  Remove (ship); Remove (data);
+  }
+
+TEST(BundledFiles, TheFingerprintNoticesANewBuild)
+  {
+  const std::string ship = Temp ("ship_f");
+  Put (ship + N ("worlds/plugins/A.xml"), "one");
+  const std::string before = bundled::Fingerprint (ship, { "worlds" });
+  EXPECT_EQ (before, bundled::Fingerprint (ship, { "worlds" }));
+  Put (ship + N ("worlds/plugins/A.xml"), "one, longer");
+  EXPECT_TRUE (before != bundled::Fingerprint (ship, { "worlds" }));
+  Remove (ship);
   }
 
 TEST(BundledFiles, AWorldIsTransformedAsItIsCopied)

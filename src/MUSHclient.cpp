@@ -23,7 +23,9 @@
 #include "StatLink.h"
 #include "user_data.h"
 #include "legacy_import.h"
+#include "bundled_files.h"
 #include "spell_engine.h"
+#include "sqlite_path.h"   // ANSI file names for sqlite3_open
 
 #include "dialogs/welcome.h"
 #include "dialogs/welcome1.h"
@@ -355,7 +357,15 @@ BOOL CMUSHclientApp::InitInstance()
 
   db = NULL;
 
+#ifdef _WIN32
+  {
+  char * utf8 = sqlite_path_utf8 (m_PreferencesDatabaseName.c_str ());  // a profile folder can be non-ASCII
+  rc = sqlite3_open (utf8 ? utf8 : m_PreferencesDatabaseName.c_str (), &db);
+  free (utf8);
+  }
+#else
   rc = sqlite3_open(m_PreferencesDatabaseName.c_str (), &db);
+#endif
 
   if( rc )
     {
@@ -1329,8 +1339,12 @@ void CMUSHclientApp::RestoreColumnConfiguration (LPCTSTR strName,
 
   } // end of RestoreColumnConfiguration
 
-int CMUSHclientApp::ExitInstance() 
+int CMUSHclientApp::ExitInstance()
 {
+  // The system spell checker is a COM object on Windows: released while COM
+  // is still there, not by a static destructor after it has gone.
+  SetSystemSpellEngine (NULL);
+
   if (!bWine)
     CoUninitialize ();
 	
@@ -1742,11 +1756,21 @@ std::string ChooseFolder ()
 // import from the menu, when there may be a good deal already here; the first
 // run's offer comes before there is anything to lose.
 const char * const kWhatImportReplaces =
-  "Your global preferences and the positions of your world windows will be "
-  "replaced with MUSHclient 5's.\r\n\r\n"
-  "Its worlds, plugins, plugin state, scripts and sounds are copied in beside "
-  "yours. Where you already have a file of the same name, yours is kept, not "
-  "replaced. Its logs are not copied.";
+  "Your global preferences -- among them the worlds and plugins to open at "
+  "startup -- and the positions of your world windows will be replaced with "
+  "MUSHclient 5's, and its recent files put at the top of the File menu.\r\n\r\n"
+  "Its worlds, plugins, plugin state, scripts, sounds and Discworld mapper "
+  "files are copied in beside yours. Where you already have a file of the same "
+  "name, yours is kept, not replaced -- except a world file still exactly as "
+  "MUSHclient 6 installed it. Words added to its spell checker are added to "
+  "yours. Its logs are not copied.";
+
+// Whether a world file in the data folder is still exactly as this version
+// seeded it (bundled_files.h), and so may make way for 5.x's.
+bool UntouchedBundledFile (const std::string & dataDir, const std::filesystem::path & file)
+  {
+  return bundled::Untouched (dataDir + "bundled-files.txt", dataDir, file);
+  }
 
 }   // namespace
 
@@ -1797,7 +1821,7 @@ void CMUSHclientApp::ImportFromVersion5 (const bool bFirstRun)
       const std::string folder = ChooseFolder ();
       if (folder.empty ())
         return;
-      if (!legacy::FromFolder (folder, old))
+      if (!legacy::FromFolder (folder, old, programDir))
         {
         TMessageBox (CFormat ("There is no MUSHclient 5 in %s, nor in a Wine prefix there.",
                               folder.c_str ()), MB_ICONEXCLAMATION);
@@ -1811,8 +1835,25 @@ void CMUSHclientApp::ImportFromVersion5 (const bool bFirstRun)
     }
 
   CWaitCursor wait;
+  legacy::Result result;
   db_execute ("BEGIN TRANSACTION", true);
-  const legacy::Result result = legacy::Import (old, db, dataDir, programDir);
+  try
+    {
+    result = legacy::Import (old, db, dataDir, programDir,
+                             [&dataDir] (const std::filesystem::path & file) {
+                               return UntouchedBundledFile (dataDir, file);
+                             });
+    }
+  catch (const std::exception & e)
+    {
+    // Whatever went wrong, not the end of the program; the preferences as
+    // they were.  (Files already copied stay: each is whole, and theirs.)
+    db_execute ("ROLLBACK", true);
+    TMessageBox (CFormat ("The import from %s stopped part way: %s",
+                          legacy::Where (old).c_str (), e.what ()),
+                 MB_ICONEXCLAMATION);
+    return;
+    }
   db_execute ("COMMIT", true);
 
   if (!result.Anything ())

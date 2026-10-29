@@ -129,17 +129,48 @@ ISpellEngine * CreatePlatformSpellEngine ()
     if (!broker)
         return nullptr;
 
-    std::string wanted;
+    // The locale as POSIX decides it: the first of these that is set at all
+    // wins, even "C" (which names no language).  $LANGUAGE, a list of
+    // languages in order of preference, comes first where the locale is not
+    // "C" -- as gettext has it.
+    std::string locale;
     for (const char * var : { "LC_ALL", "LC_MESSAGES", "LANG" })
-        if (wanted.empty ())
-            wanted = LanguageOf (getenv (var));
-    std::vector<std::string> candidates;
-    if (!wanted.empty ())
     {
-        candidates.push_back (wanted);
-        const size_t underscore = wanted.find ('_');
+        const char * value = getenv (var);
+        if (value && *value)
+        {
+            locale = value;
+            break;
+        }
+    }
+    std::vector<std::string> wanted;
+    const std::string language = LanguageOf (locale.c_str ());
+    if (!language.empty ())
+        if (const char * list = getenv ("LANGUAGE"))
+        {
+            std::string item;
+            for (const char * p = list; ; ++p)
+                if (*p == ':' || *p == 0)
+                {
+                    if (!LanguageOf (item.c_str ()).empty ())
+                        wanted.push_back (LanguageOf (item.c_str ()));
+                    item.clear ();
+                    if (!*p)
+                        break;
+                }
+                else
+                    item += *p;
+        }
+    wanted.push_back (language);
+    std::vector<std::string> candidates;
+    for (const std::string & w : wanted)
+    {
+        if (w.empty ())
+            continue;
+        candidates.push_back (w);
+        const size_t underscore = w.find ('_');
         if (underscore != std::string::npos)
-            candidates.push_back (wanted.substr (0, underscore));
+            candidates.push_back (w.substr (0, underscore));
     }
     candidates.push_back ("en_US");
 

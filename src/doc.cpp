@@ -2180,7 +2180,26 @@ CString str;
   // CDocument::SaveModified is the standard "Save changes to <name>?" prompt.
   // It is the last QUESTION; deliberately not stored in m_bWorldClosing, which
   // now means "this world is being closed" and not "this world may be closed".
-  return CDocument::SaveModified();
+  //
+  // It names an unsaved document by MFC's title, which a world never has
+  // (world.SetTitle overrides the virtual, so MFC's own titling never reaches
+  // CDocument::m_strTitle): a new world asked "Save changes to Untitled?".
+  // For the question, its name.
+  const CString strOldTitle = m_strTitle;
+  if (m_strPathName.IsEmpty () && m_strTitle.IsEmpty ())
+    m_strTitle = m_mush_name;
+  BOOL bResult;
+  try
+    {
+    bResult = CDocument::SaveModified();
+    }
+  catch (...)
+    {
+    m_strTitle = strOldTitle;
+    throw;
+    }
+  m_strTitle = strOldTitle;
+  return bResult;
 }   // end of CMUSHclientDoc::QueryCloseWorld
 
 

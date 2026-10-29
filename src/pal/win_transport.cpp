@@ -161,11 +161,12 @@ public:
         sa.sin_family      = AF_INET;
         sa.sin_addr.s_addr = addrIPv4;
         sa.sin_port        = htons(port);
+        m_connectPending   = true;
 
         // the exact CWorldSocket::Create call (ConnectSocket)
         if (!m_sock.Create(0, SOCK_STREAM,
                            FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE, NULL)) {
-            m_events.onConnect(m_sock.GetLastError());   // immediate local failure
+            handleConnect(m_sock.GetLastError());   // immediate local failure
             return;
         }
 
@@ -190,12 +191,12 @@ public:
             if (m_hWnd)
                 ::PostMessage(m_hWnd, WM_WT_CONNECTED, 0, 0);
             else
-                m_events.onConnect(0);
+                handleConnect(0);
             return;
         }
         if (m_sock.GetLastError() == WSAEWOULDBLOCK)
             return;                    // in progress — FD_CONNECT delivers OnConnect
-        m_events.onConnect(m_sock.GetLastError());   // immediate local failure
+        handleConnect(m_sock.GetLastError());   // immediate local failure
     }
 
     // ── send (append-and-it-drains) ────────────────────────────────────────
@@ -252,6 +253,14 @@ public:
         // OpenSSL itself casts it the same way (its Windows socket BIO
         // stores an int), and Winsock socket values fit in 32 bits.
         SSL_set_fd(m_ssl, (int) m_sock.m_hSocket);
+        // send() appends to m_outgoing, a std::string that can reallocate,
+        // and flushSend() retries SSL_write(m_outgoing.data(), ...) after a
+        // WANT_WRITE -- a moved buffer, which OpenSSL's default retry
+        // contract rejects as fatal (SSL_R_BAD_WRITE_RETRY), dropping the
+        // world mid-paste on a slow link.  This mode is the sanctioned
+        // relaxation: the bytes being retried are unchanged, append-only
+        // growth guarantees it.  (posix_transport.cpp's twin.)
+        SSL_set_mode(m_ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
         if (!m_tlsParams.serverName.empty()) {
             // SNI + CN/SAN pinning — without SSL_set1_host any valid chain
             // for ANY host passes SSL_get_verify_result (StartSSLHandshake)
@@ -371,7 +380,7 @@ private:
                     self->m_events.onResolved(self->m_resolveToken, 0, false);
                     return 0;
                 case WM_WT_CONNECTED:
-                    self->m_events.onConnect(0);
+                    self->handleConnect(0);
                     return 0;
             }
         }
@@ -379,7 +388,17 @@ private:
     }
 
     // ── event plumbing ─────────────────────────────────────────────────────
-    void handleConnect(int err) { m_events.onConnect(err); }
+    // Once per connect: an immediate success is posted here as
+    // WM_WT_CONNECTED, and WSAAsyncSelect posts FD_CONNECT even for a connect
+    // that succeeds immediately -- two deliveries would run the connect
+    // script twice, and start TLS (or a proxy greeting) twice.
+    void handleConnect(int err)
+    {
+        if (!m_connectPending)
+            return;
+        m_connectPending = false;
+        m_events.onConnect(err);
+    }
 
     void handleWritable()
     {
@@ -417,6 +436,11 @@ private:
         std::shared_ptr<bool> alive = m_alive;
 
         if (m_tlsUp && m_ssl) {
+            // An SSL_write that wanted to READ (renegotiation, a TLS 1.3
+            // key update) can go on now; FD_WRITE would never retry it, and
+            // the queue would sit until the next send.
+            if (!m_outgoing.empty())
+                flushSend();
             count = SSL_read(m_ssl, buff, (int)sizeof buff - 1);
             if (count <= 0) {
                 int ssl_err = SSL_get_error(m_ssl, count);
@@ -502,10 +526,16 @@ private:
             return;
         }
         int count = m_sock.Send(m_outgoing.data(), (int)m_outgoing.length());
+        // WSAENOTCONN: the connect is still under way (a timer that fires
+        // while closed, sending during the connect window).  Not an error:
+        // the bytes stay queued for the FD_WRITE that follows the connect.
+        // Taken as one, it replaced the event mask -- losing FD_CONNECT --
+        // and left the world "Connecting" for good.
         if (count > 0) {
             m_outgoing.erase(0, (size_t)count);
         } else if (count == SOCKET_ERROR &&
-                   m_sock.GetLastError() != WSAEWOULDBLOCK) {
+                   m_sock.GetLastError() != WSAEWOULDBLOCK &&
+                   m_sock.GetLastError() != WSAENOTCONN) {
             m_sock.AsyncSelect(FD_READ | FD_CLOSE);
             m_sock.ShutDown(CAsyncSocket::both);
             m_outgoing.clear();
@@ -592,6 +622,7 @@ private:
     int          m_lastResolveError = 0;  // WSA code from the last failed resolve
     alignas(hostent) char m_hostBuf[MAXGETHOSTSTRUCT];   // hostent + data
 
+    bool      m_connectPending = false;   // connect() called, onConnect not yet delivered
     bool      m_tlsHandshaking = false;
     bool      m_tlsUp          = false;
     SSL_CTX*  m_ctx            = NULL;

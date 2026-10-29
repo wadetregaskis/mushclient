@@ -249,7 +249,7 @@ public:
         // whole world connection down mid-command.  This mode is exactly the
         // sanctioned relaxation: the retry buffer may move as long as the bytes
         // being retried are unchanged, which append-only growth guarantees.
-        // (No Windows twin: stock MUSHclient has no TLS transport.)
+        // (Windows' twin is in pal/win_transport.cpp.)
         SSL_set_mode(m_ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
         if (!m_tlsParams.serverName.empty()) {
             SSL_set_tlsext_host_name(m_ssl, m_tlsParams.serverName.c_str());

@@ -6,6 +6,16 @@ many fixes that have landed on top of it — did not perturb Windows
 behaviour.  The prime directive is §1's: **Windows behaviour must not change**
 unless the change is listed as intended.
 
+> ## STATUS — 2026-10-29
+>
+> **Round three is §12, and it closes the document.**  Every §4 section is now
+> answered, the eleven left open by rounds one and two included, and so is
+> everything §10h said round two still owed — except §4c-duodequadragies item 4,
+> which needs a MUD that sends MXP status tags.  One Windows defect was found
+> (the fitted list column, §12d), and the known-bug list from the 2026-10
+> bug hunt was fixed alongside (`docs/BUGHUNT-2026-10.md`).  The banner below is
+> round two's, kept as it was.
+>
 > ## STATUS — 2026-08-20 (later)
 >
 > **Round one is done.  Round two is half done: it now builds and its
@@ -290,14 +300,16 @@ were simply not reached — §4c-bis, §4c-septies, §4c-undecies, §4c-unvicies
 
 | Verdict | Sections |
 |---|---|
-| **Answered** | §4c, §4c-ter, §4c-quater, §4c-sexies, §4c-octies, §4c-duodecies, §4c-terdecies, §4c-quaterdecies, §4c-sexdecies, §4c-septendecies, §4c-undevicies, §4c-vicies, §4c-tervicies, §4c-quatervicies, §4c-quinvicies, §4c-sexvicies, §4c-duodetricies, §4c-undetricies, §4c-duodetricies-bis, §4c-tertricies, §4c-quatertricies, §4c-octies-bis (decided 2026-10-29 by matching 5.x) |
-| **Partly answered** | §4a (keepalives, long idle), §4b (the workload ran; appearance under movement did not), §4c-quinquies (items 1, 3, 5), §4c-duodevicies (items 1–4), §4d |
-| **Outstanding** | §4c-bis, §4c-septies, §4c-undecies, §4c-unvicies, §4c-duovicies, §4c-septemvicies |
+| **Answered** | §4a, §4b, §4c, §4c-bis, §4c-ter, §4c-quater, §4c-quinquies, §4c-sexies, §4c-septies, §4c-octies, §4c-octies-bis (decided 2026-10-29 by matching 5.x), §4c-undecies, §4c-duodecies, §4c-terdecies, §4c-quaterdecies, §4c-sexdecies, §4c-septendecies, §4c-duodevicies, §4c-undevicies, §4c-vicies, §4c-unvicies, §4c-duovicies, §4c-tervicies, §4c-quatervicies, §4c-quinvicies, §4c-sexvicies, §4c-septemvicies, §4c-duodetricies, §4c-undetricies, §4c-duodetricies-bis, §4c-tertricies, §4c-quatertricies, §4d — round three (§12) closed the last eleven |
 | **Nothing for Windows** | §4c-nonies, §4c-decies, §4c-quindecies |
-| **Round two — never built or run** | §4c-quintricies … §4c-undequinquagies (all 2026-08-19) |
+| **Round two (2026-08-19)** | §4c-quintricies … §4c-undequinquagies: the scriptable half was measured in §10, and everything §10h listed as still owed is done in §12c except §4c-duodequadragies item 4 (needs a MUD that sends MXP status tags) |
 
 ### 4a. Connection lifecycle (highest risk — total rewrite of the plumbing)
 
+> **ANSWERED (round 3, 2026-10-29), §12a** — keepalives on and an hour idle:
+> connected at every one of 60 minute-ticks, timers firing, traffic both ways
+> afterwards.
+>
 > **ANSWERED in part (round 1).**  Hostname DNS, connect, MOTD, send, IAC
 > GA, disconnect statistics and reconnect: §8d.  The whole TLS matrix: §8i.
 > SOCKS 4 and 5 at the byte level: §8p.  MCCP: §8l.  **Still outstanding:**
@@ -330,6 +342,9 @@ existing characters.
 
 ### 4b. Miniwindows / drawing (GDI adapter, `world.Window*`)
 
+> **Appearance under movement ANSWERED (round 3, 2026-10-29), §12a** — Quow's
+> maps followed a guest walk on Discworld cleanly.
+>
 > **ANSWERED (round 1), with one prediction wrong.**  64/64 probes: §8c —
 > which also found a *fourth* platform difference this section had missed
 > (`tmMaxCharWidth` > `tmAveCharWidth` for a fixed-pitch face, fixed in
@@ -383,7 +398,9 @@ Drive each through Lua (Immediate window) and the UI:
 
 ### 4c-bis. Two small hoists out of `mushview.cpp` (2026-07-29)
 
-> **OUTSTANDING.**  Round one never reached either check.
+> **ANSWERED (round 3, 2026-10-29), §12b** — Copy / Copy as HTML enable
+> exactly as specified in all seven selection states; auto-wrap saturates at 20
+> and 500.  (Was: OUTSTANDING.  Round one never reached either check.)
 
 Both are meant to be behaviour-preserving refactors of code that the wx port
 had reimplemented differently; each replaced an inline body with a call into a
@@ -478,6 +495,9 @@ Three edits, all meant to leave Windows byte-for-byte unchanged:
 
 ### 4c-quinquies. Scripting-engine seam (2026-08-03)
 
+> **ANSWERED (round 3, 2026-10-29), §12b** — items 1, 3 and 5 in the running
+> client, the VBScript arm of item 1 included.
+>
 > **PARTLY ANSWERED.**  Item 2's `#ifndef _WIN32` arm was restored (§8f) and
 > the build is clean (§8a); item 5's `SafeArrayGetElement` leak was later
 > found to have a second defect (`8ede7bf`, §9).  **Items 1, 3 and 5's
@@ -581,7 +601,8 @@ whole matching line at index 10. Neither should have changed.
 
 ### 4c-septies. Bad UTF-8 bytes are repaired, as Windows already did (2026-08-03)
 
-> **OUTSTANDING** — low priority: nothing is expected to differ on Windows.
+> **ANSWERED (round 3, 2026-10-29), §12b** — the stray byte is stored as
+> UTF-8 é, shown as "café", and the trigger fires.  (Was: OUTSTANDING.)
 
 `OutputBadUTF8characters` (`telnet_phases.cpp`) re-encodes a byte that is not
 valid UTF-8 as if it were ANSI — `MultiByteToWideChar(CP_THREAD_ACP)` then
@@ -715,7 +736,11 @@ divergence turns up here.
 
 ### 4c-undecies. Command-entry path: history ordering, Repeat, PasteCommand (2026-08-03)
 
-> **OUTSTANDING.**  Port-only code, but the four "where these could be
+> **ANSWERED (round 3, 2026-10-29), §12b** — with one correction to the
+> reading below: an auto-said command is recorded only when it was SENT; a
+> refused one (disconnected) is not, and the port already matches.
+>
+> **Was: OUTSTANDING.**  Port-only code, but the four "where these could be
 > imperfect" questions at the end are about *Windows* and none has been
 > answered.
 
@@ -978,6 +1003,8 @@ when either half falls back to the BitBlt path.
 
 ### 4c-duodevicies. Four command-bar commands hoisted out of `CSendView` (2026-08-03)
 
+> **Items 1–4 ANSWERED (round 3, 2026-10-29), §12b.**
+>
 > **PARTLY ANSWERED.**  Item 5 (spell check on send) is §8u.  **Items 1–4 —
 > Recall Last Word, Global Change, the multi-line caret gate and the
 > line-ending promotion — are outstanding.**
@@ -1084,8 +1111,9 @@ still do nothing at all.
 
 ### 4c-unvicies. Unread-line accounting reads one predicate (2026-08-04)
 
-> **OUTSTANDING.**  The one observable — a background world's unread count —
-> was never checked.
+> **ANSWERED (round 3, 2026-10-29), §12b** — background world 0 → 3 for three
+> lines, Activity List agreeing; activating it clears the count.  (Was:
+> OUTSTANDING.)
 
 **Windows code changed, but provably equivalently** — `doc_shared.cpp`'s
 `StartNewLine` tested `m_pActiveCommandView == NULL && m_pActiveOutputView ==
@@ -1101,7 +1129,9 @@ clears the count. That is the only observable, and it must be exactly as before.
 
 ### 4c-duovicies. `CMiniWindow::Menu` gained a defaulted `pDoc` (2026-08-04)
 
-> **OUTSTANDING.**  The `~` anchor prefixes were never checked.
+> **ANSWERED (round 3, 2026-10-29), §12b** — `~lt ~rb ~cc ~rt ~lb` each put the
+> menu's corner on the anchor, from a timer and from a click alike.  (Was:
+> OUTSTANDING.)
 
 **Signature change only on the Windows path.** `Menu(Left, Top, Items, pView)`
 became `Menu(Left, Top, Items, pView, pDoc = NULL)`; the new argument is read
@@ -1281,7 +1311,11 @@ and neither has a test, for reasons that matter:
 
 ### 4c-septemvicies. A new `CLine::flags` bit, and the trigger grouping test (2026-08-04)
 
-> **OUTSTANDING**, and it is the highest-value of the unanswered pre-§8
+> **ANSWERED (round 3, 2026-10-29), §12b** — a wrapped prompt with IAC GA
+> matches as one line with convert-GA on, and at the next newline with it off;
+> ordinary wrapped output still matches; `GetInfo(289)` is 0 after Clear Output.
+>
+> **Was: OUTSTANDING**, and it is the highest-value of the unanswered pre-§8
 > items: it is about trigger grouping, the hottest user-visible path in the
 > app.
 
@@ -2140,6 +2174,9 @@ hazard, is `DeleteLines` at `scripting/methods/methods_output_shared.cpp:92`.
 
 ### 4d. Everything else (smoke)
 
+> **ANSWERED (round 3, 2026-10-29), §12a** — logging, notepad, save, all 22
+> world and 12 global preference pages, five worlds at once, a live MUD.
+>
 > **PARTLY ANSWERED.**  Round one exercised world open/save, prefs dialogs,
 > triggers, logging, plugins and Lua at Quow's scale.  Round two adds ~93
 > commits of change to smoke over — see §9.
@@ -4221,6 +4258,10 @@ Full table for six faces × five sizes is in the run artefacts; the four rows
 above are the ones the analysis turned on.
 
 ### 10h. What round two still owes
+
+> **Round three (2026-10-29) did all of this — §12c — except
+> §4c-duodequadragies item 4 (`MXP_statusbar.xml` against a MUD that sends MXP
+> status tags).**  The list is kept as written.
 
 Not reached.  All of it is §4's dialog-driven half plus the items needing a
 real MUD or a second machine.
@@ -8607,3 +8648,143 @@ both caught because a probe asserted the opposite and failed:
 
 Both are now pinned, which is the point: a contract that surprised the person
 writing the test is exactly the one worth a test.
+
+## 12. Round three — results (2026-10-29)
+
+ARM64 Release (the `dist` build at `157e36bb`, rebuilt with the §12d fixes for
+the checks that needed them), driven for real: keyboard and mouse into the
+client, Lua through Game ▸ Immediate, menu state read live with
+`tests/win/dump_live_menu.ps1`, and a loopback MUD stub (a PowerShell
+`TcpListener` on 127.0.0.1, so no firewall prompt) wherever a connection was
+needed.  Every section below was answered with **no Windows defect found**
+except the one in §12d.
+
+**Three instrument lessons, so they are not re-learned.**
+- `world.Simulate` runs the real telnet state machine (`DisplayMsg`), IAC
+  included — every server-side question here was answered without a server.
+- In the command bar **Ctrl+Home / Ctrl+End scroll the output window**; they do
+  not move the caret.  Get to the very end with Down then End.
+- `world.DoCommand` **posts** the command: read its effect from a timer.  And an
+  accelerator's script runs with auto-say off (as macros and the keypad do), so
+  toggling auto-say from an accelerator is undone when it returns.
+
+### 12a. §4a, §4b, §4d
+
+- **§4a, keepalives and a long idle session.**  World B, `send_keep_alives`
+  on, reconnected so `SIO_KEEPALIVE_VALS` applied, then left alone: a timer
+  logged `IsConnected` every minute — true at all 60 — and afterwards a typed
+  line reached the stub and its reply came back.
+- **§4b, appearance under movement.**  A Discworld guest with the Quow pack:
+  `minimap discworldconfig`, then a walk through the Mended Drum and out along
+  Short Street.  The building map, then the Ankh-Morpork map, recentred on
+  every move with no artifacts or stale marker; the ASCII-map window and the
+  nearby panel followed each room.  (Before the MUD's options were set the
+  nearby panel showed a raw `\u001b[38;5;188m…` — QuowMinimap.xml slices the
+  `room.writtenmap` JSON with `string.sub` and shows it raw when its own parse
+  fails: the plugin's, not the client's.)
+- **§4d, smoke.**  File ▸ Log Session (the log takes output, not notes, by
+  default; `CloseLog`), a notepad round trip, Ctrl+S, all 22 World Properties
+  pages and all 12 Global Preferences tabs opened and rendered, five worlds
+  open at once (Lua and VBScript), and the live MUD with Quow's 752 triggers.
+
+### 12b. The pre-§8 sections
+
+- **§4c-bis.**  Edit ▸ Copy / Copy as HTML with the output view active: nothing
+  selected grey/grey; a range or a single character live/live; an output caret
+  grey/grey; a command-bar selection only live/live; both live, and Ctrl+C took
+  the OUTPUT selection; carets only grey/grey.  (With the command bar focused,
+  `CSendView`'s own 5.x handlers answer — unchanged code.)  Auto-wrap: Courier
+  New 9 pt gave 74; the window dragged narrow, 20; 1 pt and maximised, 500.
+- **§4c-quinquies, items 1, 3, 5.**  A Lua world's `OnMXP_OpenTag` received
+  name, argument text and argument table for `<color fore=red back=black>`,
+  `<b>` and a secure-line `<send href hint>`; a **VBScript** world's received a
+  0-based array `{fore=red}{back=black}`, and Empty for `<b>` (the code builds
+  the array only when there are arguments).  `CallPlugin` reached a Lua plugin.
+  Script errors: off → the dialog; its "show errors in output window next time"
+  set the option; on → the four lines; `log_script_errors` appended both to
+  `logs\script_error_log.txt`.  `GetTrigger("nosuch")` → 30005 and nils;
+  500,000 `GetVariable` + 5,000 `GetOptionList` grew private bytes by 20 KB.  A
+  plugin with only `OnPluginConnect` left sends, echo and display alone.
+- **§4c-septies.**  `caf\xE9` into a UTF-8 world is stored as `caf C3 A9`,
+  shown as "café", and a trigger on the UTF-8 é fires.
+- **§4c-undecies.**  An auto-said command is recorded as typed when it is SENT
+  (the stub got `say third try`, history got `third try`); refused while
+  disconnected it is **not** recorded — `CheckConnected`'s early return — and
+  the port's `ApplyAutoSay` caller already matches.  Repeat Last Command resent
+  `look` without growing the history; an omit-from-history alias was not
+  recorded.  (`ConnectionEstablished` turns auto-say off each session — 5.x.)
+- **§4c-duodevicies, items 1–4.**  Recall Last Word off: `put ` → `put bag`;
+  on: `get sword from` → `get sword`, caret at 9, Ctrl+Z restores; on with a
+  selection, only the selection goes.  Global Change: a selection changes only
+  itself and Ctrl+Z undoes it; no selection, the whole line; no match reports
+  the string as typed (`\tzz`); a `\n` replacement gives two real lines.
+  Up/Down mid-line move the caret (markers landed line 1 col 3, line 2 col 4);
+  from the very end or start they browse history, asking before discarding
+  typing.  Tab completion still works.
+- **§4c-unvicies.**  Three lines into background world A: its `GetInfo(202)`
+  0 → 3, the Activity List agreed, the active world stayed 0; switching to A
+  cleared it.
+- **§4c-duovicies.**  A cross at the anchor: `~lt`, `~rb`, `~cc`, `~rt`, `~lb`
+  each put the right corner of the menu on it, from `DoAfterSpecial` and from a
+  hotspot mouse-down alike.
+- **§4c-septemvicies.**  Wrap column 30, a 34-character prompt + IAC GA, a
+  trigger spanning the wrap: convert-GA on, it fires on the whole prompt at the
+  GA; off, at the next newline; ordinary wrapped output fires too;
+  `GetInfo(289)` 85 before Clear Output, 0 after.
+
+### 12c. §10h
+
+- **`world.Debug("commands")`** lists the typed history on Windows, oldest
+  first, `PushCommand` entries included ("8 commands.").
+- **§4c-duodequadragies** (plugin vetoing through `OnPluginMXPopenTag`, warnings
+  read through `OnPluginMXPerror`; `<p>` is a SECURE tag, so its items need
+  `ESC[1z` lines): veto `p` → "helloworld" on one line; veto `send` inside
+  `<a href="go &text;">` → every part of the link carries `go click me now`;
+  veto `b` → no close callback and warning 5005; no veto → `<p>` breaks the
+  line, 100 unclosed tags → warning 5001; a custom element with `b` vetoed →
+  asked three times, italic not bold, a clean close.  **Item 4 not done** (needs
+  a MUD with MXP status tags).  Seen and left: an open-mode tag left open at
+  end of line is not closed — the newline arm calls `MXP_CloseOpenTags` only
+  `if (!MXP_Open ())`, as in Nick Gammon's 2010 import — so its style carries
+  on until an MXP reset.
+- **`44f0737`.**  `tests/win/drive_world_prefs.ps1` against the dist build:
+  21 of 22 pages OK'd with no diff; the 22nd's diff is the documented
+  `chat_name="Name-not-set"` adoption (UPSTREAM-BUGS 95, follow-up).  OK with no
+  edits left the world unmodified; an edited port stuck and marked it modified.
+  The printer-font picker reopened on the font chosen on the page (Consolas),
+  not the app's (Courier), and Cancel kept Courier.  The fitted-column check
+  found a defect — §12d.
+- **`2e54bba`**: `Help("string.f")` and Help ▸ Functions List both list Lua's
+  own functions.  **`8dd87e5`/`6e67cb0`**: a 20 ms `WM_GETTEXT` watcher saw a
+  background world's close notice land in the main-frame bar, as with it in
+  front (a SERVER close goes to the output window while notify-on-disconnect is
+  on — 5.x's routing).  **`5359254`**: twelve F-key/Shift/Ctrl/Alt macros from
+  the keys and three through `DoCommand` each sent their own text.
+  **`bc4d149`**: Stop Trigger Sounds leaves a script buffer playing, Stop Script
+  Sounds and Stop Sound Playing stop it.  **`43c4545`**: the plugin wizard
+  exported and removed 300 triggers in under a second.  **`aca2478`**: a plugin
+  unloaded under an open Plugins dialog, then Show Info hovered — no crash.
+  **`c605461`**: a 300-character world name in File ▸ Log Session — no
+  overrun.  **`9139076`**: an empty `[middle]` is refused (30013).
+  **`3f3e8ac`**: an `OnPluginSend` that dies does not veto the send.
+  **`89ee850`**: a missing-routine alias run inside a script call leaves the
+  note style alone (`Simulate` resets it by design, so it cannot test this).
+  **`c3936f4`**: `Tell` from `OnPluginTelnetRequest` comes out in the note
+  colours.
+- **§4c-quintricies item 6.**  Quow's set has no colour-conditioned triggers, so
+  eight catch-all "match text colour" triggers rode along on Discworld with
+  `term xterm`: 78 hits, each on a line whose RGB is that colour's palette
+  entry; the orange 256-colour line matched none.
+- **The font ascent/descent split.**  `run_app_probes.ps1 -Probe fontmetrics`: 68
+  passed; every face realized as asked; descent 17–25% of the cell height, about 21%
+  on average, against `pal::CpuRaster`'s invented 20% (`cellH / 5`).  The `SPLIT`
+  lines are in `docs/FONT-PARITY-2026-08.md` §3.
+
+### 12d. Defects
+
+Found by this round: the alias and timer pages' fitted last column overflowed
+the list, because each page subtracted only some of its other columns — fixed,
+`PrefsListColumns.TheFittedColumnLeavesRoomForEveryOtherColumn`.  The rest of
+round three's fixes came from `docs/BUGHUNT-2026-10.md`'s known-bug list
+(UPSTREAM-BUGS 110–117, the TLS handshake timeout, the scrollback pixel range,
+the bottom window tabs); that file has the list.

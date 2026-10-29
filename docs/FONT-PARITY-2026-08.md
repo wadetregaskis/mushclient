@@ -232,6 +232,37 @@ are falsifiable today without knowing the answer: `tmHeight == tmAscent + tmDesc
 5.1 the app embeds and no more than that. Paste the `SPLIT` lines back into this section
 when it runs; only then is there anything to say about `cellH / 5`.
 
+**Run on Windows, 2026-10-29** (`run_app_probes.ps1 -Probe fontmetrics`, Debug Win32 on
+the ARM64 VM; 68 passed, 0 failed, so both contract assertions hold for every face and
+size). Every face was realized as requested — no substitution on this machine:
+
+```
+SPLIT Courier New -> Courier New 8pt: height=14 ascent=11 descent=3 internalLeading=3 em=11 descent/height=0.21428571428571
+SPLIT Courier New -> Courier New 10pt: height=16 ascent=12 descent=4 internalLeading=3 em=13 descent/height=0.25
+SPLIT Courier New -> Courier New 12pt: height=18 ascent=14 descent=4 internalLeading=2 em=16 descent/height=0.22222222222222
+SPLIT Courier New -> Courier New 24pt: height=36 ascent=27 descent=9 internalLeading=4 em=32 descent/height=0.25
+SPLIT Arial -> Arial 8pt: height=14 ascent=11 descent=3 internalLeading=3 em=11 descent/height=0.21428571428571
+SPLIT Arial -> Arial 10pt: height=16 ascent=13 descent=3 internalLeading=3 em=13 descent/height=0.1875
+SPLIT Arial -> Arial 12pt: height=18 ascent=15 descent=3 internalLeading=2 em=16 descent/height=0.16666666666667
+SPLIT Arial -> Arial 24pt: height=36 ascent=29 descent=7 internalLeading=4 em=32 descent/height=0.19444444444444
+SPLIT Consolas -> Consolas 8pt: height=13 ascent=10 descent=3 internalLeading=2 em=11 descent/height=0.23076923076923
+SPLIT Consolas -> Consolas 10pt: height=15 ascent=12 descent=3 internalLeading=2 em=13 descent/height=0.2
+SPLIT Consolas -> Consolas 12pt: height=19 ascent=15 descent=4 internalLeading=3 em=16 descent/height=0.21052631578947
+SPLIT Consolas -> Consolas 24pt: height=37 ascent=29 descent=8 internalLeading=5 em=32 descent/height=0.21621621621622
+SPLIT Lucida Console -> Lucida Console 8pt: height=11 ascent=9 descent=2 internalLeading=0 em=11 descent/height=0.18181818181818
+SPLIT Lucida Console -> Lucida Console 10pt: height=13 ascent=10 descent=3 internalLeading=0 em=13 descent/height=0.23076923076923
+SPLIT Lucida Console -> Lucida Console 12pt: height=16 ascent=13 descent=3 internalLeading=0 em=16 descent/height=0.1875
+SPLIT Lucida Console -> Lucida Console 24pt: height=32 ascent=25 descent=7 internalLeading=0 em=32 descent/height=0.21875
+```
+
+**What it says about `cellH / 5`.** Windows' descent is 17–25% of the cell height across
+these four faces and sizes, centred on about 21%; `cellH / 5` is 20%. So the invented split
+sits inside Windows' own spread — within one pixel of it at every size measured here but
+one: Courier New 24 pt, 9 against 36 / 5 = 7.2 → 7 (Arial 12 pt: 3 against 3.6 → 3).
+That is close enough that no headless assertion should key on the exact descent, and not
+close enough to pin one: a per-face table would be the only way to agree exactly, and these
+figures are for this machine's fonts, at 96 dpi.
+
 ---
 
 ## 4. Why the coverage never caught any of this

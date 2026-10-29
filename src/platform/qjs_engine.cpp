@@ -459,12 +459,25 @@ const char kCompatPrelude[] =
   "(function (g) {\n"
   "  function VBArray (a) {\n"
   "    if (!(this instanceof VBArray)) return new VBArray (a);\n"
-  "    this._a = (a == null) ? [] : (a instanceof VBArray ? a._a.slice () : Array.from (a));\n"
+  "    this._lb = 0;\n"
+  "    if (a != null && a.__mcWildcards) {\n"
+  // A trigger's or alias's wildcards, as Windows' COM arm built them for JScript:
+  // a 1-based SAFEARRAY of MAX_WILDCARDS (10), %1..%9 at 1..9 and the whole
+  // matching line at 10 -- so toArray()[0] is %1, which is what every 5.x
+  // JScript callback (exampscript.js among them) indexes.
+  "      var w = [];\n"
+  "      for (var i = 1; i <= 9; i++) w.push (a [i] === undefined ? '' : a [i]);\n"
+  "      w.push (a [0] === undefined ? '' : a [0]);\n"
+  "      this._a = w;\n"
+  "      this._lb = 1;\n"
+  "    } else\n"
+  "      this._a = (a == null) ? [] : (a instanceof VBArray ? a._a.slice () : Array.from (a));\n"
+  "    if (a instanceof VBArray) this._lb = a._lb;\n"
   "  }\n"
   "  VBArray.prototype.toArray    = function () { return this._a.slice (); };\n"
-  "  VBArray.prototype.getItem    = function (i) { return this._a [i]; };\n"
-  "  VBArray.prototype.lbound     = function () { return 0; };\n"
-  "  VBArray.prototype.ubound     = function () { return this._a.length - 1; };\n"
+  "  VBArray.prototype.getItem    = function (i) { return this._a [i - this._lb]; };\n"
+  "  VBArray.prototype.lbound     = function () { return this._lb; };\n"
+  "  VBArray.prototype.ubound     = function () { return this._a.length - 1 + this._lb; };\n"
   "  VBArray.prototype.dimensions = function () { return 1; };\n"
   "  function Enumerator (c) {\n"
   "    if (!(this instanceof Enumerator)) return new Enumerator (c);\n"
@@ -635,6 +648,9 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
     JSValue wc = JS_NewArray (ctx);
     for (size_t i = 0; i < wildcards.size (); i++)
       JS_SetPropertyUint32 (ctx, wc, (uint32_t) i, js_string_from_bytes (ctx, wildcards [i]));
+    // marked, not enumerable, so VBArray (wildcards) can give a 5.x script the
+    // shape it was written for (the compat prelude above)
+    JS_DefinePropertyValueStr (ctx, wc, "__mcWildcards", JS_TRUE, 0);
     args.push_back (wc);
     }
 

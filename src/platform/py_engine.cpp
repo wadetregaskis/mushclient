@@ -342,11 +342,17 @@ int World_setattro(PyObject* self, PyObject* nameobj, PyObject* value)
   }
 
 bool g_inited = false;
+std::string g_initError;                      // why Python would not start, if it would not
 PyThreadState* g_mainThreadState = nullptr;   // saved by ensure_init's release
 
-void ensure_init()
+// False if Python cannot start here -- its stdlib missing or broken, say --
+// with the reason in g_initError.  Then (and from then on) a Python world gets
+// an error and no engine, rather than the client being aborted: the obvious
+// fallback, Py_InitializeEx, calls Py_FatalError on the same failure.
+bool ensure_init()
   {
-  if (g_inited) return;
+  if (g_inited) return true;
+  if (!g_initError.empty ()) return false;
 
   PyConfig config;
   PyConfig_InitPythonConfig (&config);
@@ -401,7 +407,12 @@ void ensure_init()
   PyStatus status = Py_InitializeFromConfig (&config);   // embedded: doesn't trap signals
   PyConfig_Clear (&config);
   if (PyStatus_Exception (status) && !Py_IsInitialized ())
-    Py_InitializeEx (0);                      // last-resort fallback (default prefix)
+    {
+    g_initError = status.err_msg ? status.err_msg : "Python could not be initialised";
+    if (status.func)
+      g_initError = std::string (status.func) + ": " + g_initError;
+    return false;
+    }
   g_inited = true;
 
   WorldType.tp_name      = "mushclient.world";
@@ -427,6 +438,7 @@ void ensure_init()
   // loop.  (There is no Py_Finalize anywhere in this file, so the saved state
   // is never restored for teardown; the process just exits.)
   g_mainThreadState = PyEval_SaveThread ();
+  return true;
   }
 
 // Hold the GIL for the duration of one host->interpreter entry point, on
@@ -550,7 +562,14 @@ void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
 // ── CScriptEngine Python methods ────────────────────────────────────────────
 void CScriptEngine::OpenPython ()
   {
-  ensure_init ();
+  if (!ensure_init ())
+    {
+    // no engine: ParsePython then fails, and scripting is off for this world
+    ReportScriptError (m_pDoc, "Python error", "Starting Python",
+                       TFormat ("Python could not start: %s", g_initError.c_str ()),
+                       m_pDoc ? TFormat ("World: %s", (LPCTSTR) m_pDoc->m_mush_name) : CString ("No active world"));
+    return;
+    }
   PyGIL gil;
   CPythonEngine* e = new CPythonEngine ();
   e->doc = m_pDoc;
@@ -588,7 +607,32 @@ bool CScriptEngine::ParsePython (const CString & strCode, const CString & strWha
   {
   if (!m_pyEngine) return true;
   PyGIL gil;
-  PyObject* r = PyRun_String ((LPCTSTR) strCode, Py_file_input, m_pyEngine->ns, m_pyEngine->ns);
+  const char* code = (LPCTSTR) strCode;
+#ifdef _WIN32
+  // Python reads source as UTF-8, and a 5.x script saved in the ANSI code page
+  // (an accented string literal in a Western world's script) is a SyntaxError
+  // at the first such byte -- where 5.x's ActivePython was handed the text as
+  // Unicode through COM, decoded from that code page.  So source that is not
+  // valid UTF-8 is decoded the same way first.
+  std::string converted;
+  if (MultiByteToWideChar (CP_UTF8, MB_ERR_INVALID_CHARS, code, -1, NULL, 0) == 0)
+    {
+    const int wide = MultiByteToWideChar (CP_ACP, 0, code, -1, NULL, 0);
+    if (wide > 0)
+      {
+      std::vector<wchar_t> w (wide);
+      MultiByteToWideChar (CP_ACP, 0, code, -1, w.data (), wide);
+      const int bytes = WideCharToMultiByte (CP_UTF8, 0, w.data (), -1, NULL, 0, NULL, NULL);
+      if (bytes > 0)
+        {
+        converted.resize (bytes);
+        WideCharToMultiByte (CP_UTF8, 0, w.data (), -1, &converted [0], bytes, NULL, NULL);
+        code = converted.c_str ();
+        }
+      }
+    }
+#endif
+  PyObject* r = PyRun_String (code, Py_file_input, m_pyEngine->ns, m_pyEngine->ns);
   if (!r) { report_error (m_pDoc, strWhat, ""); return true; }
   Py_DECREF (r);
   return false;

@@ -47,6 +47,7 @@
 #endif
 
 #include <ruby.h>
+#include <ruby/encoding.h>  // rb_utf8_encoding: a non-ASCII callback name (intern_name)
 
 #ifndef VT_ERROR
 #define VT_ERROR 10
@@ -440,6 +441,46 @@ VALUE do_singleton_defined (VALUE p)
   return rb_ary_includes (list, ID2SYM (c->mid)) ? Qtrue : Qfalse;
   }
 
+// A callback's name as a Ruby ID, or false.  rb_intern takes the name as
+// US-ASCII and RAISES on a byte above 127 -- a trigger in a Latin-1 world
+// whose script is "déplacer" -- and nothing up the C stack would catch it
+// (rb_bug, then abort).  So a name like that is interned under rb_protect,
+// as UTF-8 (which a Ruby script can define); one that is not valid UTF-8
+// names nothing a script could have defined.
+struct InternCtx { const char* name; ID mid; };
+
+VALUE do_intern_utf8 (VALUE p)
+  {
+  InternCtx* c = (InternCtx*) p;
+  VALUE s = rb_enc_str_new (c->name, (long) strlen (c->name), rb_utf8_encoding ());
+  if (rb_enc_str_coderange (s) == ENC_CODERANGE_BROKEN)
+    return Qfalse;
+  c->mid = rb_intern_str (s);
+  return Qtrue;
+  }
+
+bool intern_name (const char* name, ID & mid)
+  {
+  if (!name)
+    return false;
+  bool ascii = true;
+  for (const unsigned char* p = (const unsigned char*) name; *p; ++p)
+    if (*p >= 0x80)
+      ascii = false;
+  if (ascii)
+    {
+    mid = rb_intern (name);
+    return true;
+    }
+  InternCtx c { name, 0 };
+  int state = 0;
+  VALUE r = rb_protect (do_intern_utf8, (VALUE) &c, &state);
+  if (state) { rb_set_errinfo (Qnil); return false; }
+  if (!RTEST (r)) return false;
+  mid = c.mid;
+  return true;
+  }
+
 bool script_defined (VALUE obj, ID mid)
   {
   if (mid == rb_intern ("world")) return false;   // the engine's own accessor
@@ -506,7 +547,8 @@ bool CScriptEngine::ParseRuby (const CString & strCode, const CString & strWhat)
 DISPID CScriptEngine::GetRubyDispid (const CString & strName)
   {
   if (!m_rubyEngine || strName.IsEmpty ()) return DISPID_UNKNOWN;
-  return script_defined (m_rubyEngine->obj, rb_intern ((LPCTSTR) strName))
+  ID mid;
+  return intern_name ((LPCTSTR) strName, mid) && script_defined (m_rubyEngine->obj, mid)
            ? 1 : DISPID_UNKNOWN;
   }
 
@@ -523,8 +565,9 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   {
   if (!m_rubyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
-  ID mid = rb_intern (szProcedure);
-  if (!script_defined (m_rubyEngine->obj, mid)) { dispid = DISPID_UNKNOWN; return true; }
+  ID mid;
+  if (!intern_name (szProcedure, mid) || !script_defined (m_rubyEngine->obj, mid))
+    { dispid = DISPID_UNKNOWN; return true; }
 
   // Root the args in a Ruby Array held by a C-stack local — MRI's conservative
   // GC scans the machine stack, so this keeps every freshly-allocated arg (the
@@ -616,8 +659,9 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   {
   if (!m_rubyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
-  ID mid = rb_intern (szProcedure);
-  if (!script_defined (m_rubyEngine->obj, mid)) { dispid = DISPID_UNKNOWN; return true; }
+  ID mid;
+  if (!intern_name (szProcedure, mid) || !script_defined (m_rubyEngine->obj, mid))
+    { dispid = DISPID_UNKNOWN; return true; }
 
   // Length-explicit: rb_str_new_cstr stops at the first NUL, and this overload
   // carries whole MUD packets, which contain them.

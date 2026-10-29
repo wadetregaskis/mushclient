@@ -641,6 +641,8 @@ const Dialect kDialects[] = {
   "  world.SetVariable('ns', world.GetNoteStyle() == 0 ? 'normal' : 'inherited');\n"
   "  world.NoteStyle(4); }\n"
   "function wc(n, l, w) { world.SetVariable('wc', w.join('|')); }\n"
+  "function wcvb(n, l, wvb) { var v = new VBArray(wvb), a = v.toArray();\n"
+  "  world.SetVariable('wc', [a.length, a[0], a[1], a[2], a[9], v.lbound(), v.ubound(), v.getItem(10)].join('|')); }\n"
   "function api() {\n"
   "  world.Note('a note');\n"
   "  world.SetVariable('rt', 'value');\n"
@@ -1420,6 +1422,18 @@ void battery_wildcards(Engine& e, const Dialect& d)
     else
         check(e.var("wc") == folded, L,
               "\"lower case wildcards\" folds every entry, whole match included");
+
+    // A 5.x JScript callback reads wildcards through VBArray, and Windows' COM
+    // arm built them 1-based, %1..%9 then the whole line at 10 -- so toArray()
+    // [0] is %1.  The shim gives an old script that shape (direct indexing
+    // stays [whole, %1, ...], above).
+    if (strcmp(d.key, "js") == 0) {
+        e.seed("wc", "handler never ran");
+        e.callRich("wcvb", nullptr, {}, { "tname", "GandalF shouts LOUDLY" },
+                   nullptr, eDontChangeAction, re, false);
+        check(e.var("wc") == "10|GandalF|LOUDLY||GandalF shouts LOUDLY|1|10|GandalF shouts LOUDLY", L,
+              "VBArray(wildcards) has 5.x JScript's shape: %1 first, the whole line tenth, 1-based");
+    }
 
     delete re;
 }

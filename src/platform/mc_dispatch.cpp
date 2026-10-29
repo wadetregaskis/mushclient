@@ -161,8 +161,11 @@ static long round_to_long (const double d)
   // Out of range is DISP_E_OVERFLOW on Windows, which this substrate has no
   // channel to report.  Clamp rather than leave the cast undefined — atol,
   // which the string arm used to call, saturated the same way.
-  if (r <= -9223372036854775808.0) return LONG_MIN;   // -2^63, exactly a double
-  if (r >=  9223372036854775808.0) return LONG_MAX;   //  2^63, one past LONG_MAX
+  // The bounds are long's own: 2^63 where long is 64 bits (macOS, Linux),
+  // 2^31 where it is 32 (Windows, where clamping at 2^63 left the cast of a
+  // number past 2^31 undefined -- LONG_MIN on x64, LONG_MAX on ARM64).
+  if (r <= (double) LONG_MIN) return LONG_MIN;        // exactly a double either way
+  if (r >= -(double) LONG_MIN) return LONG_MAX;       // one past LONG_MAX
   return (long) r;
   }
 

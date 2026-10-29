@@ -7,7 +7,7 @@
 #include "pcre/config.h"
 #include "pcre/pcre.h"
 #include "pcre/pcre_internal.h"
-#include "pcre_jit.h"
+#include "mc_pcre.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -90,7 +90,7 @@ int count;
     { start.QuadPart = 0; finish.QuadPart = 0; }
 
   pcre_callout = NULL;
-  count = pcre_exec(prog->m_program, prog->m_extra, string, strlen (string),
+  count = mc_pcre_exec(prog->m_program, prog->m_extra, string, (int) strlen (string),
                     start_offset, options, &offsets [0], offsets.size ());
 
   if (App.m_iCounterFrequency)

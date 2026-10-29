@@ -372,7 +372,7 @@ static const luaL_Reg posixmeta[] = {
 #define PCRE_EXP_DECL extern
 
 #include "pcre.h"
-#include "pcre_jit.h"
+#include "mc_pcre.h"
 
 const char pcre_handle[] = "pcre_regex_handle";
 const char pcre_typename[] = "pcre_regex";
@@ -658,7 +658,7 @@ static int Lpcre_match_generic(lua_State *L, Lpcre_push_matches push_matches)
 
   check_for_callout (L, ud, 5, callout_function5);
 
-  res = pcre_exec(ud->pr, ud->extra, text, (int)elen, startoffset, eflags,
+  res = mc_pcre_exec(ud->pr, ud->extra, text, (int)elen, startoffset, eflags,
                   ud->match, (ud->ncapt + 1) * 3);
   if (res >= 0) {
     lua_pushnumber(L, ud->match[0] + 1);
@@ -700,7 +700,7 @@ static int Lpcre_gmatch(lua_State *L)
   while (!limit || nmatch < maxmatch) 
     {
 
-    res = pcre_exec(ud->pr, ud->extra, text, (int)len, startoffset, eflags,
+    res = mc_pcre_exec(ud->pr, ud->extra, text, (int)len, startoffset, eflags,
                     ud->match, (ud->ncapt + 1) * 3);
     if (res >= 0) 
       {

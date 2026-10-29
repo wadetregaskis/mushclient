@@ -10,6 +10,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "regexp.h"   // after the MFC headers: it uses CString and ASSERT
+#include "mc_pcre.h"
 
 #include "posix_compat.h"
 
@@ -444,7 +445,7 @@ TEST(RegexpTest, RecallTextDoesNotLeakItsCompiledRegexp) {
 
 // ── The JIT (pcre/config.h builds it on Windows only) ────────────────────
 
-// regcomp asks pcre_study for the JIT (pcre_jit.h); where it is built in,
+// regcomp asks pcre_study for the JIT (mc_pcre.h); where it is built in,
 // every trigger and alias pattern runs compiled.  Elsewhere the same call
 // leaves the pattern interpreted and changes nothing else.
 TEST(RegexpTest, PatternsAreJitCompiledWhereTheJitIsBuiltIn) {
@@ -460,23 +461,66 @@ TEST(RegexpTest, PatternsAreJitCompiledWhereTheJitIsBuiltIn) {
     EXPECT_EQ(std::string("the"), r->GetWildcard(1));
 }
 
-#ifdef _WIN32
-// Each repeat of the group is a recursion of the interpreter on the machine
-// stack, so this line overflows a Debug build's 1 MB main-thread stack -- an
-// access violation that took the client down.  Under the JIT the backtracking
-// lives on the pattern's own stack (pcre_jit.h), and the line simply matches.
-// (No portable twin: off Windows this pattern is interpreted, and would crash.)
-TEST(RegexpTest, ALineTooDeepForTheInterpreterMatchesUnderTheJit) {
+// ── Deep matches (mc_pcre.h) ──────────────────────────────────────────────
+
+// "ab...abc", n letters before the c: against ^(?:a|b)*c$ every letter is a
+// repeat of the group, and so a recursion of PCRE's interpreter.
+static std::string DeepLine(int n)
+{
     std::string s;
-    for (int i = 0; i < 20000; i++)
+    for (int i = 0; i < n; i++)
         s += (i & 1) ? 'b' : 'a';
-    s += 'c';
+    return s + 'c';
+}
+
+// The interpreter recursed on the machine stack with no useful limit, so a
+// long enough line overflowed it and took the client down: 1,000 letters in a
+// Debug build, 20,000 in Release.  mc_pcre_exec caps the recursion at what
+// the thread's remaining stack holds, so the line is refused instead.
+// pcre_exec with no extra is the interpreter on every platform.
+TEST(RegexpTest, TheInterpreterRefusesALineTooDeepForTheStack) {
+    if (mc_pcre_stack_floor() == NULL) {
+        mc_test::skip_current("this platform does not say where the stack ends");
+        return;
+    }
+    const char* error;
+    int erroroffset;
+    pcre* code = pcre_compile("^(?:a|b)*c$", 0, &error, &erroroffset, NULL);
+    ASSERT_NE(nullptr, code);
+    int ov[3];
+    const std::string deep = DeepLine(200000);     // past any thread's stack
+    EXPECT_EQ(PCRE_ERROR_RECURSIONLIMIT,
+              mc_pcre_exec(code, NULL, deep.c_str(), (int) deep.size(), 0, 0, ov, 3));
+    // ... while one the stack does hold still matches, all of it.  Short: a
+    // Debug x64 frame is 6,416 bytes, so 1 MB holds only ~90 letters.
+    const std::string fits = DeepLine(20);
+    EXPECT_EQ(1, mc_pcre_exec(code, NULL, fits.c_str(), (int) fits.size(), 0, 0, ov, 3));
+    EXPECT_EQ((int) fits.size(), ov[1]);
+    pcre_free(code);
+}
+
+// A trigger's view of the same line.  On Windows the pattern is JIT-compiled
+// and backtracks on its own stack (mc_pcre.h), so the line simply matches;
+// elsewhere the interpreter refuses it -- a runtime error like the match
+// limit, which drops the program -- where it used to crash.
+TEST(RegexpTest, ATriggerOnALineTooDeepForTheInterpreterDoesNotCrash) {
+    const std::string s = DeepLine(200000);
     Regexp r("^(?:a|b)*c$");
+#ifdef _WIN32
     EXPECT_TRUE(regexec(r.get(), s.c_str()));
     EXPECT_EQ(0, r->m_iExecutionError);
     EXPECT_EQ(s, r->GetWildcard(0));
+#else
+    if (mc_pcre_stack_floor() == NULL) {
+        mc_test::skip_current("this platform does not say where the stack ends");
+        return;
+    }
+    EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
+    EXPECT_EQ(PCRE_ERROR_RECURSIONLIMIT, r->m_iExecutionError);
+#endif
 }
 
+#ifdef _WIN32
 // A match that outgrows even the JIT's stack is a runtime error like the match
 // limit: reported, the program dropped, no match -- never a crash, and never a
 // rerun in the interpreter, which is shallower still.  The pattern's stack is

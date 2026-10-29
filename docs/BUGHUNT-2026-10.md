@@ -170,7 +170,7 @@ about fifteen near-identical Cow Bar regexes built on
 user's request). It is PCRE 8.45's own `pcre_jit_compile.c` and `sljit/`,
 byte-identical to the release archive, and sljit handles MSVC on x86, x64 and
 ARM64. Every trigger and alias pattern (`regexp.cpp`) and every Lua `rex`
-pattern (`lrexlib.c`) is compiled through `src/pcre_jit.h`. Same client, same
+pattern (`lrexlib.c`) is compiled through `src/mc_pcre.h`. Same client, same
 Quow set, before and after:
 
 | | interpreter | JIT |
@@ -191,8 +191,21 @@ rerun in the interpreter, which is shallower still.
 
 Not on macOS or Linux: 8.45's sljit maps its code `MAP_JIT` but never calls
 `pthread_jit_write_protect_np`, so under the hardened runtime on Apple silicon
-writing the code would fault. The port keeps the interpreter, and with it the
-deep-line crash.
+writing the code would fault. The port keeps the interpreter.
+
+**The interpreter no longer crashes either** (a follow-up, for the port and
+for whatever on Windows is still interpreted). Its recursion limit was ten
+million, which meant none. `mc_pcre_exec` now caps it at what the calling
+thread's remaining stack holds, less 128 KB. PCRE reports its own frame size
+(3,264 bytes in a Debug build). So a line too deep for the stack fails with
+"Recursion Limit", handled like the match limit, instead of crashing. Swept
+across the boundary for seven pattern shapes, every line either matched or was
+refused; none crashed. In the Release client (ARM64), Lua's `rex` in partial
+mode, which the JIT does not cover, matched lines up to ~950 letters. It
+refused 1,000 and 200,001 with no crash; the earlier build had died on 20,001.
+The stack's floor comes from `VirtualQuery` on Windows, `pthread_get_stackaddr_np`
+on macOS, and `pthread_getattr_np` on Linux. It is found once per thread. When
+the JIT runs, the check is skipped.
 
 Not done, measured as not worth the risk now: per-trigger overhead is ~110 ns
 (two `QueryPerformanceCounter` reads for the statistics, a `strlen`, the

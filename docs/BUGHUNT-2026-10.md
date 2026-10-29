@@ -114,10 +114,22 @@ repaints and miniwindow drawing. Lines per second unless stated:
 - **"Expand variables" triggers recompiled their regex on every line**; they
   keep it until the expanded pattern changes (failed compiles still retry).
 
+**With the Discworld edition's plugins** (Quow's six, 752 triggers, 604 of them
+in the Cow Bar) a plain line costs ~400 µs (2,484 lines/s; notes, which skip
+triggers, 114,649/s). GetTriggerInfo 37 puts it in the plugins' own patterns:
+about fifteen near-identical Cow Bar regexes built on
+`(?:\w+\b\W*?){1,8}` with look-aheads, ~6 µs each per line of backtracking.
+The client-side cure is **PCRE's JIT**, typically several times faster on such
+patterns — but the bundled `pcre/` has no `pcre_jit_compile.c` or sljit, so it
+means vendoring them (and confirming sljit's Windows ARM64 support) and a
+fallback to the interpreter on `PCRE_ERROR_JIT_STACKLIMIT`. Left for a
+decision. 400 µs a line is still 2,500 lines a second, well above what a MUD
+sends.
+
 Not done, measured as not worth the risk now: per-trigger overhead is ~110 ns
 (two `QueryPerformanceCounter` reads for the statistics, a `strlen`, the
 `pcre_exec`), i.e. 1000 triggers ≈ 9,000 lines/s; PCRE JIT (not compiled in;
-ARM64 support uncertain); per-run double measurement in `OnDraw`; plugin
+see above); per-run double measurement in `OnDraw`; plugin
 callback string copies; `SortTriggers` per add.
 
 ## Not fixed, and why

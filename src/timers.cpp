@@ -343,6 +343,19 @@ void CMUSHclientDoc::CheckTimers ()
         delete pSocket;
         break;    // list is no longer valid
         }
+      // An incoming call that never says who it is.  Nothing timed these out,
+      // so a caller that connected and stayed silent held a session -- and,
+      // with the cap in CChatListenSocket::OnAccept, a slot -- for good.
+      if (pSocket->m_bIncoming &&
+          pSocket->m_iChatStatus == eChatAwaitingConnectionRequest &&
+          !pSocket->m_bDeleteMe &&
+          (CTime::GetCurrentTime () - pSocket->m_tWhenStarted).GetTotalSeconds () >= 60)
+        {
+        ChatNote (eChatConnection,
+                  TFormat ("Call from %s closed: no chat request within a minute.",
+                           (LPCTSTR) pSocket->m_strServerName));
+        pSocket->OnClose (0);   // marks it for the next pass of this loop
+        }
       }
 #endif
 

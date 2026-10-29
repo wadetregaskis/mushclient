@@ -844,7 +844,25 @@ void CChatSocket::ProcessChatMessage (const int iMessage, const CString strMessa
   } // end of ProcessChatMessage
 
 // sends a chat message to the other end
-void CChatSocket::SendChatMessage (const int iMessage, 
+// A zChat frame: 2 bytes of message number, 2 bytes of length (both little-
+// endian), then the data.  The length field cannot say more than 65535, but a
+// message can be longer -- a MudMaster peer's text, which has no limit, relayed
+// on to zChat peers -- and it used to go out with the length's low 16 bits and
+// ALL of its bytes, so the receiver read the excess as further frames and the
+// session desynchronised.  The data is cut to what the field can describe.
+CString CChatSocket::ZChatFrame (const int iMessage, const CString & strData)
+  {
+  const int iLength = strData.GetLength () > 0xFFFF ? 0xFFFF : strData.GetLength ();
+  CString strFrame;
+  strFrame =  (char) (unsigned char) (iMessage & 0xFF);
+  strFrame += (char) (unsigned char) ((iMessage >> 8) & 0xFF);
+  strFrame += (char) (unsigned char) (iLength & 0xFF);
+  strFrame += (char) (unsigned char) ((iLength >> 8) & 0xFF);
+  ChatAppendBytes (strFrame, strData.GetString (), iLength);
+  return strFrame;
+  } // end of CChatSocket::ZChatFrame
+
+void CChatSocket::SendChatMessage (const int iMessage,
                                    const CString strMessage,
                                    const long iStamp)
   {
@@ -891,9 +909,6 @@ void CChatSocket::SendChatMessage (const int iMessage,
 
     case eChatZMud:
       {
-      // start of with 2 bytes of message number
-      strData =  (char) (unsigned char) (iMessage & 0xFF);
-      strData += (unsigned char) ((iMessage >> 8) & 0xFF);
       CString strStampedMessage;
 
       // now add message stamp if message requires
@@ -914,14 +929,7 @@ void CChatSocket::SendChatMessage (const int iMessage,
 
         }
 
-      // then 2 bytes of message data length
-      int iLength = strStampedMessage.GetLength ();
-      strData += (char) (unsigned char) (iLength & 0xFF);
-      strData += (char) (unsigned char) ((iLength >> 8) & 0xFF);
-
-      // then the message itself
-      ChatAppendBytes (strData, strStampedMessage.GetString (),
-                       strStampedMessage.GetLength ());
+      strData = ZChatFrame (iMessage, strStampedMessage);
       }
       break;
 
@@ -1935,10 +1943,15 @@ void CChatSocket::Process_Stamp				       (const CString strMessage)
       CChatSocket * pSocket = m_pDoc->m_ChatList.GetNext (chatpos);
       if (pSocket->m_iChatStatus == eChatConnected)
         {
-        if (m_iChatConnectionType != eChatZMud)
+        // the PEER's protocol: testing this socket's type (always zChat here)
+        // sent zChat stamp messages to MudMaster peers as well
+        if (pSocket->m_iChatConnectionType != eChatZMud)
           continue;
 
-        pSocket->SendChatMessage (CHAT_STAMP, CFormat ("%ld", m_zChatStamp));  // send it
+        // the 4-byte wire form, as at the handshake -- it went out as decimal
+        // text, which a zChat peer reads as a garbage stamp (and a length-6+
+        // one, which GetStamp's callers refuse)
+        pSocket->SendChatMessage (CHAT_STAMP, MakeStamp (m_zChatStamp));  // send it
         }   // end of chat session not being deleted
       } // end of all chat sessions
 

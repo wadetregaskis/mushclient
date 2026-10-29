@@ -51,6 +51,10 @@ struct TransportOptions {
 struct TlsParams {
     std::string serverName;
     bool        allowInvalidCert = false;
+    // A server that accepts the connection and then says nothing would leave
+    // the handshake -- and the world's "Performing TLS handshake" -- waiting
+    // forever.  Past this it fails as TlsFailure::Handshake.  0 = no limit.
+    int         handshakeTimeoutMs = 60000;
 };
 
 enum class TlsFailure {

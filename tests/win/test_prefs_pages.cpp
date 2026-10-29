@@ -192,6 +192,23 @@ TEST(PrefsP9, CommandColoursSurviveAPageChange)
 //    ceiling is the PORT's (100,000,000 lines against Windows' 500,000), so
 //    the arithmetic it broke does not exist in this configuration.
 
+
+// The fitted column leaves room for EVERY other column.  The alias page used to
+// subtract only Alias (not Sequence, Label or Group) and the timer page only
+// Type and When, so once the fitted width was actually applied, both lists'
+// last column ran past the list's edge and brought up a horizontal scroll bar.
+TEST(PrefsListColumns, TheFittedColumnLeavesRoomForEveryOtherColumn)
+{
+    // alias page: Alias 100, Sequence 40, Contents (fitted), Label 0, Group 0
+    const int alias[5] = { 100, 40, 150, 0, 0 };
+    EXPECT_EQ(140, OtherColumnsWidth(alias, 5, 2));
+    EXPECT_EQ(600 - 15 - 140, FittedLastColumnWidth(150, 150, 600, 15,
+                                                    OtherColumnsWidth(alias, 5, 2)));
+    // a column the user has hidden by dragging it to nothing (or a -1 from a
+    // damaged saved configuration) takes no room
+    const int odd[3] = { 80, -1, 200 };
+    EXPECT_EQ(80, OtherColumnsWidth(odd, 3, 2));
+}
 MC_TEST_MAIN()
 
 // ── Opening World Properties must not rewrite a preference you did not touch ─

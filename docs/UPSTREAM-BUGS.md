@@ -124,6 +124,14 @@ patches upstream, not as a claim that this tree fixed it.
 | 107 | `ProcessProxyResponse3` hard-codes the SOCKS 5 CONNECT reply at ten bytes, which is right only for an IPv4 bind address — RFC 1928 §6 makes BND.ADDR 16 bytes for ATYP 4 and 1 + N for ATYP 3 — so `OnBytesReceived` memmoves the remaining 12 bytes of an IPv6 reply (or however far a domain name ran) to the front of the receive buffer and hands them to `DisplayMsg`, and the session opens with a line of binary garbage. Not a memory-safety bug: the caller's `if (count <= iBytesToMove) return;` drops a short reply rather than over-reading it. A second hole in the same arm is **still open on both platforms**: the proxy phase has no accumulation buffer, so a reply split across TCP segments still reports success off `buff [1]` and its tail is displayed once the phase is `eConnectConnectedToMud` | `81dd178` (partial) | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::ProcessProxyResponse3`; doc_shared.cpp ← doc.cpp `CMUSHclientDoc::OnBytesReceived` (the memmove caller) |
 | 108 | `LoadPrefsP23` fills the Chat page's "Accept incoming calls on port:" tick from the **socket** (`page23.m_bAcceptIncomingChatConnections = m_pChatListenSocket != NULL`, commented "show whether we really are accepting calls") while `SavePrefsP23` copies that same tick straight back into the persisted `m_bAcceptIncomingChatConnections` — so merely opening World Properties and clicking OK on a page nobody touched overwrites the saved preference with runtime state, silently, in **both** directions: a listen socket that failed to bind (the port already in use, easily arranged with two worlds on the default 4050) shows the tick clear and OK turns the preference **off**, so the next launch does not even try; and a script's `world.ChatAcceptCalls` shows it set, so OK turns it **on** in a world that never asked for it | `dd2f079` | configuration.cpp `CMUSHclientDoc::LoadPrefsP23`; configuration.cpp `CMUSHclientDoc::SavePrefsP23` (the writer that makes it data loss) |
 | 109 | The Trigger dialog's clipboard dropdown (`IDC_WILDCARD_CLIPBOARD`) is populated from `DLGINIT` with eleven entries — `(none)`, then `1` … `10` — so the selected index is the wildcard number, but the code acting on it guards `iClipboardArg < MAX_WILDCARDS` with `MAX_WILDCARDS == 10`: the last entry the dropdown offers stores 10, fails the bound, and silently copies nothing. Wildcard 10 is not a nonexistent wildcard — the array handed to scripts is built 1-relative with `MAX_WILDCARDS` elements whose final element is deliberately `wildcards [0]`, the whole matching line — and the clipboard code could reach that by neither index: 10 failed the upper bound, and 0, where the whole line actually lives, fails the truthiness guard that means "(none)". The `iClipboardArg >= 0` term beside it was dead code, the member being `unsigned short` | `d6ce429` | ProcessPreviousLine.cpp `CMUSHclientDoc::ProcessOneTriggerSequence`; OtherTypes.h (the fix's new `ClipboardWildcardIndex` mapping, beside `MAX_WILDCARDS`) |
+| 110 | A dashed outline's gaps take the colour of the last hatch or pattern brush drawn: `WindowCircleOp` and `WindowPolygon` set the DC's background mode only for hatch and pattern brushes, and a dashed pen fills its gaps by that mode, so a solid- or null-brush shape drawn after one came out in that op's gap colour | this commit | miniwindow.cpp `WindowCircleOp`, `WindowPolygon` (here `pal/gdi_surface.cpp` `makeGdiBrush`) |
+| 111 | A trigger that reconnects from inside MCCP-decompressed text makes the decompression loop display the raw compressed packet: `ConnectSocket` resets `m_bCompress`, so the loop's next pass takes its not-compressed arm | this commit | doc.cpp `CMUSHclientDoc::OnReceive` (here doc_shared.cpp `OnBytesReceived`) |
+| 112 | A zChat message over 65,535 bytes goes out with the length field's low 16 bits and all of its bytes, so the receiver reads the excess as further frames | this commit | chatsock.cpp `CChatSocket::SendChatMessage` |
+| 113 | A plugin that stops accepting chat calls from its `ON_PLUGIN_CHAT_DISPLAY` callback during "Incoming chat call" deletes the listen socket inside its own `OnAccept`, which then calls `Accept` and reads `m_pDoc` through the freed object | this commit | chatlistensock.cpp `CChatListenSocket::OnAccept` |
+| 114 | Incoming chat calls have no cap and no deadline for the chat request: anyone who can reach the port can hold any number of sessions open by connecting and saying nothing | this commit | chatlistensock.cpp `OnAccept`; doc.cpp chat-socket reaper (here timers.cpp `CheckTimers`) |
+| 115 | `world.UdpListen` listeners: a datagram over 999 bytes is dropped silently; a port above 32,767 is stored and listed negative; a handler that re-listens on its own port frees the strings `CallPlugin` is still using; and the listener outlives its plugin | this commit | UDPsocket.cpp `OnReceive`; methods_udp.cpp `UdpListen`, `UdpSend`; plugins.cpp `CPlugin::~CPlugin` |
+| 116 | A cancelled host-name lookup's result buffer is freed (or reused) straight after `WSACancelAsyncRequest`, which under Wine is a stub: the worker thread then writes the `hostent` into freed memory | this commit | doc.cpp `LookupHostName` / `OnConnectionDisconnect` (here `pal/win_transport.cpp`) |
+| 117 | A zChat stamp collision broadcasts the new stamp as decimal text instead of the 4-byte form, and to MudMaster peers as well (the filter tested this socket's type, not the peer's) | this commit | chatsock.cpp `CChatSocket::Process_Stamp` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -3442,3 +3450,132 @@ Two tests, at two levels, because neither alone is enough:
   `clipboard_arg` 1, 3, 10 and 0 — the last as the control. Against the app
   built before the fix it failed on exactly the `10` assertion and passed the
   other three, which is the end-to-end proof the unit test cannot give.
+
+## 110 — A dashed outline's gaps take the colour of the last hatched shape
+
+`miniwindow.cpp` `WindowCircleOp` / `WindowPolygon` (here the brush set-up in
+`pal/gdi_surface.cpp`, `makeGdiBrush`).
+
+A dashed pen fills its gaps according to the DC's background mode: transparent,
+or the background colour. The shape ops set that mode only for the brushes that
+need one — hatch (`SetBkMode` by gap colour) and the mono patterns — and left it
+alone for solid and null brushes. So a dashed outline drawn after a hatched
+shape inherited `OPAQUE` and that shape's gap colour: draw a green-gapped hatch,
+then a dashed red rectangle, and its gaps came out green. The line, arc,
+polyline and Bezier ops already forced `TRANSPARENT`.
+
+**Fix:** solid and null brushes set `TRANSPARENT` too, so a shape's outline no
+longer depends on what was drawn before it. Pinned by
+`LuaSurface.DashedOutlineGapsDoNotInheritTheLastBackgroundMode`, which failed
+before the fix (a green pixel at 16,15).
+
+## 111 — A trigger that reconnects mid-MCCP-stream displays compressed bytes
+
+`doc.cpp` `CMUSHclientDoc::OnReceive` (here `doc_shared.cpp`,
+`OnBytesReceived`).
+
+The decompression loop calls `DisplayMsg` on each inflated chunk and goes round
+again. A trigger, alias or plugin running inside that `DisplayMsg` may call
+`world.Disconnect` and `world.Connect`; `ConnectSocket` sets
+`m_bCompress = FALSE`, so the loop's next pass took its not-compressed arm and
+passed the raw **compressed** packet still in `buff` to `DisplayMsg` — binary
+garbage in the output, and any IAC-shaped byte in it parsed as telnet and
+answered to the new server.
+
+**Fix:** after each `DisplayMsg` in the compressed arm, stop if the world is no
+longer connected — nothing left in the buffer belongs to a live session.
+`Mccp.TriggerThatReconnectsMidStreamDoesNotDisplayCompressedBytes` fed a
+trigger `world.Disconnect(); world.Connect()` and found bytes 0x9C, 0xCA, 0xCD
+in the output before the fix.
+
+## 112 — A zChat message over 64 KB desynchronises the session
+
+`chatsock.cpp` `CChatSocket::SendChatMessage`.
+
+A zChat frame is two bytes of message number, two of length, then the data. A
+message longer than 65,535 bytes went out with the length's low 16 bits and
+**all** of its bytes, so the receiver took the excess for further frames. Chat
+text has no such limit — MudMaster's framing is terminator-based — so relaying a
+MudMaster peer's long message to zChat peers was enough.
+
+**Fix:** the framing moved into `CChatSocket::ZChatFrame`, which cuts the data
+to what the length field can describe. `ChatProtocol.ZChatFrameLengthAlwaysDescribesTheDataThatFollows`.
+
+## 113 — Stopping chat from the "Incoming chat call" note frees the listener mid-accept
+
+`chatlistensock.cpp` `CChatListenSocket::OnAccept`.
+
+`OnAccept` began with `ChatNote ("Incoming chat call")`, and every `ChatNote`
+runs `ON_PLUGIN_CHAT_DISPLAY`. A plugin that answers it with
+`world.ChatStopAcceptingCalls` deletes the listen socket — `this` — after which
+`OnAccept` called `Accept` on the freed object and later read `m_pDoc` through it.
+
+**Fix:** the call is accepted before the first note, the document is held in a
+local, and nothing reads a member after a note.
+
+## 114 — Incoming chat calls: no cap, and no deadline for the chat request
+
+`chatlistensock.cpp` `OnAccept`; the chat-socket reaper (here `timers.cpp`,
+`CheckTimers`).
+
+Every connection to the chat port became a session, however many, and one that
+never sent its `CHAT:` / `ZCHAT:` request stayed in "awaiting connection request"
+for good. Anyone who could reach the port could hold sockets open without limit.
+
+**Fix:** at most 100 sessions in all and 10 incoming calls still unidentified —
+further calls are accepted, refused with a note, and closed — and the reaper
+closes an incoming call that has not identified itself within a minute.
+`ChatFileBlockR6.AnIncomingCallSilentForAMinuteIsClosed`.
+
+## 115 — `world.UdpListen`: four defects
+
+`UDPsocket.cpp` `OnReceive`; `methods_udp.cpp` `UdpListen`, `UdpSend`;
+`plugins.cpp` `CPlugin::~CPlugin`.
+
+- **Datagrams over 999 bytes vanished.** `OnReceive` read into a 1,000-byte
+  buffer, and a datagram that does not fit fails the whole `recv` with
+  `WSAEMSGSIZE`, which the code treated as "strange" and returned. The buffer is
+  now the size of the largest datagram.
+- **Ports above 32,767 went negative.** `Port` is a `short` in the method
+  signature, so it was keyed, listed by `UdpPortList` and passed to `Create` as a
+  negative number. Both methods now use it as the `unsigned short` a port is.
+- **A handler that re-listens on its own port freed what `CallPlugin` was
+  using.** `UdpListen` deletes the existing listener for the port — the one
+  inside `OnReceive` — while `CallPlugin` held pointers into its `m_strPluginID`
+  and `m_strScript`. They are copied first now.
+- **Listeners outlived their plugin,** holding the port and handing datagrams to
+  a plugin that no longer existed until the world closed. The plugin's
+  destructor now closes its own.
+
+Checked in the running client with a plugin on port 40123: a 5,000-byte
+datagram arrived whole, `UdpPortList` read 40123, re-listening from the handler
+kept working, and unloading the plugin emptied the list.
+
+## 116 — A cancelled host-name lookup can be written into freed memory (Wine)
+
+`doc.cpp` `LookupHostName` / `OnConnectionDisconnect` (here
+`pal/win_transport.cpp`).
+
+`WSAAsyncGetHostByName` writes its result into a caller-supplied buffer from a
+worker thread. On a disconnect, world close or reconnect during the lookup, the
+buffer was freed (or reused for the next lookup) straight after
+`WSACancelAsyncRequest`. Windows promises a cancelled request writes nothing
+more; Wine's `WSACancelAsyncRequest` is a stub that returns success while the
+lookup goes on, and then writes up to `MAXGETHOSTSTRUCT` bytes into freed memory.
+
+**Fix:** each lookup gets its own buffer, and a cancelled lookup's buffer is
+retired until exit rather than freed — 1 KB per cancelled lookup, since nothing
+can tell a real cancel from Wine's.
+
+## 117 — A zChat stamp collision broadcasts the new stamp as text, to every peer
+
+`chatsock.cpp` `CChatSocket::Process_Stamp`.
+
+When a peer announces our own stamp, we pick a new one and tell the other
+sessions. That broadcast had two slips: it sent `CFormat ("%ld", m_zChatStamp)`
+— the stamp as decimal TEXT — where the handshake sends `MakeStamp`'s four
+binary bytes, so a zChat peer read nonsense; and it filtered with
+`m_iChatConnectionType` (this socket, always zChat here) instead of the peer's,
+so MudMaster peers were sent zChat stamp messages too.
+
+**Fix:** `MakeStamp`, and the peer's own connection type.

@@ -1637,6 +1637,14 @@ void CMUSHclientDoc::OnBytesReceived (char * buff, int count)
       DisplayMsg ((LPCTSTR) m_CompressOutput, iLength, 0);    // send uncompressed data to screen
       m_zCompress.next_out = m_CompressOutput;      // reset for more output
       m_zCompress.avail_out = m_nCompressionOutputBufferSize;
+
+      // A trigger, alias or plugin may have disconnected -- and even started a
+      // new connection -- from inside that DisplayMsg.  Then nothing left here
+      // belongs to a live session: ConnectSocket resets m_bCompress, so the
+      // next pass would take the not-compressed arm and display the raw
+      // COMPRESSED packet, answering any IAC-shaped byte in it to the new server.
+      if (m_iConnectPhase != eConnectConnectedToMud)
+        return;
       }
 
     // if end of stream, turn decompression off
@@ -3751,7 +3759,19 @@ POSITION pos;
   // fixed array, skipping the eviction wrote past the end of the allocation on
   // the first line beyond the old boundary.  See line_position_index.h.
 
-  if (m_maxlines > 0 && m_LineList.GetCount () >= m_maxlines)
+  // The output view addresses rows in 32-bit pixels -- row * font height is a
+  // CScrollView size and a GDI coordinate on Windows, a wxScrolledWindow virtual
+  // size on the port -- so past INT_MAX / font height rows that product wraps
+  // and the view collapses.  max_output_lines = 0 (unlimited), or 100,000,000
+  // with a font taller than 21 pixels, could get there.  So the buffer never
+  // grows past it either: the oldest lines go, exactly as at the configured cap,
+  // and the newest output stays reachable.  (The headroom covers the pending
+  // line, the pixel offset and the window's own height.)
+  const long iPixelAddressableRows =
+      (long) (INT_MAX / (m_FontHeight > 0 ? m_FontHeight : 1)) - 2 * JUMP_SIZE;
+
+  if ((m_maxlines > 0 && m_LineList.GetCount () >= m_maxlines) ||
+      m_LineList.GetCount () >= iPixelAddressableRows)
     {
 
     RemoveChunk ();   // get rid of JUMP_SIZE lines

@@ -7,6 +7,7 @@
 
 #include "doc.h"
 #include "dialogs/plugins/PluginWizardSheet.h"
+#include "UDPsocket.h"        // a plugin's UDP listeners are closed with it
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -186,6 +187,21 @@ CPlugin::~CPlugin ()
   CScriptCallInfo callinfo (ON_PLUGIN_CLOSE, m_PluginCallbacks [ON_PLUGIN_CLOSE]);
   ExecutePluginScript (callinfo);
   m_pDoc->m_CurrentPlugin = pSavedPlugin;
+
+  // Its UDP listeners (world.UdpListen) go with it.  They used to outlive the
+  // plugin, holding the port and handing every datagram to a plugin that no
+  // longer existed, until the world closed.
+  for (map<int, UDPsocket *>::iterator it = m_pDoc->m_UDPsocketMap.begin ();
+       it != m_pDoc->m_UDPsocketMap.end (); )
+    {
+    if (it->second->m_strPluginID == m_strID)
+      {
+      delete it->second;
+      it = m_pDoc->m_UDPsocketMap.erase (it);
+      }
+    else
+      ++it;
+    }
 
   SaveState ();
   DELETE_MAP (m_TriggerMap, CTrigger); 

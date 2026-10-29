@@ -270,6 +270,22 @@ void CMDITabs::Create(CFrameWnd* pMainFrame, DWORD dwStyle)
   m_minViews = (dwStyle & MT_HIDEWLT2VIEWS) ? 2 : 1;
   
   CTabCtrl::Create(WS_CHILD|WS_VISIBLE|(m_bTop?0:TCS_BOTTOM)|TCS_SINGLELINE|TCS_FOCUSNEVER|TCS_FORCEICONLEFT|WS_CLIPSIBLINGS, CRect(0, 0, 0, 0), pMainFrame, 42);
+#ifdef _WIN32
+  // The manifest's Common Controls v6 draws a THEMED tab control, and a themed
+  // tab control ignores TCS_BOTTOM: bottom tabs drew as top tabs on a bottom
+  // bar.  And this class's own classic edges (OnNcPaint, OnPaint) framed the
+  // themed control in mismatched colours, top or bottom.  Opting this one
+  // control out of visual styles gives the classic renderer, which draws
+  // TCS_BOTTOM properly -- and is what 5.x, with no manifest, always showed.
+  // Loaded by name rather than linked: uxtheme is there whenever v6 is.
+  {
+  typedef HRESULT (WINAPI * SetWindowThemeFn) (HWND, LPCWSTR, LPCWSTR);
+  if (HMODULE hTheme = ::LoadLibraryA ("uxtheme.dll"))
+    if (SetWindowThemeFn pSetWindowTheme =
+          (SetWindowThemeFn) ::GetProcAddress (hTheme, "SetWindowTheme"))
+      pSetWindowTheme (m_hWnd, L" ", L" ");
+  }
+#endif
   ModifyStyleEx(0, WS_EX_CLIENTEDGE);
   SendMessage(WM_SETFONT, WPARAM(GetStockObject(DEFAULT_GUI_FONT)), 0);
   

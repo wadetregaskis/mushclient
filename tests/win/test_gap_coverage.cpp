@@ -1515,3 +1515,38 @@ TEST(ClipboardWildcardR6, TenNamesTheWholeLineAndZeroNamesNothing)
         EXPECT_TRUE(w == -1 || (w >= 0 && w < MAX_WILDCARDS));
     }
 }
+
+// ── An incoming chat call that never identifies itself is closed ────────────
+//
+// Nothing timed out a caller that connected and then sent no chat request, so
+// it held a session for good -- and the listener now caps unidentified calls,
+// so a few silent callers would otherwise lock everyone out.  The chat reaper
+// in CheckTimers closes one after a minute; a younger one, or one that has
+// identified itself, is left alone.
+TEST(ChatFileBlockR6, AnIncomingCallSilentForAMinuteIsClosed)
+{
+    CMUSHclientDoc doc;
+    CChatSocket* silent = new CChatSocket(&doc);
+    silent->m_bIncoming = true;
+    silent->m_iChatStatus = eChatAwaitingConnectionRequest;
+    silent->m_strServerName = "10.0.0.1";
+    silent->m_tWhenStarted = CTime::GetCurrentTime() - CTimeSpan(0, 0, 1, 1);
+    CChatSocket* young = new CChatSocket(&doc);
+    young->m_bIncoming = true;
+    young->m_iChatStatus = eChatAwaitingConnectionRequest;
+    CChatSocket* talking = new CChatSocket(&doc);
+    talking->m_bIncoming = true;
+    talking->m_iChatStatus = eChatConnected;
+    talking->m_tWhenStarted = silent->m_tWhenStarted;
+    doc.m_ChatList.AddTail(silent);
+    doc.m_ChatList.AddTail(young);
+    doc.m_ChatList.AddTail(talking);
+
+    doc.CheckTimers();
+    EXPECT_TRUE(silent->m_bDeleteMe);
+    EXPECT_FALSE(young->m_bDeleteMe);
+    EXPECT_FALSE(talking->m_bDeleteMe);
+
+    doc.CheckTimers();                  // the next pass reaps it
+    EXPECT_EQ(2, (int) doc.m_ChatList.GetCount());
+}

@@ -368,9 +368,15 @@ static int gdiHatch(HatchKind k) {
 // (BrushColour) / SetBkColor(PenColour) / TRANSPARENT when BrushColour == -1.
 static bool makeGdiBrush(CBrush& br, CDC* dc, const BrushSpec& b, CBitmap& patternBmp) {
     switch (b.style) {
+    // Solid and null brushes have no background, but a dashed PEN does: its
+    // gaps take the DC's background mode.  Upstream left the mode as the last
+    // hatch or pattern op set it, so a dashed outline's gaps came out in that
+    // op's gap colour.  Transparent, as the line/arc/polyline ops already are.
     case BrushStyle::Solid:
+        dc->SetBkMode(TRANSPARENT);
         return br.CreateSolidBrush(b.fg) != FALSE;
     case BrushStyle::Null: {
+        dc->SetBkMode(TRANSPARENT);
         LOGBRUSH lb; lb.lbStyle = BS_NULL; lb.lbColor = 0; lb.lbHatch = 0;
         return br.CreateBrushIndirect(&lb) != FALSE;
     }

@@ -767,6 +767,39 @@ TEST(Utilities, LinePositionsSurviveRepeatedEviction)
 // is the only thing that discards lines, so this pins that it is skipped — and,
 // with the counterpart below, that a real cap still evicts.  Without both arms
 // a build that never trims, or one that always does, passes half of this.
+// Unlimited still has a ceiling: the rows the view can address in 32-bit
+// pixels (INT_MAX / font height).  Past it the scroll size and every row's
+// coordinate wrapped negative; now the oldest lines go, as at a configured cap,
+// and the newest output is still there.  A font height of INT_MAX / 1000 puts
+// that ceiling at ~1000 rows instead of ~100 million.
+TEST(Utilities, ScrollbackNeverOutgrowsThePixelRange)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_maxlines = 0;                    // unlimited
+#ifndef _WIN32
+    doc.AllocateLinePositions();
+#endif
+    doc.m_FontHeight = INT_MAX / 1000;
+
+    char buf[32];
+    const int kLines = 3000;
+    for (int i = 1; i <= kLines; i++) {
+        snprintf(buf, sizeof buf, "line %d\n", i);
+        doc.DisplayMsg(buf, (int)strlen(buf), 0);
+    }
+
+    const long count = (long) doc.m_LineList.GetCount();
+    EXPECT_LE(count, 1000L);               // never past the addressable rows
+    EXPECT_GT(count, 500L);                // ...and trimmed by chunks, not wiped
+    // the newest complete line is the last-but-one (the last is in progress)
+    VARIANT v = doc.GetLineInfo(count - 1, 1);
+    ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+    snprintf(buf, sizeof buf, "line %d", kLines);
+    EXPECT_STREQ(buf, (const char*)CString(v.bstrVal));
+    VariantClear(&v);
+}
+
 #ifndef _WIN32   // CMUSHclientDoc::AllocateLinePositions is port-only (platform/doc_port_glue.cpp): it IS the port unbounded-scrollback mechanism, which raised the cap from 500,000 lines to 100,000,000. Windows applies its cap elsewhere, so this is port behaviour rather than shared behaviour blocked by a seam
 TEST(Utilities, UnlimitedScrollbackNeverEvicts)
 {

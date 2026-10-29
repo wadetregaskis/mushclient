@@ -28,7 +28,7 @@ struct sockaddr_in sa;
 
   // work out address to send to
   memset (&sa, 0, sizeof(sa));
-  sa.sin_port = htons (Port);
+  sa.sin_port = htons ((unsigned short) Port);   // 32768..65535 arrive negative
   sa.sin_family = AF_INET;
 
   if ((sa.sin_addr.s_addr = inet_addr (IP)) == INADDR_NONE)
@@ -68,8 +68,13 @@ long CMUSHclientDoc::UdpListen(LPCTSTR IP, short Port, LPCTSTR Script)
   if (m_CurrentPlugin == NULL)
     return eNotAPlugin;
 
+  // The port arrives as a (signed) short, so 32768..65535 came in negative:
+  // keyed and listed as a negative number, and handed to Create sign-extended.
+  // A port is 16 unsigned bits whatever the parameter's type.
+  const unsigned short uPort = (unsigned short) Port;
+
   // see if we already have one for this port
-  map<int, UDPsocket *>::iterator it = m_UDPsocketMap.find (Port);
+  map<int, UDPsocket *>::iterator it = m_UDPsocketMap.find (uPort);
 
   // delete existing, so we can use an empty script to achieve this
   if (it != m_UDPsocketMap.end ())
@@ -89,7 +94,7 @@ long CMUSHclientDoc::UdpListen(LPCTSTR IP, short Port, LPCTSTR Script)
   // make a new listener
   UDPsocket * pSocket = new UDPsocket (this);
 
-	if (!pSocket->Create (Port, SOCK_DGRAM, FD_READ, IP))
+	if (!pSocket->Create (uPort, SOCK_DGRAM, FD_READ, IP))
 	  {
 		delete pSocket;
 		return eBadParameter;
@@ -100,7 +105,7 @@ long CMUSHclientDoc::UdpListen(LPCTSTR IP, short Port, LPCTSTR Script)
   pSocket->m_strPluginID =  m_CurrentPlugin->m_strID;
 
   // keep a map of them
-  m_UDPsocketMap [Port] = pSocket;
+  m_UDPsocketMap [uPort] = pSocket;
 	return eOK;
 }   // end of CMUSHclientDoc::UdpListen
 

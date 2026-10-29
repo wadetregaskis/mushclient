@@ -38,6 +38,23 @@ inline int FittedLastColumnWidth (const int iSeedWidth,
   return iFitted > 0 ? iFitted : 0;
   }
 
+// Every column's width but one: what the fitted column has to leave room for.
+// The pages used to pass the columns they thought of -- the alias page only
+// Alias, not Sequence, Label or Group -- which made no difference while the
+// fitted width was never applied, and once it was, sized the alias and timer
+// lists' last column past the list's edge and gave them a horizontal scroll
+// bar on every open.
+inline int OtherColumnsWidth (const int * piColWidth,
+                              const int iColumnCount,
+                              const int iFittedColumn)
+  {
+  int iWidth = 0;
+  for (int i = 0; i < iColumnCount; i++)
+    if (i != iFittedColumn && piColWidth [i] > 0)
+      iWidth += piColWidth [i];
+  return iWidth;
+  }
+
 // What an output buffer of nLines would cost: 16 Mb for the OS plus 60 bytes a
 // line.  64-bit throughout, because the port raised the ceiling from 500,000
 // lines to 100,000,000 and the DWORD this used to accumulate into wrapped at

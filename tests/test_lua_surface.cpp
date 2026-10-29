@@ -2135,6 +2135,38 @@ TEST(LuaSurface, WindowDrawingActuallyPaints)
     ));
 }
 
+// A dashed outline's gaps show what is underneath, whatever was drawn before.
+// GDI fills a dashed pen's gaps with the background colour when the background
+// mode is OPAQUE, and only the hatch and pattern brushes set the mode -- so a
+// solid- or null-brush shape inherited it from the previous op: after a
+// hatched rectangle with a green gap colour, the next dashed outline came out
+// red-and-GREEN, not red-and-white.  (Lines, arcs and polylines always forced
+// TRANSPARENT; this makes shapes and polygons agree.)  Upstream behaviour,
+// fixed: docs/UPSTREAM-BUGS.md.  The assertion is "no green on the outline",
+// which a raster without a background mode satisfies too.
+TEST(LuaSurface, DashedOutlineGapsDoNotInheritTheLastBackgroundMode)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        "assert(world.WindowCreate('d', 0, 0, 90, 60, 0, 0, 0xFFFFFF) == 0)\n"
+        // a hatched rectangle: leaves the DC OPAQUE with a green background
+        "assert(world.WindowCircleOp('d', 2, 0, 0, 10, 10, 0x000000, 0, 1, 0x00FF00, 2) == 0)\n"
+        // dashed red outlines: a null brush, a solid white brush, a polygon
+        "assert(world.WindowCircleOp('d', 2, 2, 15, 88, 25, 0x0000FF, 1, 1, 0, 1) == 0)\n"
+        "assert(world.WindowCircleOp('d', 2, 2, 30, 88, 40, 0x0000FF, 1, 1, 0xFFFFFF, 0) == 0)\n"
+        "assert(world.WindowPolygon('d', '2,50,87,50,87,58,2,58', 0x0000FF, 1, 1, 0, 1, true, false) == 0)\n"
+        "for _, y in ipairs { 15, 30, 50 } do\n"
+        "  local red = 0\n"
+        "  for x = 3, 85 do\n"
+        "    local p = world.WindowGetPixel('d', x, y)\n"
+        "    assert(p ~= 0x00FF00, 'gap filled with the inherited background at ' .. x .. ',' .. y)\n"
+        "    if p == 0x0000FF then red = red + 1 end\n"
+        "  end\n"
+        "  assert(red > 0, 'no outline drawn on row ' .. y)\n"
+        "end\n"
+    ));
+}
+
 // WindowFilter's separable 5-tap kernel (blur / sharpen / edge / emboss) must be
 // CENTRED on the pixel it writes, and must write every pixel of the region.
 //

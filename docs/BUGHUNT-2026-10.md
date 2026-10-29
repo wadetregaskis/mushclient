@@ -12,7 +12,7 @@ performance survey, measured in the running client.
 **Method.** Reviewers read each area adversarially and reported findings with
 failure scenarios; every finding below was re-read against the code before it
 was fixed, and each Windows-reachable fix carries a test or was checked in the
-running client. Tests: 1735 pass on ARM64, x64 and Win32 (after the JIT, below); the packaged ARM64
+running client. Tests: 1743 pass on ARM64, x64 and Win32 (after the fixes made afterwards, below); the packaged ARM64
 build's engine selftest passes 471/471 (19 skipped).
 
 ## Fixed
@@ -212,31 +212,54 @@ Not done, measured as not worth the risk now: per-trigger overhead is ~110 ns
 `pcre_exec`), i.e. 1000 triggers ≈ 9,000 lines/s; per-run double
 measurement in `OnDraw`; plugin callback string copies; `SortTriggers` per add.
 
+## Fixed afterwards (2026-10-29, at the user's request)
+
+Everything the first version of the list below had left, except the three
+items that remain under it. Tests named are new; each was seen failing first
+where a failure was observable here.
+
+- **Miniwindow dashed outlines** took the last hatch or pattern brush's gap
+  colour — UPSTREAM-BUGS 110. `LuaSurface.DashedOutlineGapsDoNotInheritTheLastBackgroundMode`.
+- **MCCP + a trigger that reconnects** displayed the compressed packet —
+  UPSTREAM-BUGS 111. `Mccp.TriggerThatReconnectsMidStreamDoesNotDisplayCompressedBytes`.
+- **Chat:** zChat frames over 64 KB (112), the listener freed inside its own
+  `OnAccept` (113), no cap or request deadline for incoming calls (114), and the
+  stamp broadcast (117).
+- **UDP listeners:** all four (115), checked in the running client.
+- **DNS cancel under Wine** (116): a cancelled lookup's buffer is retired, not
+  freed.
+- **No TLS handshake timeout:** a server that accepts and then says nothing now
+  fails the handshake after 60 seconds (`TlsParams::handshakeTimeoutMs`), as a
+  handshake failure, with the usual unencrypted-fallback offer.
+  `WinTransport.ASilentServerTimesTheTlsHandshakeOut`. Windows only: the POSIX
+  transport has no such timer yet.
+- **Scrollback past the 32-bit pixel range:** the buffer now trims its oldest
+  lines at `INT_MAX / font height` rows, as at a configured cap, so the view's
+  arithmetic never overflows and the newest output stays reachable — on every
+  platform. `Utilities.ScrollbackNeverOutgrowsThePixelRange`.
+- **Window tabs at the bottom:** the tab control is opted out of visual styles,
+  so the classic renderer draws `TCS_BOTTOM` properly (and matches `CMDITabs`'
+  own classic edges, top or bottom) — what 5.x always showed. Checked in the
+  client.
+- **The alias and timer pages' fitted last column** ran past the list's edge,
+  with a horizontal scroll bar, because each page subtracted only some of its
+  other columns. `PrefsListColumns.TheFittedColumnLeavesRoomForEveryOtherColumn`.
+- **The port's vacuous toolbar selftest** now also compares the visible bars'
+  shown slots (not compiled here).
+
 ## Not fixed, and why
 
-- **Python threads calling world methods off the UI thread** are unsynchronised;
-  marshalling them is a design change.
+- **Python threads calling world methods off the UI thread** are unsynchronised.
+  The choices are to marshal each call to the UI thread (which turns today's
+  race into a deadlock for a script whose main thread waits on such a worker)
+  or to refuse the call with a Python error; that is a decision, not a fix.
 - **Text crossing world methods on multi-byte (CJK) or UTF-8 system code pages**
   round-trips through the ANSI code page (`mc_dispatch.cpp`); Tcl re-encodes
-  Latin-1 bytes. Design-level.
-- **Scrollback beyond ~97M lines** overflows `int` pixel arithmetic in
-  `mushview.cpp` (~20 GB of buffer); `pal/scroll_geometry.h` fixed it port-side.
-- **Miniwindow brush background mode** (dashed outlines inherit the last mode),
-  **DNS cancel under Wine**
-  (`WSACancelAsyncRequest` is a stub there), **MCCP + reconnect from a trigger**,
-  **IPv4 only**, **no TLS handshake timeout** — recorded, low impact, or 5.x's.
-- **Chat, lower priority:** a zChat frame over 64 KB keeps a truncated length
-  header (a MudMaster peer's huge text relayed desyncs zChat peers); a plugin
-  stopping the listen socket from its `ON_PLUGIN_CHAT_DISPLAY` callback inside
-  `OnAccept`; `Process_Stamp` broadcasting a decimal stamp; no handshake
-  timeout or connection cap for incoming calls; UDP listeners (a handler
-  re-listening on its own port, negative `short` ports, not released on plugin
-  unload, >999-byte datagrams dropped silently).
-- **Window tabs at the bottom** use `TCS_BOTTOM`, which Common Controls v6 does
-  not support: they draw as top tabs on a bottom bar, and `CMDITabs`' classic
-  edge painting mismatches the themed border (top too). Cosmetic, tabs off by
-  default; a proper fix is owner-drawn bottom tabs.
-- **Port-only toolbar selftest** "a hidden bar does not collide…" became
-  vacuous when `GetPlacement` moved to the stored arrangement.
+  Latin-1 bytes. Fixing it means passing the world's bytes through unconverted,
+  a change to the engine boundary on every platform.
+- **IPv4 only** (`WSAAsyncGetHostByName`, `AF_INET`), as in 5.x. IPv6 is a
+  feature that reaches through `pal::ITransport` to both platforms' transports,
+  SOCKS and chat.
 - Nothing port-side in this pass has been compiled (Mac/Enchant spell engines,
-  the toolbar drag guard, the bundled-files dialog, the importer's Wine search).
+  the toolbar drag guard, the bundled-files dialog, the importer's Wine search,
+  the toolbar selftest change above).

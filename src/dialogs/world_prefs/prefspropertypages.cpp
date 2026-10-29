@@ -3039,7 +3039,8 @@ BOOL CPrefsP7::OnInitDialog()
                                 m_iColWidth [eColumnContents],
                                 rect.right - rect.left,             // width of control
                                 GetSystemMetrics (SM_CXVSCROLL),    // vertical scroll bar
-                                m_iColWidth [eColumnAlias]);        // width of other items
+                                OtherColumnsWidth (m_iColWidth, m_iColumnCount,
+                                                   eColumnContents));
 
   // ... and apply it.  The base class inserted the columns from m_iColWidth
   // already, so storing the new figure there (all this used to do) reached
@@ -6907,8 +6908,8 @@ BOOL CPrefsP16::OnInitDialog()
                                 m_iColWidth [eColumnContents],
                                 rect.right - rect.left,             // width of control
                                 GetSystemMetrics (SM_CXVSCROLL),    // vertical scroll bar
-                                m_iColWidth [eColumnType] +         // existing columns
-                                m_iColWidth [eColumnWhen]);
+                                OtherColumnsWidth (m_iColWidth, m_iColumnCount,
+                                                   eColumnContents));
 
   if (iFitted)
     {
@@ -7900,7 +7901,8 @@ BOOL CPrefsP18::OnInitDialog()
                                 m_iColWidth [eColumnContents],
                                 rect.right - rect.left,             // width of control
                                 GetSystemMetrics (SM_CXVSCROLL),    // vertical scroll bar
-                                m_iColWidth [eColumnName]);         // width of other items
+                                OtherColumnsWidth (m_iColWidth, m_iColumnCount,
+                                                   eColumnContents));
 
   if (iFitted)
     {

@@ -431,4 +431,22 @@ TEST(ChatProtocol, GetStampZeroExtendsLikeTheDigestAssignmentDoes) {
     EXPECT_TRUE(wire.IsEmpty ());   // the 4 stamp bytes were consumed
 }
 
+
+// zChat's length field is two bytes.  A longer message used to go out with the
+// length's low 16 bits and every byte of the message, so the receiver read the
+// excess as further frames.  The frame's data now stops where the field does.
+TEST(ChatProtocol, ZChatFrameLengthAlwaysDescribesTheDataThatFollows) {
+    for (int n : { 0, 5, 0xFFFF, 0x10000, 70000 }) {
+        CString msg (n ? 'x' : ' ', n);
+        CString frame = CChatSocket::ZChatFrame (CHAT_TEXT_EVERYBODY, msg);
+        const unsigned char * p = (const unsigned char *) frame.GetString ();
+        ASSERT_GE(frame.GetLength (), 4);
+        EXPECT_EQ(CHAT_TEXT_EVERYBODY & 0xFF, (int) p [0]);
+        EXPECT_EQ((CHAT_TEXT_EVERYBODY >> 8) & 0xFF, (int) p [1]);
+        const int declared = p [2] | (p [3] << 8);
+        EXPECT_EQ(frame.GetLength () - 4, declared);   // header and data agree
+        EXPECT_EQ(n > 0xFFFF ? 0xFFFF : n, declared);
+    }
+}
+
 MC_TEST_MAIN()

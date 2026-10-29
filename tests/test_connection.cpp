@@ -1218,6 +1218,37 @@ TEST(Mccp, DataDiscardedWhenNotConnected)
     delete doc;
 }
 
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+// A trigger that reconnects from inside the decompressed text.  ConnectSocket
+// resets m_bCompress, so the decompression loop's next pass took its
+// not-compressed arm and fed the raw COMPRESSED packet to DisplayMsg: binary
+// garbage in the output, and any IAC-shaped byte in it answered the new
+// server.  The loop now stops once the connection it was reading is gone.
+TEST(Mccp, TriggerThatReconnectsMidStreamDoesNotDisplayCompressedBytes)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_server = "127.0.0.1";          // a literal: Connect does no DNS
+    doc->m_port = 9;
+    CScriptEngine* engine = new CScriptEngine(doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc->m_ScriptEngine = engine;
+    doc->m_bEnableScripts = TRUE;
+    doc->m_enable_triggers = TRUE;
+    ASSERT_EQ((long)eOK, doc->AddTriggerEx("bye", "goodbye", "world.Disconnect(); world.Connect()",
+                                     1 /*eEnabled*/, -1, 0, "", "", eSendToScript, 100));
+    start_mccp2(doc);
+    std::string z = deflate_bytes("hello\r\ngoodbye\r\nafter\r\n", false);
+    doc->OnBytesReceived(&z[0], (int)z.size());
+    EXPECT_TRUE(saw(doc, "goodbye"));
+    EXPECT_NE(eConnectConnectedToMud, doc->m_iConnectPhase);   // the trigger ran
+    // the test text is plain ASCII: any byte above it is compressed data
+    const std::string text = all_text(doc);
+    for (unsigned char c : text)
+        EXPECT_LT((int) c, 0x80);
+    delete doc;
+}
+#endif
+
 // ── ShiftTabCompleteItem ───────────────────────────────────────────────────
 
 TEST(TabComplete, ShiftTabCompleteItemContract)

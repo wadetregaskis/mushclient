@@ -380,6 +380,37 @@ TEST(WinTransport, ConnectToALoopbackListenerReportsSuccessAsynchronously)
     delete t;
 }
 
+// A server that accepts and then says nothing used to leave the handshake --
+// and the world's "Performing TLS handshake" -- waiting for ever.  It now fails
+// as a handshake failure once TlsParams::handshakeTimeoutMs has passed.
+TEST(WinTransport, ASilentServerTimesTheTlsHandshakeOut)
+{
+    Listener l;
+    ASSERT_TRUE(l.ok());
+    Recorder rec;
+    pal::ITransport* t = pal::CreateWinTransport(rec);
+    ASSERT_TRUE(t != NULL);
+
+    pal::TransportOptions opt;
+    t->connect(kLoopback, l.port, opt);
+    ASSERT_TRUE(Pump([&] { l.acceptOnce(); return rec.connects > 0; }));
+
+    pal::TlsParams p;
+    p.allowInvalidCert = true;
+    p.handshakeTimeoutMs = 300;
+    t->startTls(p);                    // the peer never answers the ClientHello
+    EXPECT_EQ(0, rec.tlsFail);         // not before the time is up
+    EXPECT_TRUE(Pump([&] { return rec.tlsFail > 0; }, 5000));
+    EXPECT_EQ(1, rec.tlsFail);
+    EXPECT_EQ(0, rec.tlsOk);
+    // and only once: the timer does not fire again
+    Pump([&] { return false; }, 700);
+    EXPECT_EQ(1, rec.tlsFail);
+    EXPECT_FALSE(rec.reentered);
+
+    delete t;
+}
+
 TEST(WinTransport, ConnectToAPortNothingListensOnReportsTheError)
 {
     const unsigned short dead = dead_port();

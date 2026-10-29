@@ -2340,6 +2340,13 @@ int RunMenuBarSelfTest()
         // -- so Standard (row 0) and World (renumbered 1 -> 0) both read
         // (row 0, order 0), and re-showing Standard docked it on top of World.
         // Every bar must have a DISTINCT (row, order) even while one is hidden.
+        //
+        // The stored slots alone can no longer fail -- GetPlacement reads the
+        // stored arrangement, which keeps them distinct by construction -- so
+        // the SHOWN slots of the two bars still visible are compared as well:
+        // the renumbering is where a collision would now appear.  (The
+        // original symptom, Standard re-docking on top of World, is pinned by
+        // the re-show check below.)
         {
             const Place a = bars->GetPlacement(kStd);
             const Place b = bars->GetPlacement(kWld);
@@ -2349,6 +2356,8 @@ int RunMenuBarSelfTest()
             };
             check(!same(a, b) && !same(a, c) && !same(b, c),
                   "a hidden bar does not collide with a renumbered visible bar");
+            check(!same(bars->GetShownPlacement(kWld), bars->GetShownPlacement(kAct)),
+                  "...and the visible bars do not share a shown slot");
         }
         bars->SetBarVisible(kStd, true);   // restore before teardown
         check(shownRow(bars, kStd) == 0 && shownRow(bars, kWld) == 1,

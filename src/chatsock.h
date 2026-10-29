@@ -211,6 +211,9 @@ public:
 
   CString MakeStamp (const long iStamp);   // makes zChat message stamp
 
+  // one zChat frame (message number, length, data); data past 65535 is cut
+  static CString ZChatFrame (const int iMessage, const CString & strData);
+
   // message processors
 
   void Process_Name_change				  (const CString strMessage);

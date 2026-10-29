@@ -76,8 +76,22 @@ int ssl_verify_callback(int /*preverify_ok*/, X509_STORE_CTX* /*ctx*/)
 const UINT WM_WT_RESOLVED       = WM_APP + 401;  // WSAAsyncGetHostByName completion
 const UINT WM_WT_RESOLVE_FAILED = WM_APP + 402;  // initiation failed (deferred)
 const UINT WM_WT_CONNECTED      = WM_APP + 403;  // immediate connect (deferred)
+const UINT_PTR kTlsTimeoutTimer = 1;             // SetTimer id on that window
 
 const char* const kWndClass = "MUSHclientPalWinTransport";
+
+// A WSAAsyncGetHostByName result buffer whose lookup was CANCELLED is never
+// freed: it is kept here until exit.  Windows promises a cancelled request
+// writes nothing more, but Wine's WSACancelAsyncRequest is a stub that returns
+// success while its worker thread goes on to write up to MAXGETHOSTSTRUCT bytes
+// into the buffer -- which used to be freed (or reused by the next lookup)
+// straight after the cancel.  Nothing here can tell the two apart, so a
+// cancelled lookup costs 1 KB instead of a write into freed memory.
+std::vector<std::unique_ptr<char[]>>& RetiredHostBuffers()
+{
+    static std::vector<std::unique_ptr<char[]>> retired;
+    return retired;
+}
 
 } // namespace
 
@@ -130,9 +144,11 @@ public:
             m_events.onResolved(token, 0, false);
             return;
         }
+        // a fresh buffer per lookup: a cancelled one may still be written to
+        m_hostBuf.reset(new char[MAXGETHOSTSTRUCT]);
         m_hLookup = ::WSAAsyncGetHostByName(m_hWnd, WM_WT_RESOLVED,
                                             host ? host : "",
-                                            m_hostBuf, sizeof m_hostBuf);
+                                            m_hostBuf.get(), MAXGETHOSTSTRUCT);
         if (!m_hLookup) {
             // could not even initiate — report failure, but deferred so the
             // engine never sees a re-entrant onResolved.  This is the path
@@ -149,6 +165,7 @@ public:
         if (m_hLookup) {
             ::WSACancelAsyncRequest(m_hLookup);   // == OnConnectionDisconnect's cancel
             m_hLookup = NULL;
+            RetiredHostBuffers().push_back(std::move(m_hostBuf));   // see above
         }
     }
 
@@ -269,6 +286,9 @@ public:
         }
         SSL_set_connect_state(m_ssl);
         m_tlsHandshaking = true;
+        if (m_hWnd && m_tlsParams.handshakeTimeoutMs > 0)
+            ::SetTimer(m_hWnd, kTlsTimeoutTimer,
+                       (UINT) m_tlsParams.handshakeTimeoutMs, NULL);
         stepTls();
     }
 
@@ -368,7 +388,7 @@ private:
                             self->m_lastResolveError = 0;
                             // the exact HostNameResolved parse
                             struct hostent* pHostent =
-                                (struct hostent*)self->m_hostBuf;
+                                (struct hostent*)self->m_hostBuf.get();
                             unsigned int addr =
                                 ((LPIN_ADDR)pHostent->h_addr)->s_addr;
                             self->m_events.onResolved(self->m_resolveToken,
@@ -382,6 +402,12 @@ private:
                 case WM_WT_CONNECTED:
                     self->handleConnect(0);
                     return 0;
+                case WM_TIMER:
+                    if (wParam == kTlsTimeoutTimer) {
+                        self->tlsTimedOut();
+                        return 0;
+                    }
+                    break;
             }
         }
         return ::DefWindowProcA(hWnd, msg, wParam, lParam);
@@ -548,6 +574,8 @@ private:
         int ret = SSL_do_handshake(m_ssl);
         if (ret == 1) {
             m_tlsHandshaking = false;
+            if (m_hWnd)
+                ::KillTimer(m_hWnd, kTlsTimeoutTimer);
 
             long verify_result = SSL_get_verify_result(m_ssl);
             std::string verifyFailure;
@@ -604,6 +632,21 @@ private:
         }
         m_tlsUp = false;
         m_tlsHandshaking = false;
+        if (m_hWnd)
+            ::KillTimer(m_hWnd, kTlsTimeoutTimer);
+    }
+
+    // The handshake outlived TlsParams::handshakeTimeoutMs: fail it the way a
+    // broken handshake fails, so the engine's ordinary message (and its offer
+    // to fall back to an unencrypted connection) applies.
+    void tlsTimedOut()
+    {
+        ::KillTimer(m_hWnd, kTlsTimeoutTimer);
+        if (!m_tlsHandshaking)
+            return;   // finished just before the timer was serviced
+        teardownTls();
+        m_events.onTlsFailed(TlsFailure::Handshake,
+                             "the server did not complete the TLS handshake in time");
     }
 
     ITransportEvents& m_events;
@@ -620,7 +663,9 @@ private:
     HANDLE       m_hLookup      = NULL;   // WSAAsyncGetHostByName task handle
     ResolveToken m_resolveToken = 0;
     int          m_lastResolveError = 0;  // WSA code from the last failed resolve
-    alignas(hostent) char m_hostBuf[MAXGETHOSTSTRUCT];   // hostent + data
+    // hostent + data for the lookup in flight (or the last one that completed);
+    // new[] is aligned for any fundamental type, hostent included
+    std::unique_ptr<char[]> m_hostBuf;
 
     bool      m_connectPending = false;   // connect() called, onConnect not yet delivered
     bool      m_tlsHandshaking = false;

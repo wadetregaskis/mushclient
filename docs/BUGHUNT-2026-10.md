@@ -65,6 +65,9 @@ build's engine selftest passes 471/471 (19 skipped).
 - An immediate connect could deliver `onConnect` twice (posted message plus
   `FD_CONNECT`); now once.
 - A TLS write that wanted to read was never retried until the next send.
+- A host name that would not resolve left the transport in place, so a timer
+  running while closed queued sends into it without limit; it is freed once the
+  failure is reported (checked: an unresolvable host, then a reconnect).
 
 ### Script engines (64-bit embedded)
 - **JScript's `VBArray(wildcards).toArray()` gave `[whole, %1, …]`**, so every
@@ -75,6 +78,8 @@ build's engine selftest passes 471/471 (19 skipped).
   `Py_FatalError`); now an error and no engine.
 - Python source in the ANSI code page was a SyntaxError at its first accented
   byte (an author's name in a comment will do); decoded from that code page.
+  Checked in the client: a Windows-1252 world script with an accented comment
+  loads and runs.
 - Ruby raised (→ `rb_bug` → abort) on a non-ASCII callback name.
 - `round_to_long` clamped at ±2^63, leaving a number past 2^31 undefined on
   Windows (`LONG_MIN` on x64, `LONG_MAX` on ARM64).
@@ -88,6 +93,8 @@ build's engine selftest passes 471/471 (19 skipped).
   scroll offset (the text dropped down, then snapped back). Upstream.
 - A miniwindow deleted under the mouse left a stale id that stopped tooltips
   and selection until the next click. Upstream.
+- The GDI adapter's 32-bit surface ids wrapped after 2^32 image draws and could
+  reuse a live miniwindow's; ids in use are skipped.
 
 ## Performance (measured in the running client, ARM64, Release)
 
@@ -146,7 +153,7 @@ callback string copies; `SortTriggers` per add.
 - **Scrollback beyond ~97M lines** overflows `int` pixel arithmetic in
   `mushview.cpp` (~20 GB of buffer); `pal/scroll_geometry.h` fixed it port-side.
 - **Miniwindow brush background mode** (dashed outlines inherit the last mode),
-  **32-bit surface-id wrap** (~2^32 image draws), **DNS cancel under Wine**
+  **DNS cancel under Wine**
   (`WSACancelAsyncRequest` is a stub there), **MCCP + reconnect from a trigger**,
   **IPv4 only**, **no TLS handshake timeout** — recorded, low impact, or 5.x's.
 - **Port-only toolbar selftest** "a hidden bar does not collide…" became

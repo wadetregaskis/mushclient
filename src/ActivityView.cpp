@@ -168,19 +168,26 @@ CListCtrl & pList = GetListCtrl ();
 
 // if count is the same, check world is the same as in the list
 
+  // A world's row, found by the document it holds: once the list is sorted
+  // (by any column but Seq ascending) rows are no longer in view-number
+  // order, and looking a world up by its view number found another's row --
+  // so the list was rebuilt on every update, losing the selection and the
+  // scroll position each time, and its selection-based commands went dead.
+  auto rowOf = [&pList] (CMUSHclientDoc * pDoc)
+    {
+    for (int i = 0; i < pList.GetItemCount (); i++)
+      if (pList.GetItemData (i) == (DWORD_PTR) pDoc)
+        return i;
+    return -1;
+    };
+
   if (nDocCount == pList.GetItemCount ())
     {
    	pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
     while (pos)
       {
        CMUSHclientDoc* pDoc = (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
-       int nItem = pDoc->m_view_number - 1;
-       if (nItem < 0)
-         {
-         bInserting = true;
-         break;
-         }
-       if ((DWORD_PTR) pDoc != pList.GetItemData (nItem))
+       if (pDoc->m_view_number < 1 || rowOf (pDoc) < 0)
          {
          bInserting = true;
          break;
@@ -204,7 +211,7 @@ CListCtrl & pList = GetListCtrl ();
     if (bInserting)
       pDoc->m_view_number = nItem + 1;    // so we can use Ctrl+1 etc.
     else
-      nItem = pDoc->m_view_number - 1;    // use existing item number
+      nItem = rowOf (pDoc);               // its existing row, wherever sorting put it
 
     CString strSeq;
     CString strLines;
@@ -594,7 +601,13 @@ void CActivityView::OnPopupFileClose()
     return;
 
   pDoc->OnFileClose ();
-  
+
+  // The world may be gone now, and its row -- selected, with the freed
+  // document as its item data -- would otherwise stay until the next
+  // refresh, for the toolbar's update handlers (and a double-click) to use.
+  // Rebuilt from the documents still open; rowOf compares pointers only.
+  OnUpdate (NULL, 0, NULL);
+
 }
 
 void CActivityView::OnPopupFileSave() 

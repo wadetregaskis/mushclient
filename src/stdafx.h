@@ -681,7 +681,11 @@ inline void   KillThread(HANDLE&, CEvent&) {}
 inline HANDLE CreateMonitoringThread(const char*, DWORD_PTR, CEvent&) { return nullptr; }
 #endif // _WIN32
 
-#define WM_USER_FILE_CONTENTS_CHANGED (WM_USER + 1001)
+// A notepad's file changed on disk.  Not WM_USER + 1001, which it shared with
+// WM_USER_SCRIPT_FILE_CONTENTS_CHANGED: the main frame took every one for a
+// world's script file, found no world with that pointer, and dropped it, so
+// the "reload?" question never came.
+#define WM_USER_FILE_CONTENTS_CHANGED (WM_USER + 1006)
 
 #define REGISTRATION_TIMER_ID 0x1001
 #define SPLASH_SCREEN_TIMER_ID 0x1002

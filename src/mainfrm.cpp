@@ -11,6 +11,7 @@
 
 #include "ActivityDoc.h"
 #include "ActivityView.h"
+#include "TextDocument.h"
 #include "childfrm.h"
 
 #include "winplace.h"
@@ -1053,6 +1054,25 @@ BOOL CMainFrame::PreTranslateMessage(MSG* pMsg)
 
     return TRUE;    // message was handled
     }
+
+// ******************* NOTEPAD FILE contents have changed ********************
+
+#ifdef _WIN32
+  if (pMsg->message == WM_USER_FILE_CONTENTS_CHANGED && pMsg->wParam != 0)
+    {
+    // the notepad document it was for, if it is still open
+    for (POSITION pos = App.m_pNormalDocTemplate->GetFirstDocPosition (); pos; )
+      {
+      CDocument * pDoc = App.m_pNormalDocTemplate->GetNextDoc (pos);
+      if (pDoc == (CDocument *) pMsg->wParam)
+        {
+        ((CTextDocument *) pDoc)->OnFileChanged ();
+        break;
+        }
+      }
+    return TRUE;    // message was handled
+    }
+#endif
 
 
  // ******************* Tips dialog after unregistered delay ********************

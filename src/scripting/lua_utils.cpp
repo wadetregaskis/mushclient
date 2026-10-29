@@ -28,6 +28,10 @@
 //   utils.shellexecute
 //   utils.showdebugstatus
 //   utils.spellcheckdialog
+//   utils.spell_add_word
+//   utils.spell_check
+//   utils.spell_engine
+//   utils.spell_suggest
 //   utils.timer
 //   utils.umsgbox
 //   utils.utf8decode
@@ -52,6 +56,7 @@
 #include "../dialogs/FunctionListDlg.h"
 #include "../Dmetaph.h"
 #include "../user_data.h"   // UserData_Directory: data_directory on Windows
+#include "../spell_engine.h" // utils.spell_*: the operating system's spell checker
 #ifdef _WIN32
 #include <direct.h>
 #include <wingdi.h>
@@ -942,6 +947,9 @@ static int spellcheckdialog (lua_State *L)
 
     }      // end of not nil for argument 2
 
+  // argument 3: offer "Add to System" (a system spell checker is in use)
+  dlg.m_bSystemDictionary = lua_toboolean (L, 3) && SystemSpellEngine () != NULL;
+
   if (dlg.DoModal () != IDOK)
     {
     lua_pushnil (L);
@@ -950,8 +958,53 @@ static int spellcheckdialog (lua_State *L)
 
   lua_pushstring (L, dlg.m_sAction.c_str ());
   lua_pushstring (L, dlg.m_strMisspeltWord);
-  return 2;    
+  return 2;
   } // end of spellcheckdialog
+
+// ── The operating system's spell checker (spell_engine.h) ──────────────────
+// For spellchecker.lua: what it is called (nil if there is none), whether a
+// word is right, what it suggests instead, and teaching it a word.
+
+static int spell_engine (lua_State *L)
+  {
+  ISpellEngine * engine = SystemSpellEngine ();
+  if (!engine)
+    return 0;    // nil: use the built-in dictionaries
+  lua_pushstring (L, engine->Name ().c_str ());
+  return 1;
+  }
+
+static int spell_check (lua_State *L)
+  {
+  const char * word = luaL_checkstring (L, 1);
+  ISpellEngine * engine = SystemSpellEngine ();
+  lua_pushboolean (L, !engine || engine->Check (word));
+  return 1;
+  }
+
+static int spell_suggest (lua_State *L)
+  {
+  const char * word = luaL_checkstring (L, 1);
+  lua_newtable (L);
+  if (ISpellEngine * engine = SystemSpellEngine ())
+    {
+    int i = 1;
+    for (const std::string & s : engine->Suggest (word))
+      {
+      lua_pushstring (L, s.c_str ());
+      lua_rawseti (L, -2, i++);
+      }
+    }
+  return 1;
+  }
+
+static int spell_add_word (lua_State *L)
+  {
+  const char * word = luaL_checkstring (L, 1);
+  ISpellEngine * engine = SystemSpellEngine ();
+  lua_pushboolean (L, engine && engine->AddWord (word));
+  return 1;
+  }
 
 
 static int metaphone (lua_State *L) 
@@ -2264,6 +2317,10 @@ static const struct luaL_Reg xmllib [] =
   {"sendtofront",       send_to_front},
   {"shellexecute",      shell_execute},
   {"spellcheckdialog",  spellcheckdialog},
+  {"spell_engine",      spell_engine},
+  {"spell_check",       spell_check},
+  {"spell_suggest",     spell_suggest},
+  {"spell_add_word",    spell_add_word},
   {"timer",             timer},
   {"umsgbox",           umsgbox},      // msgbox - UTF8
   {"utf8decode",        utf8decode}, 

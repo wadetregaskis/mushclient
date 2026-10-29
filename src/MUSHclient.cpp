@@ -23,6 +23,7 @@
 #include "StatLink.h"
 #include "user_data.h"
 #include "legacy_import.h"
+#include "spell_engine.h"
 
 #include "dialogs/welcome.h"
 #include "dialogs/welcome1.h"
@@ -866,6 +867,10 @@ BOOL CMUSHclientApp::InitInstance()
       bAutoOpen = false;    // and cancel auto-open
       } // end of world and port supplied
 	}
+
+  // the operating system's spell checker, if it has one: spellchecker.lua
+  // uses it in place of the built-in word lists (spell_engine.h)
+  SetSystemSpellEngine (CreatePlatformSpellEngine ());
 
   // enable spell checker, if wanted in prefs
   if (m_bEnableSpellCheck)

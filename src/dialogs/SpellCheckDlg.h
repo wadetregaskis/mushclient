@@ -30,6 +30,10 @@ public:
 
   string m_sAction;
 
+  // a system spell checker is in use: offer "Add to System" beside
+  // "Add to MUSHclient"
+  bool m_bSystemDictionary = false;
+
 // Overrides
 	// ClassWizard generated virtual function overrides
 	//{{AFX_VIRTUAL(CSpellCheckDlg)
@@ -47,6 +51,7 @@ protected:
 	afx_msg void OnIgnore();
 	afx_msg void OnIgnoreAll();
 	afx_msg void OnAdd();
+	afx_msg void OnAddSystem();
 	afx_msg void OnChange();
 	afx_msg void OnChangeAll();
 	virtual BOOL OnInitDialog();

@@ -44,6 +44,7 @@ BEGIN_MESSAGE_MAP(CSpellCheckDlg, CDialog)
 	ON_BN_CLICKED(ID_IGNORE, OnIgnore)
 	ON_BN_CLICKED(ID_IGNORE_ALL, OnIgnoreAll)
 	ON_BN_CLICKED(ID_ADD, OnAdd)
+	ON_BN_CLICKED(ID_ADD_SYSTEM, OnAddSystem)
 	ON_BN_CLICKED(ID_CHANGE, OnChange)
 	ON_BN_CLICKED(ID_CHANGE_ALL, OnChangeAll)
 	ON_LBN_DBLCLK(ID_SUGGESTIONS, OnDblclkSuggestions)
@@ -65,9 +66,16 @@ void CSpellCheckDlg::OnIgnoreAll()
   CDialog::OnOK();
 }
 
-void CSpellCheckDlg::OnAdd() 
+void CSpellCheckDlg::OnAdd()
 {
   m_sAction = "add";
+  CDialog::OnOK();
+}
+
+// to the operating system's dictionary, which every program shares
+void CSpellCheckDlg::OnAddSystem()
+{
+  m_sAction = "addsystem";
   CDialog::OnOK();
 }
 
@@ -124,6 +132,11 @@ BOOL CSpellCheckDlg::OnInitDialog()
 
   if (!m_suggestions.empty ())
      m_ctlSuggestions.SetCurSel (0);
+
+  // no system dictionary to add to: only MUSHclient's
+  if (!m_bSystemDictionary)
+    if (CWnd * pButton = GetDlgItem (ID_ADD_SYSTEM))
+      pButton->ShowWindow (SW_HIDE);
 
 	return TRUE;  // return TRUE unless you set the focus to a control
 	              // EXCEPTION: OCX Property Pages should return FALSE

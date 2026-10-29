@@ -30,9 +30,20 @@ local directory      = utils.info ().data_directory or dict_directory
 -- file name of the user dictionary, in the writable directory
 local userdict = "userdict.txt"
 
+-- The operating system's spell checker, if there is one: Windows', macOS's, or
+-- Enchant's (Hunspell's) on Linux -- in whatever language the user has set,
+-- with whatever words they have taught it.  utils.spell_engine names it, or
+-- returns nil.  With one, the dictionaries below are not used at all: a word
+-- is right if the system says so or the user added it to MUSHclient's own
+-- dictionary (userdict.txt), which keeps the words a MUD uses out of the
+-- dictionary every other program shares -- or, if they choose "Add to
+-- System" instead, puts them in it.
+local system = utils.spell_engine and utils.spell_engine ()
+
 -- stuff below used internally
 local make_upper  -- this becomes the upper-case conversion function, see below
-local db          -- SQLite3 dictionary database
+local db          -- SQLite3 dictionary database (without a system spell checker)
+local user_words = {}  -- MUSHclient's own dictionary: userdict.txt, upper-cased
 local cancelmessage = "spell check cancelled"
 local previousword  --> not used right now
 local change, ignore  -- tables of change-all, ignore-all words
@@ -93,9 +104,32 @@ local function insert_word (word, user)
    if m2 then
     assert (db:execute (string.format ("INSERT INTO words VALUES (NULL, '%s', '%s', %i)",
               fixed_word, m2, user)));
-   end -- having alternative      
-  
+   end -- having alternative
+
 end -- insert_word
+
+-- is it in MUSHclient's own dictionary?
+local function user_word (word)
+  return user_words [make_upper (word)] ~= nil
+end -- user_word
+
+-- add a word to MUSHclient's own dictionary: userdict.txt, which the database
+-- is built from -- so the word survives a rebuild, or a change of spell checker
+local function add_user_word (word)
+  word = trim (word)
+  if word == "" or user_word (word) then
+    return
+  end -- nothing to add
+  user_words [make_upper (word)] = true
+  local f = io.open (directory .. userdict, "a")
+  if f then
+    f:write (word, "\n")
+    f:close ()
+  end -- opened
+  if db then
+    insert_word (word, 1)
+  end -- have database
+end -- add_user_word
 
 
 -- sort function for sorting the suggestions into edit-distance order
@@ -147,7 +181,16 @@ local function checkword_and_suggest (word)
   if change [word] then
     return change [word], "change"
   end -- change to this word
-  
+
+  local suggestions
+
+  if system then
+    if user_word (word) or utils.spell_check (word) then
+      return word, "ok"
+    end -- word found
+    suggestions = utils.spell_suggest (word) or {}
+  else
+
   -- table of suggestions, based on the metaphone
   local keyed_suggestions = {}
   
@@ -182,15 +225,17 @@ local function checkword_and_suggest (word)
   end -- have alternate metaphone
 
   -- pull into indexed table
-  local suggestions = {}
+  suggestions = {}
   for k in pairs (keyed_suggestions) do
     table.insert (suggestions, k)
-  end -- for 
-     
+  end -- for
+
   table.sort (suggestions, suggestions_compare (uc_word))
-  
-  -- not found? do spell check dialog
-  local action, replacement = utils.spellcheckdialog (word, suggestions)
+
+  end -- no system spell checker
+
+  -- not found? do spell check dialog (offering "Add to System" if there is one)
+  local action, replacement = utils.spellcheckdialog (word, suggestions, system ~= nil)
   
   -- they cancelled?
   if not action then
@@ -211,9 +256,15 @@ local function checkword_and_suggest (word)
   -- add to user dictionary? 
   -- add to metaphone table, and rewrite dictionary
   if action == "add" then
-    insert_word (word, 1)
+    add_user_word (word)
     return word, "ok"
   end -- adding
+
+  -- add to the system's dictionary, shared with every other program
+  if action == "addsystem" then
+    utils.spell_add_word (word)
+    return word, "ok"
+  end -- adding to the system
   
   -- change word once? return replacement
   if action == "change" then
@@ -260,7 +311,14 @@ local notfound  -- table of not-found words, for spellcheck_string
 local function checkword (word)
   uc_word = make_upper (word)  -- convert to upper-case if wanted
 
-  -- get first metaphone 
+  if system then
+    if not (user_word (word) or utils.spell_check (word)) then
+      table.insert (notfound, word)
+    end -- not found
+    return
+  end -- system spell checker
+
+  -- get first metaphone
   local m = utils.metaphone (word, METAPHONE_LENGTH)
   
   local found = false
@@ -288,7 +346,7 @@ end -- spellcheck_string
 -- exported function to add a word to the user dictionary
 function spellcheck_add_word (word, action, replacement)
   assert (action == "i", "Can only use action 'i' in user dictionary")  -- only "i" supported right now
-  insert_word (word, 1)
+  add_user_word (word)
 end -- spellcheck_string
 
 -- read one of the dictionaries
@@ -305,7 +363,7 @@ local function read_dict (dlg, name)
  end -- if SHOW_PROGRESS_BAR
 
   for line in io.lines (dir .. name) do
-    insert_word (line, 0)
+    insert_word (line, name == userdict and 1 or 0)
   end
 end -- read_dict
   
@@ -326,7 +384,32 @@ local function init ()
   else
     f:close ()
   end -- checking for user dictionary
- 
+
+  for line in io.lines (directory .. userdict) do
+    line = trim (line)
+    if line ~= "" then
+      user_words [make_upper (line)] = true
+    end -- a word
+  end -- reading user dictionary
+
+  if system then
+    -- No database: the system checks the words.  But a word added before
+    -- this version, when Add put it only in the database, is carried over
+    -- into userdict.txt (one already there is left as it is).
+    local old = io.open (directory .. "spell.sqlite", "rb")
+    if old then
+      old:close ()
+      local olddb = sqlite3.open (directory .. "spell.sqlite")
+      if olddb then
+        for row in olddb:rows ("SELECT DISTINCT name FROM words WHERE user = 1") do
+          add_user_word (row [1])
+        end -- each added word
+        olddb:close ()
+      end -- opened
+    end -- have one
+    return
+  end -- system spell checker
+
   -- open database on disk
   db = assert (sqlite3.open( directory .. "spell.sqlite"))
   local words_table = false

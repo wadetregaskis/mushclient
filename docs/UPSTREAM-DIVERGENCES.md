@@ -1289,3 +1289,67 @@ version marker set back:
 - "Upgrade" replaced the copy and kept the edit as `.backup`.
 
 The macOS and Linux dialog (a `wxRichMessageDialog`) has not been run.
+
+## 29 — The spell checker uses the operating system's, with a dictionary of MUSHclient's own
+
+**Where:** `spell_engine.h` / `spell_engine.cpp`, with the engines in
+`spell_engine_win.cpp` (Windows), `platform/spell_engine_mac.mm` (macOS) and
+`platform/spell_engine_enchant.cpp` (Linux). Also `scripting/spellchecker.lua`,
+`utils.spell_*` in `scripting/lua_utils.cpp`, and `dialogs/SpellCheckDlg.cpp`
+with `IDD_SPELLCHECK_DIALOG`.
+
+**Upstream:** MUSHclient checks spelling against its own 55,000 American English
+words. Suggestions come only from words with the same Double Metaphone code. It
+offers nothing for "quikc", "neccessary" or "goverment", ranks "the" third for
+"teh", and knows no other language. "Add" put a word only into its SQLite
+database. `userdict.txt` was never written, so a rebuilt database lost the word.
+
+**Now:** where the operating system has a spell checker, it decides which words
+are right and what to suggest, in the user's languages:
+
+- **Windows:** `ISpellChecker`, in the user's locale.
+- **macOS:** `NSSpellChecker`, with the languages chosen in System Settings.
+- **Linux:** Enchant, usually Hunspell, in `$LANG`'s language. It is loaded with
+  `dlopen`, so the build and the package do not depend on it.
+
+Where there is none (no Enchant, or no dictionary for the language), the
+built-in word lists are used as before. MUSHclient keeps a dictionary of its own
+either way, `userdict.txt` in the data folder. It is consulted first, and that is
+where a MUD's names and jargon can go without reaching every other program. So
+the dialog's "Add" is now two buttons:
+
+- **Add to MUSHclient:** writes `userdict.txt`.
+- **Add to System:** teaches the operating system's dictionary. It is shown only
+  when there is one.
+
+`AddSpellCheckWord` adds to MUSHclient's. With a system spell checker the 55,000
+words are not loaded at all, which also saves the first run's database build.
+Words added before this version, which were only in the database, are carried
+over into `userdict.txt`. The script API (`SpellCheck`, `SpellCheckDlg`,
+`AddSpellCheckWord`, `Metaphone`, `EditDistance`) is unchanged, and so is the
+dialog apart from the button.
+
+**Why:** the operating systems' checkers suggest the right word far more often.
+On 23 common typos, Windows' put it first for 22, against 17 for the built-in
+lists, which offered nothing at all for 3. They also bring every language the
+user has. A dictionary of MUSHclient's own keeps MUD vocabulary out of the one
+the user's other programs share, or puts it there if they would rather.
+
+**Verification:** `tests/test_spellchecker.cpp`, on every platform, loads the
+real `spellchecker.lua` with a stand-in engine and dialog, and checks:
+
+- the engine decides;
+- MUSHclient's dictionary is consulted first;
+- each Add button writes where it should, and the word survives a reload;
+- `AddSpellCheckWord` writes MUSHclient's dictionary.
+
+`tests/win/test_spell_engine.cpp` drives Windows' real checker. Checked by hand
+on Windows, with Ctrl+J on "teh quikc grue goes nort":
+
+- the dialog showed both Add buttons and Windows' suggestions;
+- the line became "the quick grue goes north";
+- "grue" went into `userdict.txt`;
+- no spell database was built.
+
+"Add to System" was not clicked on this machine, so as not to change its real
+dictionary. The macOS and Linux engines have not been built or run.

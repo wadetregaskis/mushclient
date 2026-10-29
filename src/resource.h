@@ -1200,6 +1200,7 @@
 #define ID_IGNORE                       2880
 #define ID_IGNORE_ALL                   2881
 #define ID_ADD                          2882
+#define ID_ADD_SYSTEM                   2898
 #define ID_CHANGE                       2883
 #define ID_CHANGE_ALL                   2884
 #define ID_MISSPELT_WORD                2887
@@ -1568,7 +1569,7 @@
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        369
 #define _APS_NEXT_COMMAND_VALUE         33057
-#define _APS_NEXT_CONTROL_VALUE         2898
+#define _APS_NEXT_CONTROL_VALUE         2899
 #define _APS_NEXT_SYMED_VALUE           312
 #endif
 #endif

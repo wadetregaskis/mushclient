@@ -52,6 +52,8 @@ build's engine selftest passes 471/471 (19 skipped).
   emptied buffer's old scroll sizes, so auto-pause read it as scrolling back;
   new output then stayed off the bottom). Upstream code; also Display ▸ Clear
   Output. `win_worldview.cpp`.
+- **Closing a new world asked "Save changes to Untitled?"** (a world never has
+  MFC's title); it names the world now.
 - **Relative sound names ignored the user's sounds folder**: an import (or the
   user) puts sounds in the data folder, `PlaySound` looked only beside the exe.
   It looks in the data folder first; `GetInfo (74)` names it.
@@ -95,6 +97,28 @@ build's engine selftest passes 471/471 (19 skipped).
   and selection until the next click. Upstream.
 - The GDI adapter's 32-bit surface ids wrapped after 2^32 image draws and could
   reuse a live miniwindow's; ids in use are skipped.
+
+### Chat (raw 5.x `CAsyncSocket` code, reachable by a remote peer)
+- A socket could be reaped (from `WM_TIMER`, which modal loops deliver) while
+  one of its own prompts was up — accept this call / file / snoop, or
+  `ChatSendFile`'s picker — and was used when the box closed. Sockets inside a
+  prompt are kept (`m_iInModal`) and checked afterwards; one offer at a time.
+- A peer's file named `NUL` crashed the client (`CFile::Remove` threw from the
+  destructor). Device names, `:` streams and dot-only names are refused, and the
+  delete is exception-safe.
+- Auto-saved files replaced existing ones (and a cancel deleted them); the next
+  free `name (2).ext` is used.
+- Unparsed input and unsent output grew without limit (a frozen UI, quadratic
+  copying); capped at 1 MB / 16 MB, then the session is closed.
+- Chat sockets were reaped only while the world's timers were enabled.
+- An unsolicited `CHAT_CONNECTION_LIST` made the client dial every host in it;
+  only an answer to our own request is acted on, at most 100 calls, each once.
+- Lookups that completed during a modal loop were dropped (handled only in
+  `PreTranslateMessage`); a real message handler now.
+- Sending a file of 2 GB or more announced its size modulo 2^32; refused.
+- Chat ports ≥ 32768 went negative (`short`).
+Tests: `ChatFileBlockR6.AnAutoSavedFileNeverReplacesOneAlreadyThere`,
+`…AConnectionListNobodyAskedForIsNotDialled`.
 
 ### Windows UI shell
 - A notepad's "file changed on disk" message shared WM_USER + 1001 with the
@@ -167,6 +191,13 @@ callback string copies; `SortTriggers` per add.
   **DNS cancel under Wine**
   (`WSACancelAsyncRequest` is a stub there), **MCCP + reconnect from a trigger**,
   **IPv4 only**, **no TLS handshake timeout** — recorded, low impact, or 5.x's.
+- **Chat, lower priority:** a zChat frame over 64 KB keeps a truncated length
+  header (a MudMaster peer's huge text relayed desyncs zChat peers); a plugin
+  stopping the listen socket from its `ON_PLUGIN_CHAT_DISPLAY` callback inside
+  `OnAccept`; `Process_Stamp` broadcasting a decimal stamp; no handshake
+  timeout or connection cap for incoming calls; UDP listeners (a handler
+  re-listening on its own port, negative `short` ports, not released on plugin
+  unload, >999-byte datagrams dropped silently).
 - **Window tabs at the bottom** use `TCS_BOTTOM`, which Common Controls v6 does
   not support: they draw as top tabs on a bottom bar, and `CMDITabs`' classic
   edge painting mismatches the themed border (top too). Cosmetic, tabs off by

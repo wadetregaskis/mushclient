@@ -1060,6 +1060,73 @@ TEST(ChatFileBlockR6, ASecondFileStartIsRefusedWhileATransferIsRunning)
     ::DeleteFileA(path);
 }
 
+// ── A peer's offered file, saved unasked, never replaces one already there ──
+//
+// With "auto-allow files" and a save folder, the offered name went straight to
+// CFile(modeCreate): a peer offering "report.pdf" truncated the user's own, and
+// a CHAT_FILE_CANCEL then deleted it.  The next free "name (2).ext" instead;
+// and a device name ("NUL", which then could not be deleted on an abort --
+// which threw, from the destructor) is refused outright.  docs/BUGHUNT-2026-10.md.
+TEST(ChatFileBlockR6, AnAutoSavedFileNeverReplacesOneAlreadyThere)
+{
+    char dir[MAX_PATH];
+    ::GetTempPathA(sizeof dir, dir);
+    std::string folder = std::string(dir) + "mc_chatsave_" + std::to_string((int) ::GetCurrentProcessId()) + "\\";
+    ::CreateDirectoryA(folder.c_str(), NULL);
+    const std::string mine = folder + "report.pdf";
+    { FILE* f = fopen(mine.c_str(), "wb"); ASSERT_TRUE(f != NULL); fputs("the user's own", f); fclose(f); }
+
+    CMUSHclientDoc doc;
+    doc.m_bAutoAllowFiles      = TRUE;
+    doc.m_strChatSaveDirectory = folder.c_str();
+    {
+        CChatSocket sock(&doc);
+        sock.m_bCanSendFiles  = true;
+        sock.m_iFileBlockSize = 1024;
+        sock.Process_File_start(CString("report.pdf,2048"));
+        EXPECT_TRUE(sock.m_bDoingFileTransfer);
+        EXPECT_EQ(folder + "report (2).pdf", std::string((const char*) sock.m_strOurFileName));
+        sock.m_bDoingFileTransfer = false;
+        delete sock.m_pFile;
+        sock.m_pFile = NULL;
+    }
+    char buf[64] = "";
+    { FILE* f = fopen(mine.c_str(), "rb"); ASSERT_TRUE(f != NULL); fgets(buf, sizeof buf, f); fclose(f); }
+    EXPECT_EQ(std::string("the user's own"), std::string(buf));
+
+    // a device name is refused, and nothing is opened
+    {
+        CChatSocket sock(&doc);
+        sock.m_bCanSendFiles  = true;
+        sock.m_iFileBlockSize = 1024;
+        sock.Process_File_start(CString("NUL,100000"));
+        EXPECT_FALSE(sock.m_bDoingFileTransfer);
+        EXPECT_TRUE(sock.m_pFile == NULL);
+        sock.Process_File_start(CString("com1.txt,10"));
+        EXPECT_FALSE(sock.m_bDoingFileTransfer);
+        sock.Process_File_start(CString("a:stream,10"));
+        EXPECT_FALSE(sock.m_bDoingFileTransfer);
+    }
+
+    ::DeleteFileA((folder + "report (2).pdf").c_str());
+    ::DeleteFileA(mine.c_str());
+    ::RemoveDirectoryA(folder.c_str());
+}
+
+// ── A connection list nobody asked for is not dialled ───────────────────────
+//
+// Process_Connection_list called every host:port a peer sent, asked for or
+// not -- thousands, each told our chat name, address and port.  Only the
+// answer to our own CHAT_REQUEST_CONNECTIONS is acted on now.
+TEST(ChatFileBlockR6, AConnectionListNobodyAskedForIsNotDialled)
+{
+    CMUSHclientDoc doc;
+    CChatSocket sock(&doc);
+    sock.m_strRemoteUserName = "peer";
+    sock.Process_Connection_list(CString("10.255.255.1,4050,10.255.255.2,4050"));
+    EXPECT_EQ(0, (int) doc.m_ChatList.GetCount());
+}
+
 // ── A freshly constructed timer must be enabled, like its two siblings ─────
 //
 // `CAlias` and `CTrigger` both do `bEnabled = TRUE;` in their constructors.

@@ -129,6 +129,9 @@ IMPLEMENT_DYNAMIC(CMainFrame, CMDIFrameWnd)
 
 BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 	ON_WM_CONTEXTMENU()
+#ifdef _WIN32
+	ON_MESSAGE(WM_USER_HOST_NAME_RESOLVED, OnHostNameResolved)
+#endif
 	//{{AFX_MSG_MAP(CMainFrame)
 	ON_WM_CREATE()
 	ON_WM_CLOSE()
@@ -994,37 +997,48 @@ void CMainFrame::FixUpTitleBar (void)
 
   } // end of FixUpTitleBar
 
+// A chat socket's host name lookup has completed (world DNS lives inside the
+// PAL transport since T5 -- only chat still resolves through this window).
+// A message handler as well as a PreTranslateMessage case: a modal loop -- a
+// message box, a menu, a file dialog, moving the window -- dispatches it here
+// directly, and with only the PreTranslateMessage case DefWindowProc dropped
+// it, leaving the socket waiting for good.
+LRESULT CMainFrame::OnHostNameResolved (WPARAM wParam, LPARAM lParam)
+  {
+  if (wParam == 0)
+    return 0;
+
+ 	POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
+
+	while (pos)
+	  {
+    CMUSHclientDoc* pDoc = (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
+
+    for (POSITION chatpos = pDoc->m_ChatList.GetHeadPosition (); chatpos; )
+      {
+      CChatSocket * pSocket = pDoc->m_ChatList.GetNext (chatpos);
+      if (pSocket->m_hNameLookup == (char *) wParam)
+        {
+        pSocket->HostNameResolved (wParam, lParam);
+        return 0;     // message handled
+        }   // end of found a chat socket that was resolving a host name
+      }  // end of checking chat sockets
+
+    }  // end of checking documents
+
+  return 0;
+  } // end of CMainFrame::OnHostNameResolved
+
 // should get a WM_USER when a host name lookup completes
 
-BOOL CMainFrame::PreTranslateMessage(MSG* pMsg) 
+BOOL CMainFrame::PreTranslateMessage(MSG* pMsg)
 {
 
 // ******************* DOMAIN NAME resolution ********************
 
   if (pMsg->message == WM_USER_HOST_NAME_RESOLVED && pMsg->wParam != 0)
     {
-
-// find which chat socket this message was for (world DNS lives inside the
-// PAL transport since T5 — only chat still resolves through this window)
-
- 	  POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
-
-	  while (pos)
-	  {
-      CMUSHclientDoc* pDoc = (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
-
-      for (POSITION chatpos = pDoc->m_ChatList.GetHeadPosition (); chatpos; )
-        {
-        CChatSocket * pSocket = pDoc->m_ChatList.GetNext (chatpos);
-        if (pSocket->m_hNameLookup == (char *) pMsg->wParam)
-          {
-          pSocket->HostNameResolved (pMsg->wParam, pMsg->lParam);
-          return TRUE;    // message handled
-          }   // end of found a chat socket that was resolving a host name
-        }  // end of checking chat sockets
-
-     }  // end of checking documents
-
+    OnHostNameResolved (pMsg->wParam, pMsg->lParam);
     return TRUE;    // message was handled
     }
 

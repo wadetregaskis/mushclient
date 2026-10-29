@@ -730,6 +730,7 @@ long CMUSHclientDoc::ChatRequestConnections(long ID)
   if (!pSocket)
     return eChatIDNotFound;
   
+  pSocket->m_bAskedForConnections = true;   // so its answer is acted on
   pSocket->SendChatMessage (CHAT_REQUEST_CONNECTIONS, "");
 
 	return eOK;
@@ -1176,13 +1177,24 @@ long CMUSHclientDoc::ChatSendFile(long ID, LPCTSTR FileName)
 					  "All files (*.*)|*.*||");
 	  
     dlg.m_ofn.lpstrTitle = "Select file to send";
-	  
+
     ChangeToFileBrowsingDirectory ();
-    int nResult = dlg.DoModal();
+    int nResult;
+      {
+      CChatSocket::ModalGuard guard (pSocket);   // kept while the dialog is up
+      nResult = dlg.DoModal();
+      }
     ChangeToStartupDirectory ();
 
     if (nResult != IDOK)
 		  return eFileNotFound;
+
+    // they may have hung up while the user was choosing
+    if (pSocket->m_bDeleteMe || pSocket->m_bDoingFileTransfer)
+      {
+      ChatNote (eChatFile, TFormat ("Chat ID %i is no longer available to send to.", (int) ID));
+      return eChatIDNotFound;
+      }
 
     strName = dlg.GetPathName();
 
@@ -1209,10 +1221,28 @@ long CMUSHclientDoc::ChatSendFile(long ID, LPCTSTR FileName)
     pSocket->m_iFileSize = 0;
 
     delete pSocket->m_pFile;    // in case it was set up
+    pSocket->m_pFile = NULL;
     delete [] pSocket->m_pFileBuffer;  // and get rid of buffer
+    pSocket->m_pFileBuffer = NULL;
 
     return eFileNotFound;
     } // end of catching a file exception
+
+  // The protocol carries the size as a long, and so does m_iFileSize: a file
+  // of 2 GB or more was announced by its size modulo 2^32 (4 GB + 10 bytes as
+  // 10), one block sent, and both sides told it was complete.
+  if (pSocket->m_pFile->GetLength () > (ULONGLONG) LONG_MAX)
+    {
+    ChatNote (eChatFile, TFormat ("File %s is too large to send by chat (2 GB or more).",
+                                  (LPCTSTR) strName));
+    pSocket->m_strOurFileName.Empty ();
+    pSocket->m_iFileSize = 0;
+    delete pSocket->m_pFile;
+    pSocket->m_pFile = NULL;
+    delete [] pSocket->m_pFileBuffer;
+    pSocket->m_pFileBuffer = NULL;
+    return eBadParameter;
+    }
 
   // find last part of file name (ie. actual file name, not full path)
   pSocket->m_strSenderFileName = pSocket->m_pFile->GetFileName ();

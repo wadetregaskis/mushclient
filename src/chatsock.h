@@ -117,7 +117,7 @@ public:
   CString m_strRemoteVersion;      // version string from remote user
 
   CString m_strAllegedAddress;    // what they claim is their IP address
-  short   m_iAllegedPort;         // port to call them on
+  unsigned short m_iAllegedPort;  // port to call them on (a short went negative at 32768)
 
   HANDLE      m_hNameLookup;      // for name lookup
   char *      m_pGetHostStruct;   // ditto
@@ -126,6 +126,19 @@ public:
   int m_iChatConnectionType;      // type of connection, see enum above
   bool m_bDeleteMe;               // if true, should be deleted
   long m_iChatID;                 // unique chat session identifier
+
+  // Inside a prompt of its own (accept this call, this file, this snoop?):
+  // the reaper leaves it alone, even if m_bDeleteMe -- a modal loop still
+  // delivers WM_TIMER, and the caller uses the socket when the box closes.
+  int  m_iInModal = 0;
+  bool m_bFileOfferPending = false;   // asking about an offered file
+  bool m_bAskedForConnections = false;  // we sent CHAT_REQUEST_CONNECTIONS
+  struct ModalGuard
+    {
+    explicit ModalGuard (CChatSocket * p) : m_p (p) { m_p->m_iInModal++; }
+    ~ModalGuard () { m_p->m_iInModal--; }
+    CChatSocket * m_p;
+    };
 
   CTime m_tWhenStarted;           // when session started
   CTime m_tLastIncoming;          // when last incoming message

@@ -21,6 +21,7 @@
 #include "pal/chat_protocol.h"
 
 #include <stddef.h>
+#include <set>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -77,6 +78,42 @@ static void ChatAppendBytes (CString & dest, const char * pSrc, const int nLengt
   combined.append (pSrc, (size_t) nLength);
   dest = CString (combined.data (), (int) combined.size ());
   }   // end of ChatAppendBytes
+
+// A file (or anything) of this name exists already.
+static bool FileExists (const CString & strName)
+  {
+  CFileStatus status;
+  return CFile::GetStatus (strName, status) != FALSE;
+  }
+
+// A file name a peer offers that can be saved as itself: not empty or dots
+// only, no stream (":") or other characters Windows refuses, and not a
+// device's name (CON, PRN, AUX, NUL, COM1-9, LPT1-9), with or without an
+// extension, which Windows takes for the device wherever the folder is.
+static bool IsSafeChatFileName (const CString & strName)
+  {
+  if (strName.IsEmpty () || strName.SpanIncluding (_T(". ")) == strName)
+    return false;
+  if (strName.FindOneOf (_T(":*?\"<>|")) != -1)
+    return false;
+  for (int i = 0; i < strName.GetLength (); i++)
+    if ((unsigned char) strName [i] < ' ')
+      return false;
+  CString strStem = strName;
+  const int iDot = strStem.Find ('.');
+  if (iDot >= 0)
+    strStem = strStem.Left (iDot);
+  strStem.TrimRight ();
+  strStem.MakeUpper ();
+  static const char * const kDevices [] =
+    { "CON", "PRN", "AUX", "NUL",
+      "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+      "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
+  for (const char * p : kDevices)
+    if (strStem == p)
+      return false;
+  return true;
+  }
 
 IMPLEMENT_DYNAMIC(CChatSocket, CAsyncSocket)
 
@@ -206,9 +243,22 @@ void CChatSocket::StopFileTransfer (const bool bAbort)
       {
       m_pDoc->ChatNote (eChatFile,
               CFormat (_T("Aborted receiving file %s"), (LPCTSTR) m_strOurFileName));
-      m_pDoc->ChatNote (eChatFile,
-              CFormat (_T("File %s deleted."), (LPCTSTR) m_strOurFileName));
-      CFile::Remove (m_strOurFileName);
+      // CFile::Remove throws when the delete fails -- a peer's file named
+      // "NUL" opens the device, which cannot then be deleted -- and from the
+      // destructor that ended the program (std::terminate), from OnReceive it
+      // skipped the reset below and left a transfer "running" with no file.
+      try
+        {
+        CFile::Remove (m_strOurFileName);
+        m_pDoc->ChatNote (eChatFile,
+                CFormat (_T("File %s deleted."), (LPCTSTR) m_strOurFileName));
+        }
+      catch (CException * e)
+        {
+        e->Delete ();
+        m_pDoc->ChatNote (eChatFile,
+                CFormat (_T("File %s could not be deleted."), (LPCTSTR) m_strOurFileName));
+        }
       }
     }
 
@@ -346,13 +396,23 @@ int count = Receive (buff, sizeof (buff) - 1);
 
       if (decision == pal::eChatAcceptAsk)
         {
+        // One question at a time, and the socket kept while it is asked
+        // (m_iInModal).  OnReceive runs again inside the box's message loop,
+        // and a caller that kept talking got a second, nested box.
+        if (m_iInModal)
+          return;
         m_pDoc->Activate ();
-        decision = pal::chatAcceptAfterUser (::UMessageBox (
-              TFormat ("Incoming chat call to world %s from %s, IP address: %s.\n\nAccept it?",
-                       (LPCTSTR) m_pDoc->m_mush_name,
-                       (LPCTSTR) m_strRemoteUserName,
-                       (LPCTSTR) inet_ntoa (m_ServerAddr.sin_addr)),
-            MB_YESNO) == IDYES);
+          {
+          ModalGuard guard (this);
+          decision = pal::chatAcceptAfterUser (::UMessageBox (
+                TFormat ("Incoming chat call to world %s from %s, IP address: %s.\n\nAccept it?",
+                         (LPCTSTR) m_pDoc->m_mush_name,
+                         (LPCTSTR) m_strRemoteUserName,
+                         (LPCTSTR) inet_ntoa (m_ServerAddr.sin_addr)),
+              MB_YESNO) == IDYES);
+          }
+        if (m_bDeleteMe)
+          return;     // they hung up while we were asking
         }  // end of needing to validate calls
 
       if (!pal::chatConnectionAllowed (decision))
@@ -400,7 +460,24 @@ int count = Receive (buff, sizeof (buff) - 1);
 
 // now take the incoming text and break into blocks
 
+  if (m_bDeleteMe)
+    return;       // rejected or vetoed: nothing more of theirs to keep
+
   ChatAppendBytes (m_outstanding_input, buff, count); // add to any left over
+
+  // Nothing legitimate leaves this much unparsed -- a zChat frame is at most
+  // 64 KB, MudMaster's a line -- and with no limit a peer could grow it (each
+  // append copying the lot) until the client froze: one NUL before
+  // MudMaster's terminator wedges its framing for good.
+  if (m_outstanding_input.GetLength () > 1024 * 1024)
+    {
+    m_pDoc->ChatNote (eChatConnection,
+                TFormat ("Chat session to %s closed: too much unprocessed input.",
+                          (LPCTSTR) m_strRemoteUserName));
+    m_outstanding_input.Empty ();
+    OnClose (0);
+    return;
+    }
 
   while (!m_bDeleteMe && !m_outstanding_input.IsEmpty ())
     {
@@ -678,6 +755,19 @@ void CChatSocket::SendData (const CString & strText)
 
   ChatAppendBytes (m_outstanding_output, strText.GetString (), strText.GetLength ());
 
+  // A peer that never reads, while asking for replies (pings, unknown
+  // commands), grew this without limit.  Well past any file transfer's
+  // working set: give up on them.
+  if (m_outstanding_output.GetLength () > 16 * 1024 * 1024)
+    {
+    m_outstanding_output.Empty ();
+    m_pDoc->ChatNote (eChatConnection,
+                TFormat ("Chat session to %s closed: they are not reading what we send.",
+                          (LPCTSTR) m_strRemoteUserName));
+    OnClose (0);
+    return;
+    }
+
   OnSend (0);   // in case FD_WRITE message got lost, try to send again
   
   return;
@@ -885,15 +975,30 @@ void CChatSocket::Process_Request_connections (const CString strMessage)
 
 void CChatSocket::Process_Connection_list	 		(const CString strMessage)
   {
+  // Only the list we asked for (world.ChatRequestConnections sends the
+  // request).  Any peer could otherwise send one unasked and have us
+  // dial every host in it -- thousands of them, each told our chat name,
+  // address and port.
+  if (!m_bAskedForConnections)
+    {
+    m_pDoc->ChatNote (eChatConnectionList,
+                  TFormat ("Ignored a connection list from %s that was not asked for.",
+                      (LPCTSTR) m_strRemoteUserName));
+    return;
+    }
+  m_bAskedForConnections = false;
+
   CStringList strList;
   StringToList (strMessage, ",", strList);
   int iCount = strList.GetCount () / 2;   // number of connections
   m_pDoc->ChatNote (eChatConnectionList,
-                TFormat ("Found %i connection%s to %s", 
+                TFormat ("Found %i connection%s to %s",
                     PLURAL (iCount),
                     (LPCTSTR) m_strRemoteUserName));
-  
-  // for each one, connect to it
+
+  // for each one, connect to it -- within reason, and each address once
+  const int kMaxCalls = 100;
+  set <string> called;
   for (int i = 0; i < iCount; i++)
     {
     CString strIP;
@@ -901,6 +1006,15 @@ void CChatSocket::Process_Connection_list	 		(const CString strMessage)
 
     strIP = strList.RemoveHead ();
     iPort = atol (strList.RemoveHead ());
+
+    if (!called.insert (string (CFormat ("%s:%ld", (LPCTSTR) strIP, iPort))).second)
+      continue;   // the same one again
+    if ((int) called.size () > kMaxCalls)
+      {
+      m_pDoc->ChatNote (eChatConnectionList,
+                    TFormat ("Only the first %i connections were called.", kMaxCalls));
+      break;
+      }
 
     m_pDoc->ChatCall(strIP, iPort);
     }   // end of doing each connection
@@ -1041,13 +1155,23 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
   // new open then FAILED, the catch below left m_pFile dangling while
   // m_bDoingFileTransfer was still true, so the next CHAT_FILE_BLOCK wrote
   // through a freed pointer.  docs/UPSTREAM-BUGS.md 98.
-  if (m_bDoingFileTransfer)
+  // ...and that includes one still being asked about: the question below is a
+  // modal box, inside whose message loop OnReceive runs again, and a second
+  // CHAT_FILE_START there found m_bDoingFileTransfer still false and asked
+  // again -- accept both and the first CFile leaked, its file orphaned.
+  if (m_bDoingFileTransfer || m_bFileOfferPending)
     {
     SendChatMessage (CHAT_FILE_DENY,
                     TFormat ("%s is already transferring a file.",
                     (LPCTSTR) m_pDoc->m_strOurChatName));
     return;
     }
+  struct PendingOffer
+    {
+    explicit PendingOffer (bool & b) : m_b (b) { m_b = true; }
+    ~PendingOffer () { m_b = false; }
+    bool & m_b;
+    } pending (m_bFileOfferPending);
 
   CStringList strList;
   StringToList (strMessage, ",", strList);
@@ -1064,8 +1188,20 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
   if (m_strSenderFileName.Find (_T("/")) != -1 ||
       m_strSenderFileName.Find (_T("\\")) != -1)
     {
-    SendChatMessage (CHAT_FILE_DENY, 
+    SendChatMessage (CHAT_FILE_DENY,
                     TFormat ("Supplied file name of \"%s\" may not contain slashes.",
+                    (LPCTSTR) m_strSenderFileName));
+    return;
+    }
+
+  // Nor be a name Windows gives a device (NUL, CON, COM1... with or without
+  // an extension), which "creates" the device -- NUL then could not be
+  // deleted on an abort, which threw -- nor name a stream (":"), nor be
+  // empty or dots only.
+  if (!IsSafeChatFileName (m_strSenderFileName))
+    {
+    SendChatMessage (CHAT_FILE_DENY,
+                    TFormat ("Supplied file name of \"%s\" is not one that can be saved.",
                     (LPCTSTR) m_strSenderFileName));
     return;
     }
@@ -1088,6 +1224,7 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
   if (!m_pDoc->m_bAutoAllowFiles)
     {
      m_pDoc->Activate ();
+     ModalGuard guard (this);   // the socket is kept while we ask (see chatsock.h)
      if (UMessageBox (
         TFormat ("%s wishes to send you the file \"%s\", size %ld bytes (%1.1f Kb).\n\nAccept it?",
                  (LPCTSTR) m_strRemoteUserName,
@@ -1097,6 +1234,9 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
       MB_YESNO) != IDYES)
       bWanted = false;
     }
+
+  if (m_bDeleteMe)
+    return;     // they hung up while we were asking
 
   if (bWanted)
     {
@@ -1120,9 +1260,15 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
        filedlg.m_ofn.lpstrInitialDir = m_pDoc->m_strChatSaveDirectory;
 
       ChangeToFileBrowsingDirectory ();
-      if (filedlg.DoModal () != IDOK)
-        bWanted = false;    // cancelled dialog
+        {
+        ModalGuard guard (this);
+        if (filedlg.DoModal () != IDOK)
+          bWanted = false;    // cancelled dialog
+        }
       ChangeToStartupDirectory ();
+
+      if (m_bDeleteMe)
+        return;     // they hung up while we were choosing
 
       m_strOurFileName = filedlg.GetPathName ();
       }
@@ -1143,6 +1289,20 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
 #endif
   
       m_strOurFileName = m_pDoc->m_strChatSaveDirectory + m_strSenderFileName;
+
+      // Saved unasked, so never over a file already there: a peer offering
+      // "report.pdf" truncated the user's own, and a cancel then deleted it.
+      // The next free "name (2).ext" instead.
+      CString strBase = m_strSenderFileName, strExt;
+      const int iDot = strBase.ReverseFind ('.');
+      if (iDot > 0)
+        {
+        strExt  = strBase.Mid (iDot);
+        strBase = strBase.Left (iDot);
+        }
+      for (int i = 2; i < 1000 && FileExists (m_strOurFileName); i++)
+        m_strOurFileName = m_pDoc->m_strChatSaveDirectory +
+                           CFormat ("%s (%i)%s", (LPCTSTR) strBase, i, (LPCTSTR) strExt);
       }
     }   // end of if (bWanted)
 

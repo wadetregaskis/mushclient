@@ -68,24 +68,6 @@ CString strTimerName;
 CmcDateTime tNow = CmcDateTime::GetTimeNow();
 CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
 
-// check for deleted chat sessions.  Runs on Windows and the full GUI build
-// (mushapp) — both have the real CChatSocket; the headless mushcore/CLI engine
-// uses a stub without m_bDeleteMe and has no chat sockets to reap.  On the port
-// this now matters because inbound chat is accepted (see posix_socket.h).
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
-  for (POSITION chatpos = m_ChatList.GetHeadPosition (); chatpos; )
-    {
-    POSITION oldpos = chatpos;
-    CChatSocket * pSocket = m_ChatList.GetNext (chatpos);
-    if (pSocket->m_bDeleteMe)
-      {
-      m_ChatList.RemoveAt (oldpos);
-      delete pSocket;
-      break;    // list is no longer valid
-      }
-    }
-#endif
-
   set <string> firedTimersList;
   POSITION pos;
 
@@ -338,6 +320,31 @@ void CMUSHclientDoc::CheckTimers ()
 #endif
     ConnectSocket();      // reconnect
     }
+
+// check for deleted chat sessions.  Runs on Windows and the full GUI build
+// (mushapp) — both have the real CChatSocket; the headless mushcore/CLI engine
+// uses a stub without m_bDeleteMe and has no chat sockets to reap.  On the port
+// this now matters because inbound chat is accepted (see posix_socket.h).
+//
+// Here, not in CheckTimerList: that runs only while the world's timers are
+// enabled, and with them off a disconnected or rejected chat peer stayed
+// connected until the world closed.  Never one inside a prompt of its own
+// (m_iInModal): this runs from WM_TIMER, which a modal loop still delivers,
+// and the prompt's caller goes on using the socket when the box closes.
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
+  if (!m_CurrentPlugin)
+    for (POSITION chatpos = m_ChatList.GetHeadPosition (); chatpos; )
+      {
+      POSITION oldpos = chatpos;
+      CChatSocket * pSocket = m_ChatList.GetNext (chatpos);
+      if (pSocket->m_bDeleteMe && pSocket->m_iInModal == 0)
+        {
+        m_ChatList.RemoveAt (oldpos);
+        delete pSocket;
+        break;    // list is no longer valid
+        }
+      }
+#endif
 
   if (m_bEnableTimers)
     {

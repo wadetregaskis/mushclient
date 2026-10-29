@@ -2139,6 +2139,15 @@ void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, boo
       else
         UMessageBox (strMsg);
       }
+    // Nothing to connect to: the transport goes, as a failed connect's does,
+    // so ConnectionOpen () says so -- kept, it let a timer that runs while
+    // closed queue sends into it without limit until the next connect.
+    // (Destroying it inside its own event is within the ITransport contract.)
+    if (m_iConnectPhase == eConnectNotConnected)
+      {
+      delete m_pTransport;
+      m_pTransport = NULL;
+      }
     return;
     }
 

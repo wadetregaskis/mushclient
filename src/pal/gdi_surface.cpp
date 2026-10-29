@@ -57,13 +57,26 @@ CDC* GdiSurface::measureDc() {
     return m_measureDc;
 }
 
+// The next id not in use (and not None).  The counters are 32 bits and every
+// image draw takes a temporary surface, so after enough of them they wrap: a
+// reused id would overwrite, then erase, a miniwindow's own surface, which then
+// silently stopped drawing.
+template <class Map>
+static std::uint32_t NextFreeId(std::uint32_t& next, const Map& inUse) {
+    std::uint32_t id;
+    do
+        id = next++;
+    while (id == 0 || inUse.count(id));
+    return id;
+}
+
 SurfaceId GdiSurface::adopt(CDC* dc, Size sz) {
     if (!dc) return SurfaceId::None;
     Surf s;
     s.dc      = dc;
     s.size    = { sz.w > 0 ? sz.w : 1, sz.h > 0 ? sz.h : 1 };
     s.adopted = true;
-    std::uint32_t id = m_nextSurface++;
+    std::uint32_t id = NextFreeId(m_nextSurface, m_surfaces);
     m_surfaces[id] = s;
     return (SurfaceId)id;
 }
@@ -165,7 +178,7 @@ FontId GdiSurface::createFont(const FontSpec& spec) {
         delete f.font;
         return FontId::None;
     }
-    std::uint32_t id = m_nextFont++;
+    std::uint32_t id = NextFreeId(m_nextFont, m_fonts);
     m_fonts[id] = f;
     return (FontId)id;
 }

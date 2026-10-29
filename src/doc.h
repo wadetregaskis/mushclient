@@ -41,6 +41,7 @@ extern CString MUSHCLIENT_VERSION;
 // pulls in platform/output_types.h for SOutputLine/SOutputRun.)
 #include "pal/iworldview.h"   // pal::IWorldView — the typed per-world view seam
 namespace pal { class ITransport; }   // pal/itransport.h — the byte-transport seam
+#include "pal/netaddress.h"   // pal::NetAddress — an IPv4 or IPv6 address
 class CDocTransportEvents;            // doc_shared.cpp — the ITransportEvents → engine bridge
 // Likewise unconditional: pal::StylePalette is a parameter of GetStylePalette
 // and CLinePositionIndex is the type of the m_LinePositions member, both of
@@ -1390,8 +1391,21 @@ public:
 
  // sockets stuff
 
-	SOCKADDR_IN m_sockAddr;       // MUD address/port
-	SOCKADDR_IN m_ProxyAddr;      // Proxy address/port
+  // Where the world connects.  m_sockAddr / m_ProxyAddr are the address in
+  // use -- connected to, or being tried -- and the lists every address the
+  // MUD's and the proxy's names gave, in the order to try them
+  // (pal::OrderForConnecting).  The lists are kept between connections, as
+  // upstream kept its one resolved address: a reconnect does not look the
+  // name up again until the name changes (ForgetMudAddresses).
+  pal::NetAddress m_sockAddr;       // MUD address
+  pal::NetAddress m_ProxyAddr;      // proxy address
+  std::vector<pal::NetAddress> m_MudAddresses;
+  std::vector<pal::NetAddress> m_ProxyAddresses;
+  size_t m_iAddressIndex = 0;       // which of the list being connected is in use
+  double m_dAttemptStarted = 0;     // when that attempt began (CmcDateTime days)
+
+  void ForgetMudAddresses ()   { m_sockAddr  = pal::NetAddress (); m_MudAddresses.clear (); }
+  void ForgetProxyAddresses () { m_ProxyAddr = pal::NetAddress (); m_ProxyAddresses.clear (); }
 
   int         m_iConnectPhase;    // see enum above
 
@@ -1410,6 +1424,8 @@ public:
   COLORREF        m_cChatForegroundColour;  // default colour for chats
   COLORREF        m_cChatBackgroundColour;  //  - background for above
   CChatListenSocket * m_pChatListenSocket;  // for listening for chat connections
+  CChatListenSocket * m_pChatListenSocket6 = NULL; // and on IPv6, beside it (ChatAcceptCalls)
+  void DeleteIPv6ChatListener ();
   long            m_iNextChatID;            // next available chat session ID
   CString         m_strLastMessageSent;   // the last message we sent to everybody
   CTime           m_tLastMessageTime;     // time we sent it
@@ -2460,9 +2476,18 @@ public:
   CString GetSocketError (int nError);
   bool LookupHostName (LPCTSTR sName);
   // Called (on the main thread) when an async DNS lookup launched via the
-  // transport completes.  addr is the resolved address; ok is false if
-  // resolution failed.  phase is the m_iConnectPhase value at lookup start.
-  void LookupHostNameComplete (struct in_addr addr, int phase, bool ok);
+  // transport completes.  addresses are everything the name resolved to; ok
+  // is false if resolution failed.  phase is the m_iConnectPhase value at
+  // lookup start.
+  void LookupHostNameComplete (const std::vector<pal::NetAddress> & addresses,
+                               int phase, bool ok);
+  // Connect to the current address of the list in use (InitiateConnection's
+  // second half), and fall back to the next one: after a failed connect, or
+  // one still pending after kAddressFallbackSeconds while others remain.
+  void ConnectToCurrentAddress ();
+  bool TryNextAddress ();
+  bool AddressesLeftToTry () const;
+  void CheckAddressFallback ();
 
   // ITransport TLS outcomes — the engine-policy halves of the old
   // ContinueSSLHandshake (Notes, phase, the deferred fallback prompt); the

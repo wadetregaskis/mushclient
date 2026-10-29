@@ -17,10 +17,10 @@
 //                     SNI + SSL_set1_host) + ContinueSSLHandshake stepping +
 //                     worldsock.cpp OnReceive's SSL_pending drain
 //   async DNS         CMUSHclientDoc::LookupHostName / HostNameResolved —
-//                     WSAAsyncGetHostByName into a MAXGETHOSTSTRUCT buffer,
-//                     completion parsed as ((LPIN_ADDR)hostent->h_addr);
-//                     delivered here to an adapter-owned message-only window
-//                     instead of the main frame
+//                     once WSAAsyncGetHostByName, which knows only IPv4; now
+//                     getaddrinfo on a thread of its own (every address, both
+//                     families), the result posted to an adapter-owned
+//                     message-only window as the old completion was
 //
 // Structure mirrors platform/posix_transport.cpp 1:1 (that adapter is the
 // live-verified reference; reviewing this file is a diff exercise against
@@ -38,8 +38,13 @@
 #include <openssl/x509.h>
 #include <wincrypt.h>
 
+#include <ws2tcpip.h>
+
+#include <atomic>
 #include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 
 // From: mstcpip.h  (the same block doc.cpp carried — the header itself was
 // not shipped with all SDKs, so MUSHclient defines the pieces it needs)
@@ -73,24 +78,60 @@ int ssl_verify_callback(int /*preverify_ok*/, X509_STORE_CTX* /*ctx*/)
 }
 
 // Messages posted to the adapter's message-only window.
-const UINT WM_WT_RESOLVED       = WM_APP + 401;  // WSAAsyncGetHostByName completion
+const UINT WM_WT_RESOLVED       = WM_APP + 401;  // lookup thread finished (wParam = job id)
 const UINT WM_WT_RESOLVE_FAILED = WM_APP + 402;  // initiation failed (deferred)
 const UINT WM_WT_CONNECTED      = WM_APP + 403;  // immediate connect (deferred)
 const UINT_PTR kTlsTimeoutTimer = 1;             // SetTimer id on that window
 
 const char* const kWndClass = "MUSHclientPalWinTransport";
 
-// A WSAAsyncGetHostByName result buffer whose lookup was CANCELLED is never
-// freed: it is kept here until exit.  Windows promises a cancelled request
-// writes nothing more, but Wine's WSACancelAsyncRequest is a stub that returns
-// success while its worker thread goes on to write up to MAXGETHOSTSTRUCT bytes
-// into the buffer -- which used to be freed (or reused by the next lookup)
-// straight after the cancel.  Nothing here can tell the two apart, so a
-// cancelled lookup costs 1 KB instead of a write into freed memory.
-std::vector<std::unique_ptr<char[]>>& RetiredHostBuffers()
+// One host-name lookup.  The thread and the adapter each hold it, so neither
+// outlives what it writes to: a cancelled or abandoned lookup just finishes
+// into a job nobody reads.  (WSAAsyncGetHostByName wrote into a buffer the
+// adapter owned, and under Wine -- whose WSACancelAsyncRequest returns success
+// and lets the lookup go on -- into freed memory.  UPSTREAM-BUGS 116.)
+struct ResolveJob {
+    unsigned                 id = 0;       // echoed in WM_WT_RESOLVED's wParam
+    std::string              host;
+    std::vector<NetAddress>  addresses;    // written by the thread, then read here
+    int                      error = 0;    // getaddrinfo's code (a WSA code)
+};
+
+std::atomic<unsigned>& NextResolveJobId()
 {
-    static std::vector<std::unique_ptr<char[]>> retired;
-    return retired;
+    static std::atomic<unsigned> id(0);
+    return id;
+}
+
+// getaddrinfo, both families: the resolver's own order (RFC 6724 on Windows),
+// which the engine then interleaves.  No AI_ADDRCONFIG: Windows ignores
+// loopback when it decides what is "configured", and an offline machine would
+// stop resolving "localhost"; an address family the machine cannot reach
+// fails its connect at once and the engine moves on to the next.
+void RunLookup(std::shared_ptr<ResolveJob> job, HWND hWnd)
+{
+    addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo* res = NULL;
+    const int rc = ::getaddrinfo(job->host.c_str(), NULL, &hints, &res);
+    if (rc == 0) {
+        for (addrinfo* p = res; p; p = p->ai_next) {
+            NetAddress a;
+            if (FromSockaddr(p->ai_addr, a))
+                job->addresses.push_back(a);
+        }
+    }
+    else
+        job->error = rc;
+    if (res)
+        ::freeaddrinfo(res);
+    if (rc == 0 && job->addresses.empty())
+        job->error = WSANO_DATA;   // a name with no address we can use
+    // The adapter may be gone by now: its window with it, so this fails, or
+    // a new window has the old handle, and the id does not match.
+    ::PostMessage(hWnd, WM_WT_RESOLVED, (WPARAM) job->id, 0);
 }
 
 } // namespace
@@ -128,9 +169,9 @@ public:
     }
 
     // ── DNS ────────────────────────────────────────────────────────────────
-    // WSAAsyncGetHostByName — the exact LookupHostName mechanics (gethostbyname
-    // resolution semantics, MAXGETHOSTSTRUCT buffer), delivered to this
-    // adapter's window instead of the main frame.
+    // getaddrinfo on a thread of its own (RunLookup, above), the result
+    // posted to this adapter's window -- delivered on the main thread, never
+    // re-entrantly, as WSAAsyncGetHostByName's was.
     void resolve(const char* host, ResolveToken token) override
     {
         cancelResolve();
@@ -141,48 +182,59 @@ public:
             // window neither the completion nor a deferred failure can be
             // delivered — report synchronously rather than losing it
             m_lastResolveError = ::WSAGetLastError();
-            m_events.onResolved(token, 0, false);
+            m_events.onResolved(token, NULL, 0, false);
             return;
         }
-        // a fresh buffer per lookup: a cancelled one may still be written to
-        m_hostBuf.reset(new char[MAXGETHOSTSTRUCT]);
-        m_hLookup = ::WSAAsyncGetHostByName(m_hWnd, WM_WT_RESOLVED,
-                                            host ? host : "",
-                                            m_hostBuf.get(), MAXGETHOSTSTRUCT);
-        if (!m_hLookup) {
-            // could not even initiate — report failure, but deferred so the
-            // engine never sees a re-entrant onResolved.  This is the path
-            // upstream answered with its own message box; keeping the code
-            // means the ordinary "Unable to resolve host name" line says
-            // exactly as much as that box did.
-            m_lastResolveError = ::WSAGetLastError();
-            ::PostMessage(m_hWnd, WM_WT_RESOLVE_FAILED, 0, 0);
+        std::shared_ptr<ResolveJob> job = std::make_shared<ResolveJob>();
+        job->id   = ++NextResolveJobId();
+        job->host = host ? host : "";
+        try {
+            std::thread(RunLookup, job, m_hWnd).detach();
         }
+        catch (...) {
+            // could not even start the lookup — report failure, but
+            // deferred so the engine never sees a re-entrant onResolved
+            m_lastResolveError = WSA_NOT_ENOUGH_MEMORY;
+            ::PostMessage(m_hWnd, WM_WT_RESOLVE_FAILED, 0, 0);
+            return;
+        }
+        m_lookup = job;
     }
 
     void cancelResolve() override
     {
-        if (m_hLookup) {
-            ::WSACancelAsyncRequest(m_hLookup);   // == OnConnectionDisconnect's cancel
-            m_hLookup = NULL;
-            RetiredHostBuffers().push_back(std::move(m_hostBuf));   // see above
-        }
+        // the thread finishes into the job it holds; its message is ignored
+        m_lookup.reset();
     }
 
     // ── connect ────────────────────────────────────────────────────────────
-    void connect(unsigned int addrIPv4, unsigned short port,
+    void connect(const NetAddress& address, unsigned short port,
                  const TransportOptions& options) override
     {
-        SOCKADDR_IN sa;
-        memset(&sa, 0, sizeof sa);
-        sa.sin_family      = AF_INET;
-        sa.sin_addr.s_addr = addrIPv4;
-        sa.sin_port        = htons(port);
-        m_connectPending   = true;
+        // Another of the host's addresses, after the last one failed or was
+        // given up on: that socket goes first.  m_outgoing stays -- what was
+        // queued during the attempt goes out on whichever connects.
+        if (m_sock.m_hSocket != INVALID_SOCKET) {
+            m_sock.AsyncSelect(0);
+            m_sock.Close();
+        }
 
-        // the exact CWorldSocket::Create call (ConnectSocket)
-        if (!m_sock.Create(0, SOCK_STREAM,
-                           FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE, NULL)) {
+        sockaddr_storage sa;
+        const int saLen = ToSockaddr(address, port, sa);
+        m_connectPending = true;
+        if (saLen == 0) {
+            handleConnect(WSAEAFNOSUPPORT);   // no address at all
+            return;
+        }
+
+        // IPv4: the exact CWorldSocket::Create call (ConnectSocket), which
+        // also binds.  IPv6: MFC's Create can only make an IPv4 socket, so
+        // Socket() with the family; connect() picks the local address.
+        const long lEvents = FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE;
+        const BOOL created = address.isIPv4()
+            ? m_sock.Create(0, SOCK_STREAM, lEvents, NULL)
+            : m_sock.Socket(SOCK_STREAM, lEvents, 0, AF_INET6);
+        if (!created) {
             handleConnect(m_sock.GetLastError());   // immediate local failure
             return;
         }
@@ -198,7 +250,7 @@ public:
 
         m_sock.AsyncSelect();
 
-        if (m_sock.Connect((SOCKADDR*)&sa, sizeof sa)) {
+        if (m_sock.Connect((SOCKADDR*)&sa, saLen)) {
             // Immediate success: defer delivery via the message window — the
             // engine never sees a re-entrant onConnect.  (The old engine
             // called OnConnect(0) inline from InitiateConnection; deferral is
@@ -375,29 +427,28 @@ private:
         if (self) {
             switch (msg) {
                 case WM_WT_RESOLVED:
-                    // stale/cancelled completions carry a different handle
-                    if ((HANDLE)wParam == self->m_hLookup) {
-                        self->m_hLookup = NULL;
-                        if (WSAGETASYNCERROR(lParam)) {
+                    // a cancelled or superseded lookup's id no longer matches
+                    if (self->m_lookup && (unsigned) wParam == self->m_lookup->id) {
+                        // the thread is done with it: it posted last
+                        std::shared_ptr<ResolveJob> job;
+                        job.swap(self->m_lookup);
+                        if (job->error) {
                             // keep the code: the engine appends it to
                             // "Unable to resolve host name", as upstream did
-                            self->m_lastResolveError = WSAGETASYNCERROR(lParam);
+                            self->m_lastResolveError = job->error;
                             self->m_events.onResolved(self->m_resolveToken,
-                                                      0, false);
+                                                      NULL, 0, false);
                         } else {
                             self->m_lastResolveError = 0;
-                            // the exact HostNameResolved parse
-                            struct hostent* pHostent =
-                                (struct hostent*)self->m_hostBuf.get();
-                            unsigned int addr =
-                                ((LPIN_ADDR)pHostent->h_addr)->s_addr;
                             self->m_events.onResolved(self->m_resolveToken,
-                                                      addr, true);
+                                                      job->addresses.data(),
+                                                      job->addresses.size(),
+                                                      true);
                         }
                     }
                     return 0;
                 case WM_WT_RESOLVE_FAILED:
-                    self->m_events.onResolved(self->m_resolveToken, 0, false);
+                    self->m_events.onResolved(self->m_resolveToken, NULL, 0, false);
                     return 0;
                 case WM_WT_CONNECTED:
                     self->handleConnect(0);
@@ -660,12 +711,9 @@ private:
     std::shared_ptr<bool> m_alive;
 
     HWND         m_hWnd         = NULL;
-    HANDLE       m_hLookup      = NULL;   // WSAAsyncGetHostByName task handle
+    std::shared_ptr<ResolveJob> m_lookup;  // the lookup in flight, if any
     ResolveToken m_resolveToken = 0;
     int          m_lastResolveError = 0;  // WSA code from the last failed resolve
-    // hostent + data for the lookup in flight (or the last one that completed);
-    // new[] is aligned for any fundamental type, hostent included
-    std::unique_ptr<char[]> m_hostBuf;
 
     bool      m_connectPending = false;   // connect() called, onConnect not yet delivered
     bool      m_tlsHandshaking = false;

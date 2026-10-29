@@ -383,8 +383,6 @@ int i;
 
 // for looking up host names
 
-  ZeroMemory (&m_sockAddr, sizeof m_sockAddr);
-  ZeroMemory (&m_ProxyAddr, sizeof m_ProxyAddr);
   // m_LinePositions default-constructs un-allocated (line_position_index.h);
   // SetUpOutputWindow allocates it once m_maxlines is known.
 
@@ -659,6 +657,8 @@ int i;
   // destroy the PAL transport (the socket, every platform since T5) + its
   // events bridge — the transport cancels any DNS lookup still in flight
   TeardownTransport ();
+
+  DeleteIPv6ChatListener ();
 
 	if (m_pChatListenSocket)
 	{

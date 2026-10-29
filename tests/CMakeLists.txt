@@ -97,6 +97,8 @@ mc_test(test_mfc_ui)
 # there is no ODR clash.
 target_sources(test_mfc_ui PRIVATE ${CMAKE_SOURCE_DIR}/src/dialogs/InsertUnicodeDlg.cpp)
 mc_test(test_connection)
+# pal/netaddress.h: reading, printing and ordering IPv4 and IPv6 addresses.
+mc_test(test_netaddress)
 mc_test(test_accelerators)
 mc_test(test_menu_rules)
 mc_test(test_mc_dispatch)

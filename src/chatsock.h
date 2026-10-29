@@ -4,7 +4,10 @@
 #ifndef __CHATSOCK_H__
 #define __CHATSOCK_H__
 
+#include "pal/netaddress.h"
+
 class CMUSHclientDoc;
+namespace pal { class ITransport; class ITransportEvents; }
 
 // if an identical message is received, that we just sent, that are the same,
 // in this time interval, discard the second one (if addressed to all or a group)
@@ -110,7 +113,8 @@ public:
   CString m_outstanding_input;    // input not yet processed (eg. no \xFF yet)
 
   CString m_strServerName;       // server name before DNS resolution
-	SOCKADDR_IN m_ServerAddr;      // Chat server address/port
+  pal::NetAddress m_ServerAddr;  // chat peer's address (IPv4 or IPv6)
+  unsigned short m_iServerPort;  // and port
 
   CString m_strRemoteUserName;     // remote user name
   CString m_strGroup;              // group that user is in
@@ -119,8 +123,11 @@ public:
   CString m_strAllegedAddress;    // what they claim is their IP address
   unsigned short m_iAllegedPort;  // port to call them on (a short went negative at 32768)
 
-  HANDLE      m_hNameLookup;      // for name lookup
-  char *      m_pGetHostStruct;   // ditto
+  // An outgoing call to a NAME: its lookup, through the platform transport's
+  // resolver (WSAAsyncGetHostByName knew only IPv4, and the port had no lookup
+  // at all).  NULL once it has answered.
+  pal::ITransport *       m_pResolver;
+  pal::ITransportEvents * m_pResolverEvents;
 
   int m_iChatStatus;              // status of session, see enum above
   int m_iChatConnectionType;      // type of connection, see enum above
@@ -197,7 +204,9 @@ public:
 	virtual void OnClose      (int nErrorCode);
 	virtual void OnConnect    (int nErrorCode);
 
-  void HostNameResolved (WPARAM wParam, LPARAM lParam);
+  bool LookUp (const char * sName);
+  void HostNameResolved (const pal::NetAddress * addresses, size_t count, bool ok);
+  bool CreateFor (const pal::NetAddress & address);   // a socket of its family
   void MakeCall (void);
   void SendData (const CString & strText);
 

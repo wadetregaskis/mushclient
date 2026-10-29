@@ -8788,3 +8788,29 @@ the list, because each page subtracted only some of its other columns — fixed,
 round three's fixes came from `docs/BUGHUNT-2026-10.md`'s known-bug list
 (UPSTREAM-BUGS 110–117, the TLS handshake timeout, the scrollback pixel range,
 the bottom window tabs); that file has the list.
+
+## 13. IPv6 (2026-10-29)
+
+IPv6 support (`docs/BUGHUNT-2026-10.md`, "IPv6"), checked in the ARM64 Release
+client against two loopback stubs: one on `[::1]:4106`, one on `127.0.0.1:4104`.
+This VM has no global IPv6 (only `::1` and a link-local address), so the
+checks are on loopback; the black-holed-route case is covered by the unit test
+`Ipv6.AnAttemptThatHangsIsGivenUpForTheNextButTheLastIsNot`.
+
+- **An IPv6 world.**  A world whose server is `::1` connected on opening.  The
+  stub logged `connected from [::1]:51388` and then a line typed in the client.
+  `GetInfo (61)` was `::1`, `GetInfo (228)` 0.
+- **Fallback.**  The same world pointed at `localhost` port 4104, where only the
+  IPv4 stub listens: it connected to 127.0.0.1 (`GetInfo (61)`), with no failure
+  note on the way, and the stub received a sent line.
+- **Failure.**  `[::1]` (brackets and all) port 4199, where nothing listens:
+  "Unable to connect … (Connection refused) … Connecting to world: ::1, port 4199".
+- **Lookups.**  `GetHostAddress ("localhost")` gave `127.0.0.1 ::1`, IPv4 first;
+  `GetHostName ("::1")` and `GetHostName ("127.0.0.1")` both gave the machine name.
+- **File ▸ Windows Socket Info** lists the IPv6 link-local address after the
+  IPv4 one.  Its single-line field scrolled the second address mostly out of
+  view.  It now wraps across lines, and was seen to (`192.168.121.128,
+  fe80::61e:5579:9cb3:e648%9`).
+- Chat calls (to `::1`, and to a name) and `UdpSend` to `::1` are covered by
+  `WinTransport.*` tests on real sockets.  Chat *listening* is not checked here,
+  because it would raise a firewall prompt (§12's rule).

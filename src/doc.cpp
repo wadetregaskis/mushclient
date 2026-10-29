@@ -1910,8 +1910,8 @@ void CMUSHclientDoc::OnUpdateSessionOpen(CCmdUI* pCmdUI)
 // OnConnect: single-sourced in doc_shared.cpp (ITransport T3b)
 
 
-// HostNameResolved: gone (T5) — the Windows transport adapter owns the
-// WSAAsyncGetHostByName completion (pal/win_transport.cpp).
+// HostNameResolved: gone (T5) — the transport adapter owns the lookup and
+// its completion (pal/win_transport.cpp).
 
 void CMUSHclientDoc::OnConnectionConnect() 
 {

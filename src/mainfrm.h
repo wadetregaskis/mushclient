@@ -214,7 +214,6 @@ protected:
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	//}}AFX_MSG
   afx_msg LRESULT OnMCINotify(WPARAM, LPARAM);
-  afx_msg LRESULT OnHostNameResolved(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnF1Test();
 	afx_msg void OnUpdateInfoBar(CCmdUI* pCmdUI);
   afx_msg void OnTrayMenu(UINT nID);    

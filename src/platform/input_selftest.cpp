@@ -115,7 +115,7 @@ int swallow_message_box(const char* text, const char* /*caption*/, unsigned)
 struct RecordingTransport : pal::ITransport {
     void resolve (const char*, pal::ResolveToken) override {}
     void cancelResolve () override {}
-    void connect (unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void connect (const pal::NetAddress&, unsigned short, const pal::TransportOptions&) override {}
     void send (const char*, size_t) override {}
     void startTls (const pal::TlsParams&) override {}
     void close () override {}

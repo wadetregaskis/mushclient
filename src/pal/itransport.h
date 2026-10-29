@@ -30,6 +30,8 @@
 #include <cstddef>
 #include <string>
 
+#include "pal/netaddress.h"
+
 // NOTE: no C++17 in this header (no std::string_view) — the Windows build
 // compiles at /std:c++14 (MUSHclient.vcxproj has no <LanguageStandard>), and
 // the T5 native adapter includes this.  String parameters are NUL-terminated
@@ -73,11 +75,13 @@ class ITransportEvents {
 public:
     virtual ~ITransportEvents() = default;
 
-    // resolve() finished. ok=false → resolution failed. addrIPv4 is the
-    // address in network byte order (the engine stores it into its
-    // SOCKADDR_IN and may chain a proxy resolve before connecting).
-    virtual void onResolved(ResolveToken token, unsigned int addrIPv4,
-                            bool ok) = 0;
+    // resolve() finished.  ok=false -> resolution failed (count is 0).  On
+    // success, every address the name has, IPv4 and IPv6, in the resolver's
+    // order; the engine decides which to try first (OrderForConnecting) and
+    // falls back through the rest.  The array is the adapter's, valid only for
+    // the duration of the call.
+    virtual void onResolved(ResolveToken token, const NetAddress* addresses,
+                            size_t count, bool ok) = 0;
 
     // connect() finished: err == 0 → connected (including immediate
     // success), else a normalized error code.
@@ -117,9 +121,11 @@ public:
     virtual void resolve(const char* host, ResolveToken token) = 0;
     virtual void cancelResolve() = 0;
 
-    // Async connect to an IPv4 address (network byte order) + port.
-    // Reports via onConnect.
-    virtual void connect(unsigned int addrIPv4, unsigned short port,
+    // Async connect to one IPv4 or IPv6 address + port (host order).  Reports
+    // via onConnect.  May be called again after a failed (or abandoned)
+    // attempt -- the engine's fallback to a host's next address: the previous
+    // socket is closed first, and nothing queued by send() is lost.
+    virtual void connect(const NetAddress& address, unsigned short port,
                          const TransportOptions& options) = 0;
 
     // Buffered write: append and it drains on writability (absorbs the

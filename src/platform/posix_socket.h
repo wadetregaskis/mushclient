@@ -113,9 +113,46 @@ public:
                                        FD_ACCEPT | FD_CONNECT | FD_CLOSE,
                 LPCSTR lpszSocketAddress = nullptr)
     {
+        if (!MakeSocket(nSocketType, 0, AF_INET))
+            return FALSE;
+
+        // MFC binds unconditionally — port 0 with no address just asks the
+        // kernel for an ephemeral port, which is what an outbound socket wants
+        // anyway, so this is safe for the connect-side callers too.
+        if (!Bind(nSocketPort, lpszSocketAddress)) {
+            int saved = errno;
+            Close();
+            errno = saved;
+            return FALSE;
+        }
+
+        Register(this);
+        return TRUE;
+    }
+
+    // MFC's CAsyncSocket::Socket: the socket alone, of any address family,
+    // and NOT bound -- Create can only make an IPv4 one, in MFC as here, so
+    // this is how an IPv6 socket is made (bound afterwards with the SOCKADDR
+    // Bind if it needs a local address; connect() picks one otherwise).
+    BOOL Socket(int  nSocketType    = SOCK_STREAM,
+                long /*lEvent*/     = FD_READ | FD_WRITE | FD_OOB |
+                                      FD_ACCEPT | FD_CONNECT | FD_CLOSE,
+                int  nProtocolType  = 0,
+                int  nAddressFormat = AF_INET)
+    {
+        if (!MakeSocket(nSocketType, nProtocolType, nAddressFormat))
+            return FALSE;
+        Register(this);
+        return TRUE;
+    }
+
+private:
+    // What Create and Socket share: a non-blocking socket, no SIGPIPE.
+    BOOL MakeSocket(int nSocketType, int nProtocolType, int nAddressFormat)
+    {
         if (m_hSocket != INVALID_SOCKET) Close();
 
-        m_hSocket = ::socket(AF_INET, nSocketType, 0);
+        m_hSocket = ::socket(nAddressFormat, nSocketType, nProtocolType);
         if (m_hSocket == INVALID_SOCKET) return FALSE;
         m_sockType = nSocketType;
 
@@ -148,20 +185,10 @@ public:
         // option is gone rather than duplicated onto Windows.  Pinned by
         // PosixSocket.CreatedStreamSocketLeavesNagleAlone -- do not re-add it
         // without changing win_transport.cpp in the same commit.
-
-        // MFC binds unconditionally — port 0 with no address just asks the
-        // kernel for an ephemeral port, which is what an outbound socket wants
-        // anyway, so this is safe for the connect-side callers too.
-        if (!Bind(nSocketPort, lpszSocketAddress)) {
-            int saved = errno;
-            Close();
-            errno = saved;
-            return FALSE;
-        }
-
-        Register(this);
         return TRUE;
     }
+
+public:
 
     // ── Connection ────────────────────────────────────────────────────────────
     // Non-blocking connect.  Returns FALSE with WSAEWOULDBLOCK when in progress
@@ -186,7 +213,7 @@ public:
     BOOL Connect(const char* lpszHostAddress, UINT nHostPort)
     {
         struct addrinfo hints{}, *res = nullptr;
-        hints.ai_family   = AF_INET;
+        hints.ai_family   = AF_INET;   // the socket Create made is IPv4
         hints.ai_socktype = SOCK_STREAM;
         char port_str[16];
         snprintf(port_str, sizeof(port_str), "%u", nHostPort);
@@ -262,6 +289,25 @@ public:
             ::setsockopt(m_hSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
         }
         return (::bind(m_hSocket, (struct sockaddr*)&addr, sizeof(addr)) == 0)
+               ? TRUE : FALSE;
+    }
+
+    // MFC's other Bind: any address family (an IPv6 listener, made by Socket)
+    BOOL Bind(const SOCKADDR* lpSockAddr, int nSockAddrLen)
+    {
+        if (lpSockAddr && lpSockAddr->sa_family == AF_INET6) {
+            unsigned short port = ntohs(((const struct sockaddr_in6*) lpSockAddr)->sin6_port);
+            if (port != 0) {   // a listener, as above
+                int opt = 1;
+                ::setsockopt(m_hSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+            }
+        }
+        else if (lpSockAddr && lpSockAddr->sa_family == AF_INET &&
+                 ((const struct sockaddr_in*) lpSockAddr)->sin_port != 0) {
+            int opt = 1;
+            ::setsockopt(m_hSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        }
+        return (::bind(m_hSocket, lpSockAddr, (socklen_t)nSockAddrLen) == 0)
                ? TRUE : FALSE;
     }
 

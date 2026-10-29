@@ -37,7 +37,7 @@ using FakeTransport = RecordingTransport;
 struct FakeTransportEvents : pal::ITransportEvents {
     int connects = 0, closes = 0;
     std::string bytes;
-    void onResolved(pal::ResolveToken, unsigned int, bool) override {}
+    void onResolved(pal::ResolveToken, const pal::NetAddress*, size_t, bool) override {}
     void onConnect(int) override { ++connects; }
     void onBytes(const char* data, size_t n) override { bytes.append(data, n); }
     void onWritable() override {}
@@ -56,8 +56,8 @@ static CMUSHclientDoc* make_proxy_doc(int socksType,
     doc->m_strProxyUserName  = user;
     doc->m_strProxyPassword  = pass;
     // MUD endpoint 10.11.12.13:4000 (values chosen so every byte is distinct)
-    doc->m_sockAddr.sin_addr.s_addr = htonl(0x0A0B0C0Du);
-    doc->m_sockAddr.sin_port        = htons(4000);
+    doc->m_sockAddr = pal::NetAddress::FromIPv4(htonl(0x0A0B0C0Du));
+    doc->m_port     = 4000;
     // The doc sends through the PAL transport seam (T3b single-sourced
     // SendPacket); a FakeTransport captures the bytes.  The doc destructor's
     // TeardownTransport() frees it.
@@ -497,7 +497,7 @@ struct TlsRecorder : pal::ITransportEvents {
     pal::TlsFailure tlsFailKind = pal::TlsFailure::CertVerify;  // != expected Handshake
     std::string bytes, verifyFailure;
 
-    void onResolved(pal::ResolveToken, unsigned int, bool) override {}
+    void onResolved(pal::ResolveToken, const pal::NetAddress*, size_t, bool) override {}
     void onConnect(int) override { ++connects; }
     void onBytes(const char* d, size_t n) override { bytes.append(d, n); }
     void onWritable() override {}
@@ -711,7 +711,7 @@ TEST(PalTransport, TlsEncryptedSendRoundTrips)
 
     TlsRecorder ev;
     pal::ITransport* t = pal::CreatePosixTransport(ev);
-    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    t->connect(pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK)), port, pal::TransportOptions{ false });
     EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
 
     pal::TlsParams params;
@@ -749,7 +749,7 @@ TEST(PalTransport, TlsSendDuringHandshakeIsBufferedThenEncrypted)
 
     TlsRecorder ev;
     pal::ITransport* t = pal::CreatePosixTransport(ev);
-    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    t->connect(pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK)), port, pal::TransportOptions{ false });
     EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
 
     pal::TlsParams params;
@@ -798,7 +798,7 @@ TEST(PalTransport, TlsEncryptedSendConsumesTheBufferExactlyOnce)
 
     TlsRecorder ev;
     pal::ITransport* t = pal::CreatePosixTransport(ev);
-    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    t->connect(pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK)), port, pal::TransportOptions{ false });
     EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
 
     pal::TlsParams params;
@@ -878,7 +878,7 @@ TEST(PalTransport, TlsBackpressureBurstDoesNotTearDownTheSession)
 
     TlsRecorder ev;
     pal::ITransport* t = pal::CreatePosixTransport(ev);
-    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    t->connect(pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK)), port, pal::TransportOptions{ false });
     EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
 
     pal::TlsParams params;
@@ -923,7 +923,7 @@ TEST(PalTransport, TlsServerCleanShutdownReportsClosedZero)
 
     TlsRecorder ev;
     pal::ITransport* t = pal::CreatePosixTransport(ev);
-    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    t->connect(pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK)), port, pal::TransportOptions{ false });
     EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
 
     pal::TlsParams params;
@@ -956,7 +956,7 @@ TEST(PalTransport, TlsHandshakeProtocolFailure)
 
     TlsRecorder ev;
     pal::ITransport* t = pal::CreatePosixTransport(ev);
-    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    t->connect(pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK)), port, pal::TransportOptions{ false });
     EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
 
     pal::TlsParams params;
@@ -987,7 +987,7 @@ namespace {
 struct ConnectRecorder : pal::ITransportEvents {
     int connects = 0, closes = 0;
     int firstConnectErr = -999;
-    void onResolved(pal::ResolveToken, unsigned int, bool) override {}
+    void onResolved(pal::ResolveToken, const pal::NetAddress*, size_t, bool) override {}
     void onConnect(int err) override
     { if (firstConnectErr == -999) firstConnectErr = err; ++connects; }
     void onBytes(const char*, size_t) override {}
@@ -1018,7 +1018,7 @@ TEST(PalTransport, RefusedConnectReportsAnErrorAndNoPhantomClose)
 {
     ConnectRecorder ev;
     pal::ITransport* t = pal::CreatePosixTransport(ev);
-    t->connect(htonl(INADDR_LOOPBACK), refused_loopback_port(),
+    t->connect(pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK)), refused_loopback_port(),
                pal::TransportOptions{ false });
 
     ASSERT_TRUE(pump_until([&]{ return ev.connects > 0; }));
@@ -1063,7 +1063,7 @@ TEST(PalTransport, SendBeforeConnectIsQueuedNotDropped)
     t->send("EARLY\r\n", 7);
 
     // Now connect; the queued bytes must drain on the first writable event.
-    t->connect(htonl(INADDR_LOOPBACK), ntohs(sa.sin_port),
+    t->connect(pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK)), ntohs(sa.sin_port),
                pal::TransportOptions{ false });
     ASSERT_TRUE(pump_until([&]{ return ev.connects > 0; }));
     EXPECT_EQ(0, ev.firstConnectErr);        // connect succeeded

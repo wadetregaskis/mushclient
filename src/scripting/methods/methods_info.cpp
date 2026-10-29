@@ -494,8 +494,8 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
               }
 
     case   60: SetUpVariantString (vaResult, App.m_strPluginsDirectory); break;
-    case   61: SetUpVariantString (vaResult, inet_ntoa (m_sockAddr.sin_addr)); break;
-    case   62: SetUpVariantString (vaResult, inet_ntoa (m_ProxyAddr.sin_addr)); break;
+    case   61: SetUpVariantString (vaResult, pal::FormatAddress (m_sockAddr).c_str ()); break;
+    case   62: SetUpVariantString (vaResult, pal::FormatAddress (m_ProxyAddr).c_str ()); break;
     case   63:
               {
                char szHostName[256];
@@ -647,8 +647,8 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case  225: SetUpVariantLong (vaResult, m_CustomElementMap.GetCount ()); break;
     case  226: SetUpVariantLong (vaResult, m_CustomEntityMap.GetCount ()); break;
     case  227: SetUpVariantLong (vaResult, m_iConnectPhase); break;
-    case  228: SetUpVariantLong (vaResult, ntohl (m_sockAddr.sin_addr.s_addr)); break;
-    case  229: SetUpVariantLong (vaResult, ntohl (m_ProxyAddr.sin_addr.s_addr)); break;
+    case  228: SetUpVariantLong (vaResult, ntohl (m_sockAddr.ipv4 ())); break;
+    case  229: SetUpVariantLong (vaResult, ntohl (m_ProxyAddr.ipv4 ())); break;
     case  230: SetUpVariantLong (vaResult, m_iExecutionDepth); break;
     case  231:  // log file size
       {
@@ -1521,20 +1521,18 @@ VARIANT CMUSHclientDoc::GetHostAddress(LPCTSTR HostName)
   if (strlen (HostName) > 0)
     {
 
-    LPHOSTENT pHost = gethostbyname (HostName);
-    long iCount;
-
-    for (iCount = 0; pHost != NULL && pHost->h_addr_list [iCount] != NULL; iCount++ )
-      {};   // end of counting them
+    // IPv4 addresses first, as gethostbyname gave them, then IPv6 ones
+    const std::vector<pal::NetAddress> addresses = pal::LookUpNow (HostName);
+    long iCount = (long) addresses.size ();
 
     if (iCount) // cannot create empty array dimension
       {
       sa.CreateOneDim (VT_VARIANT, iCount);
-  
+
     // put the addresses into the array
-      for (long i = 0; pHost != NULL && pHost->h_addr_list [i] != NULL; i++ )
+      for (long i = 0; i < iCount; i++ )
         {
-        COleVariant v (inet_ntoa ( *((in_addr *)pHost->h_addr_list[i])));
+        COleVariant v (pal::FormatAddress (addresses [i]).c_str ());
         sa.PutElement (&i, &v);
         }      // end of looping through each IP address
       } // end of having at least one
@@ -1549,15 +1547,9 @@ BSTR CMUSHclientDoc::GetHostName(LPCTSTR IPaddress)
 
   if (strlen (IPaddress) > 0)
     {
-    DWORD ulAddress = inet_addr (IPaddress);
-    if (ulAddress != INADDR_NONE)
-      {
-      LPHOSTENT lpHostEntry = gethostbyaddr ((const char *) &ulAddress, 
-                                             sizeof ulAddress, 
-                                             AF_INET);
-      if (lpHostEntry != NULL)
-        strResult =  lpHostEntry->h_name;
-      } // end of valid IP address
+    pal::NetAddress address;    // IPv4 or IPv6
+    if (pal::ParseNumericAddress (IPaddress, address))
+      strResult = pal::NameOfAddress (address).c_str ();
     }   // end of non-blank name
 
 	return strResult.AllocSysString();

@@ -1467,6 +1467,7 @@
     </ClCompile>
     <ClCompile Include="src\surface_bridge.cpp" />
     <ClCompile Include="src\pal\gdi_surface.cpp" />
+    <ClCompile Include="src\pal\netaddress.cpp" />
     <ClCompile Include="src\pal\win_transport.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <ClCompile Include="src\platform\mc_dispatch.cpp" />
@@ -1514,6 +1515,7 @@
     <ClCompile Include="tests\test_lua_surface.cpp" />
     <ClCompile Include="tests\test_mcdatetime.cpp" />
     <ClCompile Include="tests\test_mxp.cpp" />
+    <ClCompile Include="tests\test_netaddress.cpp" />
     <ClCompile Include="tests\test_plugins.cpp" />
     <ClCompile Include="tests\test_regexp.cpp" />
     <ClCompile Include="tests\test_scriptengine.cpp" />

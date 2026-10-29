@@ -19,6 +19,12 @@
 // into mushcore's CORE_SOURCES, so OnReceive below is the real state machine
 // in both builds, not an empty stub.
 #include "pal/chat_protocol.h"
+#include "pal/itransport.h"
+#ifdef _WIN32
+#include "pal/win_transport.h"
+#else
+#include "platform/posix_transport.h"
+#endif
 
 #include <stddef.h>
 #include <set>
@@ -120,9 +126,9 @@ IMPLEMENT_DYNAMIC(CChatSocket, CAsyncSocket)
 CChatSocket::CChatSocket(CMUSHclientDoc* pDoc)
 {
 	m_pDoc = pDoc;
-  m_hNameLookup = NULL;
-  m_pGetHostStruct = NULL;
-  ZeroMemory (&m_ServerAddr, sizeof m_ServerAddr);
+  m_pResolver = NULL;
+  m_pResolverEvents = NULL;
+  m_iServerPort = 0;
   m_bDeleteMe = false;  
   m_bIncoming = false;
   m_bIgnore = false;
@@ -197,11 +203,9 @@ CChatSocket::~CChatSocket()
 
   StopFileTransfer (true);
 
-  // cancel pending host name lookup
-  if (m_hNameLookup)
-    WSACancelAsyncRequest (m_hNameLookup);  // cancel host name lookup in progress
-
-  delete [] m_pGetHostStruct;
+  // cancel pending host name lookup (destroying the resolver drops it)
+  delete m_pResolver;
+  delete m_pResolverEvents;
 
   ShutDownSocket (*this);
 
@@ -389,7 +393,7 @@ int count = Receive (buff, sizeof (buff) - 1);
       pal::ChatAcceptDecision decision = pal::chatAcceptAfterPlugins (
               m_pDoc->SendToAllPluginCallbacks (ON_PLUGIN_CHAT_ACCEPT,
                         pal::chatAcceptCallbackArgument (
-                                  inet_ntoa (m_ServerAddr.sin_addr),
+                                  pal::FormatAddress (m_ServerAddr).c_str (),
                                   string (m_strRemoteUserName)).c_str (),
                         true),   // stop on false response
               m_pDoc->m_bValidateIncomingCalls);
@@ -408,7 +412,7 @@ int count = Receive (buff, sizeof (buff) - 1);
                 TFormat ("Incoming chat call to world %s from %s, IP address: %s.\n\nAccept it?",
                          (LPCTSTR) m_pDoc->m_mush_name,
                          (LPCTSTR) m_strRemoteUserName,
-                         (LPCTSTR) inet_ntoa (m_ServerAddr.sin_addr)),
+                         pal::FormatAddress (m_ServerAddr).c_str ()),
               MB_YESNO) == IDYES);
           }
         if (m_bDeleteMe)
@@ -660,11 +664,72 @@ CString strAddresses;
 
   } // end of OnConnect
 
-void CChatSocket::HostNameResolved (WPARAM wParam, LPARAM lParam)
+// The resolver's answer comes back through this: the one event a chat lookup
+// wants from the transport it borrows the resolver of.
+class CChatResolverEvents : public pal::ITransportEvents
   {
-  m_hNameLookup = NULL;   // handle not needed now
+  public:
+    explicit CChatResolverEvents (CChatSocket * pSocket) : m_pSocket (pSocket) {}
+    void onResolved (pal::ResolveToken, const pal::NetAddress * addresses,
+                     size_t count, bool ok) override
+      { m_pSocket->HostNameResolved (addresses, count, ok); }
+    void onConnect (int) override {}
+    void onBytes (const char *, size_t) override {}
+    void onWritable () override {}
+    void onClosed (int) override {}
+    void onTlsEstablished (const char *, const char *, const char *) override {}
+    void onTlsFailed (pal::TlsFailure, const char *) override {}
+  private:
+    CChatSocket * m_pSocket;
+  };
 
-  if (WSAGETASYNCERROR (lParam))
+// Start looking up the name of an outgoing call; false if it cannot even start.
+bool CChatSocket::LookUp (const char * sName)
+  {
+  m_pResolverEvents = new CChatResolverEvents (this);
+#ifdef _WIN32
+  m_pResolver = pal::CreateWinTransport (*m_pResolverEvents);
+#else
+  m_pResolver = pal::CreatePosixTransport (*m_pResolverEvents);
+#endif
+  if (!m_pResolver)
+    return false;
+  m_pResolver->resolve (sName, 0);
+  return true;
+  } // end of LookUp
+
+// A socket of the address's family.  MFC's Create makes only IPv4 ones (and
+// binds), so IPv6 is Socket with the family -- the world connection's split.
+bool CChatSocket::CreateFor (const pal::NetAddress & address)
+  {
+  const long lEvents = FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE;
+  if (address.isIPv6 ())
+    return Socket (SOCK_STREAM, lEvents, 0, AF_INET6) != FALSE;
+  return Create (0, SOCK_STREAM, lEvents, NULL) != FALSE;
+  } // end of CreateFor
+
+void CChatSocket::HostNameResolved (const pal::NetAddress * addresses, size_t count, bool ok)
+  {
+  // An IPv4 address when the name has one: a chat peer listening on IPv4
+  // alone is the usual case -- zMUD, MudMaster, MUSHclient 5 -- and an
+  // IPv6 call to a dual-stack host would be refused.
+  if (ok && count > 0)
+    {
+    m_ServerAddr = addresses [0];
+    for (size_t i = 0; i < count; i++)
+      if (addresses [i].isIPv4 ())
+        {
+        m_ServerAddr = addresses [i];
+        break;
+        }
+    }
+
+  // Done with the resolver -- and with `addresses`, which are its.
+  // (Destroying it inside its own event is within the ITransport contract.)
+  delete m_pResolver;
+  m_pResolver = NULL;
+
+  if (!ok || count == 0)
     {
     m_pDoc->ChatNote (eChatConnection,
                 TFormat ("Chat session cannot resolve host name: %s.",
@@ -673,13 +738,6 @@ void CChatSocket::HostNameResolved (WPARAM wParam, LPARAM lParam)
     m_iChatStatus = eChatClosed;
     return;
     }   // end of error in host name lookup
-
-struct hostent * pHostent = (struct hostent * ) m_pGetHostStruct;
-
-  m_ServerAddr.sin_addr.s_addr = ((LPIN_ADDR)pHostent->h_addr)->s_addr;
-
-  delete [] m_pGetHostStruct;   // delete buffer used by host name lookup
-  m_pGetHostStruct = NULL;
 
   // we know the address - get on with it
 
@@ -691,8 +749,8 @@ void CChatSocket::MakeCall (void)
   {
 
   // the alleged address and port are what we actually used :)
-  m_strAllegedAddress = inet_ntoa (m_ServerAddr.sin_addr);
-  m_iAllegedPort = ntohs (m_ServerAddr.sin_port);
+  m_strAllegedAddress = pal::FormatAddress (m_ServerAddr).c_str ();
+  m_iAllegedPort = m_iServerPort;
 
 
 // first check if we are already connected
@@ -702,8 +760,8 @@ void CChatSocket::MakeCall (void)
     if (pSocket == this || pSocket->m_iChatStatus != eChatConnected)
       continue;
 
-    if (m_strAllegedAddress == inet_ntoa (pSocket->m_ServerAddr.sin_addr)  &&
-        ntohs (pSocket->m_ServerAddr.sin_port) == m_iAllegedPort)
+    if (pSocket->m_ServerAddr == m_ServerAddr  &&
+        pSocket->m_iServerPort == m_iAllegedPort)
       {
       m_pDoc->ChatNote (eChatConnection,
                   TFormat ("You are already connected to %s port %d",
@@ -723,7 +781,21 @@ void CChatSocket::MakeCall (void)
   m_iChatStatus = eChatConnecting;
 
 
-BOOL connected = Connect((SOCKADDR*)&m_ServerAddr, sizeof(m_ServerAddr));
+  // a call to a name gets its socket now, when the family is known
+  if (m_hSocket == INVALID_SOCKET)
+    {
+    if (!CreateFor (m_ServerAddr))
+      {
+      OnConnect (GetLastError ());   // says why, and closes the session
+      return;
+      }
+    AsyncSelect ();
+    }
+
+  struct sockaddr_storage sa;
+  const int saLen = pal::ToSockaddr (m_ServerAddr, m_iServerPort, sa);
+
+BOOL connected = Connect((SOCKADDR*)&sa, saLen);
 
   if (connected)
     {

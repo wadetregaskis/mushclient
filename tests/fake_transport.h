@@ -33,7 +33,7 @@ struct RecordingTransport : pal::ITransport {
 
     void resolve(const char*, pal::ResolveToken token) override { lastToken = token; }
     void cancelResolve() override { lastToken = -1; }
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void connect(const pal::NetAddress&, unsigned short, const pal::TransportOptions&) override {}
     void send(const char* data, size_t n) override {
         if (!dropSends) sent.append(data, n);
     }

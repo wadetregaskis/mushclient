@@ -18,6 +18,7 @@
 #include "doc.h"
 #include "scripting/errors.h"
 #include "pal/itransport.h"
+#include "pal/iclock.h"
 #include "fake_transport.h"
 #include "scripting/scripting.h"
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_set_status (queued-command status seam)
@@ -35,6 +36,7 @@
 
 #include <zlib.h>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include "posix_compat.h"
@@ -78,7 +80,9 @@ static const bool kNawsNeedsAView = false;
 
 struct RecTransport : RecordingTransport {
     int  connectCalls = 0;
-    unsigned int lastAddr = 0;
+    unsigned int lastAddr = 0;            // lastAddress.ipv4 ()
+    pal::NetAddress lastAddress;
+    std::vector<pal::NetAddress> attempts;   // every address connect() was handed
     unsigned short lastPort = 0;
     bool lastKeepalives = false;
     int  resolveCalls = 0;
@@ -92,10 +96,12 @@ struct RecTransport : RecordingTransport {
         lastToken = token;
     }
     void cancelResolve() override {}
-    void connect(unsigned int addr, unsigned short port,
+    void connect(const pal::NetAddress& addr, unsigned short port,
                  const pal::TransportOptions& opt) override {
         ++connectCalls;
-        lastAddr = addr;
+        lastAddress = addr;
+        lastAddr = addr.ipv4 ();
+        attempts.push_back(addr);
         lastPort = port;
         lastKeepalives = opt.keepalives;
     }
@@ -137,6 +143,25 @@ static CMUSHclientDoc* make_doc()
     doc->m_pTransport = new RecTransport();
     doc->Note("");   // retire the ctor-time 80-column line; fresh lines use 500
     return doc;
+}
+
+// Addresses as a resolver hands them over, from their text.
+static pal::NetAddress Addr(const char* s)
+{
+    pal::NetAddress a;
+    pal::ParseNumericAddress(s, a);
+    return a;
+}
+
+static std::vector<pal::NetAddress> Addrs(const char* a, const char* b = nullptr,
+                                          const char* c = nullptr)
+{
+    std::vector<pal::NetAddress> v;
+    const char* all[3] = { a, b, c };
+    for (int i = 0; i < 3; i++)
+        if (all[i])
+            v.push_back(Addr(all[i]));
+    return v;
 }
 
 static RecTransport& wire(CMUSHclientDoc* doc)
@@ -228,8 +253,7 @@ TEST(Proxy, Response2SuccessAdvancesToPhase3)
 {
     CMUSHclientDoc* doc = make_doc();
     doc->m_iSocksProcessing = eProxyServerSocks5;
-    doc->m_sockAddr.sin_addr.s_addr = htonl(0x01020304u);
-    doc->m_sockAddr.sin_port = htons(4000);
+    doc->m_sockAddr = Addr("1.2.3.4");
     char buff[2] = { 1, 0 };
     EXPECT_EQ(2, doc->ProcessProxyResponse2(buff, 2));
     EXPECT_EQ((int)eConnectAwaitingProxyResponse3, (int)doc->m_iConnectPhase);
@@ -374,7 +398,7 @@ TEST(ConnectFail, NotifiesWithPhaseAndAddress)
     NotifyToOutput toOutput;
     CMUSHclientDoc* doc = make_doc();
     doc->m_iConnectPhase = eConnectConnectingToMud;
-    doc->m_sockAddr.sin_addr.s_addr = inet_addr("10.11.12.13");
+    doc->m_sockAddr = Addr("10.11.12.13");
     // The refusal code from the platform's OWN space -- see
     // ConnectStatus.SocketErrorUsesStrerror for why they are not interchangeable.
 #ifdef _WIN32
@@ -402,7 +426,7 @@ TEST(ConnectFail, ProxyPhaseReportsProxyAddress)
     CMUSHclientDoc* doc = make_doc();
     doc->m_iConnectPhase = eConnectConnectingToProxy;
     doc->m_iProxyServerPort = 1080;
-    doc->m_ProxyAddr.sin_addr.s_addr = inet_addr("192.168.1.99");
+    doc->m_ProxyAddr = Addr("192.168.1.99");
     doc->OnConnect(ETIMEDOUT);
     EXPECT_TRUE(saw(doc, "Connecting to proxy"));
     EXPECT_TRUE(saw(doc, "192.168.1.99"));
@@ -452,7 +476,7 @@ TEST(Lookup, FailureNotesUnresolvedHostName)
     NotifyToOutput toOutput;
     CMUSHclientDoc* doc = make_doc();
     doc->m_iConnectPhase = eConnectMudNameLookup;
-    struct in_addr none = {};
+    std::vector<pal::NetAddress> none;
     doc->LookupHostNameComplete(none, eConnectMudNameLookup, false);
     EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
     EXPECT_TRUE(saw(doc, "Unable to resolve host name for \"mud.example.com\""));
@@ -465,7 +489,7 @@ TEST(Lookup, ProxyFailureNamesTheProxy)
     CMUSHclientDoc* doc = make_doc();
     doc->m_strProxyServerName = "proxy.example.com";
     doc->m_iConnectPhase = eConnectProxyNameLookup;
-    struct in_addr none = {};
+    std::vector<pal::NetAddress> none;
     doc->LookupHostNameComplete(none, eConnectProxyNameLookup, false);
     EXPECT_TRUE(saw(doc, "Unable to resolve host name for \"proxy.example.com\""));
     delete doc;
@@ -476,7 +500,7 @@ TEST(Lookup, StaleCompletionIsDropped)
     NotifyToOutput toOutput;
     CMUSHclientDoc* doc = make_doc();
     doc->m_iConnectPhase = eConnectConnectedToMud;   // user reconnected already
-    struct in_addr none = {};
+    std::vector<pal::NetAddress> none;
     doc->LookupHostNameComplete(none, eConnectMudNameLookup, false);   // stale
     EXPECT_EQ((int)eConnectConnectedToMud, (int)doc->m_iConnectPhase); // untouched
     EXPECT_FALSE(saw(doc, "Unable to resolve"));
@@ -489,12 +513,11 @@ TEST(Lookup, MudSuccessInitiatesConnection)
     doc->m_iSocksProcessing = eProxyServerNone;
     doc->m_iConnectPhase = eConnectMudNameLookup;
     doc->m_bSendKeepAlives = TRUE;
-    struct in_addr addr;
-    addr.s_addr = inet_addr("10.0.0.1");
+    const std::vector<pal::NetAddress> addr = Addrs("10.0.0.1");
     doc->LookupHostNameComplete(addr, eConnectMudNameLookup, true);
     EXPECT_EQ((int)eConnectConnectingToMud, (int)doc->m_iConnectPhase);
     EXPECT_EQ(1, wire(doc).connectCalls);
-    EXPECT_EQ(addr.s_addr, wire(doc).lastAddr);
+    EXPECT_EQ(inet_addr("10.0.0.1"), wire(doc).lastAddr);
     EXPECT_EQ((unsigned short)4000, wire(doc).lastPort);
     EXPECT_TRUE(wire(doc).lastKeepalives);
     delete doc;
@@ -507,10 +530,8 @@ TEST(Lookup, MudSuccessWithUnresolvedProxyResolvesProxyNext)
     doc->m_strProxyServerName = "proxy.example.com";   // not a dotted quad
     doc->m_iProxyServerPort = 1080;
     doc->m_iConnectPhase = eConnectMudNameLookup;
-    doc->m_ProxyAddr.sin_family = AF_INET;
-    doc->m_ProxyAddr.sin_addr.s_addr = INADDR_NONE;
-    struct in_addr addr;
-    addr.s_addr = inet_addr("10.0.0.1");
+    doc->ForgetProxyAddresses();          // proxy not resolved yet
+    const std::vector<pal::NetAddress> addr = Addrs("10.0.0.1");
     doc->LookupHostNameComplete(addr, eConnectMudNameLookup, true);
     // proxy name is non-numeric -> async re-resolve through the transport
     EXPECT_EQ((int)eConnectProxyNameLookup, (int)doc->m_iConnectPhase);
@@ -526,8 +547,8 @@ TEST(Lookup, ProxySuccessConnectsToProxy)
     doc->m_iSocksProcessing = eProxyServerSocks5;
     doc->m_iProxyServerPort = 1080;
     doc->m_iConnectPhase = eConnectProxyNameLookup;
-    struct in_addr addr;
-    addr.s_addr = inet_addr("172.16.0.1");
+    doc->m_MudAddresses = Addrs("10.0.0.1");   // looked up first, always
+    const std::vector<pal::NetAddress> addr = Addrs("172.16.0.1");
     doc->LookupHostNameComplete(addr, eConnectProxyNameLookup, true);
     EXPECT_EQ((int)eConnectConnectingToProxy, (int)doc->m_iConnectPhase);
     EXPECT_EQ(1, wire(doc).connectCalls);
@@ -1645,7 +1666,7 @@ TEST(ConnectSocketTest, ProxyByIpInitiatesConnectionToProxy)
     // ConnectSocket replaced the transport with the real POSIX adapter and
     // pointed the connect at the proxy
     EXPECT_EQ((int)eConnectConnectingToProxy, (int)doc->m_iConnectPhase);
-    EXPECT_EQ(inet_addr("10.9.9.9"), (unsigned int)doc->m_ProxyAddr.sin_addr.s_addr);
+    EXPECT_EQ(inet_addr("10.9.9.9"), doc->m_ProxyAddr.ipv4 ());
     delete doc;
 }
 
@@ -1686,7 +1707,11 @@ TEST(ConnectSocketTest, ResolvableWorldNameProceedsToConnect)
     doc->TeardownTransport();               // force the sync-fallback arm
     doc->m_iConnectPhase = eConnectMudNameLookup;
     EXPECT_FALSE(doc->LookupHostName("localhost"));   // false = resolved
-    EXPECT_EQ(inet_addr("127.0.0.1"), (unsigned int)doc->m_sockAddr.sin_addr.s_addr);
+    // every address the name has, the IPv4 loopback among them (and ::1 too,
+    // where the machine has IPv6), and the first of them in m_sockAddr
+    EXPECT_TRUE(std::find(doc->m_MudAddresses.begin(), doc->m_MudAddresses.end(),
+                          Addr("127.0.0.1")) != doc->m_MudAddresses.end());
+    EXPECT_TRUE(doc->m_sockAddr == doc->m_MudAddresses[0]);
     delete doc;
 }
 
@@ -1699,13 +1724,14 @@ TEST(ConnectSocketTest, MudLookupChainsIntoProxyLookup)
     doc->m_iSocksProcessing = eProxyServerSocks5;
     doc->m_strProxyServerName = "localhost";
     doc->m_iProxyServerPort = 1080;
-    doc->m_ProxyAddr.sin_family = AF_UNSPEC;    // proxy not resolved yet
+    doc->ForgetProxyAddresses();    // proxy not resolved yet
     doc->m_iConnectPhase = eConnectMudNameLookup;
-    struct in_addr a; a.s_addr = inet_addr("10.4.5.6");
+    const std::vector<pal::NetAddress> a = Addrs("10.4.5.6");
     doc->LookupHostNameComplete(a, eConnectMudNameLookup, true);
     // both addresses now known
-    EXPECT_EQ(inet_addr("10.4.5.6"),  (unsigned int)doc->m_sockAddr.sin_addr.s_addr);
-    EXPECT_EQ(inet_addr("127.0.0.1"), (unsigned int)doc->m_ProxyAddr.sin_addr.s_addr);
+    EXPECT_EQ(inet_addr("10.4.5.6"),  doc->m_sockAddr.ipv4 ());
+    EXPECT_TRUE(std::find(doc->m_ProxyAddresses.begin(), doc->m_ProxyAddresses.end(),
+                          Addr("127.0.0.1")) != doc->m_ProxyAddresses.end());
     delete doc;
 }
 
@@ -1714,7 +1740,7 @@ TEST(ConnectSocketTest, MudLookupChainsIntoProxyLookup)
 TEST(ConnectSocketTest, LookupCompleteInWrongPhaseIsRejected)
 {
     CMUSHclientDoc* doc = make_doc();
-    struct in_addr a; a.s_addr = inet_addr("127.0.0.1");
+    const std::vector<pal::NetAddress> a = Addrs("127.0.0.1");
     doc->LookupHostNameComplete(a, eConnectConnectedToMud, true);
     // phase untouched — the arm bails out
     EXPECT_EQ((int)eConnectConnectedToMud, (int)doc->m_iConnectPhase);
@@ -2889,7 +2915,7 @@ TEST(ConnectionR5, ResolveFailureViaMessageBoxArm)
     NotifyToOutput toBox(true, /*toOutput=*/false);
     CMUSHclientDoc* doc = make_doc();
     doc->m_iConnectPhase = eConnectMudNameLookup;
-    struct in_addr addr; addr.s_addr = 0;
+    std::vector<pal::NetAddress> addr;
     doc->LookupHostNameComplete(addr, eConnectMudNameLookup, false);
     EXPECT_FALSE(saw(doc, "Unable to resolve host name"));
     EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
@@ -3477,6 +3503,196 @@ TEST(QueueDrain, AnEmptyEntryIsSkippedRatherThanDecoded)
     EXPECT_EQ(1, doc->DrainAllQueuedCommands());
     EXPECT_TRUE(doc->m_QueuedCommandsList.IsEmpty());
     EXPECT_TRUE(wire(doc).sent.find("north") != std::string::npos);
+    delete doc;
+}
+
+// ── IPv6, and a name with more than one address ────────────────────────────
+// Upstream kept one IPv4 address per world.  A name now gives every address it
+// has, both families, and the world tries them in turn (pal::OrderForConnecting
+// alternates the families) until one connects -- reporting only the last
+// failure.  An attempt still pending after kAddressFallbackSeconds is given up
+// for the next, so a black-holed IPv6 route costs two seconds, not the OS's
+// whole connect timeout.
+
+namespace {
+
+#ifdef _WIN32
+const int kRefused = WSAECONNREFUSED;
+#else
+const int kRefused = ECONNREFUSED;
+#endif
+
+struct FallbackClock : pal::IClock {
+    double now = CmcDateTime(2026, 1, 1, 12, 0, 0).GetTime();
+    double nowOle() const override { return now; }
+    void advance(double seconds) { now += seconds / 86400.0; }
+};
+
+struct ScopedFallbackClock {
+    FallbackClock clock;
+    ScopedFallbackClock() { pal::g_clock = &clock; }
+    ~ScopedFallbackClock() { pal::g_clock = nullptr; }
+};
+
+} // namespace
+
+TEST(Ipv6, AnIPv6AddressIsConnectedTo)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("2001:db8::17"), eConnectMudNameLookup, true);
+    EXPECT_EQ((int)eConnectConnectingToMud, (int)doc->m_iConnectPhase);
+    ASSERT_EQ(1, wire(doc).connectCalls);
+    EXPECT_TRUE(wire(doc).lastAddress == Addr("2001:db8::17"));
+    EXPECT_EQ((unsigned short)4000, wire(doc).lastPort);
+    EXPECT_TRUE(doc->m_sockAddr == Addr("2001:db8::17"));
+    delete doc;
+}
+
+TEST(Ipv6, ANumericIPv6ServerNeedsNoLookup)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_server = "[2001:db8::17]";    // as typed beside a port, brackets and all
+    EXPECT_TRUE(doc->ConnectSocket());
+    // straight to connecting, with the real transport ConnectSocket made --
+    // which on a machine with no IPv6 route may fail at once, so the phase
+    // is either; what matters is that no lookup was started
+    EXPECT_NE((int)eConnectMudNameLookup, (int)doc->m_iConnectPhase);
+    EXPECT_TRUE(doc->m_sockAddr == Addr("2001:db8::17"));
+    ASSERT_EQ(1u, doc->m_MudAddresses.size());
+    delete doc;
+}
+
+TEST(Ipv6, AFailedAddressFallsBackToTheNextSilently)
+{
+    NotifyToOutput toOutput;
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("2001:db8::1", "2001:db8::2", "192.0.2.1"),
+                                eConnectMudNameLookup, true);
+
+    // alternating: IPv6, IPv4, then the second IPv6
+    ASSERT_EQ(1u, wire(doc).attempts.size());
+    EXPECT_TRUE(wire(doc).attempts[0] == Addr("2001:db8::1"));
+
+    doc->OnConnect(kRefused);
+    ASSERT_EQ(2u, wire(doc).attempts.size());
+    EXPECT_TRUE(wire(doc).attempts[1] == Addr("192.0.2.1"));
+    EXPECT_EQ((int)eConnectConnectingToMud, (int)doc->m_iConnectPhase);
+    EXPECT_FALSE(saw(doc, "Unable to connect"));     // not yet: there is more to try
+
+    doc->OnConnect(kRefused);
+    ASSERT_EQ(3u, wire(doc).attempts.size());
+    EXPECT_TRUE(wire(doc).attempts[2] == Addr("2001:db8::2"));
+    EXPECT_FALSE(saw(doc, "Unable to connect"));
+
+    // the last one failing is the failure, and it names that address
+    doc->OnConnect(kRefused);
+    EXPECT_EQ(3u, wire(doc).attempts.size());
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    EXPECT_TRUE(saw(doc, "Unable to connect to \"TestWorld\""));
+    EXPECT_TRUE(saw(doc, "2001:db8::2"));
+    delete doc;
+}
+
+TEST(Ipv6, AnAttemptThatHangsIsGivenUpForTheNextButTheLastIsNot)
+{
+    ScopedFallbackClock clock;
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bEnableTimers = FALSE;
+    doc->m_bDisconnectOK = true;          // no auto-reconnect from CheckTimers
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("2001:db8::1", "192.0.2.1"),
+                                eConnectMudNameLookup, true);
+    ASSERT_EQ(1u, wire(doc).attempts.size());
+
+    clock.clock.advance(1.0);
+    doc->CheckTimers();
+    EXPECT_EQ(1u, wire(doc).attempts.size());        // still within its time
+
+    clock.clock.advance(1.5);
+    doc->CheckTimers();
+    ASSERT_EQ(2u, wire(doc).attempts.size());        // given up: the IPv4 one
+    EXPECT_TRUE(wire(doc).attempts[1] == Addr("192.0.2.1"));
+
+    clock.clock.advance(60.0);
+    doc->CheckTimers();
+    EXPECT_EQ(2u, wire(doc).attempts.size());        // the last runs to the OS's timeout
+    EXPECT_EQ((int)eConnectConnectingToMud, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+TEST(Ipv6, AConnectFailureNamesTheIPv6Address)
+{
+    NotifyToOutput toOutput;
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iConnectPhase = eConnectConnectingToMud;
+    doc->m_sockAddr = Addr("2001:db8::5");
+    doc->OnConnect(kRefused);
+    EXPECT_TRUE(saw(doc, "2001:db8::5"));
+    EXPECT_TRUE(saw(doc, "port 4000"));
+    delete doc;
+}
+
+TEST(Ipv6, Socks5CarriesAnIPv6Address)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSocksProcessing = eProxyServerSocks5;
+    doc->m_sockAddr = Addr("2001:db8::abcd");
+    char buff[2] = { 1, 0 };           // username/password accepted
+    EXPECT_EQ(2, doc->ProcessProxyResponse2(buff, 2));
+    // VER CMD RSV ATYP=4, sixteen address bytes, the port
+    const std::string& s = wire(doc).sent;
+    ASSERT_TRUE(s.size() >= 22u);
+    const std::string req = s.substr(s.size() - 22);
+    EXPECT_EQ(5, (int)(unsigned char) req[0]);
+    EXPECT_EQ(1, (int)(unsigned char) req[1]);
+    EXPECT_EQ(4, (int)(unsigned char) req[3]);
+    EXPECT_EQ(0, memcmp(req.data() + 4, Addr("2001:db8::abcd").bytes, 16));
+    EXPECT_EQ(4000 >> 8,   (int)(unsigned char) req[20]);
+    EXPECT_EQ(4000 & 0xFF, (int)(unsigned char) req[21]);
+    delete doc;
+}
+
+TEST(Ipv6, Socks5StillSendsIPv4WhenTheNameHasIt)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSocksProcessing = eProxyServerSocks5;
+    doc->m_iProxyServerPort = 1080;
+    doc->m_MudAddresses = Addrs("2001:db8::1", "192.0.2.9");
+    doc->m_iConnectPhase = eConnectProxyNameLookup;
+    doc->LookupHostNameComplete(Addrs("10.0.0.5"), eConnectProxyNameLookup, true);
+    EXPECT_EQ((int)eConnectConnectingToProxy, (int)doc->m_iConnectPhase);
+    EXPECT_TRUE(doc->m_sockAddr == Addr("192.0.2.9"));   // what goes in the request
+    EXPECT_TRUE(wire(doc).lastAddress == Addr("10.0.0.5"));
+    EXPECT_EQ((unsigned short)1080, wire(doc).lastPort);
+    delete doc;
+}
+
+TEST(Ipv6, Socks4RefusesAnIPv6OnlyMudAndSaysWhy)
+{
+    NotifyToOutput toOutput;
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSocksProcessing = eProxyServerSocks4;
+    doc->m_iProxyServerPort = 1080;
+    doc->m_MudAddresses = Addrs("2001:db8::1");
+    doc->m_iConnectPhase = eConnectProxyNameLookup;
+    doc->LookupHostNameComplete(Addrs("10.0.0.5"), eConnectProxyNameLookup, true);
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    EXPECT_TRUE(saw(doc, "SOCKS 4 proxy cannot reach an IPv6 address"));
+    EXPECT_TRUE(saw(doc, "2001:db8::1"));
+    delete doc;
+}
+
+TEST(Ipv6, AReconnectReusesTheAddressesUntilTheNameChanges)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("192.0.2.1", "2001:db8::1"), eConnectMudNameLookup, true);
+    EXPECT_EQ(2u, doc->m_MudAddresses.size());
+    doc->ResetIP();                       // world.ResetIP, and a changed server name
+    EXPECT_TRUE(doc->m_MudAddresses.empty());
+    EXPECT_FALSE(doc->m_sockAddr.valid());
     delete doc;
 }
 

@@ -129,8 +129,10 @@ went with it: the `\n` → `ENDLINE` conversion and the `eNotepadPacketDebug` ty
 `tests/test_lua_surface.cpp:513` **asserts** `eOK`. The macOS equivalent is
 `CTFontManagerRegisterFontsForURL`.
 
-**`world.ChatCall('hostname', port)` has never worked in the shipping mac app;
-only dotted-IP calls do.** `WSAAsyncGetHostByName` is an inline stub returning
+**Fixed 2026-10-29, with IPv6: chat looks names up through the platform
+transport's resolver now (`CChatSocket::LookUp`), so this works on every
+platform.** As found: **`world.ChatCall('hostname', port)` has never worked in
+the shipping mac app; only dotted-IP calls do.** `WSAAsyncGetHostByName` is an inline stub returning
 nullptr (`platform/mfc_ui.h:7451`), so `ChatCallGeneral` takes
 `if (!pSocket->m_hNameLookup) { delete pSocket; return eCannotLookupDomainName; }`
 (`scripting/methods/methods_chat.cpp:145-149`). The completion side is dead too:

@@ -3567,6 +3567,13 @@ lookup goes on, and then writes up to `MAXGETHOSTSTRUCT` bytes into freed memory
 retired until exit rather than freed — 1 KB per cancelled lookup, since nothing
 can tell a real cancel from Wine's.
 
+**Superseded the same day by IPv6 support:** `WSAAsyncGetHostByName` knows only
+IPv4, so lookups now run `getaddrinfo` on a thread of their own, into a job the
+thread and the adapter share (`ResolveJob`, `pal/win_transport.cpp`).  A
+cancelled lookup finishes into a job nobody reads; there is no buffer left to
+free early, and nothing to retire.  Chat's lookups, which had the same shape
+(`CChatSocket::m_pGetHostStruct`), go through the same resolver.
+
 ## 117 — A zChat stamp collision broadcasts the new stamp as text, to every peer
 
 `chatsock.cpp` `CChatSocket::Process_Stamp`.

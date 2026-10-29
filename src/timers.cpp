@@ -321,6 +321,9 @@ void CMUSHclientDoc::CheckTimers ()
     ConnectSocket();      // reconnect
     }
 
+// a connect attempt on one of several addresses that is taking too long
+  CheckAddressFallback ();
+
 // check for deleted chat sessions.  Runs on Windows and the full GUI build
 // (mushapp) — both have the real CChatSocket; the headless mushcore/CLI engine
 // uses a stub without m_bDeleteMe and has no chat sockets to reap.  On the port

@@ -12,7 +12,7 @@ performance survey, measured in the running client.
 **Method.** Reviewers read each area adversarially and reported findings with
 failure scenarios; every finding below was re-read against the code before it
 was fixed, and each Windows-reachable fix carries a test or was checked in the
-running client. Tests: 1743 pass on ARM64, x64 and Win32 (after the fixes made afterwards, below); the packaged ARM64
+running client. Tests: 1769 pass on ARM64, x64 and Win32 (after the fixes made afterwards, and IPv6, below); the packaged ARM64
 build's engine selftest passes 471/471 (19 skipped).
 
 ## Fixed
@@ -214,8 +214,8 @@ measurement in `OnDraw`; plugin callback string copies; `SortTriggers` per add.
 
 ## Fixed afterwards (2026-10-29, at the user's request)
 
-Everything the first version of the list below had left, except the three
-items that remain under it. Tests named are new; each was seen failing first
+Everything the first version of the list below had left, except the two
+items that remain under it (IPv6, the third, is the section after this one). Tests named are new; each was seen failing first
 where a failure was observable here.
 
 - **Miniwindow dashed outlines** took the last hatch or pattern brush's gap
@@ -227,7 +227,7 @@ where a failure was observable here.
   stamp broadcast (117).
 - **UDP listeners:** all four (115), checked in the running client.
 - **DNS cancel under Wine** (116): a cancelled lookup's buffer is retired, not
-  freed.
+  freed -- then superseded by the IPv6 lookups below, which have no such buffer.
 - **No TLS handshake timeout:** a server that accepts and then says nothing now
   fails the handshake after 60 seconds (`TlsParams::handshakeTimeoutMs`), as a
   handshake failure, with the usual unencrypted-fallback offer.
@@ -247,6 +247,50 @@ where a failure was observable here.
 - **The port's vacuous toolbar selftest** now also compares the visible bars'
   shown slots (not compiled here).
 
+### IPv6 (2026-10-29, at the user's request)
+
+The client was IPv4 only, as 5.x is: every address a `SOCKADDR_IN`, parsed by
+`inet_addr`, printed by `inet_ntoa`, and looked up by `WSAAsyncGetHostByName`.
+Now:
+
+- **One address type**, `pal::NetAddress` (`pal/netaddress.h`): IPv4 or IPv6,
+  with a hand-written RFC 4291 parser and RFC 5952 printer (`inet_pton` and
+  `inet_ntop` are Vista and later; the build still declares XP). IPv4 is still
+  read by `inet_addr`, so every spelling it took still works. A server may be
+  typed `2001:db8::1` or `[2001:db8::1]`; `fe80::1%3` keeps its zone.
+- **Lookups give every address.** Both transports run `getaddrinfo` with
+  `AF_UNSPEC` on a thread of their own. On Windows that replaces
+  `WSAAsyncGetHostByName`, and with it the Wine hazard of UPSTREAM-BUGS 116.
+- **Every address is tried.** The engine orders a name's addresses with the
+  families alternating (RFC 8305 section 4), tries each in turn, and reports
+  only the last failure. An attempt still pending after two seconds, with
+  addresses left, is given up for the next, so a black-holed IPv6 route costs
+  two seconds rather than the OS's whole connect timeout (21 s on Windows,
+  75 s on macOS). The last address is never cut short. `connect()` may now be
+  called again on the same transport; the old socket goes and anything queued
+  stays.
+- **SOCKS 5** carries an IPv6 address (ATYP 4) when the MUD has only IPv6. It
+  still sends IPv4 whenever the name has an IPv4 address, so a proxy without
+  IPv6 keeps working. **SOCKS 4** cannot carry IPv6 at all, and an IPv6-only
+  MUD through it now fails with a note saying so, and to use SOCKS 5.
+- **Chat:** calls to an IPv6 address; calls to a name through the transport's
+  resolver, which prefers IPv4 because most chat peers listen on IPv4 only
+  (and which makes a call to a name work on the port for the first time,
+  STUB-ADOPTION-2026-08 §4); incoming IPv6 calls on a second, IPv6-only
+  listener beside the unchanged IPv4 one; the chat list shows and sorts both
+  families.
+- **UDP:** `UdpSend` and `UdpListen` take IPv6 addresses.
+- **What the client reports:** `GetInfo (61/62)`, the connection-failure note,
+  the title bar while connecting and the world's Info page print IPv6 text.
+  `GetInfo (228/229)` stay IPv4-only (a 32-bit number) and are 0 for IPv6.
+  `GetHostAddress` lists IPv4 addresses first, then IPv6; `GetHostName` takes
+  either.
+
+Tests: `NetAddress.*` (parsing, printing, ordering, sockets), `Ipv6.*` in
+`test_connection.cpp` (the fallback, the two-second deadline through
+`CheckTimers`, SOCKS 4 and 5), and `WinTransport.*` over the IPv6 loopback
+(connect, a chat call, `UdpSend`, a resolve) plus a chat call to a name.
+
 ## Not fixed, and why
 
 - **Python threads calling world methods off the UI thread** are unsynchronised.
@@ -257,9 +301,8 @@ where a failure was observable here.
   round-trips through the ANSI code page (`mc_dispatch.cpp`); Tcl re-encodes
   Latin-1 bytes. Fixing it means passing the world's bytes through unconverted,
   a change to the engine boundary on every platform.
-- **IPv4 only** (`WSAAsyncGetHostByName`, `AF_INET`), as in 5.x. IPv6 is a
-  feature that reaches through `pal::ITransport` to both platforms' transports,
-  SOCKS and chat.
 - Nothing port-side in this pass has been compiled (Mac/Enchant spell engines,
   the toolbar drag guard, the bundled-files dialog, the importer's Wine search,
-  the toolbar selftest change above).
+  the toolbar selftest change above, and IPv6's half of
+  `platform/posix_transport.cpp`, `platform/posix_socket.h`'s new `Socket` and
+  `Bind (SOCKADDR)`, and `tests/test_pal_transport.cpp`).

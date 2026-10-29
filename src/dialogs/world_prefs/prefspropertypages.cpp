@@ -274,8 +274,8 @@ LRESULT CPrefsP1::OnKickIdle(WPARAM, LPARAM)
 
 void CPrefsP1::OnUpdateCanClearCache(CCmdUI* pCmdUI)
   {
-  pCmdUI->Enable (m_doc->m_sockAddr.sin_addr.s_addr != 0 ||
-                  m_doc->m_ProxyAddr.sin_addr.s_addr != 0);
+  pCmdUI->Enable (!m_doc->m_MudAddresses.empty () ||
+                  !m_doc->m_ProxyAddresses.empty ());
 
   } // end of CPrefsP1::OnUpdateCanClearCache
 

@@ -8,6 +8,9 @@
 #include "../../doc.h"
 #include "../errors.h"
 #include "../../UDPsocket.h"
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#endif
 
 // Implements:
 
@@ -23,31 +26,31 @@ long CMUSHclientDoc::UdpSend(LPCTSTR IP, short Port, LPCTSTR Text)
 {
 // timer t ("UdpSend");
 
-int s;  // socket
-struct sockaddr_in sa; 	
+SOCKET s;  // socket
+struct sockaddr_storage sa;
 
-  // work out address to send to
-  memset (&sa, 0, sizeof(sa));
-  sa.sin_port = htons ((unsigned short) Port);   // 32768..65535 arrive negative
-  sa.sin_family = AF_INET;
-
-  if ((sa.sin_addr.s_addr = inet_addr (IP)) == INADDR_NONE)
+  // work out address to send to: IPv4 (anything inet_addr takes, as before)
+  // or IPv6
+  pal::NetAddress address;
+  if (!pal::ParseNumericAddress (IP, address))
     return -1;     // address no good
+  const int saLen = pal::ToSockaddr (address, (unsigned short) Port, sa);   // 32768..65535 arrive negative
 
   // make socket
-  s = socket(AF_INET, SOCK_DGRAM, 0);
+  s = socket(pal::SocketFamily (address), SOCK_DGRAM, 0);
   if (s == INVALID_SOCKET)
     return WSAGetLastError ();    // cannot create socket
 
-  // allow broadcasts
+  // allow broadcasts (IPv6 has none: multicast needs no option to send)
   int x = 1;
-  setsockopt( s, SOL_SOCKET, SO_BROADCAST, (const char *) &x, sizeof x);
+  if (address.isIPv4 ())
+    setsockopt( s, SOL_SOCKET, SO_BROADCAST, (const char *) &x, sizeof x);
 
   // send it
   long result = sendto (s, 
                         Text, strlen (Text), 
                         0,     // flags
-                        (struct sockaddr *) &sa, sizeof sa);
+                        (struct sockaddr *) &sa, saLen);
 
   // close it regardless
   closesocket (s);
@@ -94,7 +97,22 @@ long CMUSHclientDoc::UdpListen(LPCTSTR IP, short Port, LPCTSTR Script)
   // make a new listener
   UDPsocket * pSocket = new UDPsocket (this);
 
-	if (!pSocket->Create (uPort, SOCK_DGRAM, FD_READ, IP))
+  // An IPv6 address to listen on ("::" for all of them) needs a socket of
+  // that family, which Create cannot make; everything else is the IPv4
+  // Create it always was, "" and "0.0.0.0" included.
+  pal::NetAddress address;
+  BOOL bCreated;
+  if (strchr (IP, ':') && pal::ParseNumericAddress (IP, address) && address.isIPv6 ())
+    {
+    struct sockaddr_storage sa;
+    const int saLen = pal::ToSockaddr (address, uPort, sa);
+    bCreated = pSocket->Socket (SOCK_DGRAM, FD_READ, 0, AF_INET6) &&
+               pSocket->Bind ((SOCKADDR *) &sa, saLen);
+    }
+  else
+    bCreated = pSocket->Create (uPort, SOCK_DGRAM, FD_READ, IP);
+
+	if (!bCreated)
 	  {
 		delete pSocket;
 		return eBadParameter;

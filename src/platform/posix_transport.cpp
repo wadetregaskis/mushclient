@@ -36,6 +36,7 @@
 #endif
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -66,7 +67,7 @@ struct ResolveCompletion {
     PosixTransport* transport = nullptr;
     unsigned     gen = 0;
     ResolveToken token = 0;
-    unsigned int addr = 0;     // network byte order
+    std::vector<NetAddress> addresses;   // every address, both families
     bool         ok = false;
     // getaddrinfo's return code, carried across the thread boundary rather
     // than written to the transport from the resolver thread — the member it
@@ -123,36 +124,55 @@ public:
         std::thread([gate, self, gen, token, hostCopy]() {
             struct addrinfo hints {};
             struct addrinfo* res = nullptr;
-            hints.ai_family   = AF_INET;
+            // Both families, in the resolver's (RFC 6724) order; the engine
+            // interleaves them.  No AI_ADDRCONFIG, as on Windows: glibc's
+            // version of it ignores loopback, so an offline machine stops
+            // resolving "localhost", and a family the machine cannot reach
+            // just fails its connect and the engine moves on.
+            hints.ai_family   = AF_UNSPEC;
             hints.ai_socktype = SOCK_STREAM;
             const int gai = ::getaddrinfo(hostCopy.c_str(), nullptr, &hints, &res);
-            bool ok = (gai == 0 && res != nullptr);
-            unsigned int addr = 0;
-            if (ok) {
-                addr = reinterpret_cast<struct sockaddr_in*>(res->ai_addr)
-                           ->sin_addr.s_addr;
-                ::freeaddrinfo(res);
+            std::vector<NetAddress> addresses;
+            for (struct addrinfo* p = res; gai == 0 && p; p = p->ai_next) {
+                NetAddress a;
+                if (FromSockaddr(p->ai_addr, a))
+                    addresses.push_back(a);
             }
-            else if (res != nullptr)
-                ::freeaddrinfo(res);   // gai == 0 but empty list: still ours to free
+            if (res != nullptr)
+                ::freeaddrinfo(res);
+            const bool ok = (gai == 0 && !addresses.empty());
             std::lock_guard<std::mutex> lk(MB().lock);
-            MB().items.push_back({ gate, self, gen, token, addr, ok, gai });
+            MB().items.push_back({ gate, self, gen, token, addresses, ok,
+                                   gai != 0 ? gai : (ok ? 0 : EAI_NONAME) });
         }).detach();
     }
 
     void cancelResolve() override { ++m_gate->resolveGen; }
 
     // ── connect ────────────────────────────────────────────────────────────
-    void connect(unsigned int addrIPv4, unsigned short port,
+    void connect(const NetAddress& address, unsigned short port,
                  const TransportOptions& options) override
     {
-        SOCKADDR_IN sa {};
-        sa.sin_family = AF_INET;
-        sa.sin_addr.s_addr = addrIPv4;
-        sa.sin_port = htons(port);
+        // Another of the host's addresses, after the last one failed or was
+        // given up on: that socket goes first.  m_outgoing stays -- what was
+        // queued during the attempt goes out on whichever connects.
+        m_sock.m_awaitingConnect = false;
+        m_sock.Close();
 
-        if (!m_sock.Create(0, SOCK_STREAM,
-                           FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE, nullptr)) {
+        struct sockaddr_storage sa;
+        const int saLen = ToSockaddr(address, port, sa);
+        if (saLen == 0) {
+            m_events.onConnect(EAFNOSUPPORT);   // no address at all
+            return;
+        }
+
+        // IPv4: Create, which binds, exactly as before.  IPv6: Socket with
+        // the family (as pal/win_transport.cpp does); connect() binds it.
+        const long lEvents = FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE;
+        const BOOL created = address.isIPv4()
+            ? m_sock.Create(0, SOCK_STREAM, lEvents, nullptr)
+            : m_sock.Socket(SOCK_STREAM, lEvents, 0, AF_INET6);
+        if (!created) {
             m_events.onConnect(errno ? errno : -1);   // immediate local failure
             return;
         }
@@ -187,7 +207,7 @@ public:
 
         m_sock.AsyncSelect();
 
-        if (m_sock.Connect(reinterpret_cast<SOCKADDR*>(&sa), sizeof sa)) {
+        if (m_sock.Connect(reinterpret_cast<SOCKADDR*>(&sa), saLen)) {
             // Immediate success (loopback): defer delivery to the next Poll
             // tick — the socket is writable, so OnSend fires promptly and the
             // engine never sees a re-entrant onConnect.
@@ -539,11 +559,12 @@ private:
 
 public:
     // Called only by PumpTransportCompletions (main thread, gate-checked).
-    void deliverResolve(ResolveToken token, unsigned int addr, bool ok,
-                        int gaiError)
+    void deliverResolve(ResolveToken token, const std::vector<NetAddress>& addresses,
+                        bool ok, int gaiError)
     {
         m_lastResolveError = ok ? 0 : gaiError;
-        m_events.onResolved(token, addr, ok);
+        m_events.onResolved(token, ok ? addresses.data() : nullptr,
+                            ok ? addresses.size() : 0, ok);
     }
 
 private:
@@ -638,7 +659,7 @@ void PumpTransportCompletions()
         // The dtor clears alive on the main thread before the object dies,
         // so a true gate here means rc.transport is valid.
         if (rc.gate->alive && rc.gate->resolveGen == rc.gen)
-            rc.transport->deliverResolve(rc.token, rc.addr, rc.ok, rc.gaiError);
+            rc.transport->deliverResolve(rc.token, rc.addresses, rc.ok, rc.gaiError);
     }
 }
 
@@ -675,16 +696,18 @@ struct RecordingEvents : pal::ITransportEvents {
     int  lastConnectErr = -999, lastCloseErr = -999;
     bool resolved = false, resolveOk = false;
     pal::ResolveToken resolveToken = -1;
-    unsigned int resolveAddr = 0;
+    std::vector<pal::NetAddress> resolveAddrs;
     std::string bytes;
     bool tlsEstablished = false, tlsFailed = false;
     pal::TlsFailure tlsFailKind = pal::TlsFailure::Handshake;
     std::string tlsVersion, tlsFailReason, tlsVerifyFailure;
     pal::ITransport* deleteOnBytes = nullptr;   // destroy-mid-event check
 
-    void onResolved(pal::ResolveToken token, unsigned int addr, bool ok) override
+    void onResolved(pal::ResolveToken token, const pal::NetAddress* addrs,
+                    size_t count, bool ok) override
     {
-        resolved = true; resolveOk = ok; resolveToken = token; resolveAddr = addr;
+        resolved = true; resolveOk = ok; resolveToken = token;
+        resolveAddrs.assign(addrs, addrs + count);
     }
     void onConnect(int err) override { ++connects; lastConnectErr = err; }
     void onBytes(const char* data, size_t n) override
@@ -823,7 +846,7 @@ int RunPalTransportSelfTest()
 {
     printf("PAL ITransport conformance selftest (POSIX adapter)\n");
 
-    const unsigned int kLoopback = htonl(INADDR_LOOPBACK);
+    const pal::NetAddress kLoopback = pal::NetAddress::FromIPv4(htonl(INADDR_LOOPBACK));
 
     // ── 1. async DNS ────────────────────────────────────────────────────────
     {
@@ -832,8 +855,9 @@ int RunPalTransportSelfTest()
         t->resolve("localhost", 42);
         pumpUntil([&] { return ev.resolved; });
         ttCheck(ev.resolved && ev.resolveOk && ev.resolveToken == 42 &&
-                ev.resolveAddr == kLoopback,
-                "resolve(localhost) completes with 127.0.0.1 + token echo");
+                std::find(ev.resolveAddrs.begin(), ev.resolveAddrs.end(),
+                          kLoopback) != ev.resolveAddrs.end(),
+                "resolve(localhost) completes with 127.0.0.1 among its addresses + token echo");
 
         // A successful resolve leaves NO error behind, so the message keeps its
         // short form after a good lookup.

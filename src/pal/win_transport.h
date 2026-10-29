@@ -9,12 +9,12 @@
 // Windows ROOT-store import, non-blocking handshake stepping, verification,
 // encrypted read/write and the SSL_pending drain (the doc.cpp Windows
 // StartSSLHandshake/ContinueSSLHandshake bodies + worldsock.cpp OnReceive) —
-// and async DNS via WSAAsyncGetHostByName delivered to an adapter-owned
-// message-only window (the doc.cpp LookupHostName/HostNameResolved
-// mechanics, minus the engine policy).
+// and async DNS: getaddrinfo (IPv4 and IPv6) on a thread of its own, the
+// result posted to an adapter-owned message-only window (where the doc.cpp
+// LookupHostName/HostNameResolved pair had WSAAsyncGetHostByName post it).
 //
 // Event-delivery notes beyond the base contract:
-//  - No pump call is needed: WSAAsyncSelect / WSAAsyncGetHostByName post to
+//  - No pump call is needed: WSAAsyncSelect and the lookup thread post to
 //    windows serviced by the app's ordinary message loop.
 //  - onConnect for an immediately-successful connect is deferred via a
 //    self-posted message, never delivered from inside connect().  An

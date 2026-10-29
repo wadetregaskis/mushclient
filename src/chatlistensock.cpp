@@ -48,11 +48,16 @@ void CChatListenSocket::OnAccept(int nErrorCode)
 // call is accepted before the first note, and nothing reads a member after one.
 CMUSHclientDoc * pDoc = m_pDoc;
 CChatSocket * pSocket = new CChatSocket (pDoc);
-int SockAddrLen = sizeof(pSocket->m_ServerAddr) ;
+struct sockaddr_storage peer;     // an IPv4 or an IPv6 caller
+int SockAddrLen = sizeof peer;
 
+  memset (&peer, 0, sizeof peer);
   const BOOL bAccepted = Accept(*pSocket,
-                                (SOCKADDR*) &pSocket->m_ServerAddr,
+                                (SOCKADDR*) &peer,
                                 &SockAddrLen);
+  if (bAccepted)
+    pal::FromSockaddr ((const struct sockaddr *) &peer,
+                       pSocket->m_ServerAddr, &pSocket->m_iServerPort);
 
   pDoc->ChatNote (eChatConnection, "Incoming chat call");
 
@@ -64,7 +69,7 @@ int SockAddrLen = sizeof(pSocket->m_ServerAddr) ;
     }
 
   pSocket->m_bIncoming = true;
-  pSocket->m_strServerName = inet_ntoa (pSocket->m_ServerAddr.sin_addr);
+  pSocket->m_strServerName = pal::FormatAddress (pSocket->m_ServerAddr).c_str ();
 
   int iSessions = 0, iUnidentified = 0;
   for (POSITION pos = pDoc->m_ChatList.GetHeadPosition (); pos; )
@@ -92,7 +97,7 @@ int SockAddrLen = sizeof(pSocket->m_ServerAddr) ;
                   TFormat (
                     "Accepted call from %s port %d",
                             (LPCTSTR) pSocket->m_strServerName,
-                            ntohs (pSocket->m_ServerAddr.sin_port)));
+                            pSocket->m_iServerPort));
 
   pDoc->m_ChatList.AddTail (pSocket);
 

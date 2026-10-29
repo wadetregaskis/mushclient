@@ -48,7 +48,9 @@
 #include "doc.h"
 #include "pal/itransport.h"
 #include "pal/win_transport.h"
+#include "scripting/errors.h"   // eOK
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -88,7 +90,7 @@ bool Pump(Done done, int timeoutMs = 5000)
 struct Recorder : public pal::ITransportEvents {
     int resolves, connects, closes, writables, tlsOk, tlsFail;
     pal::ResolveToken lastToken;
-    unsigned int      lastAddr;
+    std::vector<pal::NetAddress> lastAddrs;   // everything the last resolve gave
     bool              lastResolveOk;
     int               lastConnectErr, lastCloseErr;
     std::string       bytes;
@@ -102,7 +104,7 @@ struct Recorder : public pal::ITransportEvents {
 
     Recorder()
       : resolves(0), connects(0), closes(0), writables(0), tlsOk(0), tlsFail(0),
-        lastToken(0), lastAddr(0), lastResolveOk(false),
+        lastToken(0), lastResolveOk(false),
         lastConnectErr(-1), lastCloseErr(-1),
         depth(0), reentered(false), suicideSlot(NULL) {}
 
@@ -112,10 +114,12 @@ struct Recorder : public pal::ITransportEvents {
         ~Guard() { --r->depth; }
     };
 
-    void onResolved(pal::ResolveToken token, unsigned int addr, bool ok) override
+    void onResolved(pal::ResolveToken token, const pal::NetAddress* addrs,
+                    size_t count, bool ok) override
     {
         Guard g(this);
-        ++resolves; lastToken = token; lastAddr = addr; lastResolveOk = ok;
+        ++resolves; lastToken = token; lastResolveOk = ok;
+        lastAddrs.assign(addrs, addrs + count);
     }
     void onConnect(int err) override
     {
@@ -259,7 +263,7 @@ unsigned short dead_port()
     return ::ntohs(sa.sin_port);
 }
 
-const unsigned int kLoopback = 0x0100007F;   // 127.0.0.1, network byte order
+const pal::NetAddress kLoopback = pal::NetAddress::FromIPv4(0x0100007F);   // 127.0.0.1
 
 // Connect a fresh transport to `l` and return it connected, or NULL.
 pal::ITransport* connect_to(Recorder& rec, Listener& l)
@@ -293,7 +297,9 @@ TEST(WinTransport, ResolveLocalhostAnswersTheLoopbackAddressAndEchoesTheToken)
     EXPECT_EQ(1, rec.resolves);
     EXPECT_TRUE(rec.lastResolveOk);
     EXPECT_EQ(4242, (int) rec.lastToken);          // the staleness guard's token
-    EXPECT_EQ((long) kLoopback, (long) rec.lastAddr);
+    // every address "localhost" has: 127.0.0.1 always, ::1 where IPv6 is on
+    EXPECT_TRUE(std::find(rec.lastAddrs.begin(), rec.lastAddrs.end(), kLoopback)
+                != rec.lastAddrs.end());
     EXPECT_FALSE(rec.reentered);
 
     delete t;
@@ -311,7 +317,7 @@ TEST(WinTransport, ResolveAnUnknownNameFailsAndKeepsTheWinsockCode)
     EXPECT_EQ(1, rec.resolves);
     EXPECT_FALSE(rec.lastResolveOk);
     EXPECT_EQ(9, (int) rec.lastToken);
-    EXPECT_EQ(0u, rec.lastAddr);
+    EXPECT_TRUE(rec.lastAddrs.empty());
 
     // lastResolveError exists because upstream's "Unable to resolve host name"
     // carried the WSA code and the seam nearly lost it (pal/itransport.h).
@@ -430,6 +436,131 @@ TEST(WinTransport, ConnectToAPortNothingListensOnReportsTheError)
     EXPECT_EQ(1, rec.connects);
     EXPECT_NE(0, rec.lastConnectErr);
 
+    delete t;
+}
+
+// ── IPv6, and more than one address ────────────────────────────────────────
+
+// A listener on [::1] -- the IPv6 loopback, which Windows always has unless
+// IPv6 has been switched off, in which case the tests below say so and stop.
+struct Listener6 {
+    SOCKET listening = INVALID_SOCKET;
+    SOCKET peer = INVALID_SOCKET;
+    unsigned short port = 0;
+
+    Listener6()
+    {
+        listening = ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+        if (listening == INVALID_SOCKET) return;
+        sockaddr_in6 sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sin6_family = AF_INET6;
+        sa.sin6_addr.s6_addr[15] = 1;                      // ::1
+        int len = sizeof sa;
+        if (::bind(listening, (sockaddr*) &sa, sizeof sa) != 0 ||
+            ::getsockname(listening, (sockaddr*) &sa, &len) != 0 ||
+            ::listen(listening, 4) != 0) {
+            ::closesocket(listening);
+            listening = INVALID_SOCKET;
+            return;
+        }
+        port = ::ntohs(sa.sin6_port);
+        u_long nb = 1;
+        ::ioctlsocket(listening, FIONBIO, &nb);
+    }
+    ~Listener6()
+    {
+        if (peer      != INVALID_SOCKET) ::closesocket(peer);
+        if (listening != INVALID_SOCKET) ::closesocket(listening);
+    }
+    bool ok() const { return listening != INVALID_SOCKET && port != 0; }
+    bool acceptOnce()
+    {
+        if (peer != INVALID_SOCKET) return true;
+        sockaddr_in6 from;
+        int len = sizeof from;
+        SOCKET s = ::accept(listening, (sockaddr*) &from, &len);
+        if (s == INVALID_SOCKET) return false;
+        peer = s;
+        return true;
+    }
+};
+
+static pal::NetAddress V6Loopback()
+{
+    pal::NetAddress a;
+    pal::ParseNumericAddress("::1", a);
+    return a;
+}
+
+TEST(WinTransport, ConnectsToAnIPv6AddressAndCarriesBytes)
+{
+    Listener6 l;
+    if (!l.ok()) { printf("      (no IPv6 loopback on this machine: skipped)\n"); return; }
+
+    Recorder rec;
+    pal::ITransport* t = pal::CreateWinTransport(rec);
+    ASSERT_TRUE(t != NULL);
+    pal::TransportOptions opt;
+    opt.keepalives = true;
+    t->connect(V6Loopback(), l.port, opt);
+    ASSERT_TRUE(Pump([&] { l.acceptOnce(); return rec.connects > 0; }));
+    EXPECT_EQ(0, rec.lastConnectErr);
+    ASSERT_TRUE(Pump([&] { return l.acceptOnce(); }));
+
+    t->send("v6 hello", 8);
+    std::string got;
+    EXPECT_TRUE(Pump([&] {
+        char buf[64];
+        int n = ::recv(l.peer, buf, sizeof buf, 0);
+        if (n > 0) got.append(buf, (size_t) n);
+        return got.size() >= 8;
+    }));
+    EXPECT_EQ(std::string("v6 hello"), got);
+    EXPECT_FALSE(rec.reentered);
+    delete t;
+}
+
+// The engine's fallback to a host's next address calls connect() again on the
+// same transport: the failed socket must go, a new one (of the other family,
+// here) must be made, and what was queued meanwhile must not be lost.
+TEST(WinTransport, ASecondConnectAfterAFailureTriesTheNextAddress)
+{
+    const unsigned short dead = dead_port();
+    Listener l;
+    ASSERT_NE(0, (int) dead);
+    ASSERT_TRUE(l.ok());
+
+    Recorder rec;
+    pal::ITransport* t = pal::CreateWinTransport(rec);
+    ASSERT_TRUE(t != NULL);
+    pal::TransportOptions opt;
+
+    t->connect(kLoopback, dead, opt);
+    ASSERT_TRUE(Pump([&] { return rec.connects > 0; }));
+    EXPECT_NE(0, rec.lastConnectErr);
+
+    t->send("queued", 6);                 // during the fallback
+    t->connect(kLoopback, l.port, opt);
+    ASSERT_TRUE(Pump([&] { l.acceptOnce(); return rec.connects > 1; }));
+    EXPECT_EQ(0, rec.lastConnectErr);
+
+    std::string got;
+    EXPECT_TRUE(Pump([&] { l.acceptOnce(); l.drain(got); return got.size() >= 6; }));
+    EXPECT_EQ(std::string("queued"), got);
+    delete t;
+}
+
+TEST(WinTransport, ResolveAnIPv6LiteralAnswersIt)
+{
+    Recorder rec;
+    pal::ITransport* t = pal::CreateWinTransport(rec);
+    ASSERT_TRUE(t != NULL);
+    t->resolve("::1", 77);
+    EXPECT_TRUE(Pump([&] { return rec.resolves > 0; }));
+    EXPECT_TRUE(rec.lastResolveOk);
+    ASSERT_EQ(1u, rec.lastAddrs.size());
+    EXPECT_TRUE(rec.lastAddrs[0] == V6Loopback());
     delete t;
 }
 
@@ -666,4 +797,91 @@ TEST(WinTransport, SendingBeforeTheConnectCompletesIsNotAnIllegalSocketCall)
     std::string got;
     EXPECT_TRUE(Pump([&] { l.acceptOnce(); l.drain(got); return got.size() >= 9; }));
     EXPECT_EQ(std::string("premature"), got);
+}
+
+// ── chat and UDP over IPv6 ─────────────────────────────────────────────────
+// Chat calls and UdpSend used SOCKADDR_IN and inet_addr throughout.  These
+// drive the real sockets against listeners on the loopback addresses.
+
+// What a chat peer hears first: the handshake.
+static std::string ChatHandshakeFrom(SOCKET peer)
+{
+    std::string got;
+    Pump([&] {
+        char buf[256];
+        int n = ::recv(peer, buf, sizeof buf, 0);
+        if (n > 0) got.append(buf, (size_t) n);
+        return got.find('\n') != std::string::npos && got.size() > 10;
+    });
+    return got;
+}
+
+TEST(WinTransport, AChatCallToAnIPv6AddressConnects)
+{
+    Listener6 l;
+    if (!l.ok()) { printf("      (no IPv6 loopback on this machine: skipped)\n"); return; }
+
+    CMUSHclientDoc doc;
+    doc.m_strOurChatName = "Tester";
+    EXPECT_EQ((long) eOK, doc.ChatCall("::1", l.port));
+    ASSERT_TRUE(Pump([&] { return l.acceptOnce(); }));
+    const std::string hello = ChatHandshakeFrom(l.peer);
+    EXPECT_EQ(0u, hello.find("CHAT:Tester\n"));
+
+    ASSERT_EQ(1, (int) doc.m_ChatList.GetCount());
+    CChatSocket* p = doc.m_ChatList.GetHead();
+    EXPECT_TRUE(p->m_ServerAddr == V6Loopback());
+    EXPECT_EQ((int) l.port, (int) p->m_iServerPort);
+    EXPECT_EQ(std::string("::1"), std::string((LPCTSTR) p->m_strAllegedAddress));
+    doc.ChatDisconnectAll();
+}
+
+// A NAME is looked up through the transport's resolver now -- IPv6 included --
+// and an IPv4 address is preferred, since a chat peer listening on IPv4 alone
+// is the usual case.
+TEST(WinTransport, AChatCallToANameIsLookedUpAndPrefersIPv4)
+{
+    Listener l;
+    ASSERT_TRUE(l.ok());
+
+    CMUSHclientDoc doc;
+    doc.m_strOurChatName = "Tester";
+    EXPECT_EQ((long) eOK, doc.ChatCall("localhost", l.port));
+    ASSERT_TRUE(Pump([&] { return l.acceptOnce(); }, 10000));
+    const std::string hello = ChatHandshakeFrom(l.peer);
+    EXPECT_EQ(0u, hello.find("CHAT:Tester\n"));
+
+    ASSERT_EQ(1, (int) doc.m_ChatList.GetCount());
+    EXPECT_TRUE(doc.m_ChatList.GetHead()->m_ServerAddr == kLoopback);
+    EXPECT_TRUE(doc.m_ChatList.GetHead()->m_pResolver == NULL);   // done with
+    doc.ChatDisconnectAll();
+}
+
+TEST(WinTransport, UdpSendReachesAnIPv6Address)
+{
+    SOCKET s = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) { printf("      (no IPv6 on this machine: skipped)\n"); return; }
+    sockaddr_in6 sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sin6_family = AF_INET6;
+    sa.sin6_addr.s6_addr[15] = 1;                      // ::1
+    int len = sizeof sa;
+    ASSERT_EQ(0, ::bind(s, (sockaddr*) &sa, sizeof sa));
+    ASSERT_EQ(0, ::getsockname(s, (sockaddr*) &sa, &len));
+    const unsigned short port = ::ntohs(sa.sin6_port);
+
+    CMUSHclientDoc doc;
+    EXPECT_EQ(0L, doc.UdpSend("::1", (short) port, "udp6"));
+    EXPECT_EQ(0L, doc.UdpSend("[::1]", (short) port, "and again"));
+    EXPECT_EQ(-1L, doc.UdpSend("not-an-address", (short) port, "x"));
+
+    char buf[64];
+    DWORD timeout = 2000;
+    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*) &timeout, sizeof timeout);
+    int n = ::recv(s, buf, sizeof buf, 0);
+    ASSERT_EQ(4, n);
+    EXPECT_EQ(std::string("udp6"), std::string(buf, 4));
+    n = ::recv(s, buf, sizeof buf, 0);
+    ASSERT_EQ(9, n);
+    ::closesocket(s);
 }

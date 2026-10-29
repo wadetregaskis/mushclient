@@ -214,7 +214,7 @@ for (int nItem = -1;
 
   dlg.m_strRemoteUserName   = pSock->m_strRemoteUserName  ;
 	dlg.m_strGroup            = pSock->m_strGroup           ;
-	dlg.m_strActualIPaddress  = inet_ntoa (pSock->m_ServerAddr.sin_addr);
+	dlg.m_strActualIPaddress  = pal::FormatAddress (pSock->m_ServerAddr).c_str ();
 	dlg.m_strAllegedAddress   = pSock->m_strAllegedAddress  ;
 	dlg.m_strAllegedPort      = CFormat ("%d", pSock->m_iAllegedPort);
 	dlg.m_strChatID           = CFormat ("%ld", pSock->m_iChatID);
@@ -395,13 +395,15 @@ int iResult;
       break;
 
     case eColumnFromIP:
-      if (item1->m_ServerAddr.sin_addr.s_addr <  item2->m_ServerAddr.sin_addr.s_addr)
-        iResult = -1;
-      else 
-      if (item1->m_ServerAddr.sin_addr.s_addr > item2->m_ServerAddr.sin_addr.s_addr)
-        iResult = 1;
-      else 
-        iResult = 0;
+      // IPv4 before IPv6, then in address order (the bytes are network order)
+      if (item1->m_ServerAddr.family != item2->m_ServerAddr.family)
+        iResult = item1->m_ServerAddr.family < item2->m_ServerAddr.family ? -1 : 1;
+      else
+        {
+        iResult = memcmp (item1->m_ServerAddr.bytes, item2->m_ServerAddr.bytes,
+                          sizeof item1->m_ServerAddr.bytes);
+        iResult = iResult < 0 ? -1 : iResult > 0 ? 1 : 0;
+        }
       break;
 
     case eColumnCallIP:
@@ -470,7 +472,7 @@ int nItem;
  	  m_ctlChatList.InsertItem (nItem, p->m_strRemoteUserName);    // eColumnChatName
 
 	  m_ctlChatList.SetItemText (nItem, eColumnGroup, p->m_strGroup);
-	  m_ctlChatList.SetItemText (nItem, eColumnFromIP, inet_ntoa (p->m_ServerAddr.sin_addr));
+	  m_ctlChatList.SetItemText (nItem, eColumnFromIP, pal::FormatAddress (p->m_ServerAddr).c_str ());
 	  m_ctlChatList.SetItemText (nItem, eColumnCallIP, p->m_strAllegedAddress);
 	  m_ctlChatList.SetItemText (nItem, eColumnCallPort, CFormat ("%ld", (long) p->m_iAllegedPort));
 	  m_ctlChatList.SetItemText (nItem, eColumnFlags, strFlags);

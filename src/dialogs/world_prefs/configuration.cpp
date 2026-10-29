@@ -510,10 +510,10 @@ void CMUSHclientDoc:: LoadPrefsP15 (CPrefsP15 &page15)
                               m_TimerMap.GetCount (),
                               (long long) nTotalTimers);
 
-  if (m_sockAddr.sin_addr.s_addr == INADDR_NONE)
+  if (!m_sockAddr.valid ())
     page15.m_strIpAddress = "(unknown)";
   else
-    page15.m_strIpAddress = inet_ntoa (m_sockAddr.sin_addr);
+    page15.m_strIpAddress = pal::FormatAddress (m_sockAddr).c_str ();
 
   if (m_iConnectPhase != eConnectConnectedToMud)
     page15.m_strConnectionTime = "n/a";
@@ -2297,12 +2297,12 @@ Frame.DelayDebugStatus ("World config - loading pages");
 // make sure we re-evaluate the IP address if the server address changes
 
   if (m_server != page1.m_server)
-    	ZeroMemory(&m_sockAddr, sizeof m_sockAddr);
+    	ForgetMudAddresses ();
 
 // ditto for proxy server address
 
   if (m_strProxyServerName != page1.m_strProxyServerName)
-    	ZeroMemory(&m_ProxyAddr, sizeof m_ProxyAddr);
+    	ForgetProxyAddresses ();
 
   Frame.DelayDebugStatus ("World config - fixing fonts");
 

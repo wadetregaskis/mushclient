@@ -448,8 +448,8 @@ void CMUSHclientDoc::Simulate(LPCTSTR Text)
 
 void CMUSHclientDoc::ResetIP() 
 {
-  ZeroMemory (&m_sockAddr, sizeof m_sockAddr);
-  ZeroMemory (&m_ProxyAddr, sizeof m_ProxyAddr);
+  ForgetMudAddresses ();
+  ForgetProxyAddresses ();
 }    // end of CMUSHclientDoc::ResetIP
 
 

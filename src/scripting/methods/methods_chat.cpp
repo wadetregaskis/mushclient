@@ -3,6 +3,9 @@
 // Stuff for the chat system
 
 #include "stdafx.h"
+#ifdef _WIN32
+#include <ws2tcpip.h>   // IPV6_V6ONLY
+#endif
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../../mushview.h"
@@ -108,43 +111,15 @@ CChatSocket * pSocket = new CChatSocket (this);
   else
     pSocket->m_iChatConnectionType = eChatMudMaster;
 
-	if (!pSocket->Create(0,
-                         SOCK_STREAM,
-                         FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE,
-                         NULL))
-	  {
-		delete pSocket;
-		return eCannotCreateChatSocket;
-	  }     // end of can't create socket
-
-  pSocket->AsyncSelect ();
-
   pSocket->m_strServerName = Server;
-  pSocket->m_ServerAddr.sin_port = htons((u_short)Port); 
+  pSocket->m_iServerPort = (unsigned short) Port;
 
-	pSocket->m_ServerAddr.sin_family = AF_INET;
-	pSocket->m_ServerAddr.sin_addr.s_addr = inet_addr(Server);
+// a name, not a number (IPv4 or IPv6): look it up, and make the socket when
+// its family is known (MakeCall)
 
-// if address is INADDR_NONE then address was a name, not a number
-
-	if (pSocket->m_ServerAddr.sin_addr.s_addr == INADDR_NONE)
+	if (!pal::ParseNumericAddress (Server, pSocket->m_ServerAddr))
 	 {
-    pSocket->m_pGetHostStruct = new char [MAXGETHOSTSTRUCT];
-
-    if (!pSocket->m_pGetHostStruct)
-      {
-  		delete pSocket;
-      return eCannotLookupDomainName;
-      }
-
-    if (Frame.GetSafeHwnd ())   // forget it if we don't have a window yet
-      pSocket->m_hNameLookup = WSAAsyncGetHostByName (Frame.GetSafeHwnd (),
-                                                     WM_USER_HOST_NAME_RESOLVED,
-                                                     Server,
-                                                     pSocket->m_pGetHostStruct,
-                                                     MAXGETHOSTSTRUCT);
-
-   if (!pSocket->m_hNameLookup)
+   if (!pSocket->LookUp (Server))
      {
 		  delete pSocket;
       return eCannotLookupDomainName;
@@ -155,8 +130,15 @@ CChatSocket * pSocket = new CChatSocket (this);
 
 	 }   // end of address not being an IP address
 
+	if (!pSocket->CreateFor (pSocket->m_ServerAddr))
+	  {
+		delete pSocket;
+		return eCannotCreateChatSocket;
+	  }     // end of can't create socket
 
-// the name was a dotted IP address - just make the connection
+  pSocket->AsyncSelect ();
+
+// the name was a numeric IP address - just make the connection
 
   m_ChatList.AddTail (pSocket);
 
@@ -548,6 +530,28 @@ long CMUSHclientDoc::ChatAcceptCalls(short Port)
 
   m_pChatListenSocket->Listen ();
 
+  // And on IPv6, beside it: a socket of its own, IPv6 only, so the IPv4
+  // listener above is exactly what it always was (a dual-stack socket would
+  // have replaced it, and Windows XP has none).  A machine without IPv6 just
+  // goes without.
+  CChatListenSocket * pSocket6 = new CChatListenSocket (this);
+  bool bListening6 = false;
+  if (pSocket6->Socket (SOCK_STREAM, FD_ACCEPT | FD_CLOSE, 0, AF_INET6))
+    {
+    int iOn = 1;
+    setsockopt (pSocket6->m_hSocket, IPPROTO_IPV6, IPV6_V6ONLY,
+                (const char *) &iOn, sizeof iOn);
+    pal::NetAddress any;                 // "::"
+    any.family = pal::NetAddress::IPv6;
+    struct sockaddr_storage sa;
+    const int saLen = pal::ToSockaddr (any, m_IncomingChatPort, sa);
+    bListening6 = pSocket6->Bind ((SOCKADDR *) &sa, saLen) && pSocket6->Listen ();
+    }
+  if (bListening6)
+    m_pChatListenSocket6 = pSocket6;
+  else
+    delete pSocket6;
+
   ChatNote (eChatConnection,
             TFormat (
     "Listening for chat connections on port %d", m_IncomingChatPort));
@@ -555,11 +559,22 @@ long CMUSHclientDoc::ChatAcceptCalls(short Port)
 	return eOK;
 }    // end of CMUSHclientDoc::ChatAcceptCalls
 
+void CMUSHclientDoc::DeleteIPv6ChatListener ()
+  {
+  if (m_pChatListenSocket6)
+    {
+    ShutDownSocket (*m_pChatListenSocket6);
+    delete m_pChatListenSocket6;
+    m_pChatListenSocket6 = NULL;
+    }
+  } // end of CMUSHclientDoc::DeleteIPv6ChatListener
+
 void CMUSHclientDoc::ChatStopAcceptingCalls() 
 {
 if (m_pChatListenSocket)
   {
   ShutDownSocket (*m_pChatListenSocket);
+  DeleteIPv6ChatListener ();
 
   ChatNote (eChatConnection, "Stopped accepting chat connections.");
   delete m_pChatListenSocket;
@@ -629,8 +644,8 @@ VARIANT CMUSHclientDoc::GetChatInfo(long ChatID, short InfoType)
        case   3: SetUpVariantString (vaResult, pSocket->m_strGroup); break;
        case   4: SetUpVariantString (vaResult, pSocket->m_strRemoteVersion); break;
        case   5: SetUpVariantString (vaResult, pSocket->m_strAllegedAddress); break;
-       case   6: SetUpVariantString (vaResult, inet_ntoa (pSocket->m_ServerAddr.sin_addr)); break;
-       case   7: SetUpVariantLong   (vaResult, ntohs (pSocket->m_ServerAddr.sin_port)); break;
+       case   6: SetUpVariantString (vaResult, pal::FormatAddress (pSocket->m_ServerAddr).c_str ()); break;
+       case   7: SetUpVariantLong   (vaResult, pSocket->m_iServerPort); break;
        case   8: SetUpVariantLong   (vaResult, pSocket->m_iAllegedPort); break;
        case   9: SetUpVariantLong   (vaResult, pSocket->m_iChatStatus); break;
        case  10: SetUpVariantLong   (vaResult, pSocket->m_iChatConnectionType); break;

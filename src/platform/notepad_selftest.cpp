@@ -180,7 +180,7 @@ struct RecordingTransport : pal::ITransport {
     std::string sent;
     void resolve (const char*, pal::ResolveToken) override {}
     void cancelResolve () override {}
-    void connect (unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void connect (const pal::NetAddress&, unsigned short, const pal::TransportOptions&) override {}
     void send (const char* data, size_t n) override { sent.append(data, n); }
     void startTls (const pal::TlsParams&) override {}
     void close () override {}

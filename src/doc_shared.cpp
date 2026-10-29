@@ -440,21 +440,19 @@ void CMUSHclientDoc::SendProxyConnectSequence (void)
   TRACE ("\nSending SOCKS connect request\n");
 
   // 5 = SOCKS version
-  // 1 = connect 
+  // 1 = connect
   // 0 = reserved
-  // 1 = address is ip address
+  // 1 = address is an IPv4 address (4 bytes), 4 = an IPv6 one (16)
   // address in network order
   // port in network order
-  // exactly 4 bytes on every platform: unsigned long is 8 bytes on LP64
-  // (macOS/Linux), which would put a malformed 8-byte address on the wire;
-  // on Win32 unsigned int is the same 4 bytes this always sent
-  unsigned int address = m_sockAddr.sin_addr.s_addr;  // MUD address
-  short port = m_sockAddr.sin_port;       // MUD port
-  unsigned char socks_address [4 + sizeof address + sizeof port] = { 5, 1, 0, 1 };
+  const bool bIPv6 = m_sockAddr.isIPv6 ();
+  const int iAddressLength = bIPv6 ? 16 : 4;
+  const unsigned short port = htons ((u_short) m_port);   // MUD port
+  unsigned char socks_address [4 + 16 + sizeof port] = { 5, 1, 0, (unsigned char) (bIPv6 ? 4 : 1) };
   int socks_address_length = 4;  // ie. the 4 bytes above
   // address
-  memcpy (&socks_address [socks_address_length], &address, sizeof address);
-  socks_address_length += sizeof address;     // ie. 4
+  memcpy (&socks_address [socks_address_length], m_sockAddr.bytes, iAddressLength);
+  socks_address_length += iAddressLength;
   // port
   memcpy (&socks_address [socks_address_length], &port, sizeof port);
   socks_address_length += sizeof port;     // ie. 2
@@ -1384,20 +1382,14 @@ CString str;
 
   App.m_bUpdateActivity = TRUE;   // new activity!
 
-  m_sockAddr.sin_port = htons((u_short)m_port);   // normal MUD port
-  m_ProxyAddr.sin_port = htons((u_short)m_iProxyServerPort);  // proxy server port
+// fix up server name to an address, if necessary: a numeric one (IPv4 or
+// IPv6, pal::ParseNumericAddress) is its own address, and a name is looked up
 
-// fix up server name to dotted a socket address, if necessary
-
-  if (m_sockAddr.sin_family != AF_INET || m_sockAddr.sin_addr.s_addr == INADDR_NONE)
+  if (m_MudAddresses.empty ())
     {
+    pal::NetAddress address;
 
-	  m_sockAddr.sin_family = AF_INET;
-	  m_sockAddr.sin_addr.s_addr = inet_addr(m_server);
-
-// if address is INADDR_NONE then address was a name, not a number
-
-	  if (m_sockAddr.sin_addr.s_addr == INADDR_NONE)
+	  if (!pal::ParseNumericAddress (m_server, address))
 	   {
       m_iConnectPhase = eConnectMudNameLookup;
 
@@ -1408,33 +1400,27 @@ CString str;
 
 	   }   // end of address not being an IP address
 
+    m_MudAddresses.assign (1, address);
     }   // end of not having converted the name to an address
 
 // if we got this far we know the host IP address - how about the proxy server address?
 
-  if (m_iSocksProcessing != eProxyServerNone)
+  if (m_iSocksProcessing != eProxyServerNone && m_ProxyAddresses.empty ())
     {
-    if (m_ProxyAddr.sin_family != AF_INET || m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
-      {
+    pal::NetAddress address;
 
-	    m_ProxyAddr.sin_family = AF_INET;
-	    m_ProxyAddr.sin_addr.s_addr = inet_addr(m_strProxyServerName);
+	  if (!pal::ParseNumericAddress (m_strProxyServerName, address))
+	   {
+      m_iConnectPhase = eConnectProxyNameLookup;
 
-  // if address is INADDR_NONE then address was a name, not a number
+      if (LookupHostName (m_strProxyServerName))
+        return FALSE;
 
-	    if (m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
-	     {
-        m_iConnectPhase = eConnectProxyNameLookup;
+      return TRUE;    // we are waiting for proxy name lookup to finish
 
-        if (LookupHostName (m_strProxyServerName))
-          return FALSE;
+	   }   // end of address not being an IP address
 
-        return TRUE;    // we are waiting for proxy name lookup to finish
-
-	     }   // end of address not being an IP address
-
-      }   // end of not having converted the name to an address
-
+    m_ProxyAddresses.assign (1, address);
     }   // end of needing a proxy server address
 
 
@@ -1858,6 +1844,11 @@ BOOL connected = nErrorCode == 0;
 
   TRACE ("CMUSHclientDoc::OnConnect\n");
 
+  // A host with more than one address: this one failed, so try the next
+  // before saying anything.  Only the last failure is reported.
+  if (!connected && TryNextAddress ())
+    return;
+
   if (!connected)
     {
 
@@ -1886,12 +1877,12 @@ BOOL connected = nErrorCode == 0;
         {
         case eConnectConnectingToMud:      
           strMsg += ": ";
-          strMsg += inet_ntoa (m_sockAddr.sin_addr);
+          strMsg += pal::FormatAddress (m_sockAddr).c_str ();
           strMsg += CFormat (", port %d", m_port);
           break; 
         case eConnectConnectingToProxy:    
           strMsg += ": ";
-          strMsg += inet_ntoa (m_ProxyAddr.sin_addr);
+          strMsg += pal::FormatAddress (m_ProxyAddr).c_str ();
           strMsg += CFormat (", port %d", m_iProxyServerPort);
           break; 
         } // end of switch
@@ -1955,16 +1946,17 @@ BOOL connected = nErrorCode == 0;
     m_iConnectPhase = eConnectAwaitingProxyResponse3;  // no authentication query
 
     // 4 = SOCKS version
-    // 1 = connect 
+    // 1 = connect
     // port in network order
     // address in network order
     // xxx = username
     // 0 = terminating byte
     // exactly 4 bytes on every platform: unsigned long is 8 bytes on LP64
     // (macOS/Linux), which would put a malformed 8-byte address on the wire;
-    // on Win32 unsigned int is the same 4 bytes this always sent
-    unsigned int address = m_sockAddr.sin_addr.s_addr;  // MUD address
-    short port = m_sockAddr.sin_port;       // MUD port
+    // on Win32 unsigned int is the same 4 bytes this always sent.  Always
+    // IPv4: InitiateConnection refuses an IPv6-only MUD through SOCKS 4.
+    unsigned int address = m_sockAddr.ipv4 ();  // MUD address
+    unsigned short port = htons ((u_short) m_port);   // MUD port
     unsigned char socks_address [3 + 255 + sizeof address + sizeof port] = { 4, 1 };
     int socks_address_length = 2;  // ie. the 2 bytes above
     // port
@@ -2032,24 +2024,125 @@ void CMUSHclientDoc::InitiateConnection (void)
   if (m_pTransport == NULL)
     return;     // no transport — ConnectSocket was never run
 
+  if (m_MudAddresses.empty () ||
+      (m_iSocksProcessing != eProxyServerNone && m_ProxyAddresses.empty ()))
+    return;     // nothing to connect to (ConnectSocket resolves first)
+
+  if (m_iSocksProcessing == eProxyServerNone)
+    m_iConnectPhase = eConnectConnectingToMud;
+  else
+    {
+    // The MUD's address goes to the proxy, in the SOCKS request.  An IPv4
+    // one whenever the name has one: SOCKS 4 can carry nothing else, and it
+    // is what this always sent, so a proxy without IPv6 goes on working.
+    m_sockAddr = m_MudAddresses [0];
+    for (size_t i = 0; i < m_MudAddresses.size (); i++)
+      if (m_MudAddresses [i].isIPv4 ())
+        {
+        m_sockAddr = m_MudAddresses [i];
+        break;
+        }
+
+    if (m_iSocksProcessing == eProxyServerSocks4 && !m_sockAddr.isIPv4 ())
+      {
+      m_bDisconnectOK = true;
+      m_iConnectPhase = eConnectNotConnected;
+      App.m_bUpdateActivity = TRUE;
+      UpdateAllViews (NULL);
+      if (App.m_bNotifyIfCannotConnect)
+        {
+        CString strMsg = TFormat ("Unable to connect to \"%s\": a SOCKS 4 proxy cannot reach "
+                                  "an IPv6 address (%s). Use SOCKS 5.",
+                                  (const char *) m_mush_name,
+                                  pal::FormatAddress (m_sockAddr).c_str ());
+        if (App.m_bErrorNotificationToOutputWindow)
+          Note (strMsg);
+        else
+          UMessageBox (strMsg, MB_ICONEXCLAMATION);
+        }
+      delete m_pTransport;    // as for a failed lookup: nothing to connect to
+      m_pTransport = NULL;
+      return;
+      }
+
+    m_iConnectPhase = eConnectConnectingToProxy;
+    }
+
+  m_iAddressIndex = 0;
+  ConnectToCurrentAddress ();
+
+  } // end of CMUSHclientDoc::InitiateConnection
+
+
+// ── more than one address ───────────────────────────────────────────────────
+// A name can have several addresses, IPv6 and IPv4, and some of them may not
+// be reachable from here -- the commonest case being IPv6 published for a host
+// while this machine's IPv6 goes nowhere.  So each is tried in turn
+// (pal::OrderForConnecting alternates the families) until one connects, and
+// only the last failure is reported.  An attempt that has neither connected
+// nor failed after kAddressFallbackSeconds, with addresses left, is given up
+// for the next: a black-holed route otherwise costs the OS's whole connect
+// timeout (21 s on Windows, 75 s on macOS) before anything else is tried.  The
+// last address is never cut short.
+
+static const double kAddressFallbackSeconds = 2.0;
+
+void CMUSHclientDoc::ConnectToCurrentAddress ()
+  {
+  if (m_pTransport == NULL)
+    return;
+
   pal::TransportOptions options;
   options.keepalives = m_bSendKeepAlives != 0;
 
-  if (m_iSocksProcessing == eProxyServerNone)
-    {
-    m_iConnectPhase = eConnectConnectingToMud;
-    m_pTransport->connect (m_sockAddr.sin_addr.s_addr,
-                           (unsigned short) m_port, options);
-    }
-  else
-    {
-    m_iConnectPhase = eConnectConnectingToProxy;
-    m_pTransport->connect (m_ProxyAddr.sin_addr.s_addr,
-                           (unsigned short) m_iProxyServerPort, options);
-    }
+  m_dAttemptStarted = CmcDateTime::GetTimeNow ().m_dt;
 
+  if (m_iConnectPhase == eConnectConnectingToMud)
+    {
+    if (m_iAddressIndex >= m_MudAddresses.size ())
+      return;
+    m_sockAddr = m_MudAddresses [m_iAddressIndex];
+    m_pTransport->connect (m_sockAddr, (unsigned short) m_port, options);
+    }
+  else if (m_iConnectPhase == eConnectConnectingToProxy)
+    {
+    if (m_iAddressIndex >= m_ProxyAddresses.size ())
+      return;
+    m_ProxyAddr = m_ProxyAddresses [m_iAddressIndex];
+    m_pTransport->connect (m_ProxyAddr, (unsigned short) m_iProxyServerPort, options);
+    }
+  } // end of CMUSHclientDoc::ConnectToCurrentAddress
 
-  } // end of CMUSHclientDoc::InitiateConnection
+bool CMUSHclientDoc::AddressesLeftToTry () const
+  {
+  if (m_pTransport == NULL)
+    return false;
+  if (m_iConnectPhase == eConnectConnectingToMud)
+    return m_iAddressIndex + 1 < m_MudAddresses.size ();
+  if (m_iConnectPhase == eConnectConnectingToProxy)
+    return m_iAddressIndex + 1 < m_ProxyAddresses.size ();
+  return false;
+  } // end of CMUSHclientDoc::AddressesLeftToTry
+
+bool CMUSHclientDoc::TryNextAddress ()
+  {
+  if (!AddressesLeftToTry ())
+    return false;
+  m_iAddressIndex++;
+  ConnectToCurrentAddress ();
+  return true;
+  } // end of CMUSHclientDoc::TryNextAddress
+
+// From CheckTimers: give up on an attempt that is taking too long, if there
+// is another address to try.
+void CMUSHclientDoc::CheckAddressFallback ()
+  {
+  if (!AddressesLeftToTry ())
+    return;
+  const double dSeconds = (CmcDateTime::GetTimeNow ().m_dt - m_dAttemptStarted) * 86400.0;
+  if (dSeconds >= kAddressFallbackSeconds)
+    TryNextAddress ();
+  } // end of CMUSHclientDoc::CheckAddressFallback
 
 
 // ── Async DNS (single-sourced, T3a; transport-only since T5) ────────────────
@@ -2059,9 +2152,9 @@ void CMUSHclientDoc::InitiateConnection (void)
 bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
   {
 
-  // Async DNS through the PAL transport (every platform since T5 — the
-  // Windows adapter keeps the WSAAsyncGetHostByName mechanics the doc used,
-  // delivered to its own window).  The completion arrives via the events
+  // Async DNS through the PAL transport (every platform since T5; both
+  // adapters run getaddrinfo on a thread and hand back every address, IPv4
+  // and IPv6).  The completion arrives via the events
   // bridge -> LookupHostNameComplete().  The connect phase is the resolve
   // token: the shipping staleness guard drops superseded completions.
   {
@@ -2075,16 +2168,19 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
     // Synchronous fallback (defensive — ConnectSocket creates the transport
     // before any lookup can happen).
     struct addrinfo hints{}, *res = nullptr;
-    hints.ai_family   = AF_INET;
+    hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    struct in_addr resolved{};
+    std::vector<pal::NetAddress> resolved;
     bool ok = (::getaddrinfo (sName, nullptr, &hints, &res) == 0 && res);
-    if (ok)
+    for (struct addrinfo * p = res; p; p = p->ai_next)
       {
-      resolved = ((struct sockaddr_in *) res->ai_addr)->sin_addr;
-      ::freeaddrinfo (res);
+      pal::NetAddress a;
+      if (pal::FromSockaddr (p->ai_addr, a))
+        resolved.push_back (a);
       }
+    if (res)
+      ::freeaddrinfo (res);
 
     LookupHostNameComplete (resolved, m_iConnectPhase, ok);
     return !ok;   // true = error, caller should abort
@@ -2096,11 +2192,18 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
 // Called on the main thread when an async (or synchronous fallback) DNS
 // lookup finishes.  addr is the resolved address; phase is the connect phase
 // that was active when LookupHostName was called; ok is false on failure.
-void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, bool ok)
+void CMUSHclientDoc::LookupHostNameComplete (const std::vector<pal::NetAddress> & addresses,
+                                             int phase, bool ok)
   {
   // Guard: the user may have disconnected while the DNS thread was running.
   if (m_iConnectPhase != phase)
     return;
+
+  // the order to try them in (IPv6 and IPv4 alternating, duplicates gone)
+  std::vector<pal::NetAddress> ordered (addresses);
+  pal::OrderForConnecting (ordered);
+  if (ordered.empty ())
+    ok = false;     // nothing usable came back
 
   if (!ok)
     {
@@ -2160,9 +2263,15 @@ void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, boo
     }
 
   if (phase == eConnectMudNameLookup)
-    m_sockAddr.sin_addr = addr;
+    {
+    m_MudAddresses = ordered;
+    m_sockAddr = ordered [0];
+    }
   else if (phase == eConnectProxyNameLookup)
-    m_ProxyAddr.sin_addr = addr;
+    {
+    m_ProxyAddresses = ordered;
+    m_ProxyAddr = ordered [0];
+    }
   else
     {
     TMessageBox ("Unexpected phase in LookupHostNameComplete");
@@ -2172,20 +2281,17 @@ void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, boo
   // If we just resolved the MUD address and a proxy is configured,
   // check whether the proxy address also needs resolving.
   if (phase == eConnectMudNameLookup &&
-      m_iSocksProcessing != eProxyServerNone)
+      m_iSocksProcessing != eProxyServerNone &&
+      m_ProxyAddresses.empty ())
     {
-    if (m_ProxyAddr.sin_family != AF_INET ||
-        m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+    pal::NetAddress address;
+    if (!pal::ParseNumericAddress (m_strProxyServerName, address))
       {
-      m_ProxyAddr.sin_family         = AF_INET;
-      m_ProxyAddr.sin_addr.s_addr    = inet_addr (m_strProxyServerName);
-      if (m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
-        {
-        m_iConnectPhase = eConnectProxyNameLookup;
-        LookupHostName (m_strProxyServerName);
-        return;
-        }
+      m_iConnectPhase = eConnectProxyNameLookup;
+      LookupHostName (m_strProxyServerName);
+      return;
       }
+    m_ProxyAddresses.assign (1, address);
     }
 
   InitiateConnection ();
@@ -2212,13 +2318,15 @@ class CDocTransportEvents : public pal::ITransportEvents
   public:
     explicit CDocTransportEvents (CMUSHclientDoc * pDoc) : m_pDoc (pDoc) {}
 
-    void onResolved (pal::ResolveToken token, unsigned int addrIPv4, bool ok) override
+    void onResolved (pal::ResolveToken token, const pal::NetAddress * addresses,
+                     size_t count, bool ok) override
       {
       // token is the connect phase at resolve time — the staleness guard
       // inside LookupHostNameComplete drops superseded completions
-      struct in_addr addr;
-      addr.s_addr = addrIPv4;
-      m_pDoc->LookupHostNameComplete (addr, token, ok);
+      std::vector<pal::NetAddress> v;
+      if (ok && addresses)
+        v.assign (addresses, addresses + count);
+      m_pDoc->LookupHostNameComplete (v, token, ok);
       }
 
     void onConnect (int err) override

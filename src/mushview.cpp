@@ -3503,12 +3503,12 @@ CString strTitle = pDoc->m_mush_name;
         break; 
       case eConnectConnectingToMud:      
         strTitle += ": ";
-        strTitle += inet_ntoa (pDoc->m_sockAddr.sin_addr);
+        strTitle += pal::FormatAddress (pDoc->m_sockAddr).c_str ();
         strTitle += CFormat (", port %d]", pDoc->m_port);
         break; 
       case eConnectConnectingToProxy:    
         strTitle += ": ";
-        strTitle += inet_ntoa (pDoc->m_ProxyAddr.sin_addr);
+        strTitle += pal::FormatAddress (pDoc->m_ProxyAddr).c_str ();
         strTitle += CFormat (", port %d]", pDoc->m_iProxyServerPort);
         break; 
       } // end of switch

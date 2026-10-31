@@ -49,6 +49,7 @@
 #include "pal/itransport.h"
 #include "pal/win_transport.h"
 #include "scripting/errors.h"   // eOK
+#include "pal/iclock.h"
 
 #include <algorithm>
 #include <string>
@@ -448,13 +449,14 @@ struct Listener6 {
     SOCKET peer = INVALID_SOCKET;
     unsigned short port = 0;
 
-    Listener6()
+    explicit Listener6(unsigned short wantPort = 0)
     {
         listening = ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
         if (listening == INVALID_SOCKET) return;
         sockaddr_in6 sa;
         memset(&sa, 0, sizeof sa);
         sa.sin6_family = AF_INET6;
+        sa.sin6_port = ::htons(wantPort);
         sa.sin6_addr.s6_addr[15] = 1;                      // ::1
         int len = sizeof sa;
         if (::bind(listening, (sockaddr*) &sa, sizeof sa) != 0 ||
@@ -518,36 +520,6 @@ TEST(WinTransport, ConnectsToAnIPv6AddressAndCarriesBytes)
     }));
     EXPECT_EQ(std::string("v6 hello"), got);
     EXPECT_FALSE(rec.reentered);
-    delete t;
-}
-
-// The engine's fallback to a host's next address calls connect() again on the
-// same transport: the failed socket must go, a new one (of the other family,
-// here) must be made, and what was queued meanwhile must not be lost.
-TEST(WinTransport, ASecondConnectAfterAFailureTriesTheNextAddress)
-{
-    const unsigned short dead = dead_port();
-    Listener l;
-    ASSERT_NE(0, (int) dead);
-    ASSERT_TRUE(l.ok());
-
-    Recorder rec;
-    pal::ITransport* t = pal::CreateWinTransport(rec);
-    ASSERT_TRUE(t != NULL);
-    pal::TransportOptions opt;
-
-    t->connect(kLoopback, dead, opt);
-    ASSERT_TRUE(Pump([&] { return rec.connects > 0; }));
-    EXPECT_NE(0, rec.lastConnectErr);
-
-    t->send("queued", 6);                 // during the fallback
-    t->connect(kLoopback, l.port, opt);
-    ASSERT_TRUE(Pump([&] { l.acceptOnce(); return rec.connects > 1; }));
-    EXPECT_EQ(0, rec.lastConnectErr);
-
-    std::string got;
-    EXPECT_TRUE(Pump([&] { l.acceptOnce(); l.drain(got); return got.size() >= 6; }));
-    EXPECT_EQ(std::string("queued"), got);
     delete t;
 }
 
@@ -884,4 +856,153 @@ TEST(WinTransport, UdpSendReachesAnIPv6Address)
     n = ::recv(s, buf, sizeof buf, 0);
     ASSERT_EQ(9, n);
     ::closesocket(s);
+}
+
+// ── racing a name's addresses, on real sockets ─────────────────────────────
+// tests/test_connection.cpp's Ipv6.* drive the engine's decisions against fake
+// transports.  These drive it through the real adapter: what they add is that a
+// transport really can be destroyed inside an event (its own, or from another's),
+// and that MFC's socket window copes with the sockets going away mid-race.
+
+namespace {
+
+struct RaceClock : pal::IClock {
+    double now = 46000.5;
+    double nowOle() const override { return now; }
+};
+
+pal::NetAddress TextAddress(const char* s)
+{
+    pal::NetAddress a;
+    pal::ParseNumericAddress(s, a);
+    return a;
+}
+
+std::vector<pal::NetAddress> V6ThenV4()
+{
+    std::vector<pal::NetAddress> v;
+    v.push_back(TextAddress("::1"));
+    v.push_back(TextAddress("127.0.0.1"));
+    return v;
+}
+
+} // namespace
+
+// The refused address goes (inside its own event), the next connects, and the
+// connection works.
+TEST(WinTransportRace, ARefusedAddressGivesWayToTheNext)
+{
+    Listener l;                           // on 127.0.0.1 only: ::1 refuses this port
+    ASSERT_TRUE(l.ok());
+
+    CMUSHclientDoc doc;
+    doc.m_port = l.port;
+    doc.CreateTransport();
+    doc.m_bDisconnectOK = true;
+    doc.m_bEnableTimers = FALSE;
+    doc.m_iConnectPhase = eConnectMudNameLookup;
+    doc.LookupHostNameComplete(V6ThenV4(), eConnectMudNameLookup, true);
+
+    const DWORD start = ::GetTickCount();
+    // CheckTimers as the app calls it: Windows retries a refused SYN for a while
+    // on loopback, so this may be the stagger rather than the refusal that
+    // starts the IPv4 attempt.  Either way is right, and it must be quick.
+    ASSERT_TRUE(Pump([&] {
+        doc.CheckTimers();
+        l.acceptOnce();
+        return doc.m_iConnectPhase == eConnectConnectedToMud;
+    }));
+    const DWORD took = ::GetTickCount() - start;
+    printf("      (connected to the second address after %lu ms)\n", (unsigned long) took);
+    EXPECT_TRUE(took < 3000);
+    EXPECT_TRUE(doc.m_sockAddr == kLoopback);
+    EXPECT_EQ(0u, (unsigned) doc.m_ConnectAttempts.size());
+
+    doc.SendPacket("works", 5);
+    std::string got;
+    EXPECT_TRUE(Pump([&] { l.acceptOnce(); l.drain(got); return got.find("works") != std::string::npos; }));
+    doc.DisconnectWorld();
+}
+
+// Both listening, both attempts under way before either is answered: one wins,
+// the other's connection is closed, and the winner carries the session.
+TEST(WinTransportRace, BothConnectingOneWinsAndTheOtherIsClosed)
+{
+    Listener l4;
+    ASSERT_TRUE(l4.ok());
+    Listener6 l6(l4.port);
+    if (!l6.ok()) { printf("      (no IPv6 loopback on this port: skipped)\n"); return; }
+
+    RaceClock clock;
+    pal::g_clock = &clock;
+
+    CMUSHclientDoc doc;
+    doc.m_port = l4.port;
+    doc.CreateTransport();
+    doc.m_bDisconnectOK = true;
+    doc.m_bEnableTimers = FALSE;
+    doc.m_iConnectPhase = eConnectMudNameLookup;
+    doc.LookupHostNameComplete(V6ThenV4(), eConnectMudNameLookup, true);
+    ASSERT_EQ(1, (int) doc.m_ConnectAttempts.size());
+
+    // No messages pumped, so neither attempt has been told it connected
+    clock.now += 1.1 / 86400.0;
+    doc.CheckTimers();
+    ASSERT_EQ(2, (int) doc.m_ConnectAttempts.size());
+
+    doc.SendPacket("sent mid-race", 13);
+
+    ASSERT_TRUE(Pump([&] { return doc.m_iConnectPhase == eConnectConnectedToMud; }));
+    EXPECT_EQ(0, (int) doc.m_ConnectAttempts.size());
+    pal::g_clock = nullptr;
+
+    // Both listeners were connected to, in the kernel.  The winner's has the
+    // bytes; the loser's has an end of stream and nothing else.
+    const bool v6Won = doc.m_sockAddr.isIPv6 ();
+    ASSERT_TRUE(Pump([&] { return l4.acceptOnce() && l6.acceptOnce(); }));
+    SOCKET winner = v6Won ? l6.peer : l4.peer;
+    SOCKET loser  = v6Won ? l4.peer : l6.peer;
+
+    std::string got;
+    EXPECT_TRUE(Pump([&] {
+        char buf[64];
+        int n = ::recv(winner, buf, sizeof buf, 0);
+        if (n > 0) got.append(buf, (size_t) n);
+        return got.find("sent mid-race") != std::string::npos;
+    }));
+
+    int lost = 1;
+    EXPECT_TRUE(Pump([&] {
+        char buf[64];
+        lost = ::recv(loser, buf, sizeof buf, 0);
+        return lost == 0 || (lost < 0 && ::WSAGetLastError() != WSAEWOULDBLOCK);
+    }));
+    EXPECT_TRUE(lost <= 0);       // closed, having been sent nothing
+
+    doc.DisconnectWorld();
+}
+
+// A disconnect in the middle of a race leaves nothing running.
+TEST(WinTransportRace, DisconnectingMidRaceIsClean)
+{
+    Listener l4;
+    ASSERT_TRUE(l4.ok());
+
+    RaceClock clock;
+    pal::g_clock = &clock;
+    {
+        CMUSHclientDoc doc;
+        doc.m_port = l4.port;
+        doc.CreateTransport();
+        doc.m_bEnableTimers = FALSE;
+        doc.m_iConnectPhase = eConnectMudNameLookup;
+        doc.LookupHostNameComplete(V6ThenV4(), eConnectMudNameLookup, true);
+        clock.now += 1.1 / 86400.0;
+        doc.CheckTimers();
+        doc.DisconnectWorld();
+        EXPECT_EQ(0, (int) doc.m_ConnectAttempts.size());
+        EXPECT_EQ((int) eConnectNotConnected, (int) doc.m_iConnectPhase);
+        Pump([&] { return false; }, 300);     // anything stale still in the queue
+    }
+    pal::g_clock = nullptr;
 }

@@ -995,6 +995,13 @@ long CMUSHclientDoc::OpenLog(LPCTSTR LogFileName, BOOL Append)
 void CMUSHclientDoc::ConnectionEstablished (void)
   {
 
+  // what was sent while several addresses were racing
+  if (!m_strHeldSends.empty () && m_pTransport)
+    {
+    m_pTransport->send (m_strHeldSends.data (), m_strHeldSends.size ());
+    m_strHeldSends.erase ();
+    }
+
 #ifdef _DEBUG
 //  ListAccelerators (this, 1);     // for documenting menus, accelerators
 //  ListDialogs ();
@@ -1677,6 +1684,7 @@ void CMUSHclientDoc::OnConnectionDisconnect()
   // tear down the transport (the socket, every platform since T5): cancel
   // any DNS lookup in flight, shut the stream down, run the disconnect
   // bookkeeping, destroy — the CWorldSocket shutdown/OnClose/delete sequence.
+  AbandonConnectAttempts ();
   if (m_pTransport)
     {
     m_pTransport->cancelResolve ();
@@ -1826,7 +1834,11 @@ void  CMUSHclientDoc::SendPacket (const char * lpBuf, const int nBufLen)
   if (m_bDebugIncomingPackets)
     Debug_Packets ("Sent ", lpBuf, nBufLen, m_iOutputPacketCount);
 
-  m_pTransport->send (lpBuf, nBufLen);
+  // several attempts racing: no transport yet is known to be the one
+  if (m_bHoldSends)
+    m_strHeldSends.append (lpBuf, nBufLen);
+  else
+    m_pTransport->send (lpBuf, nBufLen);
 
   m_nBytesOut += nBufLen;
 
@@ -1843,11 +1855,6 @@ void CMUSHclientDoc::OnConnect(int nErrorCode)
 BOOL connected = nErrorCode == 0;
 
   TRACE ("CMUSHclientDoc::OnConnect\n");
-
-  // A host with more than one address: this one failed, so try the next
-  // before saying anything.  Only the last failure is reported.
-  if (!connected && TryNextAddress ())
-    return;
 
   if (!connected)
     {
@@ -2068,81 +2075,13 @@ void CMUSHclientDoc::InitiateConnection (void)
     m_iConnectPhase = eConnectConnectingToProxy;
     }
 
+  AbandonConnectAttempts ();   // anything left from an earlier connection
+  m_bHoldSends = (m_iSocksProcessing == eProxyServerNone ? m_MudAddresses
+                                                         : m_ProxyAddresses).size () > 1;
   m_iAddressIndex = 0;
-  ConnectToCurrentAddress ();
+  StartConnectAttempt ();
 
   } // end of CMUSHclientDoc::InitiateConnection
-
-
-// ── more than one address ───────────────────────────────────────────────────
-// A name can have several addresses, IPv6 and IPv4, and some of them may not
-// be reachable from here -- the commonest case being IPv6 published for a host
-// while this machine's IPv6 goes nowhere.  So each is tried in turn
-// (pal::OrderForConnecting alternates the families) until one connects, and
-// only the last failure is reported.  An attempt that has neither connected
-// nor failed after kAddressFallbackSeconds, with addresses left, is given up
-// for the next: a black-holed route otherwise costs the OS's whole connect
-// timeout (21 s on Windows, 75 s on macOS) before anything else is tried.  The
-// last address is never cut short.
-
-static const double kAddressFallbackSeconds = 2.0;
-
-void CMUSHclientDoc::ConnectToCurrentAddress ()
-  {
-  if (m_pTransport == NULL)
-    return;
-
-  pal::TransportOptions options;
-  options.keepalives = m_bSendKeepAlives != 0;
-
-  m_dAttemptStarted = CmcDateTime::GetTimeNow ().m_dt;
-
-  if (m_iConnectPhase == eConnectConnectingToMud)
-    {
-    if (m_iAddressIndex >= m_MudAddresses.size ())
-      return;
-    m_sockAddr = m_MudAddresses [m_iAddressIndex];
-    m_pTransport->connect (m_sockAddr, (unsigned short) m_port, options);
-    }
-  else if (m_iConnectPhase == eConnectConnectingToProxy)
-    {
-    if (m_iAddressIndex >= m_ProxyAddresses.size ())
-      return;
-    m_ProxyAddr = m_ProxyAddresses [m_iAddressIndex];
-    m_pTransport->connect (m_ProxyAddr, (unsigned short) m_iProxyServerPort, options);
-    }
-  } // end of CMUSHclientDoc::ConnectToCurrentAddress
-
-bool CMUSHclientDoc::AddressesLeftToTry () const
-  {
-  if (m_pTransport == NULL)
-    return false;
-  if (m_iConnectPhase == eConnectConnectingToMud)
-    return m_iAddressIndex + 1 < m_MudAddresses.size ();
-  if (m_iConnectPhase == eConnectConnectingToProxy)
-    return m_iAddressIndex + 1 < m_ProxyAddresses.size ();
-  return false;
-  } // end of CMUSHclientDoc::AddressesLeftToTry
-
-bool CMUSHclientDoc::TryNextAddress ()
-  {
-  if (!AddressesLeftToTry ())
-    return false;
-  m_iAddressIndex++;
-  ConnectToCurrentAddress ();
-  return true;
-  } // end of CMUSHclientDoc::TryNextAddress
-
-// From CheckTimers: give up on an attempt that is taking too long, if there
-// is another address to try.
-void CMUSHclientDoc::CheckAddressFallback ()
-  {
-  if (!AddressesLeftToTry ())
-    return;
-  const double dSeconds = (CmcDateTime::GetTimeNow ().m_dt - m_dAttemptStarted) * 86400.0;
-  if (dSeconds >= kAddressFallbackSeconds)
-    TryNextAddress ();
-  } // end of CMUSHclientDoc::CheckAddressFallback
 
 
 // ── Async DNS (single-sourced, T3a; transport-only since T5) ────────────────
@@ -2331,7 +2270,7 @@ class CDocTransportEvents : public pal::ITransportEvents
 
     void onConnect (int err) override
       {
-      m_pDoc->OnConnect (err);
+      m_pDoc->ConnectAttemptFinished (this, err);
       }
 
     void onBytes (const char * data, size_t n) override
@@ -2378,29 +2317,209 @@ class CDocTransportEvents : public pal::ITransportEvents
     CMUSHclientDoc * m_pDoc;
   };
 
+// ── more than one address ───────────────────────────────────────────────────
+// A name can have several addresses, IPv6 and IPv4, and some of them may not be
+// reachable from here -- the commonest case being IPv6 published for a host
+// while this machine's IPv6 goes nowhere.  So they race, staggered (RFC 8305's
+// "Happy Eyeballs", pal::OrderForConnecting having alternated the families):
+// the first address gets kNextAddressDelaySeconds to itself, then the next
+// starts beside it, and so on.  The first to connect is the connection, and the
+// others are closed.  An address that fails starts the next at once.
+//
+// Nothing is given up on while it is still trying, so a slow address is never
+// cut off; each runs until it connects, loses, or reaches the OS's own connect
+// timeout.  Only when every address has failed is that reported, and a server
+// answering inside the delay sees only the one connection.
+//
+// One transport per attempt, which is ITransport's contract, so the race lives
+// here and every platform's adapter gets it without knowing.
+
+static const double kNextAddressDelaySeconds = 1.0;
+
+pal::ITransport * CMUSHclientDoc::NewTransport (pal::ITransportEvents & events)
+  {
+  if (m_fnTransportFactory)
+    return m_fnTransportFactory (events);
+#ifdef _WIN32
+  return pal::CreateWinTransport (events);
+#else
+  return pal::CreatePosixTransport (events);
+#endif
+  } // end of CMUSHclientDoc::NewTransport
+
+// Start the attempt on the address m_iAddressIndex names.  The first uses the
+// transport ConnectSocket made (and resolved with); each later one is new.
+void CMUSHclientDoc::StartConnectAttempt ()
+  {
+  const bool bMud = m_iConnectPhase == eConnectConnectingToMud;
+  if (!bMud && m_iConnectPhase != eConnectConnectingToProxy)
+    return;
+
+  const std::vector<pal::NetAddress> & addresses = bMud ? m_MudAddresses : m_ProxyAddresses;
+  if (m_pTransport == NULL || m_iAddressIndex >= addresses.size ())
+    return;
+
+  const pal::NetAddress address = addresses [m_iAddressIndex];
+
+  if (m_pTransportEvents == NULL)     // a transport a test put here itself
+    m_pTransportEvents = new CDocTransportEvents (this);
+
+  pal::ITransport * pTransport = m_pTransport;
+  pal::ITransportEvents * pEvents = m_pTransportEvents;
+
+  pal::ITransport * pFailed = NULL;
+  if (m_iAddressIndex > 0)
+    {
+    while (m_ExtraTransportEvents.size () < m_iAddressIndex)
+      m_ExtraTransportEvents.push_back (new CDocTransportEvents (this));
+    pEvents = m_ExtraTransportEvents [m_iAddressIndex - 1];
+    pTransport = NewTransport (*pEvents);
+    // Nothing else pending: m_pTransport is one that has already failed.
+    if (m_ConnectAttempts.empty ())
+      {
+      pFailed = m_pTransport;
+      m_pTransport = pTransport;
+      }
+    }
+
+  ConnectAttempt attempt = { pTransport, pEvents, address };
+  m_ConnectAttempts.push_back (attempt);
+  delete pFailed;
+
+  (bMud ? m_sockAddr : m_ProxyAddr) = address;
+  m_dAttemptStarted = CmcDateTime::GetTimeNow ().m_dt;
+
+  pal::TransportOptions options;
+  options.keepalives = m_bSendKeepAlives != 0;
+
+  // Last, and nothing after it: a local failure is reported from inside
+  // connect (), and can end this attempt or start the next before it returns.
+  pTransport->connect (address,
+                       (unsigned short) (bMud ? m_port : m_iProxyServerPort),
+                       options);
+  } // end of CMUSHclientDoc::StartConnectAttempt
+
+// An attempt has answered (the events bridge's onConnect).
+void CMUSHclientDoc::ConnectAttemptFinished (pal::ITransportEvents * pEvents, int nErrorCode)
+  {
+  size_t i = 0;
+  while (i < m_ConnectAttempts.size () && m_ConnectAttempts [i].events != pEvents)
+    i++;
+
+  if (i == m_ConnectAttempts.size ())
+    {
+    OnConnect (nErrorCode);   // a transport not connected through this race
+    return;
+    }
+
+  const ConnectAttempt attempt = m_ConnectAttempts [i];
+  const bool bMud = m_iConnectPhase == eConnectConnectingToMud;
+
+  if (nErrorCode == 0)
+    {
+    // The winner.  The rest go, and it becomes the connection.  (Destroying a
+    // transport inside an event, its own or another's, is within the contract.)
+    (bMud ? m_sockAddr : m_ProxyAddr) = attempt.address;
+    for (size_t j = 0; j < m_ConnectAttempts.size (); j++)
+      if (j != i && m_ConnectAttempts [j].transport != m_pTransport)
+        delete m_ConnectAttempts [j].transport;
+    m_ConnectAttempts.clear ();
+    if (attempt.transport != m_pTransport)
+      {
+      delete m_pTransport;
+      m_pTransport = attempt.transport;
+      }
+    m_bHoldSends = false;     // what was held goes out from ConnectionEstablished
+    OnConnect (0);
+    return;
+    }
+
+  // This address failed.  m_pTransport must stay one still in the running,
+  // or (if none is) stay as it is, until the next attempt replaces it.
+  m_ConnectAttempts.erase (m_ConnectAttempts.begin () + i);
+  if (attempt.transport != m_pTransport)
+    delete attempt.transport;
+  else if (!m_ConnectAttempts.empty ())
+    {
+    m_pTransport = m_ConnectAttempts [0].transport;
+    delete attempt.transport;
+    }
+
+  if (AddressesLeftToTry ())
+    {
+    m_iAddressIndex++;
+    StartConnectAttempt ();
+    return;
+    }
+
+  if (!m_ConnectAttempts.empty ())
+    return;     // others are still trying
+
+  // Every address has failed: report the last, naming it
+  (bMud ? m_sockAddr : m_ProxyAddr) = attempt.address;
+  m_bHoldSends = false;
+  m_strHeldSends.erase ();
+  OnConnect (nErrorCode);
+  } // end of CMUSHclientDoc::ConnectAttemptFinished
+
+bool CMUSHclientDoc::AddressesLeftToTry () const
+  {
+  if (m_pTransport == NULL)
+    return false;
+  if (m_iConnectPhase == eConnectConnectingToMud)
+    return m_iAddressIndex + 1 < m_MudAddresses.size ();
+  if (m_iConnectPhase == eConnectConnectingToProxy)
+    return m_iAddressIndex + 1 < m_ProxyAddresses.size ();
+  return false;
+  } // end of CMUSHclientDoc::AddressesLeftToTry
+
+// From CheckTimers: the last address has had its head start, so the next joins it.
+void CMUSHclientDoc::CheckConnectStagger ()
+  {
+  if (!AddressesLeftToTry ())
+    return;
+  const double dSeconds = (CmcDateTime::GetTimeNow ().m_dt - m_dAttemptStarted) * 86400.0;
+  if (dSeconds >= kNextAddressDelaySeconds)
+    {
+    m_iAddressIndex++;
+    StartConnectAttempt ();
+    }
+  } // end of CMUSHclientDoc::CheckConnectStagger
+
+// The connection is being replaced or dropped: every attempt beside
+// m_pTransport goes (m_pTransport is its owner's to close), and anything held.
+void CMUSHclientDoc::AbandonConnectAttempts ()
+  {
+  for (size_t i = 0; i < m_ConnectAttempts.size (); i++)
+    if (m_ConnectAttempts [i].transport != m_pTransport)
+      delete m_ConnectAttempts [i].transport;
+  m_ConnectAttempts.clear ();
+  m_bHoldSends = false;
+  m_strHeldSends.erase ();
+  } // end of CMUSHclientDoc::AbandonConnectAttempts
+
+
 // Create a fresh transport for a new connection attempt (destroying any old
 // one), lazily creating the per-doc events bridge on first use.  This is the
 // single place the concrete adapter is chosen (T5: Windows picks its native
 // adapter here).
 void CMUSHclientDoc::CreateTransport (void)
   {
+  AbandonConnectAttempts ();
   delete m_pTransport;
   m_pTransport = NULL;
 
   if (!m_pTransportEvents)
     m_pTransportEvents = new CDocTransportEvents (this);
 
-#ifdef _WIN32
-  m_pTransport = pal::CreateWinTransport (*m_pTransportEvents);
-#else
-  m_pTransport = pal::CreatePosixTransport (*m_pTransportEvents);
-#endif
+  m_pTransport = NewTransport (*m_pTransportEvents);
   }
 
 // Destroy the transport + its events bridge (doc destructor path; here
 // because both types are complete in this TU).
 void CMUSHclientDoc::TeardownTransport (void)
   {
+  AbandonConnectAttempts ();
   if (m_pTransport)
     {
     m_pTransport->close ();
@@ -2409,6 +2528,9 @@ void CMUSHclientDoc::TeardownTransport (void)
     }
   delete m_pTransportEvents;
   m_pTransportEvents = NULL;
+  for (size_t i = 0; i < m_ExtraTransportEvents.size (); i++)
+    delete m_ExtraTransportEvents [i];
+  m_ExtraTransportEvents.clear ();
   }
 
 

@@ -122,9 +122,8 @@ public:
     virtual void cancelResolve() = 0;
 
     // Async connect to one IPv4 or IPv6 address + port (host order).  Reports
-    // via onConnect.  May be called again after a failed (or abandoned)
-    // attempt -- the engine's fallback to a host's next address: the previous
-    // socket is closed first, and nothing queued by send() is lost.
+    // via onConnect.  Once per transport: to try several of a host's addresses
+    // the engine races one transport per address.
     virtual void connect(const NetAddress& address, unsigned short port,
                          const TransportOptions& options) = 0;
 

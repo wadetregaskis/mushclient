@@ -12,7 +12,7 @@ performance survey, measured in the running client.
 **Method.** Reviewers read each area adversarially and reported findings with
 failure scenarios; every finding below was re-read against the code before it
 was fixed, and each Windows-reachable fix carries a test or was checked in the
-running client. Tests: 1769 pass on ARM64, x64 and Win32 (after the fixes made afterwards, and IPv6, below); the packaged ARM64
+running client. Tests: 1777 pass on ARM64, x64 and Win32 (after the fixes made afterwards, and IPv6, below); the packaged ARM64
 build's engine selftest passes 471/471 (19 skipped).
 
 ## Fixed
@@ -261,14 +261,16 @@ Now:
 - **Lookups give every address.** Both transports run `getaddrinfo` with
   `AF_UNSPEC` on a thread of their own. On Windows that replaces
   `WSAAsyncGetHostByName`, and with it the Wine hazard of UPSTREAM-BUGS 116.
-- **Every address is tried.** The engine orders a name's addresses with the
-  families alternating (RFC 8305 section 4), tries each in turn, and reports
-  only the last failure. An attempt still pending after two seconds, with
-  addresses left, is given up for the next, so a black-holed IPv6 route costs
-  two seconds rather than the OS's whole connect timeout (21 s on Windows,
-  75 s on macOS). The last address is never cut short. `connect()` may now be
-  called again on the same transport; the old socket goes and anything queued
-  stays.
+- **Addresses race, staggered** (RFC 8305's "Happy Eyeballs"). The engine orders a
+  name's addresses with the families alternating and starts the first; a second
+  later, if it has not answered, the next starts beside it, and so on. An address
+  that fails starts the next at once. The first to connect is the connection and
+  the others are closed; only when every address has failed is that reported.
+  Nothing is cut off while it is still trying, so a slow address has until the
+  OS's own timeout, and a server answering within the second sees one connection.
+  One transport per attempt, as `ITransport` always said, so the race is engine
+  code and the macOS/Linux adapter gets it unchanged. Sends made during a race
+  wait in the engine and go out on the winner.
 - **SOCKS 5** carries an IPv6 address (ATYP 4) when the MUD has only IPv6. It
   still sends IPv4 whenever the name has an IPv4 address, so a proxy without
   IPv6 keeps working. **SOCKS 4** cannot carry IPv6 at all, and an IPv6-only
@@ -287,9 +289,11 @@ Now:
   either.
 
 Tests: `NetAddress.*` (parsing, printing, ordering, sockets), `Ipv6.*` in
-`test_connection.cpp` (the fallback, the two-second deadline through
-`CheckTimers`, SOCKS 4 and 5), and `WinTransport.*` over the IPv6 loopback
-(connect, a chat call, `UdpSend`, a resolve) plus a chat call to a name.
+`test_connection.cpp` (the race through `CheckTimers`, the winner and
+loser, held sends, SOCKS 4 and 5), and `WinTransport.*` over the IPv6 loopback
+(connect, a chat call, `UdpSend`, a resolve), a chat call to a name, and
+`WinTransportRace.*` (real sockets: a refused address giving way, both connecting
+with one closed, a disconnect mid-race).
 
 ## Not fixed, and why
 

@@ -153,12 +153,6 @@ public:
     void connect(const NetAddress& address, unsigned short port,
                  const TransportOptions& options) override
     {
-        // Another of the host's addresses, after the last one failed or was
-        // given up on: that socket goes first.  m_outgoing stays -- what was
-        // queued during the attempt goes out on whichever connects.
-        m_sock.m_awaitingConnect = false;
-        m_sock.Close();
-
         struct sockaddr_storage sa;
         const int saLen = ToSockaddr(address, port, sa);
         if (saLen == 0) {

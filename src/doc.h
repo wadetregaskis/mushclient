@@ -40,7 +40,7 @@ extern CString MUSHCLIENT_VERSION;
 // declarations must not sit behind a platform guard.  (pal/iworldview.h
 // pulls in platform/output_types.h for SOutputLine/SOutputRun.)
 #include "pal/iworldview.h"   // pal::IWorldView — the typed per-world view seam
-namespace pal { class ITransport; }   // pal/itransport.h — the byte-transport seam
+namespace pal { class ITransport; class ITransportEvents; }   // pal/itransport.h — the byte-transport seam
 #include "pal/netaddress.h"   // pal::NetAddress — an IPv4 or IPv6 address
 class CDocTransportEvents;            // doc_shared.cpp — the ITransportEvents → engine bridge
 // Likewise unconditional: pal::StylePalette is a parameter of GetStylePalette
@@ -752,6 +752,27 @@ public:
   pal::ITransport* m_pTransport = NULL;
   CDocTransportEvents* m_pTransportEvents = NULL;
 
+  // A connection racing several of a name's addresses: one transport per
+  // attempt, the first to connect becoming m_pTransport and the others closed
+  // (see "more than one address" in doc_shared.cpp).  m_pTransport is always
+  // one of them while any is pending, so ConnectionOpen stays true.  Each
+  // extra attempt has an events bridge of its own, kept until the doc goes:
+  // its transport may be the one that wins.
+  struct ConnectAttempt {
+    pal::ITransport *       transport;
+    pal::ITransportEvents * events;
+    pal::NetAddress         address;
+  };
+  std::vector<ConnectAttempt> m_ConnectAttempts;
+  std::vector<pal::ITransportEvents *> m_ExtraTransportEvents;
+  // Sends made while more than one attempt could still win have no transport
+  // to queue in; they wait here and go out when the session is established.
+  bool m_bHoldSends = false;
+  std::string m_strHeldSends;
+  // Tests: makes the transports CreateTransport and the race would otherwise
+  // get from the platform adapter.
+  std::function<pal::ITransport * (pal::ITransportEvents &)> m_fnTransportFactory;
+
   // The "socket exists" half of the classic connectivity test
   // (m_iConnectPhase == eConnectConnectedToMud && the connection object).
   bool ConnectionOpen (void) const
@@ -1401,7 +1422,7 @@ public:
   pal::NetAddress m_ProxyAddr;      // proxy address
   std::vector<pal::NetAddress> m_MudAddresses;
   std::vector<pal::NetAddress> m_ProxyAddresses;
-  size_t m_iAddressIndex = 0;       // which of the list being connected is in use
+  size_t m_iAddressIndex = 0;       // the last of the list being connected to be tried
   double m_dAttemptStarted = 0;     // when that attempt began (CmcDateTime days)
 
   void ForgetMudAddresses ()   { m_sockAddr  = pal::NetAddress (); m_MudAddresses.clear (); }
@@ -2481,13 +2502,13 @@ public:
   // lookup start.
   void LookupHostNameComplete (const std::vector<pal::NetAddress> & addresses,
                                int phase, bool ok);
-  // Connect to the current address of the list in use (InitiateConnection's
-  // second half), and fall back to the next one: after a failed connect, or
-  // one still pending after kAddressFallbackSeconds while others remain.
-  void ConnectToCurrentAddress ();
-  bool TryNextAddress ();
+  // Racing a name's addresses (doc_shared.cpp, "more than one address").
+  void StartConnectAttempt ();
+  void ConnectAttemptFinished (pal::ITransportEvents * pEvents, int nErrorCode);
   bool AddressesLeftToTry () const;
-  void CheckAddressFallback ();
+  void CheckConnectStagger ();
+  void AbandonConnectAttempts ();
+  pal::ITransport * NewTransport (pal::ITransportEvents & events);
 
   // ITransport TLS outcomes — the engine-policy halves of the old
   // ContinueSSLHandshake (Notes, phase, the deferred fallback prompt); the

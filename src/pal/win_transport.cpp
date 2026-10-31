@@ -161,6 +161,12 @@ public:
         *m_alive = false;   // guard event-handler continuations (see handleReadable)
         cancelResolve();
         teardownTls();
+        // Notifications off first.  Winsock posts them from a thread of its
+        // own, so a socket closed with a connect still in flight (the loser of
+        // a race) could post FD_CONNECT after MFC had forgotten its handle --
+        // which MFC takes for a socket in the middle of Accept, and ASSERTs.
+        if (m_sock.m_hSocket != INVALID_SOCKET)
+            m_sock.AsyncSelect(0);
         m_sock.Close();
         if (m_hWnd) {
             ::DestroyWindow(m_hWnd);   // no further messages can arrive
@@ -211,14 +217,6 @@ public:
     void connect(const NetAddress& address, unsigned short port,
                  const TransportOptions& options) override
     {
-        // Another of the host's addresses, after the last one failed or was
-        // given up on: that socket goes first.  m_outgoing stays -- what was
-        // queued during the attempt goes out on whichever connects.
-        if (m_sock.m_hSocket != INVALID_SOCKET) {
-            m_sock.AsyncSelect(0);
-            m_sock.Close();
-        }
-
         sockaddr_storage sa;
         const int saLen = ToSockaddr(address, port, sa);
         m_connectPending = true;

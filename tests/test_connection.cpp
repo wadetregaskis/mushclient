@@ -79,10 +79,11 @@ static const bool kNawsNeedsAView = false;
 // asserts on gets its own override.
 
 struct RecTransport : RecordingTransport {
+    static int destroyed;                  // how many have gone (the race's losers)
+    ~RecTransport() override { ++destroyed; }
     int  connectCalls = 0;
     unsigned int lastAddr = 0;            // lastAddress.ipv4 ()
     pal::NetAddress lastAddress;
-    std::vector<pal::NetAddress> attempts;   // every address connect() was handed
     unsigned short lastPort = 0;
     bool lastKeepalives = false;
     int  resolveCalls = 0;
@@ -101,7 +102,6 @@ struct RecTransport : RecordingTransport {
         ++connectCalls;
         lastAddress = addr;
         lastAddr = addr.ipv4 ();
-        attempts.push_back(addr);
         lastPort = port;
         lastKeepalives = opt.keepalives;
     }
@@ -112,6 +112,8 @@ struct RecTransport : RecordingTransport {
     }
     std::string lastErrorString() const override { return "rec"; }
 };
+
+int RecTransport::destroyed = 0;
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -3508,11 +3510,9 @@ TEST(QueueDrain, AnEmptyEntryIsSkippedRatherThanDecoded)
 
 // ── IPv6, and a name with more than one address ────────────────────────────
 // Upstream kept one IPv4 address per world.  A name now gives every address it
-// has, both families, and the world tries them in turn (pal::OrderForConnecting
-// alternates the families) until one connects -- reporting only the last
-// failure.  An attempt still pending after kAddressFallbackSeconds is given up
-// for the next, so a black-holed IPv6 route costs two seconds, not the OS's
-// whole connect timeout.
+// has, both families, and they race, staggered: each new address starts a second
+// after the last, or at once if that one fails, and the first to connect wins.
+// Only when every one has failed is that reported.
 
 namespace {
 
@@ -3563,62 +3563,251 @@ TEST(Ipv6, ANumericIPv6ServerNeedsNoLookup)
     delete doc;
 }
 
-TEST(Ipv6, AFailedAddressFallsBackToTheNextSilently)
+// A race: a doc whose extra transports are RecTransports too, with the name's
+// addresses delivered.  Each attempt answers through its own events bridge, as
+// a real transport does.
+struct Race {
+    CMUSHclientDoc* doc;
+    explicit Race(CMUSHclientDoc* d) : doc(d)
+    {
+        doc->m_fnTransportFactory = [](pal::ITransportEvents&) -> pal::ITransport* {
+            return new RecTransport();
+        };
+    }
+    size_t pending() const { return doc->m_ConnectAttempts.size(); }
+    pal::NetAddress address(size_t i) const { return doc->m_ConnectAttempts[i].address; }
+    RecTransport* transport(size_t i) const
+    {
+        return static_cast<RecTransport*>(doc->m_ConnectAttempts[i].transport);
+    }
+    void answer(size_t i, int err) { doc->m_ConnectAttempts[i].events->onConnect(err); }
+};
+
+TEST(Ipv6, AFailedAddressStartsTheNextAtOnceAndOnlyTheLastFailureIsReported)
 {
     NotifyToOutput toOutput;
     CMUSHclientDoc* doc = make_doc();
+    Race race(doc);
     doc->m_iConnectPhase = eConnectMudNameLookup;
     doc->LookupHostNameComplete(Addrs("2001:db8::1", "2001:db8::2", "192.0.2.1"),
                                 eConnectMudNameLookup, true);
 
     // alternating: IPv6, IPv4, then the second IPv6
-    ASSERT_EQ(1u, wire(doc).attempts.size());
-    EXPECT_TRUE(wire(doc).attempts[0] == Addr("2001:db8::1"));
+    ASSERT_EQ(1u, race.pending());
+    EXPECT_TRUE(race.address(0) == Addr("2001:db8::1"));
+    EXPECT_TRUE(race.transport(0)->lastAddress == Addr("2001:db8::1"));
 
-    doc->OnConnect(kRefused);
-    ASSERT_EQ(2u, wire(doc).attempts.size());
-    EXPECT_TRUE(wire(doc).attempts[1] == Addr("192.0.2.1"));
+    race.answer(0, kRefused);
+    ASSERT_EQ(1u, race.pending());
+    EXPECT_TRUE(race.address(0) == Addr("192.0.2.1"));
+    EXPECT_TRUE(race.transport(0)->lastAddress == Addr("192.0.2.1"));
+    EXPECT_TRUE(doc->m_pTransport == race.transport(0));     // the failed one has gone
     EXPECT_EQ((int)eConnectConnectingToMud, (int)doc->m_iConnectPhase);
-    EXPECT_FALSE(saw(doc, "Unable to connect"));     // not yet: there is more to try
+    EXPECT_FALSE(saw(doc, "Unable to connect"));             // not yet: there is more to try
 
-    doc->OnConnect(kRefused);
-    ASSERT_EQ(3u, wire(doc).attempts.size());
-    EXPECT_TRUE(wire(doc).attempts[2] == Addr("2001:db8::2"));
+    race.answer(0, kRefused);
+    ASSERT_EQ(1u, race.pending());
+    EXPECT_TRUE(race.address(0) == Addr("2001:db8::2"));
     EXPECT_FALSE(saw(doc, "Unable to connect"));
 
     // the last one failing is the failure, and it names that address
-    doc->OnConnect(kRefused);
-    EXPECT_EQ(3u, wire(doc).attempts.size());
+    race.answer(0, kRefused);
+    EXPECT_EQ(0u, race.pending());
     EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
     EXPECT_TRUE(saw(doc, "Unable to connect to \"TestWorld\""));
     EXPECT_TRUE(saw(doc, "2001:db8::2"));
     delete doc;
 }
 
-TEST(Ipv6, AnAttemptThatHangsIsGivenUpForTheNextButTheLastIsNot)
+// The whole point of the stagger: a slow address keeps trying while the next
+// starts beside it, a second later -- and nothing is ever cut off.
+TEST(Ipv6, TheNextAddressStartsASecondLaterBesideTheFirst)
 {
     ScopedFallbackClock clock;
     CMUSHclientDoc* doc = make_doc();
+    Race race(doc);
     doc->m_bEnableTimers = FALSE;
     doc->m_bDisconnectOK = true;          // no auto-reconnect from CheckTimers
     doc->m_iConnectPhase = eConnectMudNameLookup;
     doc->LookupHostNameComplete(Addrs("2001:db8::1", "192.0.2.1"),
                                 eConnectMudNameLookup, true);
-    ASSERT_EQ(1u, wire(doc).attempts.size());
+    ASSERT_EQ(1u, race.pending());
 
-    clock.clock.advance(1.0);
+    clock.clock.advance(0.9);
     doc->CheckTimers();
-    EXPECT_EQ(1u, wire(doc).attempts.size());        // still within its time
+    EXPECT_EQ(1u, race.pending());        // inside its head start: one connection only
 
-    clock.clock.advance(1.5);
+    clock.clock.advance(0.2);
     doc->CheckTimers();
-    ASSERT_EQ(2u, wire(doc).attempts.size());        // given up: the IPv4 one
-    EXPECT_TRUE(wire(doc).attempts[1] == Addr("192.0.2.1"));
+    ASSERT_EQ(2u, race.pending());        // the IPv4 one, beside it
+    EXPECT_TRUE(race.address(0) == Addr("2001:db8::1"));
+    EXPECT_TRUE(race.address(1) == Addr("192.0.2.1"));
+
+    clock.clock.advance(600.0);
+    doc->CheckTimers();
+    EXPECT_EQ(2u, race.pending());        // ten minutes on, both still trying
+    EXPECT_EQ((int)eConnectConnectingToMud, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+TEST(Ipv6, TheFirstToConnectWinsAndTheOtherIsClosed)
+{
+    ScopedFallbackClock clock;
+    CMUSHclientDoc* doc = make_doc();
+    Race race(doc);
+    doc->m_bEnableTimers = FALSE;
+    doc->m_bDisconnectOK = true;
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("2001:db8::1", "192.0.2.1"),
+                                eConnectMudNameLookup, true);
+    clock.clock.advance(1.1);
+    doc->CheckTimers();
+    ASSERT_EQ(2u, race.pending());
+
+    RecTransport* winner = race.transport(1);
+    const int destroyedBefore = RecTransport::destroyed;
+    race.answer(1, 0);                    // the later one answers first
+
+    EXPECT_EQ(destroyedBefore + 1, RecTransport::destroyed);   // the IPv6 attempt
+    EXPECT_EQ(0u, race.pending());
+    EXPECT_TRUE(doc->m_pTransport == winner);
+    EXPECT_TRUE(doc->m_sockAddr == Addr("192.0.2.1"));
+    EXPECT_EQ((int)eConnectConnectedToMud, (int)doc->m_iConnectPhase);
+
+    // and the bridge of the transport that won goes on working for it
+    delete doc;
+}
+
+TEST(Ipv6, OneAddressFailingLeavesTheOthersRacing)
+{
+    NotifyToOutput toOutput;
+    ScopedFallbackClock clock;
+    CMUSHclientDoc* doc = make_doc();
+    Race race(doc);
+    doc->m_bEnableTimers = FALSE;
+    doc->m_bDisconnectOK = true;
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("2001:db8::1", "192.0.2.1"),
+                                eConnectMudNameLookup, true);
+    clock.clock.advance(1.1);
+    doc->CheckTimers();
+    ASSERT_EQ(2u, race.pending());
+
+    // the first (m_pTransport) fails: the second takes its place, unreported
+    race.answer(0, kRefused);
+    ASSERT_EQ(1u, race.pending());
+    EXPECT_TRUE(doc->m_pTransport == race.transport(0));
+    EXPECT_EQ((int)eConnectConnectingToMud, (int)doc->m_iConnectPhase);
+    EXPECT_FALSE(saw(doc, "Unable to connect"));
+
+    race.answer(0, kRefused);
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    EXPECT_TRUE(saw(doc, "Unable to connect"));
+    EXPECT_TRUE(saw(doc, "192.0.2.1"));
+    delete doc;
+}
+
+TEST(Ipv6, DisconnectingMidRaceDropsEveryAttempt)
+{
+    ScopedFallbackClock clock;
+    CMUSHclientDoc* doc = make_doc();
+    Race race(doc);
+    doc->m_bEnableTimers = FALSE;
+    doc->m_bDisconnectOK = true;
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("2001:db8::1", "192.0.2.1"),
+                                eConnectMudNameLookup, true);
+    clock.clock.advance(1.1);
+    doc->CheckTimers();
+    ASSERT_EQ(2u, race.pending());
+
+    const int destroyedBefore = RecTransport::destroyed;
+    doc->DisconnectWorld();
+    EXPECT_EQ(destroyedBefore + 2, RecTransport::destroyed);
+    EXPECT_EQ(0u, race.pending());
+    EXPECT_TRUE(doc->m_pTransport == NULL);
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+
+    clock.clock.advance(5.0);
+    doc->CheckTimers();                   // nothing left to start
+    EXPECT_EQ(0u, race.pending());
+    delete doc;
+}
+
+// A timer or script sending during the race has no transport it can trust: the
+// loser's queue would die with it.  Held, then sent once, by whichever won.
+TEST(Ipv6, WhatIsSentDuringARaceGoesOutOnTheWinner)
+{
+    ScopedFallbackClock clock;
+    CMUSHclientDoc* doc = make_doc();
+    Race race(doc);
+    doc->m_bEnableTimers = FALSE;
+    doc->m_bDisconnectOK = true;
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("2001:db8::1", "192.0.2.1"),
+                                eConnectMudNameLookup, true);
+
+    doc->SendPacket("early", 5);          // before the second attempt starts
+    clock.clock.advance(1.1);
+    doc->CheckTimers();
+    ASSERT_EQ(2u, race.pending());
+    doc->SendPacket(" late", 5);          // while both are running
+    EXPECT_TRUE(race.transport(0)->sent.empty());
+    EXPECT_TRUE(race.transport(1)->sent.empty());
+
+    RecTransport* winner = race.transport(1);
+    race.answer(1, 0);
+    EXPECT_EQ(0u, winner->sent.find("early late"));
+    EXPECT_TRUE(doc->m_strHeldSends.empty());
+    delete doc;
+}
+
+// One address is exactly what it always was: nothing held, one transport.
+TEST(Ipv6, ASingleAddressIsNoRace)
+{
+    ScopedFallbackClock clock;
+    CMUSHclientDoc* doc = make_doc();
+    Race race(doc);
+    doc->m_bEnableTimers = FALSE;
+    doc->m_bDisconnectOK = true;
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    doc->LookupHostNameComplete(Addrs("192.0.2.1"), eConnectMudNameLookup, true);
+    ASSERT_EQ(1u, race.pending());
+    RecTransport* only = race.transport(0);
+
+    doc->SendPacket("hi", 2);
+    EXPECT_STREQ("hi", only->sent.c_str());
 
     clock.clock.advance(60.0);
     doc->CheckTimers();
-    EXPECT_EQ(2u, wire(doc).attempts.size());        // the last runs to the OS's timeout
-    EXPECT_EQ((int)eConnectConnectingToMud, (int)doc->m_iConnectPhase);
+    EXPECT_EQ(1u, race.pending());
+    EXPECT_TRUE(doc->m_pTransport == only);
+    delete doc;
+}
+
+// Racing to the proxy is the same race, on the proxy's addresses.
+TEST(Ipv6, AProxysAddressesRaceToo)
+{
+    ScopedFallbackClock clock;
+    CMUSHclientDoc* doc = make_doc();
+    Race race(doc);
+    doc->m_bEnableTimers = FALSE;
+    doc->m_bDisconnectOK = true;
+    doc->m_iSocksProcessing = eProxyServerSocks5;
+    doc->m_iProxyServerPort = 1080;
+    doc->m_MudAddresses = Addrs("192.0.2.9");
+    doc->m_iConnectPhase = eConnectProxyNameLookup;
+    doc->LookupHostNameComplete(Addrs("2001:db8::5", "10.0.0.5"), eConnectProxyNameLookup, true);
+    ASSERT_EQ(1u, race.pending());
+    EXPECT_EQ((unsigned short)1080, race.transport(0)->lastPort);
+
+    clock.clock.advance(1.1);
+    doc->CheckTimers();
+    ASSERT_EQ(2u, race.pending());
+    EXPECT_EQ((unsigned short)1080, race.transport(1)->lastPort);
+    race.answer(1, 0);
+    EXPECT_TRUE(doc->m_ProxyAddr == Addr("10.0.0.5"));
+    EXPECT_EQ((int)eConnectAwaitingProxyResponse1, (int)doc->m_iConnectPhase);
     delete doc;
 }
 

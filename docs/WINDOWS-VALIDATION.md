@@ -8794,15 +8794,19 @@ the bottom window tabs); that file has the list.
 IPv6 support (`docs/BUGHUNT-2026-10.md`, "IPv6"), checked in the ARM64 Release
 client against two loopback stubs: one on `[::1]:4106`, one on `127.0.0.1:4104`.
 This VM has no global IPv6 (only `::1` and a link-local address), so the
-checks are on loopback; the black-holed-route case is covered by the unit test
-`Ipv6.AnAttemptThatHangsIsGivenUpForTheNextButTheLastIsNot`.
+checks are on loopback; a black-holed route cannot be made here, so that case is
+`Ipv6.TheNextAddressStartsASecondLaterBesideTheFirst` on a fake clock.
 
 - **An IPv6 world.**  A world whose server is `::1` connected on opening.  The
   stub logged `connected from [::1]:51388` and then a line typed in the client.
   `GetInfo (61)` was `::1`, `GetInfo (228)` 0.
-- **Fallback.**  The same world pointed at `localhost` port 4104, where only the
-  IPv4 stub listens: it connected to 127.0.0.1 (`GetInfo (61)`), with no failure
-  note on the way, and the stub received a sent line.
+- **The race.**  `localhost` with stubs on both `[::1]:4108` and `127.0.0.1:4108`:
+  `::1` answered at once and the IPv4 stub never saw a connection.  `localhost`
+  port 4104, where only the IPv4 stub listens: Windows goes on retrying a refused
+  loopback SYN for a while, so the IPv6 attempt was still pending when the IPv4
+  one started beside it a second later and won (1015--1047 ms over 16 runs of
+  `WinTransportRace.ARefusedAddressGivesWayToTheNext`), with no failure note, and
+  the stub received a sent line.
 - **Failure.**  `[::1]` (brackets and all) port 4199, where nothing listens:
   "Unable to connect … (Connection refused) … Connecting to world: ::1, port 4199".
 - **Lookups.**  `GetHostAddress ("localhost")` gave `127.0.0.1 ::1`, IPv4 first;

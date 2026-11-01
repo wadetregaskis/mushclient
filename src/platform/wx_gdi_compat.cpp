@@ -16,6 +16,7 @@
 
 // ── wxWidgets ────────────────────────────────────────────────────────────
 #include <wx/wx.h>
+#include <wx/display.h>
 #include <wx/dcmemory.h>
 #include <wx/bitmap.h>
 #include <wx/image.h>
@@ -674,24 +675,25 @@ bool CBitmap::CreateBitmap(int nWidth, int nHeight, UINT nPlanes,
     return static_cast<wxBitmap*>(m_impl)->IsOk();
 }
 
-// The backing-store scale for drawing canvases: 2 on a Retina panel, 1 on an
-// ordinary one.  Derived from the same PPI everything else in this shim uses,
-// so a 72 dpi display gets scale 1 and behaves exactly as before.
+// The backing-store scale for drawing canvases: 2 on a Retina panel or a GTK display at
+// scale 2, 1 on an ordinary one.  It is the window's content scale factor: the display
+// PPI this used to be derived from said nothing about the scale the desktop is really
+// at, so that a high-PPI screen at GTK scale 1 got a 2x canvas it did not need, and a
+// window on the second of two displays got the first one's.  A canvas keeps the scale it
+// was made with; on another display it is stretched by wx until the plugin remakes it.
+// wxgdi_read_bgra / wxgdi_write_bgra need a whole number, and GTK and macOS only have those.
 double wx_canvas_scale()
 {
-    const int ppi = wxGetDisplayPPI().y;
-    if (ppi <= 0) return 1.0;
-#ifdef __WXOSX__
-    const double s = ppi / 72.0;
-    return (s < 1.0) ? 1.0 : s;
-#else
-    // On X11/GTK, standard 1x displays report 96 PPI (not CoreGraphics' 72),
-    // and wxgdi_read_bgra / wxgdi_write_bgra index the physical bitmap by
-    // integer scale isc = (int)(sc + 0.5).  Rounding ppi / 96.0 to an integer
-    // scale keeps 1x displays at 1.0 and 2x HiDPI displays at 2.0.
-    const int isc = (int)(ppi / 96.0 + 0.5);
-    return (isc < 1) ? 1.0 : (double)isc;
+    double s = 0.0;
+    wxWindow* top = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    if (top)
+        s = top->GetContentScaleFactor();
+#if wxCHECK_VERSION(3, 1, 5)
+    if (s <= 0.0)
+        s = wxDisplay(0u).GetScaleFactor();
 #endif
+    const int isc = (int)(s + 0.5);
+    return (isc < 1) ? 1.0 : (double)isc;
 }
 
 bool CBitmap::CreateCanvasBitmap(int nWidth, int nHeight) {

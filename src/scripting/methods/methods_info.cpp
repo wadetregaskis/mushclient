@@ -3,6 +3,7 @@
 // General "information" methods
 
 #include "stdafx.h"
+#include "dpi.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../../mushview.h"
@@ -357,6 +358,10 @@ static void GetWindowWidth (CWnd * pWnd, VARIANT & vaResult, const bool client =
     }
   else
     rect.right = -1;
+#ifdef _WIN32
+  if (pWnd->m_hWnd)
+    rect.right = ::MulDiv (rect.right, 96, Dpi_ForWindow (pWnd->m_hWnd));
+#endif
   VariantClear (&vaResult);
   vaResult.vt = VT_I4;
   vaResult.lVal = rect.right; 
@@ -631,10 +636,10 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case  210: SetUpVariantLong (vaResult, (long) m_iMXPtags); break;
       
     case  211: SetUpVariantLong (vaResult, (long) m_iMXPentities); break;
-    case  212: SetUpVariantLong (vaResult, m_FontHeight); break;
-    case  213: SetUpVariantLong (vaResult, m_FontWidth); break;
-    case  214: SetUpVariantLong (vaResult, m_InputFontHeight); break;
-    case  215: SetUpVariantLong (vaResult, m_InputFontWidth); break;
+    case  212: SetUpVariantLong (vaResult, ToLogical (m_FontHeight)); break;
+    case  213: SetUpVariantLong (vaResult, ToLogical (m_FontWidth)); break;
+    case  214: SetUpVariantLong (vaResult, ToLogical (m_InputFontHeight)); break;
+    case  215: SetUpVariantLong (vaResult, ToLogical (m_InputFontWidth)); break;
     case  216: SetUpVariantLong (vaResult, (long) m_nBytesIn); break;
     case  217: SetUpVariantLong (vaResult, (long) m_nBytesOut); break;
     case  218: SetUpVariantLong (vaResult, GetVariableMap ().GetCount ()); break;
@@ -802,11 +807,11 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 
     case 240:
 
-        SetUpVariantLong (vaResult, m_FontWidth);  // average character width
+        SetUpVariantLong (vaResult, ToLogical (m_FontWidth));  // average character width
         break;
 
     case 241:
-        SetUpVariantLong (vaResult, m_FontHeight);  // character height
+        SetUpVariantLong (vaResult, ToLogical (m_FontHeight));  // character height
         break;
 
     case 242:
@@ -959,7 +964,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
         {
         RECT rect;
         pmyView->GetClientRect(&rect);
-        SetUpVariantLong (vaResult, rect.bottom);
+        SetUpVariantLong (vaResult, ToLogical (rect.bottom));
         break;
         }
 #else
@@ -977,7 +982,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
         {
         RECT rect;
         pmyView->GetClientRect(&rect);
-        SetUpVariantLong (vaResult, rect.right);
+        SetUpVariantLong (vaResult, ToLogical (rect.right));
         break;
         }
 #else
@@ -1127,7 +1132,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
       if (pmyView)
         {
         CPoint pt = pmyView->GetScrollPosition ();
-        SetUpVariantLong (vaResult, pt.y);
+        SetUpVariantLong (vaResult, ToLogical (pt.y));
         break;
         }
 #endif
@@ -1687,7 +1692,11 @@ Same display format = 81
 
 long CMUSHclientDoc::GetSystemMetrics(long Index) 
 {
+#ifdef _WIN32
+  return Dpi_LogicalSystemMetric (Index);
+#else
   return ::GetSystemMetrics (Index);
+#endif
 }  // end of CMUSHclientDoc::GetSystemMetrics
 
 
@@ -1745,6 +1754,19 @@ long CMUSHclientDoc::GetDeviceCaps(long Index)
 {
 CDC dc;
   dc.CreateCompatibleDC (NULL);
+#ifdef _WIN32
+  // What a plugin expects of a display it thinks is 96 dpi (dpi.h).
+  const int iSystemDpi = dc.GetDeviceCaps (LOGPIXELSY);
+  switch (Index)
+    {
+    case LOGPIXELSX:
+    case LOGPIXELSY:
+      return 96;
+    case HORZRES:
+    case VERTRES:
+      return ::MulDiv (dc.GetDeviceCaps (Index), 96, iSystemDpi);
+    }
+#endif
   return dc.GetDeviceCaps (Index);
 }   // end of CMUSHclientDoc::GetDeviceCaps
 

@@ -345,7 +345,7 @@ public:
         {
             RECT r;
             pmyView->GetTextRect(&r);
-            s.h = (r.bottom - r.top - m_pDoc->m_iPixelOffset)
+            s.h = (r.bottom - r.top - m_pDoc->PixelOffset ())
                   / m_pDoc->m_FontHeight;
         }
         return s;
@@ -868,7 +868,7 @@ public:
 
         CRect rectInside;
         pFrame->m_wndSplitter.GetClientRect(rectInside);
-        rectInside.InflateRect(-9, -9); // allow for borders and splitter bar
+        rectInside.InflateRect(m_pDoc->ToPhysical (-9), m_pDoc->ToPhysical (-9)); // allow for borders and splitter bar
 
         // we have to root around like this, because recalclayout lays out the top
         // view first, and allocates the rest (possibly nothing) to the bottom view.
@@ -877,11 +877,11 @@ public:
         // can be.
 
         int iRoom = rectInside.bottom - rectInside.top - Height
-            + 7;    // 7 pixels for the splitter bar
+            + m_pDoc->ToPhysical (7);    // 7 pixels for the splitter bar
 
         int cyCurTop = iRoom;
 
-        if (cyCurTop < 20)
+        if (cyCurTop < m_pDoc->ToPhysical (20))
             return false;  // too small, want to see a line at least
 
         // set the info for the top view

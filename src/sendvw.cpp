@@ -2588,7 +2588,7 @@ void CSendView::AdjustCommandWindowSize (void)
     }
 
   // resize - seem to need an extra 4 pixels or things go a bit strange
-  pDoc->SetCommandWindowHeight (pDoc->m_InputFontHeight * iLines + 4);
+  pDoc->SetCommandWindowHeight (pDoc->ToLogical (pDoc->m_InputFontHeight * iLines + 4));
 
   }
 
@@ -2690,7 +2690,7 @@ void CSendView::UpdateWrap()
   CMUSHclientDoc* pDoc = GetDocument();
   CEdit& theEdit = GetEditCtrl();
   
-  int iOffset = pDoc->m_iPixelOffset; // Need this either way.
+  int iOffset = pDoc->PixelOffset (); // Need this either way.
   
   if (pDoc->m_bAutoWrapInput) 
     {

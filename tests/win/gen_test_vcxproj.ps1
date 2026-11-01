@@ -289,6 +289,7 @@ W '    <ClCompile Include="tests\win\test_https_get.cpp" />'
 W '    <ClCompile Include="tests\win\test_win_worldview.cpp" />'
 W '    <ClCompile Include="tests\win\test_user_data.cpp" />'
 W '    <ClCompile Include="tests\win\test_spell_engine.cpp" />'
+W '    <ClCompile Include="tests\win\test_hidpi_win.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'

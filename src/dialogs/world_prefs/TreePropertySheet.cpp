@@ -2,6 +2,7 @@
 //
 
 #include "stdafx.h"
+#include "../../dpi.h"
 #include "TreePropertySheet.h"
 
 #ifdef _DEBUG
@@ -271,6 +272,19 @@ void CTreePropertySheet::OnPaint()
 BOOL CTreePropertySheet::OnInitDialog() 
 {
 	CPropertySheet::OnInitDialog();
+
+	// The dialog templates are scaled by Windows.  What's added here is in pixels.
+	const int iDpi = Dpi_ForWindow (m_hWnd);
+	if (iDpi != 96)
+		{
+		m_nTreeWidth = ::MulDiv (m_nTreeWidth, iDpi, 96);
+		m_nSpaceLeft = ::MulDiv (m_nSpaceLeft, iDpi, 96);
+		m_nSpaceMid = ::MulDiv (m_nSpaceMid, iDpi, 96);
+		m_nSpaceRight = ::MulDiv (m_nSpaceRight, iDpi, 96);
+		m_nSpaceTop = ::MulDiv (m_nSpaceTop, iDpi, 96);
+		m_nSpaceBottom = ::MulDiv (m_nSpaceBottom, iDpi, 96);
+		m_nCaptionHeight = ::MulDiv (m_nCaptionHeight, iDpi, 96);
+		}
 	
 	if(m_bSpecialCaption) {
 		CRect	rcWindow;
@@ -323,9 +337,9 @@ BOOL CTreePropertySheet::OnInitDialog()
 	}
 
 	if(m_pCaptionFont==NULL)
-		SetCaptionFont("MS Sans Serif",18,TRUE);
+		SetCaptionFont("MS Sans Serif",::MulDiv (18, iDpi, 96),TRUE);
 	if(m_pCaptionDescrFont==NULL)
-		SetCaptionDescrFont("MS Sans Serif",18,TRUE);
+		SetCaptionDescrFont("MS Sans Serif",::MulDiv (18, iDpi, 96),TRUE);
 
   // remove apply button
   CWnd* pTemp;

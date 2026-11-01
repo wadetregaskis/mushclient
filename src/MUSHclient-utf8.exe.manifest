@@ -49,6 +49,8 @@
          versions ignore this).  docs/UTF8-PLAN-2026-10.md -->
     <application xmlns="urn:schemas-microsoft-com:asm.v3">
         <windowsSettings>
+            <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+            <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
             <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
         </windowsSettings>
     </application>

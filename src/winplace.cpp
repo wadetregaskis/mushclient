@@ -3,6 +3,7 @@
 // If this code works, it was written by Paul DiLascia.
 // If not, I don't know who wrote it.
 #include "stdafx.h"
+#include "dpi.h"
 #include "MUSHclient.h"
 #include "mainfrm.h"
 #include "winplace.h"
@@ -126,6 +127,16 @@ void CWindowPlacement::GetProfileWP(LPCSTR lpKeyName)
   rc.top    = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.top"),    rc.top);
   rc.bottom = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.bottom"), rc.bottom);
 
+#ifdef _WIN32
+  // Kept in 96-dpi pixels, which is what a dpi-unaware 5.x or 6.0 saved too.  Asked for
+  // on another monitor, it gets WM_DPICHANGED and comes right.
+  const int iDpi = Dpi_ForSystem ();
+  rc.left   = ::MulDiv (rc.left, iDpi, 96);
+  rc.right  = ::MulDiv (rc.right, iDpi, 96);
+  rc.top    = ::MulDiv (rc.top, iDpi, 96);
+  rc.bottom = ::MulDiv (rc.bottom, iDpi, 96);
+#endif
+
 }
 
 ////////////////
@@ -136,7 +147,16 @@ void CWindowPlacement::Save(LPCSTR lpKeyName, CWnd* pWnd)
 
    // don't save if minimized, it doesn't work properly
    if (showCmd != SW_SHOWMINIMIZED)
-     WriteProfileWP(lpKeyName);
+     #ifdef _WIN32
+   {
+   const int iDpi = Dpi_ForWindow (pWnd->m_hWnd);
+   rcNormalPosition.left   = ::MulDiv (rcNormalPosition.left, 96, iDpi);
+   rcNormalPosition.right  = ::MulDiv (rcNormalPosition.right, 96, iDpi);
+   rcNormalPosition.top    = ::MulDiv (rcNormalPosition.top, 96, iDpi);
+   rcNormalPosition.bottom = ::MulDiv (rcNormalPosition.bottom, 96, iDpi);
+   }
+#endif
+   WriteProfileWP(lpKeyName);
 }
 
 //////////////////

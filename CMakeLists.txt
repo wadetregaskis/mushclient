@@ -758,6 +758,7 @@ if(NOT WIN32)
         src/globalregistryoptions.cpp
         src/appearance.cpp
         src/unicode_width.cpp
+        src/dpi.cpp
         src/xml/xmlparse.cpp
         src/exceptions.cpp
         src/xml/xml_save_world.cpp

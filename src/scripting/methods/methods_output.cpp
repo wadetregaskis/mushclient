@@ -615,7 +615,9 @@ bool will_change_visibility = (Visible != m_bScrollBarWanted);
 		  CMUSHView* pmyView = (CMUSHView*)pView;
 
       CPoint cur_pt = pmyView->GetScrollPosition();
-      bool will_scroll = (Position != cur_pt.y) && (Position != -2); // if -2, do not change position
+      // the plugin's numbers are 96-dpi ones, as GetInfo (296) says
+      const long iPhysicalPosition = Position >= 0 ? ToPhysical (Position) : Position;
+      bool will_scroll = (iPhysicalPosition != cur_pt.y) && (Position != -2); // if -2, do not change position
       int highest = (lastline * m_FontHeight) - pmyView->GetOutputWindowHeight ();
       will_scroll = will_scroll && ((Position != -1) || (cur_pt.y != highest));
 
@@ -629,7 +631,7 @@ bool will_change_visibility = (Visible != m_bScrollBarWanted);
         if (Position == -1)
           pt.y = highest;
         else
-          pt.y = Position;
+          pt.y = iPhysicalPosition;
 
         if (pt.y < 0)
           pt.y = 0;

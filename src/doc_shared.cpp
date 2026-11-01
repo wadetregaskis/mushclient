@@ -5132,7 +5132,7 @@ int CMUSHclientDoc::WrapColumnForCharWidth (int iAveCharWidth) const
   if (iWidth <= 0)
     return 0;      // no measured output window — caller keeps its figure
 
-  return ClampWrapColumn ((iWidth - m_iPixelOffset) / iAveCharWidth);
+  return ClampWrapColumn ((iWidth - PixelOffset ()) / iAveCharWidth);
   }
 
 // ── OutputFontCharWidth ─────────────────────────────────────────────────────
@@ -5287,7 +5287,7 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
 
       pmyView->GetTextRect (&r);
 
-      WORD height = (r.bottom - r.top - m_iPixelOffset) / m_FontHeight;
+      WORD height = (r.bottom - r.top - PixelOffset ()) / m_FontHeight;
 
       // now tell them our size
       unsigned char p [13];   // IAC SB NAWS + up to 8 escaped payload bytes + IAC SE

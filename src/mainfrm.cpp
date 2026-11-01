@@ -4,6 +4,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "appearance.h"
+#include "dpi.h"
 
 #include "doc.h"
 #include "mainfrm.h"
@@ -171,8 +172,19 @@ void CMyToolBar::UseBitmap (UINT iBitmapId)
 
 void CMyToolBar::RefreshImages ()
 {
-	if (m_iBitmapId && m_hWnd)
-		Appearance_ApplyToolbarImages (m_hWnd, m_iBitmapId, 16, 15, 96);
+	if (!m_iBitmapId || !m_hWnd)
+		return;
+
+	const int iDpi = Dpi_ForWindow (m_hWnd);
+	Appearance_ApplyToolbarImages (m_hWnd, m_iBitmapId, 16, 15, iDpi);
+
+	// MFC's defaults for a toolbar, in proportion
+	if (iDpi != m_iSizedForDpi)
+		{
+		m_iSizedForDpi = iDpi;
+		SetSizes (CSize (::MulDiv (23, iDpi, 96), ::MulDiv (22, iDpi, 96)),
+		          CSize (::MulDiv (16, iDpi, 96), ::MulDiv (15, iDpi, 96)));
+		}
 }
 #endif
 
@@ -267,6 +279,9 @@ BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 	ON_WM_SYSCOMMAND()
 	//}}AFX_MSG_MAP
   ON_MESSAGE(MM_MCINOTIFY, OnMCINotify)
+#ifdef _WIN32
+  ON_MESSAGE(0x02E0, OnDpiChanged)    // WM_DPICHANGED
+#endif
   ON_UPDATE_COMMAND_UI(ID_VIEW_TOOLBAR, CMDIFrameWnd::OnUpdateControlBarMenu)
   ON_UPDATE_COMMAND_UI(ID_VIEW_STATUS_BAR, CMDIFrameWnd::OnUpdateControlBarMenu)
   ON_UPDATE_COMMAND_UI(ID_VIEW_GAME_TOOLBAR, CMDIFrameWnd::OnUpdateControlBarMenu)
@@ -364,6 +379,54 @@ void CMainFrame::ColourInfoBar (const bool bChanged)
   pRichEdit->SetDefaultCharFormat (m_defaultInfoBarFormat);
 }
 
+// Moved to a monitor of a different scale.  Windows has scaled the frame, the menu and
+// any open dialog; the rest is ours.
+LRESULT CMainFrame::OnDpiChanged (WPARAM, LPARAM lParam)
+{
+  const RECT * pRect = (const RECT *) lParam;
+  if (pRect)
+    SetWindowPos (NULL, pRect->left, pRect->top,
+                  pRect->right - pRect->left, pRect->bottom - pRect->top,
+                  SWP_NOZORDER | SWP_NOACTIVATE);
+  DpiChanged ();
+  return 0;
+}
+
+void CMainFrame::DpiChanged ()
+{
+  const int iDpi = Dpi_ForWindow (m_hWnd);
+  const int iOldDpi = m_iDpi;
+  if (iDpi == iOldDpi)
+    return;
+  m_iDpi = iDpi;
+
+  m_wndToolBar.RefreshImages ();
+  m_wndGameToolBar.RefreshImages ();
+  m_wndActivityToolBar.RefreshImages ();
+
+  // the world and notepad windows inside keep their proportion of the frame
+  for (HWND hwnd = ::GetWindow (m_hWndMDIClient, GW_CHILD); hwnd; hwnd = ::GetWindow (hwnd, GW_HWNDNEXT))
+    if (!::IsIconic (hwnd) && !::IsZoomed (hwnd))
+      {
+      RECT rect;
+      ::GetWindowRect (hwnd, &rect);
+      ::MapWindowPoints (NULL, m_hWndMDIClient, (POINT *) &rect, 2);
+      ::SetWindowPos (hwnd, NULL,
+                      ::MulDiv (rect.left, iDpi, iOldDpi), ::MulDiv (rect.top, iDpi, iOldDpi),
+                      ::MulDiv (rect.right - rect.left, iDpi, iOldDpi),
+                      ::MulDiv (rect.bottom - rect.top, iDpi, iOldDpi),
+                      SWP_NOZORDER | SWP_NOACTIVATE);
+      }
+
+  // their fonts and miniwindows
+  if (App.m_pWorldDocTemplate)
+    for (POSITION docPos = App.m_pWorldDocTemplate->GetFirstDocPosition (); docPos != NULL; )
+      ((CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc (docPos))->SetDpi (iDpi);
+
+  RecalcLayout ();
+  RedrawWindow (NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
 static void AppearanceChangedHandler ()
 {
   Frame.AppearanceChanged ();
@@ -400,6 +463,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 #ifdef _WIN32
   Appearance_SetChangeHandler (AppearanceChangedHandler);
+  m_iDpi = Dpi_ForWindow (m_hWnd);
 #endif
 
   if (CMDIFrameWnd::OnCreate(lpCreateStruct) == -1)
@@ -474,7 +538,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
   if (m_wndInfoBar.m_hWnd)
     {
     CRichEditCtrl * pRichEdit = (CRichEditCtrl *) m_wndInfoBar.GetDlgItem (IDC_INFOTEXT);
-    pRichEdit->SetWindowPos (NULL, 0, 0, 3000, 20, 
+    pRichEdit->SetWindowPos (NULL, 0, 0, 3000, ::MulDiv (20, Dpi_ForWindow (m_hWnd), 96), 
       SWP_NOMOVE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
     // remember default format

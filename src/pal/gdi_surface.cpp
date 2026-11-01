@@ -128,11 +128,16 @@ void GdiSurface::floodFill(SurfaceId id, Point seed, Colour fill, Colour ref, Fl
     s->dc->SelectObject(oldBrush);
 }
 
+// Always 96, whatever the display: a font's size in a miniwindow is in the plugin's
+// coordinates, or fonts would grow inside fixed canvases.  See docs/FONT-PARITY-2026-08.md
+// section 1 (the em stays MulDiv (pt, 96, 72)) and CMiniWindow::ApplyBackingScale.
 int GdiSurface::dpi() {
-    HDC hdc = ::GetDC(NULL);
-    int d = hdc ? ::GetDeviceCaps(hdc, LOGPIXELSY) : 96;
-    if (hdc) ::ReleaseDC(NULL, hdc);
-    return d;
+    return 96;
+}
+
+// A surface on a high-dpi display maps the plugin's coordinates onto real pixels.
+static bool SurfaceIsScaled(CDC* dc) {
+    return dc->GetMapMode() == MM_ANISOTROPIC;
 }
 
 // ── text / fonts (S3b live path) ─────────────────────────────────────────────
@@ -178,6 +183,14 @@ FontId GdiSurface::createFont(const FontSpec& spec) {
         delete f.font;
         return FontId::None;
     }
+    {
+        CDC* mdc = measureDc();
+        CFont* old = mdc->SelectObject(f.font);
+        TEXTMETRIC tm;
+        mdc->GetTextMetrics(&tm);
+        mdc->SelectObject(old);
+        f.raster = (tm.tmPitchAndFamily & (TMPF_VECTOR | TMPF_TRUETYPE)) == 0;
+    }
     std::uint32_t id = NextFreeId(m_nextFont, m_fonts);
     m_fonts[id] = f;
     return (FontId)id;
@@ -189,6 +202,68 @@ void GdiSurface::destroyFont(FontId id) {
     f->font->DeleteObject();
     delete f->font;
     m_fonts.erase((std::uint32_t)id);
+}
+
+// Text on a scaled surface.  A font's hinted advances aren't proportional: at twice the
+// size a character can be a pixel wider than twice as wide, and over a line that would
+// run past what the plugin measured.  So the characters are placed one by one where the
+// font's 96-dpi metrics put them, which is where measureText said they would be.
+static void PartialExtents(HDC hdc, const WCHAR* text, int n, int* dx, SIZE* sz) {
+    ::GetTextExtentExPointW(hdc, text, n, 0, NULL, dx, sz);
+}
+static void PartialExtents(HDC hdc, const char* text, int n, int* dx, SIZE* sz) {
+    ::GetTextExtentExPointA(hdc, text, n, 0, NULL, dx, sz);
+}
+static void OutputText(HDC hdc, int x, int y, UINT eto, const RECT* prc, const WCHAR* text, int n, const int* dx) {
+    ::ExtTextOutW(hdc, x, y, eto, prc, text, n, dx);
+}
+static void OutputText(HDC hdc, int x, int y, UINT eto, const RECT* prc, const char* text, int n, const int* dx) {
+    ::ExtTextOutA(hdc, x, y, eto, prc, text, n, dx);
+}
+
+template <typename CHAR_TYPE>
+int GdiSurface::DrawScaledText(CDC* dc, Font* f, Point pt, Colour colour, const Rect* clip,
+                               UINT eto, const RECT* prc, const CHAR_TYPE* text, int n) {
+    CDC* mdc = measureDc();
+    CFont* oldMeasure = mdc->SelectObject(f->font);
+    std::vector<int> extents(n);
+    SIZE sz = { 0, 0 };
+    PartialExtents(mdc->GetSafeHdc(), text, n, &extents[0], &sz);
+
+    if (f->raster) {
+        // A bitmap font: draw it at its own size in a one-bit mask (in a memory DC with no
+        // mapping), and stretch that on with the colour.
+        const int h = sz.cy > 0 ? sz.cy : 1;
+        const int w = sz.cx > 0 ? sz.cx : 1;
+        CBitmap bitmap;
+        bitmap.CreateBitmap(w, h, 1, 1, NULL);
+        CBitmap* oldBitmap = mdc->SelectObject(&bitmap);
+        mdc->SetBkMode(TRANSPARENT);
+        COLORREF oldText = mdc->SetTextColor(RGB(255, 255, 255));
+        mdc->PatBlt(0, 0, w, h, BLACKNESS);
+        OutputText(mdc->GetSafeHdc(), 0, 0, 0, NULL, text, n, NULL);
+        mdc->SetTextColor(oldText);
+
+        const int saved = dc->SaveDC();
+        if (clip)
+            dc->IntersectClipRect(clip->x, clip->y, clip->x + clip->w, clip->y + clip->h);
+        CBrush brush(colour);
+        dc->SelectObject(&brush);
+        dc->SetBkColor(RGB(255, 255, 255));
+        dc->SetTextColor(RGB(0, 0, 0));
+        dc->SetStretchBltMode(COLORONCOLOR);
+        dc->StretchBlt(pt.x, pt.y, w, h, mdc, 0, 0, w, h, 0x00E20746);  // DSPDxax: brush through mask
+        dc->RestoreDC(saved);
+
+        mdc->SelectObject(oldBitmap);
+    } else {
+        // extents -> advances
+        for (int i = n - 1; i > 0; --i)
+            extents[i] -= extents[i - 1];
+        OutputText(dc->GetSafeHdc(), pt.x, pt.y, eto, prc, text, n, &extents[0]);
+    }
+    mdc->SelectObject(oldMeasure);
+    return sz.cx;
 }
 
 int GdiSurface::drawText(SurfaceId sid, FontId fid, const char* utf8, size_t len, Point pt,
@@ -207,13 +282,20 @@ int GdiSurface::drawText(SurfaceId sid, FontId fid, const char* utf8, size_t len
         rc.right = clip->x + clip->w; rc.bottom = clip->y + clip->h;
         prc = &rc; eto = ETO_CLIPPED;         // == the old CRect(...) + ETO_CLIPPED
     }
+    const bool scaled = SurfaceIsScaled(s->dc);
     int width = 0;
     std::vector<WCHAR> wide;
     if (!g_legacyText && Utf8ToWide(utf8, len, wide)) {   // Unicode=false: never (surface_bridge.h)
+        if (scaled) {
+            width = DrawScaledText(s->dc, f, pt, colour, clip, eto, prc, &wide[0], (int)wide.size());
+        } else {
         ::ExtTextOutW(hdc, pt.x, pt.y, eto, prc, &wide[0], (int)wide.size(), NULL);
         SIZE sz = { 0, 0 };
         ::GetTextExtentPoint32W(hdc, &wide[0], (int)wide.size(), &sz);
         width = sz.cx;
+        }
+    } else if (scaled) {
+        width = DrawScaledText(s->dc, f, pt, colour, clip, eto, prc, utf8, (int)len);
     } else {
         ::ExtTextOutA(hdc, pt.x, pt.y, eto, prc, utf8, (int)len, NULL);
         SIZE sz = { 0, 0 };
@@ -540,6 +622,10 @@ void GdiSurface::writePixels(SurfaceId id, Rect r, const PixelBuffer& in) {
     CDC tmp;
     tmp.CreateCompatibleDC(s->dc);
     HBITMAP hOld = (HBITMAP)::SelectObject(tmp.GetSafeHdc(), hbm);
+    if (SurfaceIsScaled(s->dc))
+        s->dc->StretchBlt(clipped.x, clipped.y, clipped.w, clipped.h,
+                          &tmp, clipped.x - r.x, clipped.y - r.y, clipped.w, clipped.h, SRCCOPY);
+    else
     s->dc->BitBlt(clipped.x, clipped.y, clipped.w, clipped.h,
                   &tmp, clipped.x - r.x, clipped.y - r.y, SRCCOPY);
     ::SelectObject(tmp.GetSafeHdc(), hOld);
@@ -555,6 +641,9 @@ Colour GdiSurface::getPixel(SurfaceId id, Point p) {
 void GdiSurface::setPixel(SurfaceId id, Point p, Colour c) {
     Surf* s = surf(id);
     if (!s || !s->dc) return;
+    if (SurfaceIsScaled(s->dc))
+        s->dc->FillSolidRect(p.x, p.y, 1, 1, c);     // one of the plugin's pixels is several real ones
+    else
     s->dc->SetPixelV(p.x, p.y, c);               // == old SetPixel (pdc->SetPixelV)
 }
 
@@ -583,6 +672,11 @@ void GdiSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat 
     CDC tmp;
     tmp.CreateCompatibleDC(s->dc);
     HBITMAP hOld = (HBITMAP)::SelectObject(tmp.GetSafeHdc(), hbm);
+    if (SurfaceIsScaled(s->dc)) {
+        // one sample per logical pixel: its top-left real pixel, as the port does
+        tmp.SetStretchBltMode(COLORONCOLOR);
+        tmp.StretchBlt(0, 0, r.w, r.h, s->dc, r.x, r.y, r.w, r.h, SRCCOPY);
+    } else
     tmp.BitBlt(0, 0, r.w, r.h, s->dc, r.x, r.y, SRCCOPY);
 
     out.format = fmt;

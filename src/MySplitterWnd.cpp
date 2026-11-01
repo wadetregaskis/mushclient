@@ -38,6 +38,16 @@ END_MESSAGE_MAP()
 
 
 #ifdef _WIN32
+void CMySplitterWnd::ScaleBars (const int iDpi)
+{
+  if (iDpi == 96)
+    return;
+  m_cxSplitter = ::MulDiv (m_cxSplitter, iDpi, 96);
+  m_cySplitter = ::MulDiv (m_cySplitter, iDpi, 96);
+  m_cxSplitterGap = ::MulDiv (m_cxSplitterGap, iDpi, 96);
+  m_cySplitterGap = ::MulDiv (m_cySplitterGap, iDpi, 96);
+}
+
 // The base class's bars and borders come from the light palette MFC cached at startup.
 void CMySplitterWnd::OnDrawSplitter(CDC* pDC, ESplitType nType, const CRect& rect)
 {
@@ -100,7 +110,7 @@ void CMySplitterWnd::OnLButtonUp(UINT nFlags, CPoint point)
       } // end of ctrl key held down
 
     if (!(m_pDoc->m_mush_name.IsEmpty ()))
-      App.db_write_int ("worlds", (LPCTSTR) CFormat ("%s:%s", (LPCTSTR) m_pDoc->m_mush_name, "Bottom Height"), cyCur);
+      App.db_write_int ("worlds", (LPCTSTR) CFormat ("%s:%s", (LPCTSTR) m_pDoc->m_mush_name, "Bottom Height"), m_pDoc->ToLogical (cyCur));
 
 //    TRACE1 ("Bottom height (saved) = %i\n", cyCur);
 

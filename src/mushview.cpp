@@ -4,6 +4,7 @@
 // ANSI test in PennMUSH: think [ansi(cR,Nick)][ansi(wB,Gammon)][ansi(u,Underscored)]
 
 #include "stdafx.h"
+#include "dpi.h"
 #include "MUSHclient.h"
 
 #include "doc.h"
@@ -411,7 +412,7 @@ CLine * pLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (line));
 
     thiscol += thislen;     // new column
     cols_to_go -= thislen;  // fewer in next batch
-    pixel += textsize.cx;   // count pixels
+    pixel += textsize.cx * pDoc->m_iRasterScale;   // count pixels
 
     }   // end of this style
 
@@ -427,6 +428,59 @@ CLine * pLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (line));
    text.
 
   */
+static inline void ExtTextOutBoth (HDC hdc, const WCHAR * pText, const int iLength)
+  {
+  ExtTextOutW (hdc, 0, 0, 0, NULL, pText, iLength, NULL);
+  }
+
+static inline void ExtTextOutBoth (HDC hdc, const char * pText, const int iLength)
+  {
+  ExtTextOutA (hdc, 0, 0, 0, NULL, pText, iLength, NULL);
+  }
+
+// A bitmap font (FixedSys, Terminal, Dina) comes in fixed sizes, and on a high-dpi display
+// it is drawn at its own size and blown up by a whole number, so that it keeps its look.
+// That is a one-bit mask, stretched, painted in the text colour through ROP 0xE20746:
+// where the mask is set, the brush; where it isn't, leave alone whatever's underneath.
+static void BlowUpMask (CDC * pDC, const RECT & r, CDC & mask, const int iWidth, const int iHeight, const int iScale)
+  {
+  CBrush brush (pDC->GetTextColor ());
+  CBrush * pOldBrush = pDC->SelectObject (&brush);
+  const COLORREF cOldBack = pDC->SetBkColor (RGB (255, 255, 255));
+  const COLORREF cOldText = pDC->SetTextColor (RGB (0, 0, 0));
+  const int iOldMode = pDC->SetStretchBltMode (COLORONCOLOR);
+  pDC->StretchBlt (r.left, r.top, iWidth * iScale, iHeight * iScale, &mask, 0, 0, iWidth, iHeight, 0x00E20746);
+  pDC->SetStretchBltMode (iOldMode);
+  pDC->SetTextColor (cOldText);
+  pDC->SetBkColor (cOldBack);
+  pDC->SelectObject (pOldBrush);
+  }
+
+template <typename CHAR_TYPE>
+static void DrawBlownUpText (CDC * pDC, const RECT & r, const CHAR_TYPE * pText, const int iLength, const int iScale)
+  {
+  const int iWidth = (r.right - r.left) / iScale + 1;
+  const int iHeight = (r.bottom - r.top) / iScale + 1;
+
+  CDC mask;
+  mask.CreateCompatibleDC (pDC);
+  CBitmap bitmap;
+  bitmap.CreateBitmap (iWidth, iHeight, 1, 1, NULL);
+  CBitmap * pOldBitmap = mask.SelectObject (&bitmap);
+  CFont * pOldFont = mask.SelectObject (pDC->GetCurrentFont ());
+
+  mask.SetBkMode (TRANSPARENT);
+  mask.SetTextColor (RGB (255, 255, 255));
+  mask.PatBlt (0, 0, iWidth, iHeight, BLACKNESS);
+  ExtTextOutBoth (mask.m_hDC, pText, iLength);
+
+  BlowUpMask (pDC, r, mask, iWidth, iHeight, iScale);
+
+  mask.SelectObject (pOldFont);
+  mask.SelectObject (pOldBitmap);
+  }
+
+
 void CMUSHView::display_text (CDC* pDC,
                              const CMUSHclientDoc* pDoc,
                              const long line,
@@ -526,17 +580,19 @@ int iUnicodeCharacters = 0;
       }
 
 
+    textsize.cx *= pDoc->m_iRasterScale;
+
     SetRect (&r,
-             pDoc->m_iPixelOffset + pixel,
-             - pDoc->m_iPixelOffset + line * pDoc->m_FontHeight,
-             pDoc->m_iPixelOffset + pixel + textsize.cx,
-             - pDoc->m_iPixelOffset + (line + 1) * pDoc->m_FontHeight);
+             pDoc->PixelOffset () + pixel,
+             - pDoc->PixelOffset () + line * pDoc->m_FontHeight,
+             pDoc->PixelOffset () + pixel + textsize.cx,
+             - pDoc->PixelOffset () + (line + 1) * pDoc->m_FontHeight);
 
     // allow for scroll position
     OffsetRect (&r, -m_scroll_position.x, -m_scroll_position.y);
 
     // allow for text rectangle
-    OffsetRect (&r, pDoc->m_TextRectangle.left, pDoc->m_TextRectangle.top);
+    OffsetRect (&r, pDoc->ToPhysical (pDoc->m_TextRectangle.left), pDoc->ToPhysical (pDoc->m_TextRectangle.top));
 
     if (bBackground)
       {
@@ -551,7 +607,14 @@ int iUnicodeCharacters = 0;
       }
     else
       {
-      if (pDoc->m_bUTF_8)     // Unicode output
+      if (pDoc->m_iRasterScale > 1)
+        {
+        if (pDoc->m_bUTF_8)
+          DrawBlownUpText (pDC, r, sUnicodeText, iUnicodeCharacters, pDoc->m_iRasterScale);
+        else
+          DrawBlownUpText (pDC, r, &pLine->text [thiscol], thislen, pDoc->m_iRasterScale);
+        }
+      else if (pDoc->m_bUTF_8)     // Unicode output
         ExtTextOutW(          // W = wide
                     pDC->m_hDC,
                     r.left,
@@ -750,6 +813,15 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
   else
     GetClientRect (&r);
 
+  // Plugins place these in 96-dpi coordinates (dpi.h), so that's how the sums below are
+  // done, and only what's handed to GDI is real pixels.  At 96 dpi X is the identity, and
+  // each of these goes down the path it always did.
+  const CMUSHclientDoc * pScaleDoc = GetDocument ();
+  const bool bScaled = pScaleDoc->m_iDpi != 96;
+  r.right = pScaleDoc->ToLogical (r.right);
+  r.bottom = pScaleDoc->ToLogical (r.bottom);
+#define X(v) (pScaleDoc->ToPhysical (v))
+
   pDestDC->SetStretchBltMode (HALFTONE);  // looks better when squashed
 
   // they know where they want it to go
@@ -829,7 +901,11 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
           {
           for (y = 0; y < iDown; y++)
             {
-             pDestDC->BitBlt (x * iWidth, y * iHeight, 
+             if (bScaled)
+               pDestDC->StretchBlt (X (x * iWidth), X (y * iHeight), X (iWidth), X (iHeight),
+                                    pSrcDC, 0, 0, iWidth, iHeight, SRCCOPY);
+             else
+             pDestDC->BitBlt (x * iWidth, y * iHeight,
                           iWidth, iHeight, pSrcDC, 0, 0, SRCCOPY);
 
             }  // each y
@@ -846,7 +922,7 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
 
 
   if (iMode <= 3 && !bUseRect)         // stretch (not for absolute rectangles)
-     pDestDC->StretchBlt(rect.left, rect.top, rect.right, rect.bottom, pSrcDC, 0, 0, iWidth, iHeight, SRCCOPY);
+     pDestDC->StretchBlt(X (rect.left), X (rect.top), X (rect.right), X (rect.bottom), pSrcDC, 0, 0, iWidth, iHeight, SRCCOPY);
   else                    
     {                    // normal
     if (bTransparent)
@@ -861,7 +937,7 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
 
       // Create the mask bitmap for the subset of the main image
       CBitmap bitmapTrans;
-      bitmapTrans.CreateBitmap(iWidth, iHeight, 1, 1, NULL);
+      bitmapTrans.CreateBitmap(X (iWidth), X (iHeight), 1, 1, NULL);
 
       // Select the mask bitmap into the appropriate dc
       CBitmap* pOldBitmapTrans = dcTrans.SelectObject(&bitmapTrans);
@@ -870,12 +946,25 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
       COLORREF crOldBackground = pSrcDC->SetBkColor (TransparentColour);
 
       // Build mask based on transparent colour at location 0, 0
+      if (bScaled)
+        {
+        dcTrans.SetStretchBltMode (COLORONCOLOR);
+        dcTrans.StretchBlt (0, 0, X (iWidth), X (iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCCOPY);
+
+        // Do the work
+        pDestDC->StretchBlt (X (rect.left), X (rect.top), X (iWidth), X (iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCINVERT);
+        pDestDC->BitBlt (X (rect.left), X (rect.top), X (iWidth), X (iHeight), &dcTrans, 0, 0, SRCAND);
+        pDestDC->StretchBlt (X (rect.left), X (rect.top), X (iWidth), X (iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCINVERT);
+        }
+      else
+        {
       dcTrans.BitBlt (0, 0, iWidth, iHeight, pSrcDC, 0, 0, SRCCOPY);
 
-      // Do the work 
+      // Do the work
       pDestDC->BitBlt (rect.left, rect.top, iWidth, iHeight, pSrcDC, 0, 0, SRCINVERT);
       pDestDC->BitBlt (rect.left, rect.top, iWidth, iHeight, &dcTrans, 0, 0, SRCAND);
       pDestDC->BitBlt (rect.left, rect.top, iWidth, iHeight, pSrcDC, 0, 0, SRCINVERT);
+        }
 
       // Restore settings
       dcTrans.SelectObject(pOldBitmapTrans);
@@ -883,10 +972,15 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
       pDestDC->SetTextColor(crOldText);
       pSrcDC->SetBkColor(crOldBackground);
       }
+    else if (bScaled)   // not transparent
+      pDestDC->StretchBlt (X (rect.left), X (rect.top), X (rect.right), X (rect.bottom),
+                           pSrcDC, 0, 0, rect.right, rect.bottom, SRCCOPY);
     else    // not transparent
       pDestDC->BitBlt (rect.left, rect.top, rect.right, rect.bottom, pSrcDC, 0, 0, SRCCOPY);
     }
   
+#undef X
+
   // make into rectangle, not position and width/height
   rect.right += rect.left;
   rect.bottom += rect.top;
@@ -998,8 +1092,8 @@ RECT r;
     pDC->SelectObject (oldBrush);
 
     CRect fillrect (GetTextRectangle ());
-    fillrect.InflateRect (pDoc->m_TextRectangleBorderOffset, pDoc->m_TextRectangleBorderOffset);
-    fillrect.InflateRect (pDoc->m_TextRectangleBorderWidth, pDoc->m_TextRectangleBorderWidth);
+    fillrect.InflateRect (pDoc->ToPhysical (pDoc->m_TextRectangleBorderOffset), pDoc->ToPhysical (pDoc->m_TextRectangleBorderOffset));
+    fillrect.InflateRect (pDoc->ToPhysical (pDoc->m_TextRectangleBorderWidth), pDoc->ToPhysical (pDoc->m_TextRectangleBorderWidth));
     pDC->FillRect (&fillrect, &backbr);
 
     }
@@ -1017,7 +1111,7 @@ RECT r;
       {
       // create pen 
       CPen pen;
-      pen.CreatePen (PS_SOLID, pDoc->m_TextRectangleBorderWidth, pDoc->m_TextRectangleBorderColour); 
+      pen.CreatePen (PS_SOLID, pDoc->ToPhysical (pDoc->m_TextRectangleBorderWidth), pDoc->m_TextRectangleBorderColour); 
   
       CBrush br;
 
@@ -1029,8 +1123,8 @@ RECT r;
       CPen* oldPen = pDC->SelectObject(&pen);
       CBrush* oldBrush = pDC->SelectObject(&br);
       CRect r (TextRectangle);
-      r.InflateRect (pDoc->m_TextRectangleBorderWidth, pDoc->m_TextRectangleBorderWidth);
-      r.InflateRect (pDoc->m_TextRectangleBorderOffset, pDoc->m_TextRectangleBorderOffset);
+      r.InflateRect (pDoc->ToPhysical (pDoc->m_TextRectangleBorderWidth), pDoc->ToPhysical (pDoc->m_TextRectangleBorderWidth));
+      r.InflateRect (pDoc->ToPhysical (pDoc->m_TextRectangleBorderOffset), pDoc->ToPhysical (pDoc->m_TextRectangleBorderOffset));
       pDC->Rectangle (r);
       pDC->SelectObject (oldPen);
       pDC->SelectObject (oldBrush);
@@ -1083,7 +1177,7 @@ RECT r;
   CPoint pt = GetScrollPosition ();
    
 
-  startline = (pt.y - pDoc->m_iPixelOffset) / pDoc->m_FontHeight;
+  startline = (pt.y - pDoc->PixelOffset ()) / pDoc->m_FontHeight;
   endline =  ((pt.y + GetOutputWindowHeight ()) / pDoc->m_FontHeight);
 
   if (startline < 0)
@@ -1101,7 +1195,7 @@ RECT r;
 
   // give the user a chance to update miniwindows to match text in the output window
   pDoc->SendToAllPluginCallbacks (ON_PLUGIN_DRAW_OUTPUT_WINDOW,
-                                  startline + 1, pt.y - pDoc->m_iPixelOffset,
+                                  startline + 1, pt.y - pDoc->PixelOffset (),
                                   "", false, false);
 
 POSITION pos = pDoc->GetLinePosition (startline);
@@ -1281,19 +1375,20 @@ double opacity;  // for fading lines
         // find how big, so we can fill the background
         RECT r;
         CSize textsize = pDC->GetTextExtent (strPreamble, strPreamble.GetLength ());
+        textsize.cx *= pDoc->m_iRasterScale;
 
         // offsetting per above  (in display_text)
         SetRect (&r, 
-                 pDoc->m_iPixelOffset + pixel,
-                 - pDoc->m_iPixelOffset + line * pDoc->m_FontHeight,
-                 pDoc->m_iPixelOffset + pixel + textsize.cx,
-                 - pDoc->m_iPixelOffset + (line + 1) * pDoc->m_FontHeight);
+                 pDoc->PixelOffset () + pixel,
+                 - pDoc->PixelOffset () + line * pDoc->m_FontHeight,
+                 pDoc->PixelOffset () + pixel + textsize.cx,
+                 - pDoc->PixelOffset () + (line + 1) * pDoc->m_FontHeight);
             
         // allow for scroll position
         OffsetRect (&r, -m_scroll_position.x, -m_scroll_position.y);
 
         // allow for text rectangle
-        OffsetRect (&r, pDoc->m_TextRectangle.left, pDoc->m_TextRectangle.top);
+        OffsetRect (&r, pDoc->ToPhysical (pDoc->m_TextRectangle.left), pDoc->ToPhysical (pDoc->m_TextRectangle.top));
 
         // now draw preamble (background/text)
         if (bBackground)
@@ -1302,7 +1397,10 @@ double opacity;  // for fading lines
           {
           pDC->SetBkMode (TRANSPARENT);   // trouble brewing if this isn't here!
           pDC->SetTextColor (pDoc->TranslateColour (cPreambleText, opacity));  
-          pDC->ExtTextOut (r.left,
+          if (pDoc->m_iRasterScale > 1)
+            DrawBlownUpText (pDC, r, (LPCTSTR) strPreamble, strPreamble.GetLength (), pDoc->m_iRasterScale);
+          else
+            pDC->ExtTextOut (r.left,
                            r.top,
                            0,
                            &r,
@@ -1425,9 +1523,9 @@ double opacity;  // for fading lines
 
         SetRect (&r,
                  0,
-                 - pDoc->m_iPixelOffset + line * pDoc->m_FontHeight,
-                 pDoc->m_iPixelOffset,
-                 - pDoc->m_iPixelOffset + (line + 1) * pDoc->m_FontHeight);
+                 - pDoc->PixelOffset () + line * pDoc->m_FontHeight,
+                 pDoc->PixelOffset (),
+                 - pDoc->PixelOffset () + (line + 1) * pDoc->m_FontHeight);
 
         OffsetRect (&r, -m_scroll_position.x, -m_scroll_position.y);
 
@@ -1481,10 +1579,10 @@ double opacity;  // for fading lines
 
 
         SetRect (&r,
-                 pDoc->m_iPixelOffset + pixel,
-                 - pDoc->m_iPixelOffset + line * pDoc->m_FontHeight,
+                 pDoc->PixelOffset () + pixel,
+                 - pDoc->PixelOffset () + line * pDoc->m_FontHeight,
                  cr.right,
-                 - pDoc->m_iPixelOffset + (line + 1) * pDoc->m_FontHeight);
+                 - pDoc->PixelOffset () + (line + 1) * pDoc->m_FontHeight);
 
         OffsetRect (&r, -m_scroll_position.x, -m_scroll_position.y);
 
@@ -1505,13 +1603,13 @@ double opacity;  // for fading lines
         GetClientRect (&cr);
 
         SetRect (&r,
-                 pDoc->m_iPixelOffset + 10 + pixel,
-                 - pDoc->m_iPixelOffset + line * pDoc->m_FontHeight + iHalfFontHeight,
-                 cr.right - 10 - pDoc->m_iPixelOffset,
-                 - pDoc->m_iPixelOffset + line * pDoc->m_FontHeight + iHalfFontHeight + 1);
+                 pDoc->PixelOffset () + 10 + pixel,
+                 - pDoc->PixelOffset () + line * pDoc->m_FontHeight + iHalfFontHeight,
+                 cr.right - 10 - pDoc->PixelOffset (),
+                 - pDoc->PixelOffset () + line * pDoc->m_FontHeight + iHalfFontHeight + 1);
 
         OffsetRect (&r, -m_scroll_position.x, -m_scroll_position.y);
-        OffsetRect (&r, pDoc->m_TextRectangle.left, pDoc->m_TextRectangle.top);
+        OffsetRect (&r, pDoc->ToPhysical (pDoc->m_TextRectangle.left), pDoc->ToPhysical (pDoc->m_TextRectangle.top));
 
         pDC->FillSolidRect (&r, pDoc->TranslateColour (RGB (132, 132, 132), opacity));
         OffsetRect (&r, 0, 1);
@@ -1593,6 +1691,9 @@ ASSERT_VALID(pDoc);
   SetScrollSizes(sizeTotal, sizeTotal, sizeTotal);
 
   sizewindow ();
+
+  // it may have opened on a monitor other than the one the fonts were made for
+  pDoc->SetDpi (Dpi_ForWindow (m_hWnd));
 
   FixupTitle ();
 
@@ -1787,7 +1888,7 @@ ASSERT_VALID(pDoc);
   m_DefaultWidth  =  (pDoc->m_nWrapColumn * pDoc->m_FontWidth) +   // Client width of screen is 640 pixels
                     (GetSystemMetrics (SM_CXFRAME) * 2) +  // allow for border
                      GetSystemMetrics (SM_CXVSCROLL) +  // allow for vertical scroll bar
-                     + pDoc->m_iPixelOffset  +                  // plus text offset from side
+                     + pDoc->PixelOffset ()  +                  // plus text offset from side
                     4;      // allow for Windows 95 frame
 
 // calculate height
@@ -1796,7 +1897,7 @@ ASSERT_VALID(pDoc);
                     statusrect.Height() +     // plus the status bar
                     toolbarrect.Height () +   // plus the tool bar
                     2 +                       // enough to see the WP cursor
-                    pDoc->m_iPixelOffset +            // plus text offset from bottom
+                    pDoc->PixelOffset () +            // plus text offset from bottom
                     GetSystemMetrics (SM_CYMENU) + // plus the menu
                     (GetSystemMetrics (SM_CYFRAME) * 2) +
                     GetSystemMetrics (SM_CYCAPTION) +  // plus the title
@@ -1831,7 +1932,7 @@ int lastline;
   lastline = pDoc->GetLastLine ();
 
   m_ScrollbarSizeTotal = CSize (pDoc->m_nWrapColumn * pDoc->m_FontWidth, lastline * pDoc->m_FontHeight);
-  m_ScrollbarSizePage  = CSize (GetOutputWindowWidth () - pDoc->m_iPixelOffset, GetOutputWindowHeight ());
+  m_ScrollbarSizePage  = CSize (GetOutputWindowWidth () - pDoc->PixelOffset (), GetOutputWindowHeight ());
   m_ScrollbarSizeLine  = CSize (pDoc->m_FontWidth, pDoc->m_FontHeight);
 
   SetScrollSizes (m_ScrollbarSizeTotal, m_ScrollbarSizePage, m_ScrollbarSizeLine);
@@ -1856,7 +1957,7 @@ int lastline;
   lastline = pDoc->GetLastLine ();
 
  m_ScrollbarSizeTotal = CSize (pDoc->m_nWrapColumn * pDoc->m_FontWidth, lastline * pDoc->m_FontHeight),
- m_ScrollbarSizePage  = CSize (GetOutputWindowWidth () - pDoc->m_iPixelOffset, GetOutputWindowHeight ()),
+ m_ScrollbarSizePage  = CSize (GetOutputWindowWidth () - pDoc->PixelOffset (), GetOutputWindowHeight ()),
  m_ScrollbarSizeLine  = CSize (pDoc->m_FontWidth, pDoc->m_FontHeight);
 
   if (pDoc->m_bScrollBarWanted)
@@ -1935,11 +2036,11 @@ long pixel;
 
   dc.SelectObject(pDoc->m_font [0]);
 
-  point.y -= pDoc->m_TextRectangle.top;
-  point.x -= pDoc->m_TextRectangle.left;
+  point.y -= pDoc->ToPhysical (pDoc->m_TextRectangle.top);
+  point.x -= pDoc->ToPhysical (pDoc->m_TextRectangle.left);
 
 
-  line = (point.y + pDoc->m_iPixelOffset + m_scroll_position.y) / pDoc->m_FontHeight;
+  line = (point.y + pDoc->PixelOffset () + m_scroll_position.y) / pDoc->m_FontHeight;
 
 // include partial last line if necessary
 
@@ -1965,7 +2066,7 @@ long pixel;
       pixel < point.x && col <= pLine->len; col++)
         {
         lastx = pixel;
-        pixel = calculate_width (line, col, pDoc, dc) + pDoc->m_iPixelOffset + pLine->m_iPreambleOffset;
+        pixel = calculate_width (line, col, pDoc, dc) + pDoc->PixelOffset () + pLine->m_iPreambleOffset;
 
         // for a UTF-8 character, bypass the whole character not just one byte
         if (pDoc->m_bUTF_8 && (col < pLine->len))
@@ -2199,8 +2300,8 @@ int line,
 
   // don't do it *past* end of last word
   long pixel = calculate_width (line, pLine->len, pDoc, dc) +
-                pDoc->m_iPixelOffset +
-                pDoc->m_TextRectangle.left +
+                pDoc->PixelOffset () +
+                pDoc->ToPhysical (pDoc->m_TextRectangle.left) +
                 pLine->m_iPreambleOffset;
 
   if (point.x < pixel &&
@@ -2727,10 +2828,10 @@ CPoint pt = GetScrollPosition ();
     {
 
     SetRect (&r, 
-              pDoc->m_iPixelOffset + start_textsize,
-              - pDoc->m_iPixelOffset + (m_selstart_line * pDoc->m_FontHeight) - pt.y,
-              pDoc->m_iPixelOffset + end_textsize,
-              - pDoc->m_iPixelOffset + ((m_selstart_line + 1) * pDoc->m_FontHeight) - pt.y);
+              pDoc->PixelOffset () + start_textsize,
+              - pDoc->PixelOffset () + (m_selstart_line * pDoc->m_FontHeight) - pt.y,
+              pDoc->PixelOffset () + end_textsize,
+              - pDoc->PixelOffset () + ((m_selstart_line + 1) * pDoc->m_FontHeight) - pt.y);
 
     // end before or equal start means empty region
     // if we cannot create the region, create an empty one
@@ -2746,10 +2847,10 @@ CPoint pt = GetScrollPosition ();
 // do the first line, from startcol to the end
 
   SetRect (&r, 
-            pDoc->m_iPixelOffset + start_textsize,
-            - pDoc->m_iPixelOffset + (m_selstart_line * pDoc->m_FontHeight) - pt.y,
-            pDoc->m_iPixelOffset + right,
-            - pDoc->m_iPixelOffset + ((m_selstart_line + 1) * pDoc->m_FontHeight) - pt.y);
+            pDoc->PixelOffset () + start_textsize,
+            - pDoc->PixelOffset () + (m_selstart_line * pDoc->m_FontHeight) - pt.y,
+            pDoc->PixelOffset () + right,
+            - pDoc->PixelOffset () + ((m_selstart_line + 1) * pDoc->m_FontHeight) - pt.y);
 
   CRgn firstrgn;
   CRgn middlergn;
@@ -2763,10 +2864,10 @@ CPoint pt = GetScrollPosition ();
   if (m_selend_line > (m_selstart_line + 1))
     {
     SetRect (&r, 
-              pDoc->m_iPixelOffset,
-              - pDoc->m_iPixelOffset + ((m_selstart_line + 1) * pDoc->m_FontHeight) - pt.y,
-              pDoc->m_iPixelOffset + right,
-              - pDoc->m_iPixelOffset + ((m_selend_line) * pDoc->m_FontHeight) - pt.y);
+              pDoc->PixelOffset (),
+              - pDoc->PixelOffset () + ((m_selstart_line + 1) * pDoc->m_FontHeight) - pt.y,
+              pDoc->PixelOffset () + right,
+              - pDoc->PixelOffset () + ((m_selend_line) * pDoc->m_FontHeight) - pt.y);
 
 
     if (middlergn.CreateRectRgn (r.left, r.top, r.right, r.bottom) == 0)
@@ -2780,10 +2881,10 @@ CPoint pt = GetScrollPosition ();
 // do the last line, from the start to endcol
 
   SetRect (&r, 
-            pDoc->m_iPixelOffset,
-            - pDoc->m_iPixelOffset + (m_selend_line * pDoc->m_FontHeight) - pt.y,
-            pDoc->m_iPixelOffset + end_textsize,
-            - pDoc->m_iPixelOffset + ((m_selend_line + 1) * pDoc->m_FontHeight) - pt.y);
+            pDoc->PixelOffset (),
+            - pDoc->PixelOffset () + (m_selend_line * pDoc->m_FontHeight) - pt.y,
+            pDoc->PixelOffset () + end_textsize,
+            - pDoc->PixelOffset () + ((m_selend_line + 1) * pDoc->m_FontHeight) - pt.y);
 
   if (lastrgn.CreateRectRgn (r.left, r.top, r.right, r.bottom) == 0)
     lastrgn.CreateRectRgn (0, 0, 0, 0);
@@ -2892,8 +2993,8 @@ ASSERT_VALID(pDoc);
 
   // don't show finger pointer *past* end of last word
   long pixel = calculate_width (line, pLine->len, pDoc, dc) + 
-               pDoc->m_iPixelOffset + 
-               pDoc->m_TextRectangle.left +
+               pDoc->PixelOffset () + 
+               pDoc->ToPhysical (pDoc->m_TextRectangle.left) +
                pLine->m_iPreambleOffset;
 
   if (pDoc->FindStyle (pLine, col, iCol, pStyle, foundpos))
@@ -3030,8 +3131,8 @@ pt.y += pDoc->m_FontHeight;
 
 lastline = pDoc->GetLastLine ();
 
-//if (pt.y > (pDoc->m_iPixelOffset + (lastline * pDoc->m_FontHeight) - r.bottom))
-//  pt.y = pDoc->m_iPixelOffset + (lastline * pDoc->m_FontHeight) - r.bottom;
+//if (pt.y > (pDoc->PixelOffset () + (lastline * pDoc->m_FontHeight) - r.bottom))
+//  pt.y = pDoc->PixelOffset () + (lastline * pDoc->m_FontHeight) - r.bottom;
 
 if (pt.y > ((lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ()))
   pt.y =  (lastline * pDoc->m_FontHeight) - GetOutputWindowHeight ();
@@ -3161,7 +3262,8 @@ void CMUSHView::AutoWrapWindowWidth (CMUSHclientDoc* pDoc)
 
     dc.CreateCompatibleDC (NULL);
 
-    int lfHeight = -MulDiv(pDoc->m_font_height, dc.GetDeviceCaps(LOGPIXELSY), 72);
+    // the same size ChangeFont asked for
+    int lfHeight = -MulDiv(pDoc->m_font_height, pDoc->m_iRasterScale > 1 ? 96 : pDoc->m_iDpi, 72);
     CFont font;
 
      font.CreateFont(lfHeight, // int nHeight, 
@@ -3187,7 +3289,7 @@ void CMUSHView::AutoWrapWindowWidth (CMUSHclientDoc* pDoc)
       dc.GetTextMetrics(&tm);
 
 
-    int iWidth = (GetOutputWindowWidth () - pDoc->m_iPixelOffset) / tm.tmAveCharWidth;
+    int iWidth = (GetOutputWindowWidth () - pDoc->PixelOffset ()) / (tm.tmAveCharWidth * pDoc->m_iRasterScale);
 
     // ensure in range that we allow (same clamp, now shared with the wx port's
     // auto-wrap path — doc_shared.cpp)
@@ -3241,7 +3343,7 @@ int lastline;
   lastline = pDoc->GetLastLine ();
 
   m_ScrollbarSizeTotal = CSize (pDoc->m_nWrapColumn * pDoc->m_FontWidth, lastline * pDoc->m_FontHeight);
-  m_ScrollbarSizePage  = CSize (GetOutputWindowWidth () - pDoc->m_iPixelOffset, GetOutputWindowHeight ());
+  m_ScrollbarSizePage  = CSize (GetOutputWindowWidth () - pDoc->PixelOffset (), GetOutputWindowHeight ());
   m_ScrollbarSizeLine  = CSize (pDoc->m_FontWidth, pDoc->m_FontHeight);
 
   if (pDoc->m_bScrollBarWanted)
@@ -3586,11 +3688,11 @@ ASSERT_VALID(pDoc);
 
     // don't do it *past* end of last word
     long pixel = calculate_width (line, pLine->len, pDoc, dc) + 
-                 pDoc->m_iPixelOffset + 
+                 pDoc->PixelOffset () + 
                  pLine->m_iPreambleOffset;
 
-    if ((point.x - pDoc->m_TextRectangle.left) < pixel &&
-        (point.x - pDoc->m_TextRectangle.left) >= 0 &&
+    if ((point.x - pDoc->ToPhysical (pDoc->m_TextRectangle.left)) < pixel &&
+        (point.x - pDoc->ToPhysical (pDoc->m_TextRectangle.left)) >= 0 &&
         pDoc->FindStyle (pLine, col, iCol, pStyle, foundpos))
       {
       iStyle = pStyle->iFlags;
@@ -4322,8 +4424,8 @@ BOOL CMUSHView::OnToolTipNeedText(UINT id, NMHDR * pNMHDR, LRESULT * pResult)
 
     // don't do it *past* end of last word
     long pixel = calculate_width (line, pLine->len, pDoc, dc) + 
-                pDoc->m_iPixelOffset + 
-                pDoc->m_TextRectangle.left +
+                pDoc->PixelOffset () + 
+                pDoc->ToPhysical (pDoc->m_TextRectangle.left) +
                 pLine->m_iPreambleOffset;
 
 //    m_ToolTip.SendMessage (TTM_SETTITLE, TTI_INFO, (LPARAM) Translate ("Line information") );
@@ -5146,7 +5248,7 @@ RECT r;
 
 GetClientRect (&r);
 
-  int startline = (pt.y - pDoc->m_iPixelOffset) / pDoc->m_FontHeight + 1;
+  int startline = (pt.y - pDoc->PixelOffset ()) / pDoc->m_FontHeight + 1;
   int endline =  ((pt.y + GetOutputWindowHeight ()) / pDoc->m_FontHeight) - 1;
 
   if (startline < 0)
@@ -6290,6 +6392,12 @@ void CMUSHView::OnSysCommand(UINT nID, LPARAM lParam)
 // Adapter giving the engine-owned mouse routing (miniwindow_compose.cpp,
 // docs/PAL.md S4) this view's tooltip / capture / keyboard services — each
 // method is exactly the code the old member functions ran inline.
+// Plugins live in 96-dpi coordinates (dpi.h).
+static CPoint LogicalPoint (const CMUSHclientDoc * pDoc, const CPoint & point)
+  {
+  return CPoint (pDoc->ToLogical (point.x), pDoc->ToLogical (point.y));
+  }
+
 struct CMUSHViewMouseHooks : public MiniWindowMouseHooks
   {
   CMUSHView * m_pView;
@@ -6380,26 +6488,26 @@ CMiniWindow * CMUSHView::Mouse_Over_Miniwindow (CMUSHclientDoc* pDoc,
   // post-paint m_rect (whose right/bottom hold width/height — see
   // Blit_Bitmap), so hotspots also work for windows positioned beyond
   // their own size. A strict extension: everything that matched still does.
-  return MouseOverMiniWindow (pDoc, point, sHotspotId, pHotspot, sMiniwindowId);
+  return MouseOverMiniWindow (pDoc, LogicalPoint (pDoc, point), sHotspotId, pHotspot, sMiniwindowId);
   } // end of  CMUSHView::Mouse_Over_Miniwindow
 
 
 bool CMUSHView::Mouse_Move_MiniWindow (CMUSHclientDoc* pDoc, CPoint point)
   {
   CMUSHViewMouseHooks hooks (this);
-  return MouseMoveMiniWindow (pDoc, point, hooks);
+  return MouseMoveMiniWindow (pDoc, LogicalPoint (pDoc, point), hooks);
   } // end of CMUSHView::Mouse_Move_MiniWindow 
 
 bool CMUSHView::Mouse_Down_MiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags)
   {
   CMUSHViewMouseHooks hooks (this);
-  return MouseDownMiniWindow (pDoc, point, flags, hooks);
+  return MouseDownMiniWindow (pDoc, LogicalPoint (pDoc, point), flags, hooks);
   } // end of CMUSHView::Mouse_Down_MiniWindow 
 
 bool CMUSHView::Mouse_Up_MiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags)
   {
   CMUSHViewMouseHooks hooks (this);
-  return MouseUpMiniWindow (pDoc, point, flags, hooks);
+  return MouseUpMiniWindow (pDoc, LogicalPoint (pDoc, point), flags, hooks);
   } // end of CMUSHView::Mouse_Up_MiniWindow 
 
 
@@ -6472,6 +6580,10 @@ void CMUSHView::Calculate_MiniWindow_Rectangles (CMUSHclientDoc* pDoc, const boo
 
   pFrame->GetClientRect (&ownerrect);
   GetClientRect (&clientrect);
+  ownerrect.right = pDoc->ToLogical (ownerrect.right);
+  ownerrect.bottom = pDoc->ToLogical (ownerrect.bottom);
+  clientrect.right = pDoc->ToLogical (clientrect.right);
+  clientrect.bottom = pDoc->ToLogical (clientrect.bottom);
 
   // the placement maths is engine-owned and shared with every frontend
   // (miniwindow_compose.cpp, docs/PAL.md S4) — the identical code, moved verbatim
@@ -6520,10 +6632,13 @@ RECT r;
   if (pDoc->m_TextRectangle != CRect (0, 0, 0, 0))
     {
     // they can use -n on right/bottom to indicate offset from side
+    // all of this is in the plugin's coordinates, until the end
+    const long iLogicalRight = pDoc->ToLogical (r.right);
+    const long iLogicalBottom = pDoc->ToLogical (r.bottom);
 
     if (TextRectangle.right <= 0)
       {
-      TextRectangle.right += r.right;
+      TextRectangle.right += iLogicalRight;
       // ensure not negative
       TextRectangle.right = max (TextRectangle.right, TextRectangle.left + 20);
       }
@@ -6531,7 +6646,7 @@ RECT r;
 
     if (TextRectangle.bottom <= 0)
       {
-      TextRectangle.bottom += r.bottom;
+      TextRectangle.bottom += iLogicalBottom;
       // ensure not negative
       TextRectangle.bottom = max (TextRectangle.bottom, TextRectangle.top + 20);
       }
@@ -6539,6 +6654,10 @@ RECT r;
     if (bIncludeBorder)
       TextRectangle.InflateRect (pDoc->m_TextRectangleBorderOffset, pDoc->m_TextRectangleBorderOffset);
 
+    TextRectangle.left = pDoc->ToPhysical (TextRectangle.left);
+    TextRectangle.top = pDoc->ToPhysical (TextRectangle.top);
+    TextRectangle.right = pDoc->ToPhysical (TextRectangle.right);
+    TextRectangle.bottom = pDoc->ToPhysical (TextRectangle.bottom);
     return TextRectangle;
     }
 
@@ -6635,6 +6754,6 @@ bool CMUSHView::Mouse_Wheel_MiniWindow (CMUSHclientDoc* pDoc, CPoint point, long
   ScreenToClient(&point);
 
   CMUSHViewMouseHooks hooks (this);
-  return MouseWheelMiniWindow (pDoc, point, delta, hooks);
+  return MouseWheelMiniWindow (pDoc, LogicalPoint (pDoc, point), delta, hooks);
   } // end of CMUSHView::Mouse_Wheel_MiniWindow 
 

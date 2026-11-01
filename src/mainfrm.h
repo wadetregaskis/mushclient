@@ -34,6 +34,7 @@ public:
 	void UseBitmap (UINT iBitmapId);
 	void RefreshImages ();
 	UINT m_iBitmapId = 0;
+	int m_iSizedForDpi = 96;
 #endif
 
 protected:
@@ -54,6 +55,8 @@ public:
 #ifdef _WIN32
 	void AppearanceChanged ();
 	void ColourInfoBar (const bool bChanged);
+	void DpiChanged ();
+	int m_iDpi = 96;
 	bool m_bInfoBackgroundSet = false;    // a plugin has chosen one
 #endif
 
@@ -230,6 +233,9 @@ protected:
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	//}}AFX_MSG
   afx_msg LRESULT OnMCINotify(WPARAM, LPARAM);
+#ifdef _WIN32
+  afx_msg LRESULT OnDpiChanged(WPARAM, LPARAM);
+#endif
 	afx_msg void OnF1Test();
 	afx_msg void OnUpdateInfoBar(CCmdUI* pCmdUI);
   afx_msg void OnTrayMenu(UINT nID);    

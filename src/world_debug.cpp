@@ -3,8 +3,12 @@
 // Implementation for script command: Debug ("something")
 
 #include "stdafx.h"
+#include "dpi.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#ifdef _WIN32
+#include "mainfrm.h"
+#endif
 #include "mxp/mxp.h"
 #include "sendvw.h"
 #include "Color.h"
@@ -958,6 +962,14 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 //-----------------------------------------------------------------------
 //          summary
 //-----------------------------------------------------------------------
+#ifdef _WIN32
+  // world.Debug ("dpi 144"): act as though the window had moved to a monitor at that dpi
+  else if (strncmp (Command, "dpi ", 4) == 0)
+    {
+    Dpi_SetOverride (atoi (Command + 4));
+    Frame.DpiChanged ();
+    }
+#endif
   else if (strcmp (Command, "summary") == 0)
     {
 

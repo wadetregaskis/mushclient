@@ -32,6 +32,7 @@ CMiniWindow::CMiniWindow ()  :
           m_ZOrder (0),
           m_bExecutingScript (false)
   {
+  m_iBackingDpi = 96;
   pdc = new CDC;
   pdc->CreateCompatibleDC(NULL);
   pdc->SetTextAlign (TA_LEFT | TA_TOP);
@@ -185,6 +186,71 @@ long CMiniWindow::FixBottom (const long Bottom)
   */
 
 
+// How miniwindows are sharp on a high-dpi display, without plugins knowing.  The bitmap
+// behind the window has real pixels, and the window's DC maps the plugin's coordinates
+// onto them: 96 logical units to however many pixels.  GDI then does the sums for every
+// primitive -- rectangles, lines, curves, blits -- and draws a font at its real size, which
+// is sharp, while everything measured stays what it would be at 96 dpi (fonts are made and
+// measured at 96, in a DC with no mapping: GdiSurface::measureDc).  GM_COMPATIBLE rather
+// than a world transform, because GM_ADVANCED makes a rectangle's bottom and right edges
+// inclusive, and that would change what plugins draw.
+//
+// At 96 dpi the DC isn't touched at all, so nothing can differ.
+void CMiniWindow::ApplyBackingScale ()
+  {
+#ifdef _WIN32
+  if (m_iBackingDpi == 96)
+    return;
+  pdc->SetMapMode (MM_ANISOTROPIC);
+  pdc->SetWindowExt (96, 96);
+  pdc->SetViewportExt (m_iBackingDpi, m_iBackingDpi);
+  pdc->SetStretchBltMode (COLORONCOLOR);    // the default is for monochrome, and ruins colour
+#endif
+  }
+
+// Moved to a monitor of a different scale.  What's there is stretched to fit, which is
+// soft until the plugin next draws it.
+void CMiniWindow::Rescale (const int iDpi)
+  {
+#ifdef _WIN32
+  if (iDpi == m_iBackingDpi || !m_Bitmap)
+    {
+    m_iBackingDpi = iDpi;
+    return;
+    }
+
+  const int iOldWidth = ::MulDiv (m_iWidth, m_iBackingDpi, 96);
+  const int iOldHeight = ::MulDiv (m_iHeight, m_iBackingDpi, 96);
+
+  CBitmap * pNew = new CBitmap;
+  pNew->CreateBitmap (MAX (::MulDiv (m_iWidth, iDpi, 96), 1), MAX (::MulDiv (m_iHeight, iDpi, 96), 1),
+                      1, GetDeviceCaps((*pdc), BITSPIXEL), NULL);
+
+  pdc->SetMapMode (MM_TEXT);
+  pdc->SetWindowOrg (0, 0);
+  pdc->SetViewportOrg (0, 0);
+
+  CDC bmDC;
+  bmDC.CreateCompatibleDC (&(*pdc));
+  CBitmap * pOldbmp = bmDC.SelectObject (pNew);
+  bmDC.SetStretchBltMode (HALFTONE);
+  ::SetBrushOrgEx (bmDC.m_hDC, 0, 0, NULL);
+  bmDC.StretchBlt (0, 0, ::MulDiv (m_iWidth, iDpi, 96), ::MulDiv (m_iHeight, iDpi, 96),
+                   &(*pdc), 0, 0, iOldWidth, iOldHeight, SRCCOPY);
+  bmDC.SelectObject (pOldbmp);
+
+  pdc->SelectObject (pNew);
+  m_Bitmap->DeleteObject ();
+  delete m_Bitmap;
+  m_Bitmap = pNew;
+
+  m_iBackingDpi = iDpi;
+  ApplyBackingScale ();
+#else
+  (void) iDpi;
+#endif
+  }
+
 // create (or re-create) a mini-window
 void CMiniWindow::Create (long Left, long Top, long Width, long Height,
                           short Position, long Flags,
@@ -221,7 +287,10 @@ void CMiniWindow::Create (long Left, long Top, long Width, long Height,
 
   //  CreateBitmap with zero-dimensions creates a monochrome bitmap, so force to be at least 1x1
 #ifdef _WIN32
-  m_Bitmap->CreateBitmap (MAX (m_iWidth, 1), MAX (m_iHeight, 1), 1, GetDeviceCaps((*pdc), BITSPIXEL), NULL);
+  // The same canvas in the plugin's coordinates, with as many real pixels behind it as
+  // the display has: see ApplyBackingScale.
+  m_Bitmap->CreateBitmap (MAX (::MulDiv (m_iWidth, m_iBackingDpi, 96), 1), MAX (::MulDiv (m_iHeight, m_iBackingDpi, 96), 1),
+                          1, GetDeviceCaps((*pdc), BITSPIXEL), NULL);
 #else
   // Same canvas, at the display's real resolution.  The miniwindow is still
   // m_iWidth x m_iHeight in the coordinates every plugin draws with -- only the
@@ -238,6 +307,7 @@ void CMiniWindow::Create (long Left, long Top, long Width, long Height,
   m_oldBitmap = pdc->SelectObject (m_Bitmap);
 #endif
   pdc->SetWindowOrg(0, 0);
+  ApplyBackingScale ();
 
   pdc->FillSolidRect (0, 0, m_iWidth, m_iHeight, m_iBackgroundColour);
 
@@ -4051,7 +4121,8 @@ long CMiniWindow::Resize(long Width, long Height, long BackgroundColour)
 
   //  CreateBitmap with zero-dimensions creates a monochrome bitmap, so force to be at least 1x1
 #ifdef _WIN32
-  m_Bitmap->CreateBitmap (MAX (Width, 1), MAX (Height, 1), 1, GetDeviceCaps((*pdc), BITSPIXEL), NULL);
+  m_Bitmap->CreateBitmap (MAX (::MulDiv (Width, m_iBackingDpi, 96), 1), MAX (::MulDiv (Height, m_iBackingDpi, 96), 1),
+                          1, GetDeviceCaps((*pdc), BITSPIXEL), NULL);
 #else
   // The RESIZE path needs the same HiDPI canvas as Create does, or a plugin
   // that resizes a miniwindow silently drops it back to 1x — which is what
@@ -4067,6 +4138,12 @@ long CMiniWindow::Resize(long Width, long Height, long BackgroundColour)
   pdc->FillSolidRect (0, 0, Width, Height, BackgroundColour);
 
   // copy old contents back
+#ifdef _WIN32
+  if (m_iBackingDpi != 96)
+    pdc->StretchBlt (0, 0, m_iWidth, m_iHeight, &bmDC, 0, 0,
+                     ::MulDiv (m_iWidth, m_iBackingDpi, 96), ::MulDiv (m_iHeight, m_iBackingDpi, 96), SRCCOPY);
+  else
+#endif
   pdc->BitBlt (0, 0, m_iWidth, m_iHeight, &bmDC, 0, 0, SRCCOPY);
   bmDC.SelectObject(pOldbmp);
 

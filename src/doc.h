@@ -821,6 +821,7 @@ public:
   unsigned short m_enable_trigger_sounds;
   unsigned short m_indent_paras;
   unsigned short m_bSaveWorldAutomatically;
+  unsigned short m_bSaveScrollback;     // keep the output buffer between sessions
   unsigned short m_bLineInformation;
   unsigned short m_bStartPaused;
 
@@ -2230,7 +2231,39 @@ public:
 
   BOOL OpenSession (void);
   void SetUpOutputWindow (void);
+  void StartOutputBuffer (void);
   void OutputOutstandingLines (void);
+
+  // ── saved scrollback (doc_scrollback_shared.cpp) ────────────────────────
+  // The output buffer as it stood at the end of the last session, in
+  // <data folder>/scrollback/<world id>.mcsb.  See scrollback_store.h for the file.
+  class CScrollbackSession * m_pScrollback;   // NULL if not saving
+  // Every line in the buffer numbered this or lower came back from the file rather
+  // than from this session.  Logs must not write them again: see CMUSHclientDoc::OpenLog.
+  long m_nLastRestoredLine;
+  // The option is off, so there is no session, and one should start if it goes on.
+  bool m_bScrollbackWanted;
+
+  // Where this world's file is.  Empty if it has no world ID to name it by.
+  CString ScrollbackFilePath (void) const;
+  // SetUpOutputWindow, at the very start, with the buffer empty.  Puts the saved
+  // lines into it directly, so triggers and plugins don't see them.  True if any came back.
+  bool RestoreSavedScrollback (void);
+  // SetUpOutputWindow, after the banner: what's in the buffer now is not to be saved.
+  void ScrollbackSessionStarted (void);
+  // From CheckTimers.  Hands any finished lines to the worker, at most every few seconds.
+  void ScrollbackTick (void);
+  // Saves what's left, including an unfinished last line, and waits for the disk.
+  // bClosing: this world is going away, so close the file too.
+  void FlushSavedScrollback (const bool bClosing);
+  // Everything that takes lines back out of the buffer has to say so, or they'd
+  // come back next time.
+  void ScrollbackTailDeleted (void);
+  void ScrollbackHeadDeleted (void);
+  void ScrollbackCleared (void);
+  void ScrollbackLineFlagsChanged (const CLine * pLine);
+  // World Properties' button: forget what's saved, and leave what's on screen.
+  void ClearSavedScrollback (void);
 
   bool m_bInPlaySoundFilePlugin;
   bool m_bInCancelSoundFilePlugin;
@@ -2632,6 +2665,7 @@ public:
   void CheckTimerList (CTimerMap & TimerMap);
   void CheckTimers (void);
   void CheckTickTimers (void);
+  void SavePendingWork (void);
 
   virtual BOOL DoSave(LPCTSTR lpszPathName, BOOL bReplace);
 

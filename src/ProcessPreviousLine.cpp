@@ -806,6 +806,8 @@ assemble the full text of the original line.
      pos = posPrev;
      }
 
+    ScrollbackTailDeleted ();
+
 #ifndef _WIN32
     {
     // Same clamp DeleteLines uses: never count the in-progress tail line, which

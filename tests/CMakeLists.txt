@@ -86,6 +86,7 @@ mc_test(test_bundled_files)
 mc_test(test_spellchecker)
 mc_test(test_database)
 mc_test(test_info)
+mc_test(test_scrollback)
 mc_test(test_xmlparse)
 mc_test(test_mfc_ui)
 # dialogs/InsertUnicodeDlg.cpp (E26-F3) has no wx/MFC-adapter dependency at all

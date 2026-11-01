@@ -264,6 +264,8 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
 void CMUSHclientDoc::CheckTimers ()
   {
 
+  SavePendingWork ();
+
 #ifdef _WIN32
   // make sure status line is showing the right thing (after 5 seconds)
   if (m_pActiveCommandView || m_pActiveOutputView)
@@ -382,6 +384,13 @@ void CMUSHclientDoc::CheckTimers ()
     m_CurrentPlugin = NULL;
     }
   } // end of CMUSHclientDoc::CheckTimers
+
+// The periodic work that has nothing to do with the world's own timers, so it happens
+// whether or not they are enabled or the world is connected.  CheckTimers calls it first.
+void CMUSHclientDoc::SavePendingWork ()
+  {
+  ScrollbackTick ();
+  } // end of CMUSHclientDoc::SavePendingWork
 
 #ifdef _WIN32
 

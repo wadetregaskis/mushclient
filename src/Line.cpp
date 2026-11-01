@@ -67,6 +67,45 @@ CLine::CLine (const long nLineNumber,
 
   }   // end of CLine::CLine
 
+// A saved line coming back.  Unlike the constructor above this does not read the
+// clock, does not allocate a default style, and sizes the text buffer exactly; and on
+// Windows its style list allocates nodes one at a time rather than MFC's default ten,
+// which is most of what a live line costs in memory beyond its text.
+CLine::CLine (const long nLineNumber,
+              const CTime & theTime,
+              const LONGLONG iHighPerformanceTime,
+              const unsigned char iLineFlags,
+              const bool bHardReturn,
+              const int iCharCount,
+              const short iPreambleOffset,
+              const char * pText,
+              const int iLength)
+#ifdef _WIN32
+  : styleList (1)
+#endif
+  {
+  hard_return = bHardReturn;
+  flags = iLineFlags;
+  len = iLength;
+  m_iCharCount = iCharCount;
+  m_iPreambleOffset = iPreambleOffset;
+  m_theTime = theTime;
+  m_lineHighPerformanceTime.QuadPart = iHighPerformanceTime;
+  m_nLineNumber = nLineNumber;
+  iMemoryAllocated = iLength > 0 ? iLength : 1;
+
+#ifdef USE_REALLOC
+  text = (char *) malloc (iMemoryAllocated);
+#else
+  text = new char [iMemoryAllocated];
+#endif
+  ASSERT (text);
+  if (!text)
+    throw std::bad_alloc();
+  if (iLength > 0)
+    memcpy (text, pText, iLength);
+  }   // end of CLine::CLine (restored)
+
 // CLine destructor
 
 CLine::~CLine ()

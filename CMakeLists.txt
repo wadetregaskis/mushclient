@@ -616,6 +616,9 @@ if(NOT WIN32)
         src/ansi.cpp
         src/doc_aliasmenu_shared.cpp
         src/doc_shared.cpp
+        src/scrollback_store.cpp        # a world's saved output buffer, on disk
+        src/doc_scrollback_shared.cpp   # ... and in and out of the document
+        src/command_history_store.cpp   # a world's command history, likewise
         src/utilities_shared.cpp
         src/legacy_import.cpp      # importing a MUSHclient 5 (legacy_import.h)
         src/bundled_files.cpp      # keeping the bundled plugins up to date

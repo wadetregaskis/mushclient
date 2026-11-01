@@ -363,6 +363,19 @@ class CLine : public CObject
          const COLORREF       iBackColour,
          const bool bUnicode
          );   // constructor
+  // A line restored from the saved scrollback (doc_scrollback_shared.cpp): its text
+  // and when it arrived are known, and it will never grow, so the text gets exactly
+  // the room it needs.  It starts with no styles at all.  Safe to call on any thread:
+  // it touches nothing but the new line.
+  CLine (const long nLineNumber,
+         const CTime & theTime,
+         const LONGLONG iHighPerformanceTime,
+         const unsigned char iLineFlags,
+         const bool bHardReturn,
+         const int iCharCount,
+         const short iPreambleOffset,
+         const char * pText,
+         const int iLength);
 #if !defined(_WIN32) || defined(MUSHCLIENT_TESTS)
   // Default constructor for non-Windows scratch/stub lines (doc_portable.cpp),
   // and for test fixtures on every platform — several of them want a blank

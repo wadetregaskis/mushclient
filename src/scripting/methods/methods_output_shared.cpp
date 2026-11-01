@@ -104,6 +104,8 @@ POSITION pos;
     m_total_lines--;            // don't count as received
    }
 
+  ScrollbackTailDeleted ();     // they may have been saved already
+
   // try to allow world.tells to span omitted lines
   if (!m_LineList.IsEmpty ())
     {

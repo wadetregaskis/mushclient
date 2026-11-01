@@ -219,7 +219,7 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
           eArgCount,     // this MUST be last
           };
 
-        COleVariant args [eArgCount];
+        CScriptVariant args [eArgCount];
         DISPPARAMS params = { args, NULL, eArgCount, 0 };
 
   //      args [eTimerName] = strTimerName;

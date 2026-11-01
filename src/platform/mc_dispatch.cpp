@@ -31,9 +31,7 @@
 // Windows-1252, because it is the one ANSI code page that maps every byte to a
 // character and back.  (The five it leaves undefined map to the matching C1
 // control and return.)  This is not the text's encoding, which may well be UTF-8:
-// it is a lossless way to carry bytes in a BSTR.  MFC converts with the thread's
-// code page, CString::AllocSysString on the way out of every world method, so
-// MC_DispatchInvoke runs with that set to the same thing (CarryBytesIn1252).
+// it is a lossless way to carry bytes in a BSTR (script_text.h).
 static const UINT kBstrCodePage = 1252;
 
 std::string MC_BstrBytes (const BSTR b)
@@ -58,6 +56,34 @@ BSTR MC_BstrFromBytes (const char * s)
   if (b && len > 0)
     MultiByteToWideChar (kBstrCodePage, 0, s, n, b, len);
   return b;
+  }
+BSTR ScriptBstr (const CString & strBytes)
+  {
+  const int n = strBytes.GetLength ();
+  if (n == 0)
+    return SysAllocString (L"");
+  const int len = MultiByteToWideChar (kBstrCodePage, 0, strBytes, n, NULL, 0);
+  BSTR b = SysAllocStringLen (NULL, (UINT) (len > 0 ? len : 0));
+  if (b && len > 0)
+    MultiByteToWideChar (kBstrCodePage, 0, strBytes, n, b, len);
+  return b;
+  }
+
+CString ScriptBytes (const BSTR b)
+  {
+  // directly into the CString: this is every string a Lua script reads back
+  CString s;
+  const int n = b ? (int) SysStringLen (b) : 0;
+  if (n > 0)
+    {
+    const int len = WideCharToMultiByte (kBstrCodePage, 0, b, n, NULL, 0, NULL, NULL);
+    if (len > 0)
+      {
+      WideCharToMultiByte (kBstrCodePage, 0, b, n, s.GetBuffer (len), len, NULL, NULL);
+      s.ReleaseBuffer (len);
+      }
+    }
+  return s;
   }
 #else
 std::string MC_BstrBytes (const char * b)     { return b ? b : ""; }
@@ -633,43 +659,11 @@ static int required_args (const std::string& key, const int arity)
   return required;
   }
 
-#ifdef _WIN32
-// For the length of a world method: the thread's code page is 1252, whatever the
-// machine's, so that its CString::AllocSysString matches MC_BstrBytes.  On any
-// other code page bytes do not survive: a double-byte one reads them in pairs and
-// a UTF-8 one rejects what is not UTF-8, so a world's text came back to a script
-// damaged.  Nothing changes on Western Windows, where this does nothing.
-// (TextBoundary, tests/win/test_text_boundary.cpp.)
-namespace {
-class CarryBytesIn1252
-  {
-  public:
-    CarryBytesIn1252 () : m_saved (0)
-      {
-      DWORD cp = 0;
-      const LCID lcid = GetThreadLocale ();
-      if (GetLocaleInfoA (lcid, LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER,
-                          (LPSTR) &cp, sizeof cp / sizeof (TCHAR)) && cp != kBstrCodePage)
-        {
-        m_saved = lcid;
-        SetThreadLocale (MAKELCID (MAKELANGID (LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT));
-        }
-      }
-    ~CarryBytesIn1252 () { if (m_saved) SetThreadLocale (m_saved); }
-  private:
-    LCID m_saved;
-  };
-} // namespace
-#endif
-
 int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
                       const VARIANT* args, int nargs,
                       VARIANT& result, std::vector<VARIANT>* outargs,
                       unsigned flags)
   {
-#ifdef _WIN32
-  CarryBytesIn1252 carry;
-#endif
   build_table();
   VariantInit(&result);
   const std::string key = lc(name);

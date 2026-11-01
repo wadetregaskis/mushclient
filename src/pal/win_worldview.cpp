@@ -273,7 +273,7 @@ public:
                 CSendView* pmyView = (CSendView*)pView;
 
                 // find what the command is
-                pmyView->GetEditCtrl().GetWindowText(strCommand);
+                CmdBoxGetText (pmyView->GetEditCtrl (), pmyView->GetDocument (), strCommand);
             }
         }
 
@@ -365,10 +365,10 @@ public:
 
                 CString strCurrent;
 
-                pmyView->GetEditCtrl().GetWindowText(strCurrent);
+                CmdBoxGetText (pmyView->GetEditCtrl (), pmyView->GetDocument (), strCurrent);
                 if (strCurrent.IsEmpty())
                 {
-                    pmyView->GetEditCtrl().ReplaceSel(text, TRUE);
+                    CmdBoxReplaceSel (pmyView->GetEditCtrl (), pmyView->GetDocument (), text, TRUE);
                     pmyView->NotifyPluginCommandChanged();
                     return true;
                 }   // end of command being empty
@@ -418,7 +418,7 @@ public:
                 // characters" — the wx adapter returns them untouched).  The
                 // GetInfo 236/237 engine sites own the 1-based / zero-if-empty
                 // transform, so applying it here as well would run it twice.
-                pmyView->GetEditCtrl().GetSel(nStartChar, nEndChar);
+                CmdBoxGetSel (pmyView->GetEditCtrl (), pmyView->GetDocument (), nStartChar, nEndChar);
                 r.start = nStartChar;
                 r.end   = nEndChar;
                 break;
@@ -438,7 +438,7 @@ public:
             if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
             {
                 CSendView* pmyView = (CSendView*)pView;
-                pmyView->GetEditCtrl().SetSel(first - 1, last, FALSE);
+                CmdBoxSetSel (pmyView->GetEditCtrl (), pmyView->GetDocument (), first - 1, last, FALSE);
             }
         }
     }
@@ -489,10 +489,10 @@ public:
                 // twice over: the port's shim CEdit declares only the (int, int)
                 // overload (platform/mfc_ui.h), and this whole file sits inside
                 // #ifdef _WIN32 so clang never parses it.
-                pmyView->GetEditCtrl().SetSel ((int) start, (int) end);
+                CmdBoxSetSel (pmyView->GetEditCtrl (), pmyView->GetDocument (), (int) start, (int) end);
                 pmyView->UnlockWindowUpdate ();
                 // replace it, allow undos
-                pmyView->GetEditCtrl().ReplaceSel (strText, TRUE);
+                CmdBoxReplaceSel (pmyView->GetEditCtrl (), pmyView->GetDocument (), strText, TRUE);
                 break;
             }
         }
@@ -512,7 +512,7 @@ public:
                 CSendView* pmyView = (CSendView*)pView;
 
                 // find what the command is
-                pmyView->GetEditCtrl().GetWindowText(strCommand);
+                CmdBoxGetText (pmyView->GetEditCtrl (), pmyView->GetDocument (), strCommand);
 
                 // save the echo flag
                 bool bSaveNoEcho = m_pDoc->m_bNoEcho;
@@ -525,7 +525,7 @@ public:
                 m_pDoc->m_bNoEcho = bSaveNoEcho;
 
                 pmyView->GetEditCtrl().SetSel(0, -1);          // select all
-                pmyView->GetEditCtrl().ReplaceSel("", TRUE);   // blank it out
+                CmdBoxReplaceSel (pmyView->GetEditCtrl (), pmyView->GetDocument (), "", TRUE);   // blank it out
                 pmyView->NotifyPluginCommandChanged();
             }
         }

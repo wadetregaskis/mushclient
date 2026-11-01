@@ -182,7 +182,7 @@ VARIANT CMUSHclientDoc::ArrayListAll()
          it++)
            {
             // the array must be a bloody array of variants, or VBscript kicks up
-            COleVariant v (it->first.c_str ());
+            CScriptVariant v (it->first.c_str ());
             sa.PutElement (&iCount, &v);
             iCount++;
            }
@@ -215,7 +215,7 @@ VARIANT CMUSHclientDoc::ArrayListKeys(LPCTSTR Name)
          i++)
            {
             // the array must be a bloody array of variants, or VBscript kicks up
-            COleVariant v (i->first.c_str ());
+            CScriptVariant v (i->first.c_str ());
             sa.PutElement (&iCount, &v);
             iCount++;
            }
@@ -248,7 +248,7 @@ VARIANT CMUSHclientDoc::ArrayListValues(LPCTSTR Name)
          i++)
            {
             // the array must be a bloody array of variants, or VBscript kicks up
-            COleVariant v (i->second.c_str ());
+            CScriptVariant v (i->second.c_str ());
             sa.PutElement (&iCount, &v);
             iCount++;
            }

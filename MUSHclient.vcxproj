@@ -1884,6 +1884,7 @@
     <ClCompile Include="src\surface_bridge.cpp" />
     <ClCompile Include="src\pal\gdi_surface.cpp" />
     <ClCompile Include="src\pal\netaddress.cpp" />
+    <ClCompile Include="src\text_edges.cpp" />
     <ClCompile Include="src\pal\win_transport.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <!-- The embedded scripting engines (MUSHclient.engines.props).  Empty
@@ -1966,6 +1967,8 @@
     <ClInclude Include="src\pal\gdi_surface.h" />
     <ClInclude Include="src\pal\itransport.h" />
     <ClInclude Include="src\pal\netaddress.h" />
+    <ClInclude Include="src\text_edges.h" />
+    <ClInclude Include="src\script_text.h" />
     <ClInclude Include="src\pal\win_transport.h" />
     <ClInclude Include="src\pal\win_worldview.h" />
     <ClInclude Include="src\stdafx.h" />

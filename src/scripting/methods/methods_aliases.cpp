@@ -342,7 +342,7 @@ VARIANT CMUSHclientDoc::GetAliasList()
       GetAliasMap ().GetNextAssoc (pos, strAliasName, alias_item);
 
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (strAliasName);
+      CScriptVariant v (strAliasName);
       sa.PutElement (&iCount, &v);
         
       }      // end of looping through each alias

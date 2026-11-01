@@ -32,14 +32,14 @@
 BSTR CMUSHclientDoc::EvaluateSpeedwalk(LPCTSTR SpeedWalkString) 
   {
 CString strResult = DoEvaluateSpeedwalk (SpeedWalkString);
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
   }   // end of CMUSHclientDoc::EvaluateSpeedwalk
 
 
 BSTR CMUSHclientDoc::ReverseSpeedwalk(LPCTSTR SpeedWalkString) 
   {
 	CString strResult = DoReverseSpeedwalk (SpeedWalkString);
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
   }   // end of CMUSHclientDoc::ReverseSpeedwalk
 
 
@@ -111,7 +111,7 @@ BSTR CMUSHclientDoc::RemoveBacktracks(LPCTSTR Path)
 
   // if string empty, or has an error message, just return it
   if (strWalk.IsEmpty () || strWalk.Left (1) == "*")
-	  return strWalk.AllocSysString();
+	  return ScriptBstr (strWalk);
 
   // convert speedwalk string into a nice vector we can walk
   vector<string> w;   // input
@@ -120,7 +120,7 @@ BSTR CMUSHclientDoc::RemoveBacktracks(LPCTSTR Path)
 
   // empty? ah well, can't be many backtracks to remove
   if (w.empty ())
-	  return strResult.AllocSysString();
+	  return ScriptBstr (strResult);
 
   // we will push each item onto our queue (stack) and look for
   // backtracks on the top of it
@@ -157,7 +157,7 @@ BSTR CMUSHclientDoc::RemoveBacktracks(LPCTSTR Path)
 
   // empty? must have cleaned everything up
   if (q.empty ())
-	  return strResult.AllocSysString();
+	  return ScriptBstr (strResult);
 
   string sPrev;
   int iCount = 0;
@@ -207,7 +207,7 @@ BSTR CMUSHclientDoc::RemoveBacktracks(LPCTSTR Path)
     strResult += " ";
     }
 
-  return strResult.AllocSysString();
+  return ScriptBstr (strResult);
 
   }  // end of CMUSHclientDoc::RemoveBacktracks
 

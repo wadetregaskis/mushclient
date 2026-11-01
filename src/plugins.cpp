@@ -329,13 +329,13 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
         eArgCount,     // this MUST be last
         };   
 
-      COleVariant args [eArgCount];
+      CScriptVariant args [eArgCount];
     
       DISPPARAMS params = { args, NULL, eArgCount, 0 };
     
       args [eText] = sText;
 
-      COleVariant result;
+      CScriptVariant result;
 
       m_ScriptEngine->Execute (iRoutine, 
                                callinfo._name.c_str (), 
@@ -420,7 +420,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
       };    
 
 
-    COleVariant args [eArgCount];
+    CScriptVariant args [eArgCount];
     
     DISPPARAMS params = { args, NULL, eArgCount, 0 };
     
@@ -435,10 +435,10 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
                             // pointer.  VariantInit is what this wanted.
     v.vt = VT_BSTR;
     CString str (sText.c_str (), sText.size ());
-    v.bstrVal = str.AllocSysString (); 
+    v.bstrVal = ScriptBstr (str); 
     args [eText].Attach (v);
     
-    COleVariant result;
+    CScriptVariant result;
 
     m_ScriptEngine->Execute (iRoutine, 
                              callinfo._name.c_str (), 
@@ -524,7 +524,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
       };    
 
 
-    COleVariant args [eArgCount];
+    CScriptVariant args [eArgCount];
     
     DISPPARAMS params = { args, NULL, eArgCount, 0 };
     
@@ -532,7 +532,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
     args [eArg2] = arg2;
     args [eText] = CString (sText.c_str (), sText.size ());  // yadda yadda, doesn't work with internal 0x00
     
-    COleVariant result;
+    CScriptVariant result;
 
     m_ScriptEngine->Execute (iRoutine, 
                              callinfo._name.c_str (), 
@@ -622,7 +622,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
       };    
 
 
-    COleVariant args [eArgCount];
+    CScriptVariant args [eArgCount];
     
     DISPPARAMS params = { args, NULL, eArgCount, 0 };
     
@@ -631,7 +631,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
     args [eArg3] = arg3;
     args [eArg4] = arg4;
     
-    COleVariant result;
+    CScriptVariant result;
 
     m_ScriptEngine->Execute (iRoutine, 
                              callinfo._name.c_str (), 
@@ -699,13 +699,13 @@ void CPlugin::ExecutePluginScriptRtn (CScriptCallInfo & callinfo,
         eArgCount,     // this MUST be last
         };   
 
-      COleVariant args [eArgCount];
+      CScriptVariant args [eArgCount];
   
       DISPPARAMS params = { args, NULL, eArgCount, 0 };
   
       args [eText] = strText;
 
-      COleVariant result;
+      CScriptVariant result;
 
       m_ScriptEngine->Execute (iRoutine, 
                                callinfo._name.c_str (), 
@@ -719,7 +719,7 @@ void CPlugin::ExecutePluginScriptRtn (CScriptCallInfo & callinfo,
 
       // if they returned a string, give it back
       if (result.vt == VT_BSTR)
-        strText = result.bstrVal;
+        strText = ScriptBytes (result.bstrVal);
 
       } // end of not Lua
 

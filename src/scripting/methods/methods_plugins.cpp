@@ -43,7 +43,7 @@ BSTR CMUSHclientDoc::GetPluginID()
   if (m_CurrentPlugin)
     strResult = m_CurrentPlugin->m_strID;
   
-  return strResult.AllocSysString();
+  return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::GetPluginID
 
 // gets our own plugin name
@@ -55,7 +55,7 @@ BSTR CMUSHclientDoc::GetPluginName()
   if (m_CurrentPlugin)
     strResult = m_CurrentPlugin->m_strName;
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::GetPluginName
 
 // get list of plugins
@@ -80,7 +80,7 @@ VARIANT CMUSHclientDoc::GetPluginList()
       CPlugin * p = *pit;
 
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (p->m_strID);
+      CScriptVariant v (p->m_strID);
       sa.PutElement (&iCount, &v);
       iCount++;
       }      // end of looping through each plugin
@@ -440,7 +440,7 @@ long nInvocationCount = 0;
       eArgCount,     // this MUST be last
       };    
 
-    COleVariant args [eArgCount];
+    CScriptVariant args [eArgCount];
     DISPPARAMS params = { args, NULL, eArgCount, 0 };
 
     args [eArgument] = Argument;

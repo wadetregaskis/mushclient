@@ -304,7 +304,7 @@ TEST(ScriptEngine, ValuesPassedToTheWorldApiKeepTheirBytes)
     for (auto& c : cases) {
         e.simple(d, "store", c.in);
         VARIANT v = e.doc.GetVariable("echoed");
-        EXPECT_EQ(c.in, (v.bstrVal ? CString(v.bstrVal) : CString("")));
+        EXPECT_EQ(c.in, ScriptBytes (v.bstrVal));
     }
 }
 

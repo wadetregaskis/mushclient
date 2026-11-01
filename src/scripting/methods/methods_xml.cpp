@@ -27,7 +27,7 @@ BSTR CMUSHclientDoc::GetEntity(LPCTSTR Name)
 
   m_CustomEntityMap.Lookup (Name, strResult);
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::GetEntity
 
 
@@ -223,7 +223,7 @@ BSTR CMUSHclientDoc::ExportXML(short Type, LPCTSTR Name)
 	  }   // end of catch
 
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::ExportXML
 
 
@@ -252,7 +252,7 @@ BSTR CMUSHclientDoc::GetXMLEntity(LPCTSTR Entity)
     e->Delete ();
     } // end of catch
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::GetXMLEntity
 
 

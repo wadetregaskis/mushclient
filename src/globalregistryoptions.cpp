@@ -465,7 +465,7 @@ VARIANT CMUSHclientApp::GetGlobalOption(LPCTSTR Name)
       const char * p = (const char *) this +  AlphaGlobalOptionsTable [i].iOffset;
       CString strValue = * (CString *) p;
       vaResult.vt = VT_BSTR;
-      vaResult.bstrVal = strValue.AllocSysString (); 
+      vaResult.bstrVal = ScriptBstr (strValue); 
   	  return vaResult;
       }
     };
@@ -493,7 +493,7 @@ VARIANT CMUSHclientApp::GetGlobalOptionList()
   for (i = 0; GlobalOptionsTable [i].pName; i++)
     {
     // the array must be a bloody array of variants, or VBscript kicks up
-    COleVariant v ((LPCTSTR) GlobalOptionsTable [i].pName);
+    CScriptVariant v ((LPCTSTR) GlobalOptionsTable [i].pName);
     sa.PutElement (&count, &v);
     count++;
     }      // end of looping through each option
@@ -502,7 +502,7 @@ VARIANT CMUSHclientApp::GetGlobalOptionList()
   for (i = 0; AlphaGlobalOptionsTable [i].pName; i++)
     {
     // the array must be a bloody array of variants, or VBscript kicks up
-    COleVariant v ((LPCTSTR) AlphaGlobalOptionsTable [i].pName);
+    CScriptVariant v ((LPCTSTR) AlphaGlobalOptionsTable [i].pName);
     sa.PutElement (&count, &v);
     count++;
     }      // end of looping through each option

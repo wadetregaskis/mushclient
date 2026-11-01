@@ -101,10 +101,11 @@ bool CMUSHclientDoc::SwitchToNotepad (void)
   }   // end of CMUSHclientDoc::SwitchToNotepad
 
 bool CMUSHclientDoc::AppendToTheNotepad (const CString strTitle,
-                                      const CString strText,
+                                      const CString strWorldText,
                                       const bool bReplace,
                                       const int  iNotepadType)
   {
+const CString strText = WorldTextToAnsi (this, strWorldText);   // a notepad is not a world's
 CTextDocument * pTextDoc = FindNotepad (strTitle);
 
   if (pTextDoc)
@@ -180,7 +181,7 @@ CTextDocument * pTextDoc = FindNotepad (strTitle);
 
 BOOL CMUSHclientDoc::SendToNotepad(LPCTSTR Title, LPCTSTR Contents) 
 {
-  return CreateTextWindow (Contents,     // contents
+  return CreateTextWindow (WorldTextToAnsi (this, Contents),     // contents
                       Title,     // title
                       this,   // document
                       m_iUniqueDocumentNumber,      // document number
@@ -360,7 +361,9 @@ CTextDocument * pTextDoc = FindNotepad (Title);
     } // end of having an existing notepad document
 
 
-	return strResult.AllocSysString();
+  strResult = AnsiToWorldText (this, strResult);    // a notepad is not a world's
+
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::GetNotepadText
 
 
@@ -404,7 +407,7 @@ BSTR CMUSHclientDoc::GetNotepadWindowPosition(LPCTSTR Title)
 #endif // _WIN32
     } // end of having an existing notepad document
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of  CMUSHclientDoc::GetNotepadWindowPosition
 
 
@@ -531,7 +534,7 @@ VARIANT CMUSHclientDoc::GetNotepadList(BOOL All)
            continue;
 
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (pTextDoc->m_strTitle);
+      CScriptVariant v (pTextDoc->m_strTitle);
       sa.PutElement (&iCount, &v);
 
       iCount++;

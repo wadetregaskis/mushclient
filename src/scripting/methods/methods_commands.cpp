@@ -42,7 +42,7 @@ VARIANT CMUSHclientDoc::GetCommandList(long Count)
       long n = (long)hist.size();
       sa.CreateOneDim(VT_VARIANT, n);
       for (long i = 0; i < n; ++i) {
-        COleVariant v(CString(hist[i].c_str()));
+        CScriptVariant v(CString(hist[i].c_str()));
         sa.PutElement(&i, &v);
       }
     }
@@ -64,7 +64,7 @@ BSTR CMUSHclientDoc::PushCommand()
     strCommand = s.c_str();
   }
 
-	return strCommand.AllocSysString();
+	return ScriptBstr (strCommand);
 }   // end of CMUSHclientDoc::PushCommand
 
 // world.SelectCommand - selects the command in the command window
@@ -84,7 +84,7 @@ BSTR CMUSHclientDoc::GetCommand()
   // the seam (empty if there is no view — strCommand starts empty)
   strCommand = GetCommandText().c_str();
 
-	return strCommand.AllocSysString();
+	return ScriptBstr (strCommand);
 }   // end of CMUSHclientDoc::GetCommand
 
 
@@ -143,10 +143,10 @@ int nStartChar,
       CString strCurrent;
 
       // find the selection range
-      pmyView->GetEditCtrl().GetSel(nStartChar, nEndChar);
+      CmdBoxGetSel (pmyView->GetEditCtrl (), this, nStartChar, nEndChar);
       // get window text
-      pmyView->GetEditCtrl().GetWindowText (strCurrent);
-      pmyView->GetEditCtrl().ReplaceSel (Text, TRUE);
+      CmdBoxGetText (pmyView->GetEditCtrl (), this, strCurrent);
+      CmdBoxReplaceSel (pmyView->GetEditCtrl (), this, Text, TRUE);
       pmyView->NotifyPluginCommandChanged ();
 
       // get selection if any
@@ -158,7 +158,7 @@ int nStartChar,
     }   // end of loop through views
 #endif
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::PasteCommand
 
 
@@ -347,7 +347,7 @@ VARIANT CMUSHclientDoc::GetInternalCommandsList()
 // put the addresses into the array
 	for (long i = 0; CommandIDs [i].iCommandID; i++)
     {
-    COleVariant v (CommandIDs [i].sCommandName);
+    CScriptVariant v (CommandIDs [i].sCommandName);
     sa.PutElement (&i, &v);
     }      // end of looping through each command
 
@@ -389,7 +389,7 @@ long iCount;
 
       // the array must be a bloody array of variants, or VBscript kicks up
       CString s = strLine.Mid (1);
-      COleVariant v (s);  // drop echo flag
+      CScriptVariant v (s);  // drop echo flag
       sa.PutElement (&iCount, &v);
       iCount++;
       }      // end of looping through each command

@@ -371,7 +371,7 @@ void CMUSHclientDoc::ExecuteAliasMenuItem (const CString & strItem)
               };    
 
             COleSafeArray sa;   // for wildcard list
-            COleVariant args [eArgCount];
+            CScriptVariant args [eArgCount];
             DISPPARAMS params = { args, NULL, eArgCount, 0 };
 
             args [eAliasName] = strItem;
@@ -384,7 +384,7 @@ void CMUSHclientDoc::ExecuteAliasMenuItem (const CString & strItem)
             for (long i = 1; i <= MAX_WILDCARDS; i++)
               {
               CString s ("");
-              COleVariant v (s); // no wildcards are relevant
+              CScriptVariant v (s); // no wildcards are relevant
               sa.PutElement (&i, &v);
               }
             args [eWildcards] = sa;

@@ -117,7 +117,7 @@ int pushVariant (lua_State *L, VARIANT & v, const bool bOwned)
   switch (v.vt)
     {
     case VT_BSTR:
-      lua_pushstring (L, CString (v.bstrVal));
+      lua_pushstring (L, ScriptBytes (v.bstrVal));
       // Lua has its own copy now.  VariantClear frees a BSTR on Windows but must
       // not on the port (its COleVariant borrows the caller's string), so every
       // string a VARIANT-returning world method produced was leaking here --
@@ -201,7 +201,7 @@ int pushVariant (lua_State *L, VARIANT & v, const bool bOwned)
 
 int pushBstr (lua_State *L, BSTR & str)
   {
-  lua_pushstring (L, CString (str));
+  lua_pushstring (L, ScriptBytes (str));
   SysFreeString (str);
   return 1;  // number of result fields
   }   // end of pushBstr

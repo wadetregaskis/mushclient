@@ -144,7 +144,7 @@ VARIANT CMUSHclientDoc::UdpPortList()
          it != m_UDPsocketMap.end (); it++, iCount++)
       {
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v ((long) it->first);
+      CScriptVariant v ((long) it->first);
       sa.PutElement (&iCount, &v);
       }      // end of looping through each colour
     } // end of having at least one

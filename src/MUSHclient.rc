@@ -140,7 +140,13 @@ IDR_NORMALTYPE          ICON    DISCARDABLE     "res\\MUSHclient.ico"
 // still exists -- and it gets the pre-XP common controls.
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+#ifdef MUSHCLIENT_EMBEDDED_ENGINES
+// The 64-bit builds are UTF-8 throughout (docs/UTF8-PLAN-2026-10.md).  Win32 keeps
+// the machine's code page, for the ActiveScript engines only it has.
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "MUSHclient-utf8.exe.manifest"
+#else
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "MUSHclient.exe.manifest"
+#endif
 
 
 #ifndef APSTUDIO_INVOKED

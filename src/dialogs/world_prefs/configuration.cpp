@@ -2031,6 +2031,9 @@ GamePreferences (ePageMXP);
 
 bool CMUSHclientDoc::GamePreferences (const int iPage)
 {
+#ifdef _WIN32
+  CDialogsForWorld worldDialogs (this);   // DDX_Text in this, and all it opens
+#endif
 Frame.DelayDebugStatus ("Starting world config");
 
 int iWantedPage = iPage;

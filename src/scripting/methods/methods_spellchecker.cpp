@@ -92,7 +92,7 @@ set<string> errors;
          it != errors.end (); it++, iCount++)
       {
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (it->c_str ());
+      CScriptVariant v (it->c_str ());
       sa.PutElement (&iCount, &v);
       }      // end of looping through each error
 
@@ -435,7 +435,7 @@ BSTR CMUSHclientDoc::Metaphone(LPCTSTR Word, short Length)
   if (!str2.IsEmpty ())
     strResult += "," + str2;
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::Metaphone
 
 

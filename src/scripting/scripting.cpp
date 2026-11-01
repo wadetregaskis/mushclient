@@ -237,6 +237,9 @@ bool CMUSHclientDoc::FindAllEntryPoints (void)
 
 void CMUSHclientDoc::OnGameImmediate() 
 {
+#ifdef _WIN32
+CDialogsForWorld worldDialogs (this);   // what is typed here is sent to this world
+#endif
 CImmediateDlg dlg;
 
 dlg.m_pDoc = this;

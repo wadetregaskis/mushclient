@@ -40,7 +40,7 @@ BSTR CMUSHclientDoc::RGBColourToName(long Colour)
 {
 	CString strResult = ColourToName (Colour);
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::RGBColourToName
 
 
@@ -96,7 +96,7 @@ BSTR CMUSHclientDoc::ANSI(short Code)
 {
 CString strResult = CFormat ("%c[%dm", ESC, Code); 
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of MUSHclientDoc::ANSI
 
 
@@ -208,7 +208,7 @@ VARIANT CMUSHclientDoc::MapColourList()
       CString s = CFormat ("%s = %s", 
                           (LPCTSTR) ColourToName (it->first), 
                           (LPCTSTR) ColourToName (it->second));
-      COleVariant v (s);
+      CScriptVariant v (s);
       sa.PutElement (&iCount, &v);
       }      // end of looping through each colour
     } // end of having at least one
@@ -247,7 +247,7 @@ BSTR CMUSHclientDoc::GetCustomColourName(short WhichColour)
   if (WhichColour >= 1 && WhichColour <= MAX_CUSTOM)
     strResult = m_strCustomColourName [WhichColour - 1];
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::GetCustomColourName
 
 long CMUSHclientDoc::SetCustomColourName(short WhichColour, LPCTSTR Name) 

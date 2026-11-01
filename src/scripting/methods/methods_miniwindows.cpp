@@ -318,7 +318,7 @@ VARIANT CMUSHclientDoc::WindowList()
          it++)
            {
             // the array must be a bloody array of variants, or VBscript kicks up
-            COleVariant v (it->first.c_str ());
+            CScriptVariant v (it->first.c_str ());
             sa.PutElement (&iCount, &v);
             iCount++;
            }
@@ -873,7 +873,7 @@ BSTR CMUSHclientDoc::WindowMenu(LPCTSTR Name, long Left, long Top, LPCTSTR Items
 #endif
     strResult = it->second->Menu (Left, Top, Items, (CMUSHView *) pView, this);
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 
 }   // end of CMUSHclientDoc::WindowMenu
 

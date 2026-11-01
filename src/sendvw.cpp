@@ -322,7 +322,7 @@ ASSERT_VALID(pDoc);
     pDoc->m_iCurrentActionSource = eUserTyping;
 
 		CString strText;
-		GetEditCtrl().GetWindowText(strText);
+		CmdBoxGetText (GetEditCtrl (), GetDocument (), strText);
 
     // spell check on send?
     if (pDoc->m_bSpellCheckOnSend)
@@ -340,7 +340,7 @@ ASSERT_VALID(pDoc);
         if (!bOK)
           return;   // spell check was cancelled
         // get the text again, as the spell check may have changed it
-		    GetEditCtrl().GetWindowText(strText);
+		    CmdBoxGetText (GetEditCtrl (), GetDocument (), strText);
         }
 
       }   // end of spell check wanted
@@ -601,7 +601,7 @@ void CSendView::SetCommand (LPCTSTR str)
   {
 
 //  TRACE1 ("SetCommand = %s\n", str);
-	GetEditCtrl().SetWindowText (str);
+	CmdBoxSetText (GetEditCtrl (), GetDocument (), str);
   int len = GetWindowTextLength ();
   GetEditCtrl().SetSel (len, len);
   OnChange ();
@@ -801,7 +801,7 @@ void CSendView::SendMacro (int whichone)
 
   case ADD_TO_COMMAND:  
         
-        GetEditCtrl().ReplaceSel (pDoc->m_macros [whichone], TRUE);
+        CmdBoxReplaceSel (GetEditCtrl (), GetDocument (), pDoc->m_macros [whichone], TRUE);
         break;
 
   default:              
@@ -1076,7 +1076,7 @@ const int iIndex = KeypadCommandIdToSlot (nIDC);
       pDoc->m_iCurrentActionSource = eUnknownActionSource;
       }
     else
-      GetEditCtrl().ReplaceSel (KeypadSlotDigit (iIndex), TRUE);
+      CmdBoxReplaceSel (GetEditCtrl (), GetDocument (), KeypadSlotDigit (iIndex), TRUE);
     }
 
 // restore auto-say
@@ -1277,7 +1277,7 @@ const int iLimit = 200;
 
 CString strCurrent;
 
-  GetEditCtrl().GetWindowText (strCurrent);
+  CmdBoxGetText (GetEditCtrl (), GetDocument (), strCurrent);
 
   // nothing there? who cares?
   if (strCurrent.GetLength () == 0)
@@ -1629,7 +1629,7 @@ ASSERT_VALID(pDoc);
         }
       }
 
-  	GetEditCtrl().SetWindowText ("");
+  	CmdBoxSetText (GetEditCtrl (), GetDocument (), "");
     OnChange ();
     }
 
@@ -1655,7 +1655,7 @@ ASSERT_VALID(pDoc);
         GetKeyState (VK_MENU) >= 0 &&      // nor alt+return (above)
         GetKeyState (VK_SHIFT) < 0)
       {
-      GetEditCtrl().ReplaceSel ("\r\n", TRUE);  // at the caret, replacing the
+      CmdBoxReplaceSel (GetEditCtrl (), GetDocument (), "\r\n", TRUE);  // at the caret, replacing the
       return TRUE;                              //  selection; undoable
       }
 
@@ -2004,7 +2004,7 @@ int nStartChar;
 int nEndChar;
 
   // the selection as it is NOW, before the modal dialog can disturb it
-  GetEditCtrl().GetSel(nStartChar, nEndChar);
+  CmdBoxGetSel (GetEditCtrl (), GetDocument (), nStartChar, nEndChar);
 
   CGlobalChangeDlg dlg;
 
@@ -2036,7 +2036,7 @@ void CSendView::OnUpdateInputGlobalchange(CCmdUI* pCmdUI)
 	
 CString strCurrent;
 
-  GetEditCtrl().GetWindowText (strCurrent);
+  CmdBoxGetText (GetEditCtrl (), GetDocument (), strCurrent);
 	
   // they can do a global change if not empty
   pCmdUI->Enable (!strCurrent.IsEmpty ());
@@ -2057,7 +2057,7 @@ void CSendView::OnUpdateEditSpellcheck(CCmdUI* pCmdUI)
 {
 CString strCurrent;
 
-  GetEditCtrl().GetWindowText (strCurrent);
+  CmdBoxGetText (GetEditCtrl (), GetDocument (), strCurrent);
 	
   // they can do a spell check if not empty
   pCmdUI->Enable (!strCurrent.IsEmpty () && App.m_bSpellCheckOK);
@@ -2097,8 +2097,8 @@ int nEndChar;
 CString strCurrent;
   // get current text
 
-  GetEditCtrl().GetWindowText (strCurrent);
-  GetEditCtrl().GetSel(nStartChar, nEndChar);	
+  CmdBoxGetText (GetEditCtrl (), GetDocument (), strCurrent);
+  CmdBoxGetSel (GetEditCtrl (), GetDocument (), nStartChar, nEndChar);	
 
   // if they are replacing a selection - just get that bit
   if (nEndChar > nStartChar)
@@ -2434,9 +2434,9 @@ int nStartChar,
 CString strSelection;
 
   // find the selection range
-  GetEditCtrl().GetSel(nStartChar, nEndChar);
+  CmdBoxGetSel (GetEditCtrl (), GetDocument (), nStartChar, nEndChar);
   // get window text
-  GetEditCtrl().GetWindowText (strSelection);
+  CmdBoxGetText (GetEditCtrl (), GetDocument (), strSelection);
 
   bool bLua = false;
   
@@ -2455,7 +2455,7 @@ void CSendView::OnCompleteFunction()
 /*    // NOT YET
 
 	CString strText;
-  GetEditCtrl().GetWindowText(strText);
+  CmdBoxGetText (GetEditCtrl (), GetDocument (), strText);
 
   // if line starts with scripting prefix, do a function-completion
   if (pDoc->m_bEnableScripts &&            // providing scripting active
@@ -2503,7 +2503,7 @@ void CSendView::OnCompleteFunction()
       nEndChar;
 
   // find the selection range
-  GetEditCtrl().GetSel(nStartChar, nEndChar);
+  CmdBoxGetSel (GetEditCtrl (), GetDocument (), nStartChar, nEndChar);
 
   dlg.m_bFunctions = false;
   dlg.m_commandHistoryItems = &vWantedHistory;
@@ -2518,7 +2518,7 @@ void CSendView::OnCompleteFunction()
     return;
 
   GetEditCtrl().SetSel (0, -1);   // select all
-  GetEditCtrl().ReplaceSel (dlg.m_strResult, TRUE);
+  CmdBoxReplaceSel (GetEditCtrl (), GetDocument (), dlg.m_strResult, TRUE);
 */
 
 }
@@ -2598,7 +2598,7 @@ void CSendView::CheckForSelectionChange (void)
   int nStartChar;
   int nEndChar;
 
-  GetEditCtrl().GetSel(nStartChar, nEndChar);	
+  CmdBoxGetSel (GetEditCtrl (), GetDocument (), nStartChar, nEndChar);	
 
   // no selection? leave alone
   if (nStartChar == nEndChar)
@@ -2625,14 +2625,14 @@ void CSendView::CancelSelection (void)
   int nStartChar;
   int nEndChar;
 
-  GetEditCtrl().GetSel(nStartChar, nEndChar);	
+  CmdBoxGetSel (GetEditCtrl (), GetDocument (), nStartChar, nEndChar);	
 
   // no selection? leave alone
   if (nStartChar == nEndChar)
     return;
 
   // put cursor at end of previous selection
-  GetEditCtrl().SetSel (nEndChar, nEndChar);
+  CmdBoxSetSel (GetEditCtrl (), GetDocument (), nEndChar, nEndChar);
 
   } // end of CSendView::CancelSelection
 

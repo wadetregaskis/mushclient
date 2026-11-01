@@ -1193,7 +1193,7 @@ bool CMUSHclientDoc::ExecuteAliasScript (CAlias * alias_item,
       };    
 
     COleSafeArray sa;   // for wildcard list
-    COleVariant args [eArgCount];
+    CScriptVariant args [eArgCount];
     DISPPARAMS params = { args, NULL, eArgCount, 0 };
 
     args [eAliasName] = pLabel;
@@ -1206,11 +1206,11 @@ bool CMUSHclientDoc::ExecuteAliasScript (CAlias * alias_item,
     long i;
     for (i = 1; i < MAX_WILDCARDS; i++)
       {
-      COleVariant v (alias_item->wildcards [i].c_str ());
+      CScriptVariant v (alias_item->wildcards [i].c_str ());
       sa.PutElement (&i, &v);
       }
     // i should be MAX_WILDCARDS (10) now ;)
-    COleVariant v (alias_item->wildcards [0].c_str ()); // the whole matching line
+    CScriptVariant v (alias_item->wildcards [0].c_str ()); // the whole matching line
     sa.PutElement (&i, &v);
     args [eWildcards] = sa;
     

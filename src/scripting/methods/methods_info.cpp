@@ -77,7 +77,7 @@ BSTR CMUSHclientDoc::WorldName()
 
   strResult = m_mush_name;
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::WorldName
 
 
@@ -87,7 +87,7 @@ BSTR CMUSHclientDoc::Version()
 {
 	CString strResult = MUSHCLIENT_VERSION;
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::Version
 
 
@@ -1143,11 +1143,11 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
         break;
 
     case 299:
-        SetUpVariantLong (vaResult, GetACP());    // ANSI code page
+        SetUpVariantLong (vaResult, MachineAnsiCodePage ());    // ANSI code page
         break;
 
     case 300:
-        SetUpVariantLong (vaResult, GetOEMCP());  // OEM code page
+        SetUpVariantLong (vaResult, MachineOemCodePage ());  // OEM code page
         break;
 
 
@@ -1235,7 +1235,7 @@ BSTR CMUSHclientDoc::WorldAddress()
 {
 	CString strResult = m_server;
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of  CMUSHclientDoc::WorldAddress
 
 long CMUSHclientDoc::WorldPort() 
@@ -1532,7 +1532,7 @@ VARIANT CMUSHclientDoc::GetHostAddress(LPCTSTR HostName)
     // put the addresses into the array
       for (long i = 0; i < iCount; i++ )
         {
-        COleVariant v (pal::FormatAddress (addresses [i]).c_str ());
+        CScriptVariant v (pal::FormatAddress (addresses [i]).c_str ());
         sa.PutElement (&i, &v);
         }      // end of looping through each IP address
       } // end of having at least one
@@ -1552,13 +1552,13 @@ BSTR CMUSHclientDoc::GetHostName(LPCTSTR IPaddress)
       strResult = pal::NameOfAddress (address).c_str ();
     }   // end of non-blank name
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }    // end of CMUSHclientDoc::GetHostName
 
 
 BSTR CMUSHclientDoc::GetWorldID() 
 {
-	return m_strWorldID.AllocSysString();
+	return ScriptBstr (m_strWorldID);
 }  // end of CMUSHclientDoc::GetWorldID
 
 
@@ -1751,7 +1751,7 @@ BSTR CMUSHclientDoc::GetNotes()
 {
 	CString strResult = m_notes;
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::GetNotes
 
 
@@ -1773,7 +1773,7 @@ BSTR CMUSHclientDoc::ErrorDesc(long Code)
       }
     } 
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::ErrorDesc
 
 
@@ -1797,7 +1797,7 @@ BSTR CMUSHclientDoc::GetMainWindowPosition()
     }
 
 	windowPositionHelper (strResult, wp.rcNormalPosition);
-  return strResult.AllocSysString();
+  return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::GetMainWindowPosition
 
 // warning - different in Lua

@@ -302,7 +302,7 @@ BSTR CMUSHclientDoc::DatabaseError(LPCTSTR Name)
       } // end of switch
     }
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::DatabaseError
 
 
@@ -328,7 +328,7 @@ BSTR CMUSHclientDoc::DatabaseColumnName(LPCTSTR Name, long Column)
       strResult = p;
     }
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::DatabaseColumnName
 
 /////////////////////////////////////////////////////////////////////////////
@@ -356,7 +356,7 @@ BSTR CMUSHclientDoc::DatabaseColumnText(LPCTSTR Name, long Column)
       strResult = p;
     }
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::DatabaseColumnText
 
 /////////////////////////////////////////////////////////////////////////////
@@ -507,7 +507,7 @@ BSTR CMUSHclientDoc::DatabaseLastInsertRowid(LPCTSTR Name)
     strResult.Format("%lld", (long long) sqlite3_last_insert_rowid(it->second->db));
     }
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }    // end of CMUSHclientDoc::DatabaseLastInsertRowid
 
 /////////////////////////////////////////////////////////////////////////////
@@ -529,7 +529,7 @@ VARIANT CMUSHclientDoc::DatabaseList()
          it++)
            {
             // the array must be a bloody array of variants, or VBscript kicks up
-            COleVariant v (it->first.c_str ());
+            CScriptVariant v (it->first.c_str ());
             sa.PutElement (&iCount, &v);
             iCount++;
            }
@@ -626,7 +626,7 @@ VARIANT CMUSHclientDoc::DatabaseColumnNames(LPCTSTR Name)
          if (p)
            strResult = p;
 
-         COleVariant v (strResult);
+         CScriptVariant v (strResult);
          sa.PutElement (&i, &v);
          }
 
@@ -684,7 +684,7 @@ VARIANT CMUSHclientDoc::DatabaseColumnValues(LPCTSTR Name)
          {
 
         int iType = sqlite3_column_type(it->second->pStmt, i);
-        COleVariant v ;
+        CScriptVariant v ;
         // Declared out here, not inside the arms: on the port a COleVariant
         // borrows the string it is assigned, and PutElement below is what
         // copies it, so the CString has to still be alive at that point.

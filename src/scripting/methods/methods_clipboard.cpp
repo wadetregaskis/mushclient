@@ -16,14 +16,14 @@ BSTR CMUSHclientDoc::GetClipboard()
 {
 CString strContents; 
 
- GetClipboardContents (strContents, m_bUTF_8, false);   // no warning
+ ClipboardToWorldText (this, strContents, false);   // no warning
 
-	return strContents.AllocSysString();
+	return ScriptBstr (strContents);
 }  // end of CMUSHclientDoc::GetClipboard
 
 
 
 void CMUSHclientDoc::SetClipboard(LPCTSTR Text) 
 {
-putontoclipboard (Text, m_bUTF_8);
+WorldTextToClipboard (this, Text);
 }  // end of CMUSHclientDoc::SetClipboard

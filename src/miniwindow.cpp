@@ -754,7 +754,7 @@ static void SetUpVariantString (VARIANT & tVariant, const CString & strContents)
   {
   VariantClear (&tVariant);
   tVariant.vt = VT_BSTR;
-  tVariant.bstrVal = strContents.AllocSysString ();
+  tVariant.bstrVal = ScriptBstr (strContents);
   }   // end of SetUpVariantString
 
 static void SetUpVariantBool (VARIANT & tVariant, const BOOL iContents)
@@ -833,7 +833,7 @@ void CMiniWindow::FontList (VARIANT & vaResult)
          it++)
            {
             // the array must be a bloody array of variants, or VBscript kicks up
-            COleVariant v (it->first.c_str ());
+            CScriptVariant v (it->first.c_str ());
             sa.PutElement (&iCount, &v);
             iCount++;
            }
@@ -1497,7 +1497,7 @@ void CMiniWindow::ImageList(VARIANT & vaResult)
          it++)
            {
             // the array must be a bloody array of variants, or VBscript kicks up
-            COleVariant v (it->first.c_str ());
+            CScriptVariant v (it->first.c_str ());
             sa.PutElement (&iCount, &v);
             iCount++;
            }
@@ -1813,7 +1813,7 @@ void CMiniWindow::HotspotList(VARIANT & vaResult)
          it++)
            {
             // the array must be a bloody array of variants, or VBscript kicks up
-            COleVariant v (it->first.c_str ());
+            CScriptVariant v (it->first.c_str ());
             sa.PutElement (&iCount, &v);
             iCount++;
            }

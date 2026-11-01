@@ -5,6 +5,10 @@
 // xgettext  -kTranslateFormat -o mushclient_formatted.po *.cpp
 
 #include "stdafx.h"
+#ifdef _WIN32
+#include <afxstat_.h>   // _AFX_THREAD_STATE (CMUSHclientApp::PumpMessage)
+#include <afxpriv.h>   // WM_KICKIDLE
+#endif
 #include "MUSHclient.h"
 #include "pal/gdi_surface.h"   // Windows pal::ISurface adapter (self-guarded #ifdef _WIN32)
 #include "doc.h"
@@ -1201,6 +1205,27 @@ void CMUSHclientApp::OnGameMinimiseprogram()
   ASSERT(AfxGetMainWnd () != NULL);
   AfxGetMainWnd ()->ShowWindow(SW_MINIMIZE);		
 }
+
+#ifdef _WIN32
+// AfxInternalPumpMessage, but fetching wide: see HandleWideCharMessage.  Every
+// window here is multi-byte, and Windows converts for it in DispatchMessage, so
+// what it sees is unchanged -- except that a character that does not fit, it would
+// have been told was "?".  (Used by modal dialogs' loops as well as CWinApp::Run's.)
+BOOL CMUSHclientApp::PumpMessage ()
+  {
+  _AFX_THREAD_STATE * pState = AfxGetThreadState ();
+  if (!::GetMessageW (&pState->m_msgCur, NULL, 0, 0))
+    return FALSE;
+  if (pState->m_msgCur.message != WM_KICKIDLE &&
+      !HandleWideCharMessage (pState->m_msgCur) &&
+      !AfxPreTranslateMessage (&pState->m_msgCur))
+    {
+    ::TranslateMessage (&pState->m_msgCur);
+    ::DispatchMessageW (&pState->m_msgCur);
+    }
+  return TRUE;
+  } // end of CMUSHclientApp::PumpMessage
+#endif
 
 BOOL CMUSHclientApp::PreTranslateMessage(MSG* pMsg)
 {

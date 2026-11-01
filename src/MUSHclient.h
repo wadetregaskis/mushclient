@@ -52,6 +52,9 @@ class CMUSHclientApp : public CWinApp
 public:
 
 	virtual BOOL PreTranslateMessage(MSG* pMsg);
+#ifdef _WIN32
+	virtual BOOL PumpMessage ();
+#endif
 	CMUSHclientApp();
 	~CMUSHclientApp();
 

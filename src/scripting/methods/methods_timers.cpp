@@ -315,7 +315,7 @@ VARIANT CMUSHclientDoc::GetTimerList()
       GetTimerMap ().GetNextAssoc (pos, strTimerName, timer_item);
 
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (strTimerName);
+      CScriptVariant v (strTimerName);
       sa.PutElement (&iCount, &v);
       }      // end of looping through each timer
     } // end of having at least one

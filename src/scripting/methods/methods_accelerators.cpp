@@ -277,7 +277,7 @@ VARIANT CMUSHclientDoc::AcceleratorList()
       CString s = CFormat ("%s = %s%s", (LPCTSTR) key, 
                           command.c_str (), 
                           (LPCTSTR) strSendTo);
-      COleVariant v (s);
+      CScriptVariant v (s);
       sa.PutElement (&iCount, &v);
       }      // end of looping through each accelerator
     } // end of having at least one

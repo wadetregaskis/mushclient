@@ -1468,6 +1468,7 @@
     <ClCompile Include="src\surface_bridge.cpp" />
     <ClCompile Include="src\pal\gdi_surface.cpp" />
     <ClCompile Include="src\pal\netaddress.cpp" />
+    <ClCompile Include="src\text_edges.cpp" />
     <ClCompile Include="src\pal\win_transport.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <ClCompile Include="src\platform\mc_dispatch.cpp" />

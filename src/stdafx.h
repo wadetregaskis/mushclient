@@ -188,6 +188,18 @@ bool IsStringNumber (const string & s, const bool bSigned = false);
 #include "regexp.h"
 #include "mcdatetime.h" // MUSHclient date/time class
 
+#include "script_text.h"  // world text to scripts: ScriptBstr, CScriptVariant
+#include "text_edges.h"   // world text to controls
+
+#ifdef _WIN32
+// Every DDX_Text: a world's text in a world's dialogs goes through the wide APIs
+// (text_edges.h).  Text outside them, and everything that is not text, is MFC's.
+inline void MC_DDX_Text (CDataExchange * pDX, int nIDC, CString & value) { MC_DDX_TextString (pDX, nIDC, value); }
+template <class T> inline void MC_DDX_Text (CDataExchange * pDX, int nIDC, T & value) { ::DDX_Text (pDX, nIDC, value); }
+template <class T> inline void MC_DDX_Text (CDataExchange * pDX, int nIDC, T & value, int nPrecision) { ::DDX_Text (pDX, nIDC, value, nPrecision); }
+#define DDX_Text MC_DDX_Text
+#endif
+
 #include "sqlite3/sqlite3.h"  // SQLite3 database
 
 #define PREFERENCES_DATABASE_FILE "mushclient_prefs.sqlite"

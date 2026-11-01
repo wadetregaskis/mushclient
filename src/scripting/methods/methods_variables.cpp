@@ -105,7 +105,7 @@ VARIANT CMUSHclientDoc::GetVariableList()
       GetVariableMap ().GetNextAssoc (pos, strVariableName, variable_item);
 
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (strVariableName);
+      CScriptVariant v (strVariableName);
       sa.PutElement (&iCount, &v);
       iCount++;
       }      // end of looping through each Variable

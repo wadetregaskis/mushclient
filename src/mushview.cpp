@@ -3089,7 +3089,7 @@ CString strSelection;
     return;     // error in producing selection
     }
 
-  putontoclipboard (strSelection, pDoc->m_bUTF_8);
+  WorldTextToClipboard (pDoc, strSelection);
 
 }
 
@@ -6034,7 +6034,7 @@ char * p = NULL;
 
     free (p);   // remove memory allocated in CMemFile
     p = NULL;
-    putontoclipboard (strSelection, pDoc->m_bUTF_8);
+    WorldTextToClipboard (pDoc, strSelection);
 
     }   // end of try block
 

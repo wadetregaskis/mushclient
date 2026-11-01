@@ -58,7 +58,7 @@ VARIANT CMUSHclientDoc::GetWorldList()
       pDoc = (CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc(pos);
 
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (pDoc->m_mush_name);
+      CScriptVariant v (pDoc->m_mush_name);
       sa.PutElement (&iCount, &v);
       }      // end of looping through each world
     } // end of having at least one
@@ -89,7 +89,7 @@ VARIANT CMUSHclientDoc::GetWorldIdList()
       pDoc = (CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc(pos);
 
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (pDoc->m_strWorldID);
+      CScriptVariant v (pDoc->m_strWorldID);
       sa.PutElement (&iCount, &v);
       }      // end of looping through each world
     } // end of having at least one

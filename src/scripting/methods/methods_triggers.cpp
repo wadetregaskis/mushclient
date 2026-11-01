@@ -418,7 +418,7 @@ VARIANT CMUSHclientDoc::GetTriggerList()
       GetTriggerMap ().GetNextAssoc (pos, strTriggerName, trigger_item);
 
       // the array must be a bloody array of variants, or VBscript kicks up
-      COleVariant v (strTriggerName);
+      CScriptVariant v (strTriggerName);
       sa.PutElement (&iCount, &v);
       }      // end of looping through each trigger
     } // end of having at least one

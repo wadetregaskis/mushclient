@@ -125,7 +125,7 @@ BSTR CMUSHclientDoc::GetRecentLines(long Count)
     } // end of assembling text
   strResult = s.c_str ();
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::GetRecentLines
 
 
@@ -214,7 +214,7 @@ int i = 0;
     }
 #endif
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::GetWorldWindowPositionX
 
 

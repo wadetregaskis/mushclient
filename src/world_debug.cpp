@@ -930,7 +930,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
 	  for (iCount = 0; InfoTypes [iCount].iInfoType; iCount++)
       {
-      COleVariant v;
+      CScriptVariant v;
 
       v = GetInfo (InfoTypes [iCount].iInfoType);
 
@@ -943,7 +943,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
         Note (CFormat ("%03i: %s = %s", InfoTypes [iCount].iInfoType,
                        InfoTypes [iCount].sDescription,
-                       (LPCTSTR) CString (v.bstrVal)));
+                       (LPCTSTR) ScriptBytes (v.bstrVal)));
 
         v.Clear ();   // get rid of string (is this necessary?)
         } // end of not VT_NULL

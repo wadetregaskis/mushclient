@@ -137,7 +137,7 @@ inline void SetUpVariantDatabaseInteger (VARIANT & tVariant, const sqlite3_int64
 
     default:
       tVariant.vt = VT_BSTR;
-      tVariant.bstrVal = DatabaseIntegerAsString (iValue).AllocSysString ();
+      tVariant.bstrVal = ScriptBstr (DatabaseIntegerAsString (iValue));
       break;
     }
   }   // end of SetUpVariantDatabaseInteger

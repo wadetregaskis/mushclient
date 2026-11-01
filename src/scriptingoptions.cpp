@@ -138,7 +138,7 @@ VARIANT CMUSHclientDoc::GetOptionList()
   for (i = 0; OptionsTable [i].pName; i++)
     {
     // the array must be a bloody array of variants, or VBscript kicks up
-    COleVariant v (OptionsTable [i].pName);
+    CScriptVariant v (OptionsTable [i].pName);
     sa.PutElement (&i, &v);
     }      // end of looping through each option
 
@@ -160,7 +160,7 @@ VARIANT CMUSHclientDoc::GetAlphaOptionList()
   for (i = 0; AlphaOptionsTable [i].pName; i++)
     {
     // the array must be a bloody array of variants, or VBscript kicks up
-    COleVariant v (AlphaOptionsTable [i].pName);
+    CScriptVariant v (AlphaOptionsTable [i].pName);
     sa.PutElement (&i, &v);
     }      // end of looping through each option
 

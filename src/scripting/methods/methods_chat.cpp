@@ -615,7 +615,7 @@ VARIANT CMUSHclientDoc::GetChatList()
         if (pSocket->m_iChatStatus == eChatConnected)
           {
           // the array must be a bloody array of variants, or VBscript kicks up
-          COleVariant v (pSocket->m_iChatID);
+          CScriptVariant v (pSocket->m_iChatID);
           sa.PutElement (&iCount, &v);
           iCount++;
           }

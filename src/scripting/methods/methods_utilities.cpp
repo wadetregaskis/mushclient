@@ -118,7 +118,7 @@ long length;
 BSTR CMUSHclientDoc::StripANSI(LPCTSTR Message) 
 {
 CString strResult = ::StripAnsi (Message);
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }
 
 
@@ -154,7 +154,7 @@ BSTR CMUSHclientDoc::Replace(LPCTSTR Source, LPCTSTR SearchFor, LPCTSTR ReplaceW
 	CString strResult;
   CString strSource = Source;
   strResult = ::Replace (strSource, SearchFor, ReplaceWith, Multiple != 0);
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::Replace
 
 BSTR CMUSHclientDoc::FixupEscapeSequences(LPCTSTR Source) 
@@ -162,7 +162,7 @@ BSTR CMUSHclientDoc::FixupEscapeSequences(LPCTSTR Source)
 	CString strResult;
   CString strSource = Source;
   strResult = ::FixupEscapeSequences (strSource);
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }    // end of CMUSHclientDoc::FixupEscapeSequences
 
 BSTR CMUSHclientDoc::Trim(LPCTSTR Source) 
@@ -171,7 +171,7 @@ BSTR CMUSHclientDoc::Trim(LPCTSTR Source)
   strSource.TrimLeft ();
   strSource.TrimRight ();
   
-	return strSource.AllocSysString();
+	return ScriptBstr (strSource);
 }  // end of CMUSHclientDoc::Trim
 
 
@@ -180,7 +180,7 @@ BSTR CMUSHclientDoc::Trim(LPCTSTR Source)
 BSTR CMUSHclientDoc::FixupHTML(LPCTSTR StringToConvert) 
 {
 	CString strResult = FixHTMLString (StringToConvert);
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::FixupHTML
 
 
@@ -273,7 +273,7 @@ BSTR CMUSHclientDoc::CreateGUID()
 {
 	CString strResult = GetGUID ();
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::CreateGUID
 
 
@@ -290,7 +290,7 @@ BSTR CMUSHclientDoc::Hash(LPCTSTR Text)
   for (int i = 0; i < NUMITEMS (shsInfo.digest); i++)
     strResult += CFormat ("%08x", shsInfo.digest [i]);
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::Hash
 
 
@@ -299,7 +299,7 @@ BSTR CMUSHclientDoc::GetUniqueID()
 {
 CString strResult = ::GetUniqueID ();
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
 }  // end of CMUSHclientDoc::GetUniqueID
 
 
@@ -307,13 +307,13 @@ BSTR CMUSHclientDoc::TranslateGerman(LPCTSTR Text)
 {
 	CString strResult = FixUpGerman (Text);
 
-	return strResult.AllocSysString();
+	return ScriptBstr (strResult);
   }  // end of CMUSHclientDoc::TranslateGerman
 
 
 BSTR CMUSHclientDoc::MakeRegularExpression(LPCTSTR Text) 
 {
-	return ConvertToRegularExpression (Text).AllocSysString();
+	return ScriptBstr (ConvertToRegularExpression (Text));
 }   // end of CMUSHclientDoc::MakeRegularExpression
 
 
@@ -660,7 +660,7 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
 
   // must have at least one item
   if (iCount < 1)
-    return strResult.AllocSysString();
+    return ScriptBstr (strResult);
 
 #ifdef _WIN32
   CSendView* pmyView = NULL;
@@ -677,7 +677,7 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
     }
 
   if (!pmyView)
-    return strResult.AllocSysString();
+    return ScriptBstr (strResult);
 
   CEdit * ctlEdit = & pmyView->GetEditCtrl();
 
@@ -685,7 +685,7 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
       nEndChar;
 
   // find the selection range
-  ctlEdit->GetSel(nStartChar, nEndChar);
+  CmdBoxGetSel (*ctlEdit, this, nStartChar, nEndChar);
 
   if (nEndChar < 0)
     nEndChar = nStartChar;
@@ -723,7 +723,7 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
     }
 #endif // _WIN32
 
-  return strResult.AllocSysString();
+  return ScriptBstr (strResult);
 }   // end of CMUSHclientDoc::Menu
 
 

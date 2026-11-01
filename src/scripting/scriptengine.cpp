@@ -66,7 +66,7 @@ bool CScriptEngine::Execute (DISPID & dispid,  // dispatch ID, will be set to DI
         {
         // A real (wide) BSTR here: CString narrows it the way MFC's automation
         // layer would have for the callee.
-        case VT_BSTR:  sparams.push_back ((LPCTSTR) CString (v.bstrVal));  break;
+        case VT_BSTR:  sparams.push_back ((LPCTSTR) ScriptBytes (v.bstrVal));  break;
         case VT_I2:    nparams.push_back (v.iVal);              break;
         case VT_I4:    nparams.push_back (v.lVal);              break;
         case VT_R4:    nparams.push_back (v.fltVal);            break;
@@ -526,7 +526,7 @@ SCRIPTSTATE ss;
   BSTR bstrCode;
   EXCEPINFO ei; 
 
-  bstrCode = strCode.AllocSysString ();
+  bstrCode = ScriptBstr (strCode);
   ZeroMemory(&ei, sizeof(ei));
 
   if (!bstrCode)
@@ -587,7 +587,7 @@ BSTR bstrProcedure;
 HRESULT hr;
 DISPID dispid;
 
-  bstrProcedure = strName.AllocSysString ();
+  bstrProcedure = ScriptBstr (strName);
 
 // LCID en_us = MAKELCID (MAKELANGID (LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
 

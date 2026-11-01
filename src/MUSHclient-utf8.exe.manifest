@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+
+<assembly
+   xmlns="urn:schemas-microsoft-com:asm.v1"
+   xmlns:asmv3="urn:schemas-microsoft-com:asm.v3"
+   manifestVersion="1.0">
+
+    <!-- No processorArchitecture here: the attribute is optional, and this
+         one file is embedded into the Win32, x64 and ARM64 builds alike.
+         A hard-coded "x86" in a 64-bit image makes the loader refuse it. -->
+    <assemblyIdentity
+        version="6.0.0.0"
+        type="win32"
+        name="MUSHclient.exe"/>
+
+    <description>MUSHclient</description>
+
+    <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+        <security>
+            <requestedPrivileges>
+                <requestedExecutionLevel
+                    level="asInvoker"
+                    uiAccess="false"
+                />
+            </requestedPrivileges>
+        </security>
+    </trustInfo>
+
+    <!-- Declare OS compatibility -->
+    <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+        <application>
+            <!-- Windows 11 -->
+            <supportedOS Id="{d8fcd9e3-1760-4cd5-9f9c-44b3226fb1b4}"/>
+            <!-- Windows 10 -->
+            <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+            <!-- Windows 8.1 -->
+            <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+            <!-- Windows 8 -->
+            <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+            <!-- Windows 7 -->
+            <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
+            <!-- Windows Vista -->
+            <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"/>
+            <!-- Windows XP ignores this section entirely -->
+        </application>
+    </compatibility>
+
+    <!-- UTF-8 as the process code page (Windows 10 1903 and later; earlier
+         versions ignore this).  docs/UTF8-PLAN-2026-10.md -->
+    <application xmlns="urn:schemas-microsoft-com:asm.v3">
+        <windowsSettings>
+            <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+        </windowsSettings>
+    </application>
+
+    <!-- Enable Common Controls v6 for visual styles -->
+    <dependency>
+        <dependentAssembly>
+            <assemblyIdentity
+                type="win32"
+                name="Microsoft.Windows.Common-Controls"
+                version="6.0.0.0"
+                processorArchitecture="*"
+                publicKeyToken="6595b64144ccf1df"
+                language="*"
+            />
+        </dependentAssembly>
+    </dependency>
+
+</assembly>

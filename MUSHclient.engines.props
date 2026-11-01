@@ -30,6 +30,9 @@
     <ClCompile>
       <PreprocessorDefinitions>MUSHCLIENT_EMBEDDED_ENGINES;MUSHCLIENT_PYTHON_SCRIPTING;MUSHCLIENT_JS_SCRIPTING;MUSHCLIENT_TCL_SCRIPTING;MUSHCLIENT_RUBY_SCRIPTING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>MUSHCLIENT_EMBEDDED_ENGINES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
     <Link>
       <AdditionalDependencies>ruby.lib;tcl86.lib;quickjs.lib;netapi32.lib;userenv.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>

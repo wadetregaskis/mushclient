@@ -629,7 +629,7 @@ void CMUSHclientDoc::ExecuteHotspotScript (DISPID & dispid,  // dispatch ID, wil
     eArgCount,     // this MUST be last
     };    
 
-  COleVariant args [eArgCount]; // arguments to script
+  CScriptVariant args [eArgCount]; // arguments to script
   DISPPARAMS params = { args, NULL, eArgCount, 0 };
 
 
@@ -1882,7 +1882,7 @@ void CMUSHclientDoc::OnEditPastetomush()
 
 CString strClipboard;
 
-if (!GetClipboardContents (strClipboard, m_bUTF_8))
+if (!ClipboardToWorldText (this, strClipboard))
   return;
 
 CMemFile f ((unsigned char *) (const char *) strClipboard, strClipboard.GetLength ());

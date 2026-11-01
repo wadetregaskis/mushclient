@@ -59,7 +59,7 @@ CString strText;
   if (!m_pDoc->m_ScriptEngine)
     return;
 
-  m_ctlExpression.GetWindowText (strText);
+  CmdBoxGetText (m_ctlExpression, m_pDoc, strText);   // this world's bytes
 
   Frame.SetStatusMessageNow (Translate ("Executing immediate script"));
 
@@ -76,7 +76,7 @@ CString strText;
 void CImmediateDlg::OnCancel( )
   {
   // save the expression text for next time
-  m_ctlExpression.GetWindowText (m_strExpression);
+  CmdBoxGetText (m_ctlExpression, m_pDoc, m_strExpression);
   CDialog::OnCancel ();
   }
 
@@ -84,7 +84,7 @@ void CImmediateDlg::OnEdit()
 {
 CEditMultiLine dlg;
 
-  dlg.m_strText = GetText (m_ctlExpression);
+  CmdBoxGetText (m_ctlExpression, m_pDoc, dlg.m_strText);
 
   dlg.m_strTitle = "Edit immediate expression";
 
@@ -96,7 +96,7 @@ CEditMultiLine dlg;
   if (dlg.DoModal () != IDOK)
       return;
 
-  m_ctlExpression.SetWindowText (dlg.m_strText);
+  CmdBoxSetText (m_ctlExpression, m_pDoc, dlg.m_strText);
 	
 }
 

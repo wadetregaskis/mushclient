@@ -4794,7 +4794,7 @@ long i = 1;
     };    
 
   COleSafeArray sa;   // for wildcard list
-  COleVariant args [eArgCount]; // arguments to script
+  CScriptVariant args [eArgCount]; // arguments to script
   DISPPARAMS params = { args, NULL, eArgCount, 0 };
 
 //    ::AfxMessageBox (trigger_item->trigger);
@@ -4808,11 +4808,11 @@ long i = 1;
   sa.CreateOneDim (VT_VARIANT, MAX_WILDCARDS, NULL, 1);
   for (i = 1; i < MAX_WILDCARDS; i++)
     {
-    COleVariant v (trigger_item->wildcards [i].c_str ());
+    CScriptVariant v (trigger_item->wildcards [i].c_str ());
     sa.PutElement (&i, &v);
     }
   // i should be MAX_WILDCARDS (10) now ;)
-  COleVariant v (trigger_item->wildcards [0].c_str ()); // the whole matching line
+  CScriptVariant v (trigger_item->wildcards [0].c_str ()); // the whole matching line
   sa.PutElement (&i, &v);
   args [eWildcards] = sa;
 
@@ -5312,7 +5312,7 @@ void CMUSHclientDoc::SetUpVariantString (VARIANT & tVariant, const CString & str
   {
   VariantClear (&tVariant);
   tVariant.vt = VT_BSTR;
-  tVariant.bstrVal = strContents.AllocSysString (); 
+  tVariant.bstrVal = ScriptBstr (strContents); 
   }   // end of CMUSHclientDoc::SetUpVariantString
 
 
@@ -5838,10 +5838,10 @@ void CMUSHclientDoc::SendTo (
 
           CString strCurrent;
 
-          pmyView->GetEditCtrl().GetWindowText (strCurrent);
+          CmdBoxGetText (pmyView->GetEditCtrl (), this, strCurrent);
           if (strCurrent.IsEmpty ())
             {
-            pmyView->GetEditCtrl().ReplaceSel (strSendText, TRUE);
+            CmdBoxReplaceSel (pmyView->GetEditCtrl (), this, strSendText, TRUE);
             break;    // just do first view that we can use
             }   // end of command being empty
 	        }	  // end of being a CMUSHView

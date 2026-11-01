@@ -38,8 +38,9 @@ SetCompressor /SOLID lzma
   !define LUADLL     "..\WinRel\lua5.1.dll"
   !define LUALIB     "..\src\lua5.1.lib"
   !define LOCALEDIR  "..\WinRel\locale"
-  !define SOCKETCORE "..\lua\socket\core.dll"
-  !define MIMECORE   "..\lua\mime\core.dll"
+  ; fetch-deps.ps1 -Arch x86 -Only luasocket
+  !define SOCKETCORE "..\packaging\windows\deps\Win32\bin\socket\core.dll"
+  !define MIMECORE   "..\packaging\windows\deps\Win32\bin\mime\core.dll"
   !define OUTFILE    "mushclient50x.exe"
   !define PROGDIR    "$PROGRAMFILES"
   !define APPNAME    "MUSHclient"
@@ -538,6 +539,7 @@ SetOverwrite ifnewer
 
    File "${SOCKETCORE}"
    File "..\lua\socket\ftp.lua"
+   File "..\lua\socket\headers.lua"
    File "..\lua\socket\http.lua"
    File "..\lua\socket\smtp.lua"
    File "..\lua\socket\tp.lua"
@@ -805,6 +807,7 @@ Section Uninstall
   Delete "$INSTDIR\mime\core.dll"
   Delete "$INSTDIR\socket\core.dll"
   Delete "$INSTDIR\socket\ftp.lua"
+  Delete "$INSTDIR\socket\headers.lua"
   Delete "$INSTDIR\socket\http.lua"
   Delete "$INSTDIR\socket\smtp.lua"
   Delete "$INSTDIR\socket\tp.lua"

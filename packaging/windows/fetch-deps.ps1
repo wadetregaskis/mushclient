@@ -5,11 +5,17 @@
 .DESCRIPTION
   The Win32 build uses prebuilts committed to the repository -- openssl\lib\
   libcrypto.lib + libssl.lib (static OpenSSL 3.5, VC-WIN32, /MT) and
-  src\lua5.1.lib (import library for lua5.1.dll) -- plus DLLs from an existing
-  installation (lua5.1.dll, socket\core.dll, mime\core.dll).  Every one is
-  32-bit x86.  This script produces the 64-bit set for one architecture, from
-  source wherever source exists, plus the scripting runtimes the 64-bit
-  builds embed (MUSHclient.engines.props):
+  src\lua5.1.lib (import library for lua5.1.dll) -- plus lua5.1.dll from an
+  existing installation.  Every one is 32-bit x86.  This script produces the
+  64-bit set for one architecture, from source wherever source exists, plus the
+  scripting runtimes the 64-bit builds embed (MUSHclient.engines.props).
+
+  -Arch x86 builds just the two Win32 pieces that are made from source:
+  -Only openssl (then copy deps\Win32\lib\*.lib to openssl\lib\ and
+  deps\Win32\include\openssl\*.h to openssl\include\openssl\, and commit them)
+  and -Only luasocket (the installer takes those from deps\Win32\bin\; a
+  development copy wants them beside the exe, as socket\core.dll and
+  mime\core.dll, because lua\socket*.lua, shared by every build, need them).
 
     openssl    OpenSSL 3.5.x, static libcrypto.lib / libssl.lib + headers,
                built the way the committed x86 libs were (VC-WIN32,
@@ -17,7 +23,7 @@
                verified against its published .sha256.
     lua        Lua 5.1.5 as lua5.1.dll + lua5.1.lib (lua.org, pinned), every
                symbol the x86 DLL exports, x86's rounding (Build-Lua).
-    luasocket  LuaSocket 2.0.2: socket\core.dll + mime\core.dll.
+    luasocket  LuaSocket 3.1.0: socket\core.dll + mime\core.dll.
     dina       the Dina bitmap font one bundled plugin uses, from its author's
                own release (pinned; MIT licence) -- architecture-neutral.
     python     python.org's NuGet package: python3XX.dll + python\.
@@ -55,7 +61,7 @@
     - tar.exe from Windows 10 1803+ (System32), for the .tar.gz sources.
 
 .PARAMETER Arch
-  x64 or arm64 (case-insensitive).
+  x64 or arm64 (case-insensitive), or x86 with -Only openssl and/or luasocket.
 
 .PARAMETER OpenSslVersion
   Exact OpenSSL release, e.g. 3.5.9.  Default: newest final 3.5.x on GitHub.
@@ -90,7 +96,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('x64', 'arm64')] [string]$Arch,      # case-insensitive: ARM64 works too
+  [ValidateSet('x64', 'arm64', 'x86')] [string]$Arch,      # case-insensitive: ARM64 works too
   [string]$OpenSslVersion = '',
   [string]$OpenSslSeries = '3.5',
   [switch]$NoAsm,
@@ -109,9 +115,12 @@ Set-StrictMode -Version 2
 
 # ---------------------------------------------------------------- constants ---
 
-$Platform = if ($Arch -eq 'x64') { 'x64' } else { 'ARM64' }     # MSBuild's spelling
-$Machine  = if ($Arch -eq 'x64') { 'X64' } else { 'ARM64' }      # link /MACHINE:
-$PeMachine = if ($Arch -eq 'x64') { 0x8664 } else { 0xAA64 }
+$Platform = @{ x64 = 'x64'; arm64 = 'ARM64'; x86 = 'Win32' }[$Arch.ToLowerInvariant()]     # MSBuild's spelling
+$Machine  = @{ x64 = 'X64'; ARM64 = 'ARM64'; Win32 = 'X86' }[$Platform]      # link /MACHINE:
+$PeMachine = @{ x64 = 0x8664; ARM64 = 0xAA64; Win32 = 0x14C }[$Platform]
+if ($Platform -eq 'Win32' -and (-not $Only.Count -or ($Only | Where-Object { $_ -notin 'openssl', 'luasocket' }))) {
+  throw '-Arch x86 builds only -Only openssl and/or luasocket: the rest of Win32 is committed or comes from an installation'
+}
 
 $Repo   = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $Deps   = Join-Path $PSScriptRoot 'deps'
@@ -125,9 +134,9 @@ $OutBin = Join-Path $Out 'bin'
 $LuaVersion   = '5.1.5'
 $LuaUrl       = "https://www.lua.org/ftp/lua-$LuaVersion.tar.gz"
 $LuaSha256    = '2640fc56a795f29d28ef15e13c34a47e223960b0240e8cb0a82d9b0738695333'   # lua.org/ftp
-$SocketTag    = 'v2.0.2'
+$SocketTag    = 'v3.1.0'
 $SocketUrl    = "https://github.com/lunarmodules/luasocket/archive/refs/tags/$SocketTag.tar.gz"
-$SocketSha256 = '4861d1d6589462ac638c8d096085e7b4fe12bb90263c84e13bac5c89b0b67475'   # GitHub's tag archive
+$SocketSha256 = 'bf033aeb9e62bcaa8d007df68c119c966418e8c9ef7e4f2d7e96bddeca9cca6e'   # GitHub's tag archive
 
 # The embedded scripting languages: the same versions packaging/fetch-*.sh
 # bundle on macOS and Linux, give or take a patch release.
@@ -227,6 +236,7 @@ function Import-VsEnvironment {
   if ($sysArch -eq 'ARM64') { $hostArch = 'Arm64' }
   $vcArg = switch ($Platform) {
     'x64'   { if ($hostArch -eq 'Arm64') { 'arm64_x64' } else { 'x64' } }
+    'Win32' { if ($hostArch -eq 'Arm64') { 'arm64_x86' } else { 'x64_x86' } }
     'ARM64' { if ($hostArch -eq 'Arm64') { 'arm64' } else { 'x64_arm64' } }
   }
   $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -306,7 +316,7 @@ function Assert-Machine([string]$Path) {
 function Assert-LibMachine([string]$Path) {
   $out = & dumpbin /nologo /headers $Path | Select-String -Pattern 'machine \((\w+)\)' | Select-Object -First 1
   if (-not $out) { Warn "could not read the machine type of $Path"; return }
-  $want = if ($Platform -eq 'x64') { 'x64' } else { 'ARM64' }
+  $want = @{ x64 = 'x64'; ARM64 = 'ARM64'; Win32 = 'x86' }[$Platform]
   if ($out.Matches[0].Groups[1].Value -ne $want) { throw "$Path is $($out.Matches[0].Groups[1].Value), expected $want" }
 }
 
@@ -355,8 +365,8 @@ function Build-OpenSsl {
   # Target and assembler.  The committed x86 libs say "platform: VC-WIN32";
   # these are its 64-bit siblings.
   $cfgArgs = @()
-  if ($Platform -eq 'x64') {
-    $target = 'VC-WIN64A'
+  if ($Platform -ne 'ARM64') {
+    $target = if ($Platform -eq 'x64') { 'VC-WIN64A' } else { 'VC-WIN32' }
     if ($NoAsm) { $cfgArgs += 'no-asm' }
     elseif (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
       throw 'NASM is not on PATH (winget install NASM.NASM, then reopen the shell), or pass -NoAsm'
@@ -479,9 +489,11 @@ function Build-LuaSocket {
     $Versions['LuaSocket'] = "$SocketTag (already built)"
     return
   }
-  $luaLib = Join-Path $OutLib 'lua5.1.lib'
+  # Win32 links the committed import library of the shipped x86 lua5.1.dll,
+  # against the headers beside it.
+  $luaLib = if ($Platform -eq 'Win32') { Join-Path $Repo 'src\lua5.1.lib' } else { Join-Path $OutLib 'lua5.1.lib' }
   if (-not (Test-Path $luaLib)) { throw 'LuaSocket links lua5.1.lib: build lua first (-Only lua)' }
-  $luaInc = Join-Path $Work 'lua\src'
+  $luaInc = if ($Platform -eq 'Win32') { Join-Path $Repo 'src' } else { Join-Path $Work 'lua\src' }
   if (-not (Test-Path (Join-Path $luaInc 'lua.h'))) {
     $t = Get-Download -Url $LuaUrl -Name "lua-$LuaVersion.tar.gz" -Sha256 $LuaSha256
     Expand-TarGz $t.Path (Join-Path $Work 'lua')
@@ -497,18 +509,18 @@ function Build-LuaSocket {
   Note "building socket\core.dll (LuaSocket $SocketTag)"
   $objS = New-Dir (Join-Path $Work 'socket-obj')
   $socketFiles = 'luasocket', 'timeout', 'buffer', 'io', 'auxiliar', 'options', 'inet', 'tcp',
-                 'udp', 'except', 'select', 'wsocket' | ForEach-Object { Join-Path $s "$_.c" }
+                 'udp', 'except', 'select', 'wsocket', 'compat' | ForEach-Object { Join-Path $s "$_.c" }
   Exec cl ($common + @('/DLUASOCKET_API=__declspec(dllexport)') + $socketFiles) $objS
-  # wsocket.h includes <winsock.h>: the x86 core.dll imported WSOCK32.dll.
   Exec link (@('/nologo', '/DLL', "/MACHINE:$Machine", "/OUT:$sock", "/IMPLIB:$objS\core.lib") +
              (Get-ChildItem (Join-Path $objS '*.obj') | ForEach-Object { $_.FullName }) +
-             @($luaLib, 'ws2_32.lib', 'wsock32.lib'))
+             @($luaLib, 'ws2_32.lib'))
 
   Note "building mime\core.dll"
   $objM = New-Dir (Join-Path $Work 'mime-obj')
-  Exec cl ($common + @('/DMIME_API=__declspec(dllexport)', (Join-Path $s 'mime.c'))) $objM
+  Exec cl ($common + @('/DMIME_API=__declspec(dllexport)', '/DLUASOCKET_API=__declspec(dllexport)',
+                       (Join-Path $s 'mime.c'), (Join-Path $s 'compat.c'))) $objM
   Exec link @('/nologo', '/DLL', "/MACHINE:$Machine", "/OUT:$mime", "/IMPLIB:$objM\core.lib",
-              (Join-Path $objM 'mime.obj'), $luaLib)
+              (Join-Path $objM 'mime.obj'), (Join-Path $objM 'compat.obj'), $luaLib)
 
   foreach ($d in $sock, $mime) { Assert-Machine $d }
   $Versions['LuaSocket'] = "$SocketTag (github.com/lunarmodules/luasocket, sha256 $($tgz.Sha256))"
@@ -690,7 +702,7 @@ function Build-RubyDeps([string]$Into) {
   $inc = New-Dir (Join-Path $Into 'include')
   $lib = New-Dir (Join-Path $Into 'lib')
 
-  # zlib: the repository's own copy (zlib\, 1.3.1), the one the app links.
+  # zlib: the repository's own copy (zlib\), the one the app links.
   $zobj = New-Dir (Join-Path $Work 'ruby-zlib-obj')
   $zsrc = Join-Path $Repo 'zlib'
   $zfiles = 'adler32','compress','crc32','deflate','gzclose','gzlib','gzread','gzwrite','infback',

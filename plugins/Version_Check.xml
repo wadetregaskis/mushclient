@@ -9,12 +9,14 @@
    language="Lua"
    purpose="Checks for a new version of MUSHclient"
    date_written="2010-11-13 16:45:58"
-   requires="4.60"
-   version="1.5"
+   date_modified="2026-10-31 12:00:00"
+   requires="6.00"
+   version="2.0"
    >
 <description trim="y">
 <![CDATA[
-This automatically checks every week for a new version of MUSHclient.
+This automatically checks every week for a new version of MUSHclient, on this
+fork's GitHub releases page. It tells you; it does not download or install anything.
 
 It only checks when you load the plugin. You can change that by enabling the
 timer in the plugin (change to: enabled="y" )
@@ -63,6 +65,7 @@ To check right now, type: version_check
 -- interval
 
 CHECK_INTERVAL = 60 * 60 * 24 * 7  -- every 7 days
+CHECK_TIMEOUT = 5                  -- seconds
 
 -- font
 FONT_NAME = "Microsoft Sans Serif"
@@ -76,12 +79,13 @@ GAP = 5
 
 TITLE = "A new version of MUSHclient is available."
 
-VERSION_URL       = "http://www.mushclient.com/scripts/version.php"
+-- "latest" leaves out drafts and pre-releases
+LATEST_RELEASE_URL = "https://api.github.com/repos/wadetregaskis/mushclient/releases/latest"
+RELEASES_URL       = "https://github.com/wadetregaskis/mushclient/releases"
 
-ANNOUNCEMENTS_URL = "http://www.mushclient.com/scripts/?bbtopic_id=1"
-RELNOTES_URL      = "http://www.mushclient.com/relnotes"
+MAX_DESCRIPTION_LINES = 12  -- any more and the links can end up off the screen
 
- 
+
 -- colours
 WINDOW_BACKGROUND_COLOUR = ColourNameToRGB ("khaki")
 WINDOW_TEXT_COLOUR = ColourNameToRGB ("black")
@@ -107,15 +111,15 @@ db:close()  -- close
 
 function hyperlink_download ()
    OpenBrowser (installer_url)
-end -- hyperlink_download 
-
-function hyperlink_announcements ()
-   OpenBrowser (ANNOUNCEMENTS_URL)
-end -- hyperlink_announcements 
+end -- hyperlink_download
 
 function hyperlink_relnotes ()
-   OpenBrowser (RELNOTES_URL)
-end -- hyperlink_relnotes 
+   OpenBrowser (release_url)
+end -- hyperlink_relnotes
+
+function hyperlink_releases ()
+   OpenBrowser (RELEASES_URL)
+end -- hyperlink_releases
 
 function hyperlink_close ()
    WindowShow (win, false)
@@ -158,51 +162,108 @@ function make_hyperlink (text, id, left, top, action, hint)
            
 end -- make_hyperlink    
 
-function do_version_check ()
-  
+-- remember when we checked last
+function remember_check ()
+  last_check_time = os.time ()
+  db = sqlite3.open(GetInfo (82))  -- open preferences
+  db:exec (string.format ('UPDATE prefs SET value = %i WHERE name = "time_last_version_check"',
+            last_check_time))
+  db:close()  -- close
+end -- remember_check
+
+-- The file to download for this copy, from a release's list of files, or nil to
+-- send them to the release page to choose.  packaging/README.md has the names.
+function asset_for_this_copy (release, version)
+  local info = utils.info ()
+  local wanted
+
+  if info.platform == "windows" then
+    local portable = io.open (info.app_directory .. "portable.txt")
+    if portable then
+      portable:close ()
+      wanted = string.format ("MUSHclient-%s-windows-%s.zip", version, info.architecture)
+    else
+      wanted = string.format ("MUSHclient-%s-windows-%s-setup.exe", version, info.architecture)
+    end -- if
+  elseif info.platform == "macos" then
+    wanted = string.format ("MUSHclient-%s-macOS-universal.dmg", version)
+  elseif not string.match (info.app_directory, "^/usr/") then  -- installed by a .deb otherwise
+    local linux_arch = { x64 = "x86_64", arm64 = "arm64" }
+    wanted = string.format ("mushclient-%s-linux-%s.tar.xz", version, linux_arch [info.architecture] or "")
+  end -- if
+
+  for _, asset in ipairs (release.assets or {}) do
+    if asset.name == wanted then
+      return asset
+    end -- if
+  end -- for
+end -- asset_for_this_copy
+
+-- name is set when they typed the alias, so they want to hear how it went
+function do_version_check (name)
+
   require "getlines"
   require "movewindow"
-  
-  if package.loaders [3] == nil or package.loadlib == nil then
-     ColourNote ("orange", "", GetPluginName () .. " cannot do version check.") 
-     ColourNote ("orange", "", "You need to allow DLLs to be loaded.")
-     ColourNote ("orange", "", "You also need to trust this plugin.")
-     ColourNote ("orange", "", "See File Menu -> Global Preferences -> Lua")
-     return
-  end -- if
-    
-  local http = require "socket.http" 
-  
+  local json = require "json"
+
+  local function complain (why)
+    if name then
+      ColourNote ("orange", "", GetPluginName () .. " could not check for a new version: " .. why)
+    end -- if
+  end -- complain
+
+  -- This holds up the whole client until it is done, so a machine with no network
+  -- must not pay for it every time a world opens: a try counts, whatever comes of it.
+  remember_check ()
+
   SetStatus "Checking for latest MUSHclient version ..."
-  local page =  http.request (string.format ("%s?plat=%i,%i,%i&vers=%s",
-                              VERSION_URL, 
-                              GetInfo (268), GetInfo (265), GetInfo (266),
-                              Version ()))
+  local page, status = utils.https_get (LATEST_RELEASE_URL, CHECK_TIMEOUT)
   SetStatus "Ready"
-  
-  if not page then return end -- page doesn't exist
-  
-  local s = string.match (page, "<pre>(.*)</pre>")
-  
-  if not s then return end  -- page in wrong format
-  
-  local t = {}  
-  setfenv (assert (loadstring (s)), t) () -- compile and load into t
-  
-  local info = t.installer_info
-  
-  if not info then return end  -- installer_info not there
-  
-  local new_version = tonumber (info.version)
+
+  if not page then
+    complain (status) -- which is why it failed
+    return
+  end -- no response
+
+
+  if status == 404 then
+    complain ("no releases have been published yet.")
+    return
+  elseif status ~= 200 then
+    complain ("GitHub answered with status " .. status .. ".")
+    return
+  end -- if
+
+  local ok, release = pcall (json.decode, page)
+  if not ok or type (release) ~= "table" or type (release.tag_name) ~= "string" then
+    complain ("GitHub's answer could not be understood.")
+    return
+  end -- if
+
+  -- tags are v6.00, and Version () is 6.00
+  local available = string.gsub (release.tag_name, "^[vV]", "")
+  local new_version = tonumber (available)
   local old_version = tonumber (Version ())
-  
+
+  if not new_version then
+    complain ("the latest release is called '" .. release.tag_name .. "'.")
+    return
+  end -- if
+
   -- naive version check (chuckle)
   if new_version <= old_version then
-    ColourNote ("cyan", "", "You have version " .. Version () .. 
-                " of MUSHclient, which is the lastest version.")
+    if name then
+      ColourNote ("cyan", "", "You have version " .. Version () ..
+                  " of MUSHclient, which is the latest version.")
+    end -- if
     return  -- have latest version
   end -- if
-  
+
+  local asset = asset_for_this_copy (release, available)
+  release_url = release.html_url or RELEASES_URL
+  installer_url = asset and asset.browser_download_url or release_url
+  local description = type (release.body) == "string" and release.body or ""
+
   -- make the window to get font info
   WindowCreate (win, 0, 0, 0, 0, -- very small
                 miniwin.pos_center_all, 0, 
@@ -224,7 +285,11 @@ function do_version_check ()
   lines = {}
   
   -- wrap long lines
-  for line in getlines (info.description) do
+  for line in getlines (description) do
+    if #lines >= MAX_DESCRIPTION_LINES then
+      table.insert (lines, "... and more, in the release notes.")
+      break
+    end -- if
     local width = 0
     local t = {}
     
@@ -284,26 +349,26 @@ function do_version_check ()
   WindowText (win, font_id, "Current version: " .. Version (), x, y, 0, 0, WINDOW_TEXT_COLOUR )
   y = y + font_height
   
-  WindowText (win, font_id, "Available version: " .. info.version, x, y, 0, 0, WINDOW_TEXT_COLOUR )
-  y = y + font_height
-  
-  WindowText (win, font_id, string.format ("Size: %0.2f Mb", info.installer_size / 1024 / 1024), x, y, 0, 0, WINDOW_TEXT_COLOUR )
-  y = y + font_height
- 
-  installer_url = info.installer_url 
-  
-  -- link to download this version
-  make_hyperlink ("Download version " .. info.version, 
-                  "download", 
-                  x, y, hyperlink_download, "Download version " .. info.version)
-  y = y + font_height
-  
-  -- link to view announcements forum topic
-  make_hyperlink ("Visit announcements forum topic", "announcements", x, y, hyperlink_announcements, "View announcements")
+  WindowText (win, font_id, "Available version: " .. available, x, y, 0, 0, WINDOW_TEXT_COLOUR )
   y = y + font_height
 
-  -- link to view all release notes
-  make_hyperlink ("View all release notes", "relnotes", x, y, hyperlink_relnotes, "View release notes")
+  if asset and asset.size then
+    WindowText (win, font_id, string.format ("Size: %0.2f Mb", asset.size / 1024 / 1024), x, y, 0, 0, WINDOW_TEXT_COLOUR )
+  end -- if
+  y = y + font_height
+
+  -- link to download this version
+  make_hyperlink ("Download version " .. available,
+                  "download",
+                  x, y, hyperlink_download, installer_url)
+  y = y + font_height
+
+  -- link to this version's notes
+  make_hyperlink ("View this version's release notes", "relnotes", x, y, hyperlink_relnotes, "View release notes")
+  y = y + font_height
+
+  -- link to the others
+  make_hyperlink ("View all releases", "releases", x, y, hyperlink_releases, "View all releases")
   y = y + font_height
 
   -- extra line 
@@ -361,15 +426,6 @@ function do_version_check ()
   
   -- show the window
   WindowShow (win, true)
-    
-  -- we last checked: now
-  last_check_time = os.time ()
-  
-  -- remember when we checked last
-  db = sqlite3.open(GetInfo (82))  -- open preferences
-  db:exec (string.format ('UPDATE prefs SET value = %i WHERE name = "time_last_version_check"',
-            last_check_time))
-  db:close()  -- close
 
 end -- do_version_check
 

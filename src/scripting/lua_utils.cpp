@@ -57,6 +57,8 @@
 #include "../Dmetaph.h"
 #include "../user_data.h"   // UserData_Directory: data_directory on Windows
 #include "../spell_engine.h" // utils.spell_*: the operating system's spell checker
+#include "../pal/https_get.h" // utils.https_get
+#include "../version.h"
 #ifdef _WIN32
 #include <direct.h>
 #include <wingdi.h>
@@ -1045,6 +1047,22 @@ static int info (lua_State *L)
     MakeTableItem (L, "current_directory", strPath);
     }
 
+  // What this copy was built for, which a release's file names go by.
+#if defined (_WIN32)
+  MakeTableItem (L, "platform", CString ("windows"));
+#elif defined (__APPLE__)
+  MakeTableItem (L, "platform", CString ("macos"));
+#else
+  MakeTableItem (L, "platform", CString ("linux"));
+#endif
+#if defined (_M_ARM64) || defined (__aarch64__)
+  MakeTableItem (L, "architecture", CString ("arm64"));
+#elif defined (_M_X64) || defined (__x86_64__)
+  MakeTableItem (L, "architecture", CString ("x64"));
+#else
+  MakeTableItem (L, "architecture", CString ("x86"));
+#endif
+
   MakeTableItem (L, "app_directory", ExtractDirectory (App.m_strMUSHclientFileName));
   // Read-only bundled resources (spell/ dictionaries, etc.).  In a macOS .app
   // these live in Contents/Resources/, not next to the executable; elsewhere
@@ -2018,7 +2036,27 @@ static int timer (lua_State *L)
 
 
 // returns table of GetInfo selectors and their descriptions
-static int infotypes (lua_State *L) 
+// utils.https_get (url [, timeout_seconds]): body, status -- or nil, why.
+// Blocks the client until it is done; see pal/https_get.h.
+static int https_get (lua_State *L)
+  {
+  const char * url = luaL_checkstring (L, 1);
+  const int timeout = (int) luaL_optnumber (L, 2, pal::kHttpsGetDefaultTimeoutSeconds);
+
+  int status = 0;
+  string body, error;
+  if (!pal::HttpsGet (url, timeout, "MUSHclient/" VERSION_STRING, &status, &body, &error))
+    {
+    lua_pushnil (L);
+    lua_pushlstring (L, error.data (), error.size ());
+    return 2;
+    }
+  lua_pushlstring (L, body.data (), body.size ());
+  lua_pushnumber (L, status);
+  return 2;
+  } // end of https_get
+
+static int infotypes (lua_State *L)
   {
   lua_newtable(L);
 
@@ -2303,6 +2341,7 @@ static const struct luaL_Reg xmllib [] =
   {"functionlist",      functionlist},
   {"getfontfamilies",   getfontfamilies},
   {"glyph_available",   glyph_available},
+  {"https_get",         https_get},
   {"info",              info},
   {"infotypes",         infotypes},
   {"inputbox",          inputbox},

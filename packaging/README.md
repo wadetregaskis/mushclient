@@ -185,6 +185,22 @@ and whether to create a draft release.  It produces:
 | Linux x86-64, AArch64 | `.deb` + self-contained `.tar.xz` each | a runner of each architecture, under a virtual X display |
 | Windows x64, ARM64 | NSIS installer + portable `.zip` each (`windows/build-app.ps1`) | a runner of each architecture: the unit tests, then every scripting language's selftest run from the package |
 
+Release file names are part of the client's behaviour: `plugins/Version_Check.xml`
+finds the file for a copy of the client by its exact name, so renaming one here
+means changing it there too.  A release's tag is `v<version>`, as in `v6.00`.
+
+| Platform | File | `<arch>` |
+|----------|------|----------|
+| Windows, installed | `MUSHclient-<version>-windows-<arch>-setup.exe` | `x64`, `arm64` |
+| Windows, portable | `MUSHclient-<version>-windows-<arch>.zip` | `x64`, `arm64` |
+| macOS | `MUSHclient-<version>-macOS-universal.dmg` and `.zip` | |
+| Linux, tarball | `mushclient-<version>-linux-<arch>.tar.xz` | `x86_64`, `arm64` |
+| Linux, Debian | `mushclient_<version>_<arch>.deb` | `amd64`, `arm64` |
+
+The Discworld edition adds `-discworld` after the architecture (Windows, macOS) or
+after `mushclient` (Linux).  The version check never offers it: a Discworld copy is
+sent to the plain edition's file, or to the release page where there is none.
+
 With *create draft release* on, the packages are attached to a **draft** GitHub
 release.  The macOS app is attached unsigned so that your Developer ID key never
 goes to GitHub.  To finish it, download `MUSHclient-<version>-macOS-universal-UNSIGNED.zip`

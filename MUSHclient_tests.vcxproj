@@ -1470,6 +1470,7 @@
     <ClCompile Include="src\pal\netaddress.cpp" />
     <ClCompile Include="src\text_edges.cpp" />
     <ClCompile Include="src\pal\win_transport.cpp" />
+    <ClCompile Include="src\pal\https_get.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <ClCompile Include="src\platform\mc_dispatch.cpp" />
     <ClCompile Include="src\platform\mc_ui_thread.cpp" />
@@ -1498,6 +1499,7 @@
     <ClCompile Include="tests\win\test_win_transport.cpp" />
     <ClCompile Include="tests\win\test_text_boundary.cpp" />
     <ClCompile Include="tests\win\test_ui_thread.cpp" />
+    <ClCompile Include="tests\win\test_https_get.cpp" />
     <ClCompile Include="tests\win\test_win_worldview.cpp" />
     <ClCompile Include="tests\win\test_user_data.cpp" />
     <ClCompile Include="tests\win\test_spell_engine.cpp" />

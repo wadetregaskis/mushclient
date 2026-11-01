@@ -720,6 +720,7 @@ if(NOT WIN32)
         src/mxp/mxpDefs.cpp
         src/mxp/mxpEntities.cpp
         src/platform/posix_transport.cpp
+        src/pal/https_get.cpp
         src/pal/netaddress.cpp
         src/Line.cpp
         src/ProcessPreviousLine.cpp

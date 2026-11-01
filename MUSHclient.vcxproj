@@ -1886,6 +1886,7 @@
     <ClCompile Include="src\pal\netaddress.cpp" />
     <ClCompile Include="src\text_edges.cpp" />
     <ClCompile Include="src\pal\win_transport.cpp" />
+    <ClCompile Include="src\pal\https_get.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <!-- The embedded scripting engines (MUSHclient.engines.props).  Empty
          translation units in Win32, which defines none of their switches. -->

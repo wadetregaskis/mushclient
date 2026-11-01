@@ -222,6 +222,14 @@ bool PluginSendVetoIgnored (const CString & strPluginID, const double dVersion)
          dVersion < 4.96 + 0.001;
   }
 
+// A command, as it may appear in a trace or a note: while the MUD has echo off
+// it is very likely to be a password.
+
+static CString CommandToShow (const CMUSHclientDoc * pDoc, const char * sText)
+  {
+  return pDoc->m_bNoEcho ? CString (Translate ("(hidden: echo is off)")) : CString (sText);
+  }
+
 // A plugin's callback has just refused sText.  Keep a record if that refusal
 // was about a command.  Returns whether the refusal stands.
 
@@ -235,9 +243,7 @@ static bool CommandVetoStands (CMUSHclientDoc * pDoc,
 
   CCommandVetoCounts & counts = s_CommandVetoes [pPlugin];
 
-  // the MUD has echo off, so this is very likely to be a password
-  const CString strCommand = pDoc->m_bNoEcho ? CString (Translate ("(hidden: echo is off)"))
-                                             : CString (sText);
+  const CString strCommand = CommandToShow (pDoc, sText);
 
   if (sName == ON_PLUGIN_SEND && PluginSendVetoIgnored (pPlugin->m_strID, pPlugin->m_dVersion))
     {
@@ -1806,7 +1812,7 @@ void CMUSHclientDoc::SendToAllPluginCallbacksRtn (const string & sName, CString 
     Trace ("%s", (LPCTSTR) TFormat ("Plugin %s: %s stopped command: %s",
                                     (LPCTSTR) pDiscardedBy->m_strName,
                                     sName.c_str (),
-                                    m_bNoEcho ? Translate ("(hidden: echo is off)") : (LPCTSTR) strEntered));
+                                    (LPCTSTR) CommandToShow (this, strEntered)));
     }
 
   m_bNotesNotWantedNow = bSavedNotesNotWanted;

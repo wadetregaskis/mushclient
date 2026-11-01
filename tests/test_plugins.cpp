@@ -2667,6 +2667,28 @@ TEST(PluginVetoCounts, CommandTextIsHiddenWhileEchoIsOff)
     EXPECT_EQ(-1, trace.Find("hunter2"));
 }
 
+TEST(PluginVetoCounts, DiscardedCommandTextIsTracedOnlyWhileEchoIsOn)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tab", IDA, "Tab",
+        "function OnPluginCommandEntered(t) return '\\t' end\n")));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tracer", IDB, "Tracer",
+        "function OnPluginTrace(m) world.SetVariable('trace', m) end\n")));
+
+    doc.m_bTrace = true;
+    CString s = "open sesame";
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, s);
+    EXPECT_TRUE(plugin_var(doc.GetPlugin(IDB), "trace").Find("open sesame") != -1);
+
+    doc.m_bNoEcho = true;
+    s = "hunter2";
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, s);
+    CString trace = plugin_var(doc.GetPlugin(IDB), "trace");
+    EXPECT_TRUE(trace.Find("OnPluginCommandEntered") != -1);
+    EXPECT_EQ(-1, trace.Find("hunter2"));
+    EXPECT_EQ(2L, stopped(doc, IDA));
+}
+
 TEST(PluginVetoCounts, OnPluginCommandEnteredDiscardsAreCounted)
 {
     CMUSHclientDoc doc; make_doc(doc);

@@ -2008,6 +2008,93 @@ void battery_py_overflow(Engine& e, const Dialect& d)
           "...and the world call right after is not poisoned by a leaked OverflowError");
 }
 
+// 6a-sexies. The Lua libraries the client bundles, over the versions it now bundles,
+//     as a plugin uses them: what each promises that an upgrade could quietly take
+//     away.  Each piece of script reports through a world variable.
+void battery_lua_libraries()
+{
+    const char* L = "Lua";
+    static const char code[] =
+        "function run()\n"
+        "  SetVariable('lpegver', type(lpeg.version) == 'function' and lpeg.version() or 'not a function')\n"
+        "  SetVariable('lpeg', lpeg.match(lpeg.C(lpeg.R('az')^1), 'abc1') or 'no')\n"
+        "  local re = require 're'\n"
+        "  SetVariable('re', re.match('hello world', '{[a-z]+}') or 'no')\n"
+        "  SetVariable('regsub', re.gsub('hello world', '[o]', '0'))\n"
+        "  local json = require 'json'\n"
+        "  SetVariable('json', json.decode('{\"a\":[1,2,{\"b\":\"c\"}]}').a[3].b)\n"
+        "  SetVariable('jsonenc', json.encode({1,2,3}))\n"
+        "  SetVariable('sqlver', sqlite3.lversion())\n"
+        "  SetVariable('noext', tostring(sqlite3.open_memory().load_extension))\n"
+        "  local db = sqlite3.open_memory()\n"
+        "  db:exec('CREATE TABLE t (a, b)')\n"
+        "  local vm = db:prepare('INSERT INTO t VALUES (?, ?)')\n"
+        "  vm:bind(1, true) vm:bind(2, false) vm:step() vm:finalize()\n"
+        "  for a, b in db:urows('SELECT typeof(a), typeof(b) FROM t') do SetVariable('sqlbool', a .. ',' .. b) end\n"
+        "  db:exec('CREATE TABLE u (a UNIQUE)')\n"
+        "  db:exec('INSERT INTO u VALUES (1)')\n"
+        "  vm = db:prepare('INSERT INTO u VALUES (1)')\n"
+        "  SetVariable('sqlstep', tostring(vm:step() == sqlite3.CONSTRAINT))\n"
+        "  vm:finalize() db:close()\n"
+        "  local loaded, socket = pcall(require, 'socket')\n"
+        "  SetVariable('socket', loaded and (_G.socket == socket and socket._VERSION or 'no global') or 'cannot load')\n"
+        "  if loaded then\n"
+        "    SetVariable('sockhttp', tostring(pcall(require, 'socket.http')) .. tostring(_G.socket.http ~= nil))\n"
+        "    local mime = require 'mime'\n"
+        "    SetVariable('sockmime', tostring(_G.mime == mime) .. mime.b64('hello'))\n"
+        "  end\n"
+        "end\n";
+    Engine e("Lua", code);
+    if (!e.ok) {
+        check(false, L, "the libraries script compiles");
+        return;
+    }
+    bool err = false;
+    e.callRich("run", &err);
+    check(!err, L, "the libraries script ran without an error");
+    if (err)
+        printf("%s", e.output().c_str());
+    check(e.var("lpegver") == "1.1.0", L, "lpeg.version () is still a function, and says 1.1.0");
+    check(e.var("lpeg") == "abc", L, "lpeg matches");
+    check(e.var("re") == "hello", L, "re.lua matches");
+    check(e.var("regsub") == "hell0 w0rld", L, "re.gsub");
+    check(e.var("json") == "c", L, "LuaJSON decodes, over LPeg 1.1");
+    check(e.var("jsonenc") == "[1,2,3]", L, "LuaJSON encodes");
+    check(e.var("sqlver") == "0.9.7", L, "sqlite3.lversion ()");
+    check(e.var("noext") == "nil", L, "lsqlite3 gives no way to load a DLL");
+    check(e.var("sqlbool") == "null,null", L, "binding a boolean still stores NULL");
+    check(e.var("sqlstep") == "true", L, "a constraint failure in a step still says so");
+#if defined(_WIN32)
+    if (e.var("socket") == "cannot load")
+        skip(L, "LuaSocket", "socket\\core.dll is not beside this exe");
+    else {
+        check(e.var("socket").find("LuaSocket") == 0, L, "require 'socket' still makes a global table");
+        check(e.var("sockhttp") == "truetrue", L, "socket.http loads, as a field of it");
+        check(e.var("sockmime") == "trueaGVsbG8=", L, "so does mime, also as a global");
+    }
+#endif
+}
+
+// 6a-septies. Python 3.15 made UTF-8 the default for open (): on Windows that stays
+//     the code page it was, for the sake of a plugin's existing text files.
+void battery_py_encoding(const Dialect& d)
+{
+#if defined(_WIN32)
+    Engine e(d.language,
+             "import sys, locale\n"
+             "def enc():\n"
+             "    world.SetVariable('utf8mode', str(sys.flags.utf8_mode))\n"
+             "    world.SetVariable('version', '.'.join(map(str, sys.version_info[:2])))\n");
+    if (!e.ok) return;
+    bool err = false;
+    e.callRich("enc", &err);
+    check(!err && (e.var("utf8mode") == "0" || getenv("PYTHONUTF8") != NULL), d.display,
+          "UTF-8 mode stays off, so open () goes on using the code page");
+#else
+    (void) d;
+#endif
+}
+
 // 6a-quinquies. A thread the SCRIPT creates must run while the app is idle.
 //     ensure_init used to leave the GIL held by the UI thread for the process
 //     lifetime, and CPython's "drop the GIL for a waiting thread" check lives
@@ -2476,7 +2563,10 @@ bool run_language(const Dialect& d)
     battery_state     (e, d);
     if (strcmp(d.key, "tcl") == 0)        // Tcl-specific platform bootstrap
         battery_tcl_platform(e, d);
+    if (strcmp(d.key, "lua") == 0)
+        battery_lua_libraries();
     if (strcmp(d.key, "python") == 0) {   // CPython-specific behaviours
+        battery_py_encoding (d);
         battery_py_namespace(e, d);
         battery_py_overflow (e, d);
         battery_py_threads  (e, d);

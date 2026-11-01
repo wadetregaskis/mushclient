@@ -4517,6 +4517,7 @@ public:
     HTREEITEM GetPrevSiblingItem(HTREEITEM) const { return nullptr; }
     HTREEITEM GetParentItem(HTREEITEM) const{ return nullptr; }
     HTREEITEM GetRootItem() const           { return nullptr; }
+    UINT      GetCount() const              { return 0; }
     CString   GetItemText(HTREEITEM) const  { return {}; }
     DWORD_PTR GetItemData(HTREEITEM) const  { return 0; }
     BOOL      SetItemData(HTREEITEM, DWORD_PTR) { return FALSE; }

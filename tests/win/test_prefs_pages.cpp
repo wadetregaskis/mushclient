@@ -304,3 +304,59 @@ TEST(PrefsChange, ADefaultChatNameIsAdoptedQuietly)
     EXPECT_TRUE(doc.m_strOurChatName == "Twoflower");
     EXPECT_TRUE(doc.IsModified());
 }
+
+// GetItemCount and the selected counts run on every idle while a page is open, so they
+// no longer walk the tree (upstream 8c996752).  They rely on what the page keeps true:
+// one root per entry in m_GroupsMap, and an emptied group going from both.
+TEST(PrefsTreeCounts, CountsAreRightWithoutWalkingTheTree)
+{
+    HWND hParent = ::CreateWindowExA (0, "STATIC", "", WS_POPUP, 0, 0, 200, 200, NULL, NULL, NULL, NULL);
+    CWnd parent;
+    parent.Attach (hParent);
+    {
+        CPrefsP16 page;
+        page.m_bWantTreeControl = true;
+        CRect r (0, 0, 190, 190);
+        ASSERT_TRUE (page.m_cTreeCtrl.Create (WS_CHILD | TVS_HASLINES | TVS_SHOWSELALWAYS, r, &parent, 1) != FALSE);
+
+        EXPECT_EQ (0, page.GetItemCount ());
+        EXPECT_EQ (0, page.GetSelectedItemCount ());
+        EXPECT_EQ (0, page.GetSelectedGroupCount ());
+
+        HTREEITEM g1 = page.m_cTreeCtrl.InsertItem ("first", TVI_ROOT);
+        page.m_GroupsMap ["first"] = g1;
+        HTREEITEM g2 = page.m_cTreeCtrl.InsertItem ("second", TVI_ROOT);
+        page.m_GroupsMap ["second"] = g2;
+        HTREEITEM a = page.m_cTreeCtrl.InsertItem ("a", g1);
+        page.m_cTreeCtrl.InsertItem ("b", g1);
+        HTREEITEM c = page.m_cTreeCtrl.InsertItem ("c", g2);
+        EXPECT_EQ (3, page.GetItemCount ());
+
+        // an item selected: one item, no group
+        page.m_cTreeCtrl.SelectItem (a);
+        EXPECT_EQ (1, page.GetSelectedItemCount ());
+        EXPECT_EQ (0, page.GetSelectedGroupCount ());
+
+        // a group selected: no item, and the size of the group
+        page.m_cTreeCtrl.SelectItem (g1);
+        EXPECT_EQ (0, page.GetSelectedItemCount ());
+        EXPECT_EQ (2, page.GetSelectedGroupCount ());
+
+        // nothing selected
+        page.m_cTreeCtrl.SelectItem (NULL);
+        EXPECT_EQ (0, page.GetSelectedItemCount ());
+        EXPECT_EQ (0, page.GetSelectedGroupCount ());
+
+        // the last item of a group going takes the group, through the page's own code
+        page.m_cTreeCtrl.DeleteItem (c);
+        page.CheckParentHasChildren (g2);
+        EXPECT_EQ (1, (int) page.m_GroupsMap.size ());
+        EXPECT_EQ (2, page.GetItemCount ());
+
+        // and a group that still has one stays
+        page.CheckParentHasChildren (g1);
+        EXPECT_EQ (2, page.GetItemCount ());
+    }
+    parent.Detach ();
+    ::DestroyWindow (hParent);
+}

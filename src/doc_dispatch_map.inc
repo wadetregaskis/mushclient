@@ -417,4 +417,9 @@
 	DISP_PROPERTY_PARAM(CMUSHclientDoc, "BoldColour", GetBoldColour, SetBoldColour, VT_I4, VTS_I2)
 	DISP_PROPERTY_PARAM(CMUSHclientDoc, "CustomColourText", GetCustomColourText, SetCustomColourText, VT_I4, VTS_I2)
 	DISP_PROPERTY_PARAM(CMUSHclientDoc, "CustomColourBackground", GetCustomColourBackground, SetCustomColourBackground, VT_I4, VTS_I2)
+	DISP_FUNCTION(CMUSHclientDoc, "GMCP_Subscribe", GMCP_Subscribe, VT_I4, VTS_BSTR VTS_BSTR)
+	DISP_FUNCTION(CMUSHclientDoc, "GMCP_Unsubscribe", GMCP_Unsubscribe, VT_I4, VTS_BSTR)
+	DISP_FUNCTION(CMUSHclientDoc, "GMCP_Send", GMCP_Send, VT_I4, VTS_BSTR VTS_BSTR)
+	DISP_FUNCTION(CMUSHclientDoc, "GMCP_Get", GMCP_Get, VT_VARIANT, VTS_BSTR)
+	DISP_FUNCTION(CMUSHclientDoc, "MXPEntityInfo", MXPEntityInfo, VT_VARIANT, VTS_BSTR VTS_I2)
 	//}}AFX_DISPATCH_MAP

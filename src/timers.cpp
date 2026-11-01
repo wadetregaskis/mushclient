@@ -5,6 +5,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "protocols.h"
 #include "mainfrm.h"
 #include "sendvw.h"
 
@@ -263,6 +264,7 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
 
 void CMUSHclientDoc::CheckTimers ()
   {
+  Proto_Tick (*this);    // MSP repeats and downloads, a reconnection that was asked for
 
 #ifdef _WIN32
   // make sure status line is showing the right thing (after 5 seconds)

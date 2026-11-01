@@ -10,6 +10,7 @@
 #include "../mushview.h"
 #include "../mainfrm.h"
 #include "mxp.h"
+#include "../protocols.h"
 #include "scripting/errors.h"
 
 #ifdef _DEBUG
@@ -56,6 +57,15 @@ CString strDefinition;
     }
   
   strDefinition.MakeLower (); // case-insensitive?
+
+  // <!TAG 20 ...> is named by a number, which is not a name
+  if (strDefinition == "tag")
+    {
+    CString strIndex;
+    GetWord (strIndex, strTag);
+    Proto_MxpTagDefinition (*this, strIndex, strTag);
+    return;
+    }
 
 // get name of what we are defining
 
@@ -410,7 +420,10 @@ CArgumentList ArgumentList;
 void CMUSHclientDoc::MXP_Entity (CString strName, CString strTag)
   {
 
-  // case insensitive
+  // Case-insensitive, though the spec says otherwise.  Lower case is what plugins have
+  // always been told (OnPluginMXPsetEntity), and QuowMinimap looks Discworld's vitals
+  // up by those names, so a change here would break them to help a server that has
+  // both &Hp; and &hp; and means different things, which none is known to.
   strName.MakeLower ();
 
   CString strEntityContents;
@@ -418,68 +431,33 @@ void CMUSHclientDoc::MXP_Entity (CString strName, CString strTag)
   if (App.m_EntityMap.Lookup (strName, strEntityContents))
     {
     MXP_error (DBG_ERROR, errMXP_CannotRedefineEntity,
-              TFormat ("Cannot redefine entity: &%s;", 
-              (LPCTSTR) strName)); 
+              TFormat ("Cannot redefine entity: &%s;",
+              (LPCTSTR) strName));
     return;
     }
 
+  // <!ENTITY x DELETE> has no value at all: DELETE, unquoted and on its own, is the
+  // keyword and not what x is to be set to.
+  {
+  CString strPeek = strTag;
+  strPeek.TrimLeft ();
+  strPeek.TrimRight ();
+  if (strPeek.CompareNoCase ("delete") == 0)
+    {
+    m_CustomEntityMap.RemoveKey (strName);
+    m_pProto->entities.erase ((LPCTSTR) strName);
+    Proto_MxpEntityChanged (*this);
+    return;
+    }
+  }
+
   GetWord (strEntityContents, strTag);
 
-    // blank contents deletes the entity
-  if (strEntityContents.IsEmpty ())
-     m_CustomEntityMap.RemoveKey (strName);
-  else
-    {
+  // First the words after the value, because ADD and REMOVE say what the value means.
+  bool bAdd = false, bRemove = false, bDelete = false;
+  bool bPublish = false, bPrivate = false, bHaveDesc = false;
+  CString strDesc;
 
-    // look for entities imbedded in the definition, eg. <!EN blah '&lt;Nick&gt;'>
-    const char * p = strEntityContents;
-    const char * pStart;
-    CString strFixedValue;
-    CString strEntity;
-
-    strFixedValue.Empty ();
-
-    for ( ; *p; p++)
-      {
-      if (*p == '&')
-        {
-
-        p++;    // skip ampersand
-        pStart = p; // where entity starts
-        for ( ; *p && *p != ';'; p++) // look for closing semicolon
-          ; // just keep looking
-        if (*p != ';')
-          {
-          MXP_error (DBG_ERROR, errMXP_NoClosingSemicolon,
-                    TFormat ("No closing \";\" in MXP entity argument \"%s\"", 
-                    (LPCTSTR) strEntityContents)); 
-          return;
-          }
-
-        CString s (pStart, p - pStart);
-        strFixedValue += MXP_GetEntity (s);    // add to list
-      
-        } // end of having an ampersand 
-      else
-         strFixedValue += *p;   // just add ordinary characters to list
-
-      } // end of processing the value
-
-    // add entity to map
-    m_CustomEntityMap.SetAt (strName, strFixedValue);
-
-    // tell each plugin what we have received
-    if (m_bPluginProcessesSetEntity)
-      SendToAllPluginCallbacks (ON_PLUGIN_MXP_SETENTITY, 
-                                CFormat ("%s=%s",
-                                (LPCTSTR) strName,
-                                (LPCTSTR) strFixedValue));
-
-    m_CurrentPlugin = NULL;
-
-    }
-
-  // check they didn't supply any other arguments
   strTag.TrimLeft ();
 
   while (!strTag.IsEmpty ())
@@ -491,39 +469,110 @@ void CMUSHclientDoc::MXP_Entity (CString strName, CString strTag)
 
     if (strKeyword == "desc")
       {
-      GetWord (strKeyword, strTag);
-      if (strKeyword != "=")
-        GetWord (strKeyword, strTag);   // get description
+      GetWord (strDesc, strTag);
+      if (strDesc == "=")
+        GetWord (strDesc, strTag);   // DESC = "description"
+      bHaveDesc = true;
       }
     else if (strKeyword == "private")
-      {
-      // do nothing
-      } 
+      bPrivate = true;
     else if (strKeyword == "publish")
-      {
-      // do nothing
-      } 
+      bPublish = true;
     else if (strKeyword == "delete")
-      {
-      m_CustomEntityMap.RemoveKey (strName);
-      } 
+      bDelete = true;
     else if (strKeyword == "add")
-      {
-      // do nothing
-      } 
+      bAdd = true;
     else if (strKeyword == "remove")
-      {
-      m_CustomEntityMap.RemoveKey (strName);
-      } 
+      bRemove = true;
     else
       {
       MXP_error (DBG_WARNING, errMXP_UnexpectedEntityArguments,
-                TFormat ("Unexpected word \"%s\" in entity definition for &%s; ignored", 
+                TFormat ("Unexpected word \"%s\" in entity definition for &%s; ignored",
                 (LPCTSTR) strKeyword,
-                (LPCTSTR) strName)); 
-      return;
+                (LPCTSTR) strName));
+      break;
       }
-
     } // of processing optional words
+
+  // blank contents deletes the entity
+  if (strEntityContents.IsEmpty ())
+    {
+    m_CustomEntityMap.RemoveKey (strName);
+    m_pProto->entities.erase ((LPCTSTR) strName);
+    Proto_MxpEntityChanged (*this);
+    return;
+    }
+
+  // look for entities imbedded in the definition, eg. <!EN blah '&lt;Nick&gt;'>
+  CString strFixedValue;
+
+  for (const char * p = strEntityContents; *p; p++)
+    {
+    if (*p == '&')
+      {
+      p++;    // skip ampersand
+      const char * pStart = p; // where entity starts
+      for ( ; *p && *p != ';'; p++) // look for closing semicolon
+        ; // just keep looking
+      if (*p != ';')
+        {
+        MXP_error (DBG_ERROR, errMXP_NoClosingSemicolon,
+                  TFormat ("No closing \";\" in MXP entity argument \"%s\"",
+                  (LPCTSTR) strEntityContents));
+        return;
+        }
+
+      CString s (pStart, p - pStart);
+      strFixedValue += MXP_GetEntity (s);    // add to list
+      } // end of having an ampersand
+    else
+       strFixedValue += *p;   // just add ordinary characters to list
+    } // end of processing the value
+
+  // ADD and REMOVE treat the entity as a list, and what they leave is its value
+  if (bAdd || bRemove)
+    {
+    CString strOld;
+    m_CustomEntityMap.Lookup (strName, strOld);
+    const std::string list = bAdd ? proto::EntityListAdd ((LPCTSTR) strOld, (LPCTSTR) strFixedValue)
+                                  : proto::EntityListRemove ((LPCTSTR) strOld, (LPCTSTR) strFixedValue);
+    strFixedValue = list.c_str ();
+    }
+
+  // add entity to map
+  m_CustomEntityMap.SetAt (strName, strFixedValue);
+
+  // tell each plugin what we have received
+  if (m_bPluginProcessesSetEntity)
+    SendToAllPluginCallbacks (ON_PLUGIN_MXP_SETENTITY,
+                              CFormat ("%s=%s",
+                              (LPCTSTR) strName,
+                              (LPCTSTR) strFixedValue));
+
+  m_CurrentPlugin = NULL;
+
+  if (bDelete)
+    {
+    m_CustomEntityMap.RemoveKey (strName);
+    m_pProto->entities.erase ((LPCTSTR) strName);
+    }
+  else
+    {
+    CMxpEntityInfo & info = m_pProto->entities [(LPCTSTR) strName];
+    if (bHaveDesc)
+      info.description = (LPCTSTR) strDesc;
+    if (bPublish)
+      {
+      info.bPublish = true;
+      info.bPrivate = false;
+      }
+    if (bPrivate)
+      {
+      info.bPrivate = true;
+      info.bPublish = false;
+      }
+    }
+
+  Proto_MxpEntityChanged (*this);
 
   } // end of CMUSHclientDoc::MXP_Entity

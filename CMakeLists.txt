@@ -721,6 +721,11 @@ if(NOT WIN32)
         src/mxp/mxpEntities.cpp
         src/platform/posix_transport.cpp
         src/pal/https_get.cpp
+        src/protocols.cpp
+        src/protocols_telnet.cpp
+        src/protocols_mxp.cpp
+        src/msp.cpp
+        src/gmcp.cpp
         src/pal/netaddress.cpp
         src/Line.cpp
         src/ProcessPreviousLine.cpp

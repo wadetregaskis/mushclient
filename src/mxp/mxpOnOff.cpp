@@ -6,6 +6,7 @@
 #include "../mushview.h"
 #include "../mainfrm.h"
 #include "mxp.h"
+#include "../protocols.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -31,7 +32,8 @@ void CMUSHclientDoc::MXP_Off (const bool bCompletely)
     Frame.SetStatusMessageNow (Translate ("Closing down MXP"));
 
   MXP_CloseAllTags ();
-  m_bInParagraph = false; 
+  Proto_MxpReset (*this, bCompletely);
+  m_bInParagraph = false;
   m_bMXP_script = false;    // cancel scripts
   m_bPreMode = false;       // no more preformatted text
   m_iListMode = eNoList;    // no more ordered/unordered lists
@@ -151,6 +153,8 @@ void CMUSHclientDoc::MXP_On (const bool bPueblo, const bool bManual)
   // delete custom entities list
 
     m_CustomEntityMap.RemoveAll ();
+
+    Proto_MxpReset (*this, true);
    }
 
  }  // end of CMUSHclientDoc::MXP_On

@@ -126,6 +126,9 @@ class CPlugin :public CObject
   void ExecutePluginScript (CScriptCallInfo & callinfo);   // no arguments
   bool ExecutePluginScript (CScriptCallInfo & callinfo, 
                             const char * sText);  // 1 argument
+  bool ExecutePluginScript (CScriptCallInfo & callinfo,
+                            const char * sText1,  // 2 strings
+                            const char * sText2);
   bool ExecutePluginScript (CScriptCallInfo & callinfo, 
                             const long arg1,      // 2 arguments
                             const string sText);
@@ -220,7 +223,9 @@ extern const string ON_PLUGIN_TICK;                 //  "OnPluginTick"
 extern const string ON_PLUGIN_MOUSE_MOVED;          //  "OnPluginMouseMoved"           
                                                                                       
 // MXP stuff                                                                          
-extern const string ON_PLUGIN_MXP_START;            //  "OnPluginMXPstart"             
+extern const string ON_PLUGIN_MXP_FLAG;             //  "OnPluginMXPflag"
+extern const string ON_PLUGIN_GMCP;                 //  "OnPluginGMCP"
+extern const string ON_PLUGIN_MXP_START;            //  "OnPluginMXPstart"
 extern const string ON_PLUGIN_MXP_STOP;             //  "OnPluginMXPstop"              
 extern const string ON_PLUGIN_MXP_OPENTAG;          //  "OnPluginMXPopenTag"           
 extern const string ON_PLUGIN_MXP_CLOSETAG;         //  "OnPluginMXPcloseTag"          

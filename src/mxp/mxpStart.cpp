@@ -8,6 +8,7 @@
 #include "../mushview.h"
 #include "../mainfrm.h"
 #include "mxp.h"
+#include "../protocols.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -83,11 +84,14 @@ int      iOldOutstandingTagCount = m_iLastOutstandingTagCount;
   // <send href="nick"> <b> blah </b> </send> will work
   // in this case we want the href (action) to persist through the <b>
 
+  m_pProto->openExpire.clear ();
+
   if (pAction)
     {
     strAction = pAction->m_strAction;
     strHint = pAction->m_strHint;
     strVariable = pAction->m_strVariable;
+    m_pProto->openExpire = (LPCTSTR) pAction->m_strExpire;
     } // end of having an action etc.
 
 
@@ -414,7 +418,7 @@ CStyle * pNewStyle = AddStyle (iFlags & STYLE_BITS,
         }
       }
 
-    pNewStyle->pAction = GetAction (strAction, strHint, strVariable);
+    pNewStyle->pAction = GetAction (strAction, strHint, strVariable, m_pProto->openExpire.c_str ());
 
     DELETE_LIST (ArgumentList);  // clean up memory
     return;
@@ -611,7 +615,7 @@ CElementItem * pElementItem;
     }
 
   // make an action for the built-up action/hint/variable
-  pNewStyle->pAction = GetAction (strAction, strHint, strVariable);
+  pNewStyle->pAction = GetAction (strAction, strHint, strVariable, m_pProto->openExpire.c_str ());
 
 // check all arguments used
 

@@ -183,7 +183,11 @@ enum { NONE,          // normal text
        HAVE_MXP_ROOM_NAME,  // the line is parsed as the name of a room.  
        HAVE_MXP_ROOM_DESCRIPTION,  // the line is parsed as a description of a room.    
        HAVE_MXP_ROOM_EXITS,  // the line is parsed as an exit line for a room.    
-       HAVE_MXP_WELCOME,  // This text is sent from the MUD at the beginning of a session to welcome the user to the MUD.    
+       HAVE_MXP_WELCOME,  // This text is sent from the MUD at the beginning of a session to welcome the user to the MUD.
+
+       // MSP: a line began with '!', which may be !!SOUND( or !!MUSIC(
+       HAVE_MSP_TRIGGER,  // collecting, up to the closing )
+       HAVE_MSP_AFTER,    // got the ), swallowing the line ending
        };
         
 
@@ -1043,6 +1047,19 @@ public:
   CString m_strProxyPassword;     // password for proxy authentication
 
   unsigned short m_bUseSSL;       // use TLS/SSL for this connection
+
+  // protocol options; protocols.h has the state behind them
+  unsigned short m_bOsc8Links;          // OSC 8 hyperlinks from the server
+  unsigned short m_bMttsScreenReader;   // tell servers a screen reader is in use (MTTS 64)
+  unsigned short m_bMsspTlsHint;        // offer TLS if MSSP advertises a TLS port
+  unsigned short m_bNativeMSP;          // play MSP sounds in the client
+  unsigned short m_bMSPWithoutNegotiation;  // even if the server never said WILL MSP
+  unsigned short m_bMSPDownloads;       // fetch missing sounds named by U=
+  unsigned short m_bMSPAllowHttp;       // ... over plain http too
+  unsigned short m_bMXPWindows;         // show MXP FRAME, GAUGE, STAT, IMAGE in miniwindows
+  CString m_strMSPSoundDirectory;       // where this world's sounds are
+  CString m_strMSPAllowedHosts;         // hosts the player agreed to download from
+  class CProtocolState * m_pProto;      // never NULL
 
   // more new stuff
 
@@ -2122,6 +2139,10 @@ public:
   CAction * GetAction (const CString & strAction,
                        const CString & strHint,
                        const CString & strVariable);
+  CAction * GetAction (const CString & strAction,
+                       const CString & strHint,
+                       const CString & strVariable,
+                       const CString & strExpire);    // MXP expire= name
 
   bool CheckConnected (void);
   bool FindStyle (const CLine * pLine,         // which line
@@ -3629,6 +3650,11 @@ public:
 	afx_msg BOOL NotepadSaveMethod(LPCTSTR Title, short Method);
 	afx_msg long ChangeDir(LPCTSTR Path);
 	afx_msg long SendPkt(LPCTSTR Packet);
+	afx_msg long GMCP_Subscribe(LPCTSTR Package, LPCTSTR Version);
+	afx_msg long GMCP_Unsubscribe(LPCTSTR Package);
+	afx_msg long GMCP_Send(LPCTSTR Package, LPCTSTR Json);
+	afx_msg VARIANT GMCP_Get(LPCTSTR Package);
+	afx_msg VARIANT MXPEntityInfo(LPCTSTR Name, short InfoType);
 	afx_msg BSTR Metaphone(LPCTSTR Word, short Length);
 	afx_msg long EditDistance(LPCTSTR Source, LPCTSTR Target);
 	afx_msg long FlushLog();

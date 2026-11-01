@@ -6,6 +6,7 @@
 #include "../mushview.h"
 #include "../mainfrm.h"
 #include "mxp.h"
+#include "../protocols.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -23,6 +24,13 @@ void CMUSHclientDoc::MXP_mode_change (int iNewMode)
   // change to new mode, -1 means use the default after a newline
   if (iNewMode == -1)
     iNewMode = m_iMXP_defaultMode;
+
+  // Line tags say what a line is, not how secure it is, so the mode stays as it was.
+  if (iNewMode >= eMXP_room_name && iNewMode <= 99)
+    {
+    Proto_MxpLineTag (*this, iNewMode);
+    return;
+    }
 
 //  if (iNewMode != m_iMXP_mode)
 //      TRACE2 ("MXP mode change from %i to %i\n", m_iMXP_mode, iNewMode);

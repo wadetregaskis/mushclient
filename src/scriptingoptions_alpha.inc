@@ -27,6 +27,8 @@
 {"log_line_preamble_notes",       "",         A(m_strLogLinePreambleNotes), OPT_KEEP_SPACES},
 {"log_line_preamble_output",      "",         A(m_strLogLinePreambleOutput), OPT_KEEP_SPACES},
 {"mapping_failure",               "Alas, you cannot go that way.", A(m_strMappingFailure), OPT_KEEP_SPACES},
+{"msp_allowed_hosts",             "",         A(m_strMSPAllowedHosts), OPT_PLUGIN_CANNOT_WRITE},
+{"msp_sound_directory",           "",         A(m_strMSPSoundDirectory)},
 {"name",                          "",         A(m_mush_name), OPT_PLUGIN_CANNOT_WRITE},
 {"new_activity_sound",            NOSOUNDLIT, A(m_new_activity_sound)},
 {"notes",                         "",         A(m_notes), OPT_MULTLINE},

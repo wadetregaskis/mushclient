@@ -446,6 +446,11 @@ library MUSHclient
 			[id(412)] void SetUnseenLines(long Counter);
 			[id(413)] void SetSelection(long StartLine, long EndLine, long StartColumn, long EndColumn);
 			[id(414)] void SetFrameBackgroundColour(long Colour);
+			[id(419)] long GMCP_Subscribe(BSTR Package, BSTR Version);
+			[id(420)] long GMCP_Unsubscribe(BSTR Package);
+			[id(421)] long GMCP_Send(BSTR Package, BSTR Json);
+			[id(422)] VARIANT GMCP_Get(BSTR Package);
+			[id(423)] VARIANT MXPEntityInfo(BSTR Name, short InfoType);
 			//}}AFX_ODL_METHOD
 
 	};

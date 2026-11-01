@@ -4,6 +4,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "protocols.h"
 // No-op stubs for the debug helpers used below — not needed in the full build.
 #define dbg(...)          ((void)0)
 #define telopt_name(opt)  ""
@@ -64,12 +65,14 @@ void CMUSHclientDoc::Phase_ESC (const unsigned char c)
     {
     // OSC (Operating System Command): ESC ] <text> BEL/ST
     // MUDs use this for window titles (ESC]0;title BEL) and colour palette
-    // (ESC]4;...).  In CLI mode we have no window title to set, so we simply
-    // swallow the entire sequence.
+    // (ESC]4;...), which we swallow, and links (ESC]8;...), which we don't.
 #ifndef _WIN32
     dbg("OSC sequence started - will discard until BEL/ST");
 #endif
     m_phase = HAVE_OSC;
+    m_pProto->osc.clear ();
+    m_pProto->oscCount = 0;
+    m_pProto->bOscReprocess = false;
     }
   else
     {
@@ -79,7 +82,8 @@ void CMUSHclientDoc::Phase_ESC (const unsigned char c)
 
   } // end of Phase_ESC
 
-// OSC - we have ESC ] and are swallowing until BEL or ST (ESC \)
+// OSC - we have ESC ] and are collecting until BEL or ST (ESC \).  Telling an OSC 8
+// link from the rest, and what to do with it, is in protocols_telnet.cpp.
 // Compiled on ALL platforms: Phase_ESC above enters HAVE_OSC unconditionally,
 // so every build must be able to consume the payload.  (This was historically
 // #ifndef _WIN32 on the mistaken belief that Windows never entered HAVE_OSC —
@@ -87,13 +91,13 @@ void CMUSHclientDoc::Phase_ESC (const unsigned char c)
 // the visible output on Windows and the mac product.)
 void CMUSHclientDoc::Phase_OSC (const unsigned char c)
   {
-  if (c == '\007')          // BEL terminates OSC
-    m_phase = NONE;
-  else if (c == 0x9C)       // ST as a single C1 byte (rare)
-    m_phase = NONE;
-  else if (c == '\033')     // ESC starts a possible String Terminator (ESC \)
-    m_phase = HAVE_ESC;     // if next char is '\', Phase_ESC→NONE; harmless either way
-  // else: still inside the OSC payload — stay in HAVE_OSC and keep discarding
+  if (c == '\033')          // ESC starts a possible String Terminator (ESC \)
+    {                       // (the display loop does this first: this is for direct calls)
+    Proto_OscInterrupted (*this, c);
+    m_phase = HAVE_ESC;     // if next char is '\', Phase_ESC goes to NONE; harmless either way
+    return;
+    }
+  Proto_OscByte (*this, c);
   }
 
 // ANSI - we have ESC [ x
@@ -320,6 +324,25 @@ void CMUSHclientDoc::Send_IAC_WONT (const unsigned char c)
   } // end of CMUSHclientDoc::Send_IAC_WONT
 
 
+// Should the plugins' SENT_DO or SENT_WILL handshake run for this request?
+//
+// A request repeated when we have already agreed gets no reply (RFC 854, above), and
+// running the handshake again for it is what a server sending WILL twice used to get:
+// Quow's plugin would say Core.Hello and Core.Supports.Set all over again.  So not if
+// we have just done it.  But it must still run for one that comes later.  A server
+// that copies over keeps its sockets and forgets who wanted what, then says WILL again
+// and, since we dedupe, the handshake is the only answer it can get.  Nothing tells
+// that apart from a repeat except the time between them.
+static bool ShouldRunHandshake (CProtocolState & state, const bool bAlreadyAgreed, uint64_t & lastRun)
+  {
+  if (!bAlreadyAgreed)
+    {
+    lastRun = state.Now ();
+    return true;
+    }
+  return Proto_ShouldRerunHandshake (state, &lastRun);
+  }
+
 // WILL - we have IAC WILL x   - reply DO or DONT (generally based on client option settings)
 // for unknown types we query plugins: function OnPluginTelnetRequest (num, type) 
 //    eg. num = 200, type = WILL
@@ -336,6 +359,15 @@ void CMUSHclientDoc::Phase_WILL (const unsigned char c)
   m_phase = NONE;  // back to normal text after this character
 
   m_nCount_IAC_WILL++;
+
+  if (!Proto_NegotiationAllowed (*this, c))
+    {
+    // No reply, but do not let a looping server echo a password.
+    if (c == TELOPT_ECHO && !m_bNoEchoOff)
+      m_bNoEcho = true;
+    return;
+    }
+
   m_bClient_got_IAC_WILL [c] = true;
 
   switch (c)
@@ -432,14 +464,30 @@ void CMUSHclientDoc::Phase_WILL (const unsigned char c)
         Send_IAC_DO (c);
         break;
 
+    // GMCP: plugins first, then the helper's subscribers (gmcp.cpp)
+    case proto::kTelOptGmcp:
+        Proto_GmcpWill (*this);
+        break;
+
     default:
+        {
+        const bool bAlreadyAgreed = m_bClient_sent_IAC_DO [c];
         if (Handle_Telnet_Request (c, "WILL"))
           {
+          if (c == proto::kTelOptMsp)
+            m_pProto->bMspPluginClaimed = true;
           Send_IAC_DO (c);
-          Handle_Telnet_Request (c, "SENT_DO");
+          if (ShouldRunHandshake (*m_pProto, bAlreadyAgreed, m_pProto->lastSentDo [c]))
+            Handle_Telnet_Request (c, "SENT_DO");
           }
+        else if (c == proto::kTelOptMsp && Proto_MspWillAccept (*this))
+          Send_IAC_DO (c);
+        // only to read a TLS port, and a server we have TLS with has nothing to tell us
+        else if (c == proto::kTelOptMssp && m_bMsspTlsHint && !m_bUseSSL)
+          Send_IAC_DO (c);
         else
           Send_IAC_DONT (c);
+        }
         break;  // end of others
 
     } // end of switch
@@ -459,7 +507,20 @@ void CMUSHclientDoc::Phase_WONT (const unsigned char c)
   m_phase = NONE;
 
   m_nCount_IAC_WONT++;
+
+  if (!Proto_NegotiationAllowed (*this, c))
+    {
+    if (c == TELOPT_ECHO && !m_bNoEchoOff)
+      m_bNoEcho = false;
+    return;
+    }
+
   m_bClient_got_IAC_WONT [c] = true;
+
+  if (c == proto::kTelOptMsp)
+    m_pProto->bMspNegotiated = m_pProto->bMspPluginClaimed = false;
+  else if (c == proto::kTelOptGmcp)
+    Proto_GmcpWont (*this);
 
   switch (c)
     {
@@ -495,6 +556,10 @@ void CMUSHclientDoc::Phase_DO (const unsigned char c)
   m_phase = NONE;
 
   m_nCount_IAC_DO++;
+
+  if (!Proto_NegotiationAllowed (*this, c))
+    return;
+
   m_bClient_got_IAC_DO [c] = true;
 
   switch (c)
@@ -539,13 +604,23 @@ void CMUSHclientDoc::Phase_DO (const unsigned char c)
           break;  // end of MXP
 
     default:
+          {
+          const bool bAlreadyAgreed = m_bClient_sent_IAC_WILL [c];
           if (Handle_Telnet_Request (c, "DO"))
             {
             Send_IAC_WILL (c);
-            Handle_Telnet_Request (c, "SENT_WILL");
+            if (ShouldRunHandshake (*m_pProto, bAlreadyAgreed, m_pProto->lastSentWill [c]))
+              Handle_Telnet_Request (c, "SENT_WILL");
+            }
+          // MNES: nobody else wants it, and it is ours to answer
+          else if (c == proto::kTelOptNewEnviron)
+            {
+            m_pProto->bNewEnviron = true;
+            Send_IAC_WILL (c);
             }
           else
             Send_IAC_WONT (c);
+          }
           break;    // end of others
     }   // end of switch
 
@@ -560,10 +635,18 @@ void CMUSHclientDoc::Phase_DONT (const unsigned char c)
   TRACE1 ("<%d>", c);
   dbg("recv IAC DONT %s", telopt_name(c));
   m_phase = NONE;
-  Send_IAC_WONT (c);
 
   m_nCount_IAC_DONT++;
+
+  if (!Proto_NegotiationAllowed (*this, c))
+    return;
+
+  Send_IAC_WONT (c);
+
   m_bClient_got_IAC_DONT [c] = true;
+
+  if (c == proto::kTelOptNewEnviron)
+    m_pProto->bNewEnviron = false;
 
   switch (c)
     {
@@ -743,6 +826,13 @@ void CMUSHclientDoc::Phase_SUBNEGOTIATION_IAC (const unsigned char c)
                                 false,
                                 false);
 
+      // What the client does itself comes after the raw callbacks, which are as they were.
+      if (m_subnegotiation_type == proto::kTelOptGmcp)
+        Proto_GmcpReceived (*this);
+      else if (m_subnegotiation_type == proto::kTelOptNewEnviron && m_pProto->bNewEnviron)
+        Proto_HandleNewEnviron (*this);
+      else if (m_subnegotiation_type == proto::kTelOptMssp)
+        Proto_HandleMssp (*this);
       }
       break;  // end of default
 
@@ -838,54 +928,26 @@ void CMUSHclientDoc::Handle_TELOPT_CHARSET ()
   if (tt != 1) 
     return;  // not a REQUEST
 
-  string delim = m_IAC_subnegotiation_data.substr (1, 1);
+  // The first name on the server's list that this world can honestly agree to.  We
+  // never change the world's encoding to suit the server: that is the player's choice,
+  // and a world's triggers and logs depend on it.
+  const string strCharset = proto::ChooseCharset (m_IAC_subnegotiation_data.substr (1),
+                                                  Proto_WorldCharsetNames (*this));
 
-  vector <string> v;
-  StringToVector (m_IAC_subnegotiation_data.substr (2), v, delim, false);
-
-  bool found = false;
-  CString strCharset = "US-ASCII"; // default
-
-  // (upstream tested `if (m_font)` here -- an array, so always true -- and
-  // nothing below uses the font)
+  // Charset names are short.  One that isn't, we can't be using.
+  if (!strCharset.empty () && strCharset.size () < 64)
     {
-
-    // hack! ugh.
-    if (m_bUTF_8)
-       strCharset = "UTF-8";
-
-    for (vector<string>::const_iterator i = v.begin (); i != v.end (); i++)
-      if (i->c_str () == strCharset)
-        {
-        found = true;
-
-        unsigned char p1 [] = { IAC, SB, TELOPT_CHARSET, 2 };  // 2 = accepted
-        unsigned char p2 [] = { IAC, SE }; 
-        unsigned char sResponse [40];
-        int iLength = 0;
-
-        // build up response, eg. IAC, SB, TELOPT_CHARSET, 2, "UTF-8", IAC, SE 
-
-        // preamble
-        memcpy (sResponse, p1, sizeof p1);
-        iLength += sizeof p1;
-
-        // ensure max of 20 so we don't overflow the field
-        CString strTemp = strCharset.Left (20);
-
-        memcpy (&sResponse [iLength], strTemp, strTemp.GetLength ());
-        iLength += strTemp.GetLength ();
-
-        // postamble
-        memcpy (&sResponse [iLength], p2, sizeof p2);
-        iLength += sizeof p2;
-
-        SendPacket (sResponse, iLength);
-
-        }
-    } // end of having an output font
-
-  if (!found)
+    string sResponse;
+    sResponse += (char) IAC;
+    sResponse += (char) SB;
+    sResponse += (char) TELOPT_CHARSET;
+    sResponse += (char) 2;        // accepted
+    sResponse += strCharset;      // as the server spelled it
+    sResponse += (char) IAC;
+    sResponse += (char) SE;
+    SendPacket (sResponse.data (), (int) sResponse.size ());
+    }
+  else
     {
     unsigned char p [] = { IAC, SB, TELOPT_CHARSET, 3, IAC, SE };    // 3 = rejected
     SendPacket (p, sizeof p);
@@ -984,7 +1046,7 @@ void CMUSHclientDoc::Handle_TELOPT_TERMINAL_TYPE ()
 
     case 2:
         {
-        // ANSI=1, 256 COLORS=8, TRUECOLOR=256.
+        // ANSI=1, 256 COLORS=8, TRUECOLOR=256, MNES=512, in Proto_MttsBits.
         //
         // The TRUECOLOR bit was upstream's deliberate addition (d9d45b3), and
         // it is honest here: ansi.cpp parses ESC[38;2;r;g;b into COLOUR_RGB and
@@ -994,12 +1056,7 @@ void CMUSHclientDoc::Handle_TELOPT_TERMINAL_TYPE ()
         // mushcli, which no longer exists, and never true of the GUI.  MUDs
         // that gate 24-bit output on this bit were sending banded 256-colour
         // approximations to a client that could display the real thing.
-        int iMTTS = 265;
-        if (m_bUTF_8)
-          iMTTS |= 4;     // UTF-8
-        if (m_bSSL_Connected)
-          iMTTS |= 2048;  // TLS/SSL
-        strTemp.Format ("MTTS %d", iMTTS);
+        strTemp.Format ("MTTS %d", Proto_MttsBits (*this));
         }
         break;
 

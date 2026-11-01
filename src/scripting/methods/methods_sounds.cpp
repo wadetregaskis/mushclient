@@ -7,6 +7,7 @@
 #include "../../doc.h"
 #include "../errors.h"
 #include "../../user_data.h"   // UserData_Directory: the user's sounds
+#include "../../platform/ma_decode.h"
 
 // Implements:
 
@@ -177,8 +178,23 @@ int i;
         strName = ExtractDirectory (App.m_strMUSHclientFileName) + "sounds\\" + strName;
       }
 
-    if (strName.GetLength () > 127)
-      return eBadParameter;
+    // DirectSound's loader reads WAV files, with a path that fits in 127 characters.
+    // Anything else goes through the decoder the port uses, as a WAV in memory.
+    {
+    const CString strExtension = strName.Right (4);
+    const bool bWav = strExtension.CompareNoCase (".wav") == 0;
+    if (!bWav || strName.GetLength () > 127)
+      {
+      int iWide = MultiByteToWideChar (CP_ACP, 0, strName, -1, NULL, 0);
+      std::wstring wide (iWide > 0 ? iWide : 1, L'\0');
+      MultiByteToWideChar (CP_ACP, 0, strName, -1, &wide [0], iWide);
+      std::string wav;
+      if (!MC_DecodeAudioFileToWav (wide.c_str (), &wav))
+        return bWav || GetFileAttributes (strName) == INVALID_FILE_ATTRIBUTES
+                 ? eFileNotFound : eCannotPlaySound;
+      return PlaySoundHelper (Buffer + 1, "", Loop, Volume, Pan, wav.data (), wav.size ());
+      }
+    }
 
     } // have a file name (not memory file)
 

@@ -7,6 +7,7 @@
 #include "../mainfrm.h"
 #include "../Color.h"   // CColor (HLS colour operations) — not in stdafx.h on macOS
 #include "mxp.h"
+#include "../protocols.h"
 #include "scripting/errors.h"
 
 #ifdef _DEBUG
@@ -15,8 +16,9 @@
 static char BASED_CODE THIS_FILE[] = __FILE__;
 #endif
 
-// version of MXP to report to servers
-#define MXP_VERSION "0.5"
+// version of MXP to report to servers.  1.0, which is what the spec is: what we leave
+// out of it is FILTER, as zMUD itself did, and <SUPPORT> says so.
+#define MXP_VERSION "1.0"
 
 // for now we'll treat Pueblo and MXP the same
 #define PUEBLO_ACTIVE true
@@ -133,6 +135,133 @@ COLORREF       iBackColour = pStyle->iBackColour;
     case MXP_ACTION_BOLD: pStyle->iFlags |= HILITE; break;
     case MXP_ACTION_UNDERLINE: pStyle->iFlags |= UNDERLINE; break;
     case MXP_ACTION_ITALIC: pStyle->iFlags |= BLINK; break;
+    case MXP_ACTION_STRIKE: pStyle->iFlags |= STRIKEOUT; break;
+
+    // The output window is a fixed grid, so text cannot get smaller without breaking
+    // it, and everything is already non-proportional.  What is left of "small" is the
+    // emphasis: the opposite of <HIGH>.
+    case MXP_ACTION_TT: break;
+    case MXP_ACTION_SMALL:
+         {
+         CColor clr;
+
+         pStyle->iForeColour = colour1;
+         pStyle->iBackColour = colour2;
+         pStyle->iFlags &= ~COLOURTYPE;  // clear bits, eg. custom
+         pStyle->iFlags |= COLOUR_RGB;
+
+         clr.SetColor (colour1);
+         float lum = clr.GetLuminance ();
+         lum -= 0.15f;
+         if (lum < 0.0f)
+           lum = 0.0f;
+         clr.SetLuminance (lum);
+         pStyle->iForeColour = clr;
+         }
+         break;
+
+    case MXP_ACTION_NOBR:
+         m_pProto->bNoBreak = true;
+         break;
+
+    case MXP_ACTION_SBR:
+         AddToLine (" ", 0);     // the spec: shown as a space, and wrap prefers a space
+         break;
+
+    case MXP_ACTION_EXPIRE:
+         Proto_MxpExpire (*this, GetArgument (ArgumentList, "name", 1, false));
+         break;
+
+    case MXP_ACTION_GAUGE:
+    case MXP_ACTION_STAT:
+         {
+         const CString strEntity = GetArgument (ArgumentList, "", 1, false);
+         const CString strMax = GetArgument (ArgumentList, "max", 2, false);
+         const CString strCaption = GetArgument (ArgumentList, "caption", 3, false);
+         const CString strColour = iAction == MXP_ACTION_GAUGE
+                                     ? GetArgument (ArgumentList, "color", 4, true) : CString ();
+         Proto_MxpBinding (*this, iAction == MXP_ACTION_GAUGE, (LPCTSTR) strEntity,
+                           (LPCTSTR) strMax, (LPCTSTR) strCaption, (LPCTSTR) strColour);
+         }
+         break;
+
+    case MXP_ACTION_FRAME:
+         {
+         const bool bInternal = GetKeyword (ArgumentList, "internal");
+         const bool bFloating = GetKeyword (ArgumentList, "floating");
+         (void) bFloating;       // a miniwindow is on top of the output window anyway
+         const CString strName = GetArgument (ArgumentList, "name", 1, false);
+         const CString strFrameAction = GetArgument (ArgumentList, "action", 2, false);
+         const CString strTitle = GetArgument (ArgumentList, "title", 3, false);
+         const CString strAlign = GetArgument (ArgumentList, "align", 0, false);
+         const CString strLeft = GetArgument (ArgumentList, "left", 0, false);
+         const CString strTop = GetArgument (ArgumentList, "top", 0, false);
+         const CString strWidth = GetArgument (ArgumentList, "width", 0, false);
+         const CString strHeight = GetArgument (ArgumentList, "height", 0, false);
+         const CString strScrolling = GetArgument (ArgumentList, "scrolling", 0, true);
+         GetArgument (ArgumentList, "parent", 0, false);    // spec: obsolete
+         Proto_MxpFrameTag (*this, (LPCTSTR) strName, (LPCTSTR) strFrameAction, (LPCTSTR) strTitle,
+                            bInternal, (LPCTSTR) strAlign, (LPCTSTR) strLeft, (LPCTSTR) strTop,
+                            (LPCTSTR) strWidth, (LPCTSTR) strHeight, strScrolling == "yes");
+         }
+         break;
+
+    case MXP_ACTION_DEST:
+         {
+         const bool bEol = GetKeyword (ArgumentList, "eol");
+         const bool bEof = GetKeyword (ArgumentList, "eof");
+         const CString strFrame = GetArgument (ArgumentList, "name", 1, false);
+         const CString strX = GetArgument (ArgumentList, "x", 0, false);
+         const CString strY = GetArgument (ArgumentList, "y", 0, false);
+         Proto_MxpDestOpen (*this, (LPCTSTR) strFrame, (LPCTSTR) strX, (LPCTSTR) strY, bEol, bEof);
+         }
+         break;
+
+    case MXP_ACTION_SOUND:
+    case MXP_ACTION_MUSIC:
+         {
+         // the same as the MSP trigger, and played by the same player.  A plugin that
+         // has claimed MSP sees these through OnPluginMXPopenTag if it wants them.
+         if (!m_bNativeMSP || m_pProto->bMspPluginClaimed)
+           {
+           bIgnoreUnusedArgs = true;
+           break;
+           }
+         const bool bMusic = iAction == MXP_ACTION_MUSIC;
+         proto::MspTrigger trigger;
+         trigger.bMusic = bMusic;
+         trigger.name = (LPCTSTR) GetArgument (ArgumentList, "fname", 1, false);
+         const CString strV = GetArgument (ArgumentList, "v", 2, false);
+         const CString strL = GetArgument (ArgumentList, "l", 3, false);
+         const CString strPC = GetArgument (ArgumentList, bMusic ? "c" : "p", 4, false);
+         trigger.type = (LPCTSTR) GetArgument (ArgumentList, "t", 5, false);
+         trigger.url = (LPCTSTR) GetArgument (ArgumentList, "u", 6, false);
+         if (trigger.name.empty ())
+           break;
+         trigger.bOff = proto::Lower (trigger.name) == "off";
+         if (!strV.IsEmpty ())
+           trigger.volume = MIN (100, MAX (0, atoi (strV)));
+         if (!strL.IsEmpty ())
+           trigger.repeats = atoi (strL) == -1 ? -1 : MAX (1, atoi (strL));
+         if (!strPC.IsEmpty ())
+           {
+           if (bMusic)
+             trigger.cont = atoi (strPC) ? 1 : 0;
+           else
+             trigger.priority = MIN (100, MAX (0, atoi (strPC)));
+           }
+         Proto_MspPlay (*this, trigger);
+         }
+         break;
+
+    case MXP_ACTION_RELOCATE:
+         {
+         GetKeyword (ArgumentList, "quiet");
+         const CString strHost = GetArgument (ArgumentList, "hostname", 1, false);
+         const CString strPort = GetArgument (ArgumentList, "port", 2, false);
+         Proto_MxpRelocate (*this, (LPCTSTR) strHost, (LPCTSTR) strPort);
+         }
+         break;
 
     case MXP_ACTION_COLOR:
          {
@@ -215,6 +344,13 @@ COLORREF       iBackColour = pStyle->iBackColour;
           
           strHint = strArgument;     // hints
 
+          strArgument = GetArgument (ArgumentList, "expire", 0, false);
+          if (!strArgument.IsEmpty ())
+            {
+            m_pProto->openExpire = (LPCTSTR) strArgument;
+            Proto_MxpNoteExpiringLink (*this);
+            }
+
           break;  // end of MXP_ACTION_SEND
 
     case MXP_ACTION_HYPERLINK: 
@@ -222,6 +358,15 @@ COLORREF       iBackColour = pStyle->iBackColour;
 
           strArgument = GetArgument (ArgumentList,"href", 1, false);  // get link
           strAction = strArgument;   // hyperlink
+
+          strHint = GetArgument (ArgumentList, "hint", 2, false);  // shown on hover, else the URL
+
+          strArgument = GetArgument (ArgumentList, "expire", 0, false);
+          if (!strArgument.IsEmpty ())
+            {
+            m_pProto->openExpire = (LPCTSTR) strArgument;
+            Proto_MxpNoteExpiringLink (*this);
+            }
 
           pStyle->iFlags &= ~ACTIONTYPE;   // cancel old actions
           pStyle->iFlags |= ACTION_HYPERLINK | UNDERLINE;   // send-to action
@@ -293,8 +438,10 @@ COLORREF       iBackColour = pStyle->iBackColour;
                         TFormat ("Unknown colour: \"%s\"" ,
                                   (LPCTSTR) strArgument));
 
-          // get font size argument to avoid warnings about unused arguments
+          // A line in this window is one grid: one font, one size.  These are the only
+          // arguments we take and do nothing with, and <SUPPORT> says we don't have them.
           strArgument = GetArgument (ArgumentList,"size", 0, true);  // get font size
+          strArgument = GetArgument (ArgumentList,"face", 0, true);  // get font face
           }
           break; // end of FONT
 
@@ -571,6 +718,10 @@ COLORREF       iBackColour = pStyle->iBackColour;
 
 
     case MXP_ACTION_USER:
+            if (m_pProto->bRelocateAsked || m_pProto->bRelocated)
+              MXP_error (DBG_WARNING, wrnMXP_CharacterNameRequestedButNotDefined,
+                        Translate ("Character name requested after <RELOCATE> - not sent."));
+            else
             if (!m_name.IsEmpty () && 
                 m_connect_now == eConnectMXP)
               {
@@ -589,6 +740,10 @@ COLORREF       iBackColour = pStyle->iBackColour;
             break;  // end of USER
 
     case MXP_ACTION_PASSWORD:
+            if (m_pProto->bRelocateAsked || m_pProto->bRelocated)
+              MXP_error (DBG_WARNING, wrnMXP_PasswordNotSent,
+                        "Password requested after <RELOCATE> - not sent.");
+            else
             if (m_nTotalLinesSent > 10)     // security check
               MXP_error (DBG_WARNING, wrnMXP_PasswordNotSent,
                         "Too many lines sent to MUD - password not sent.");      
@@ -754,7 +909,19 @@ COLORREF       iBackColour = pStyle->iBackColour;
           if (strArgument.IsEmpty () && PUEBLO_ACTIVE)   
             strArgument = GetArgument (ArgumentList,"src", 0, false);  // get link
 
-          CString strFilename = GetArgument (ArgumentList,"fname", 0, false); // and file name
+          CString strFilename = GetArgument (ArgumentList,"fname", iAction == MXP_ACTION_IMAGE ? 1 : 0, false); // and file name
+
+          // In this world's cache folder?  Then it needs no link.  We never fetch one.
+          if (iAction == MXP_ACTION_IMAGE)
+            {
+            const CString strType = GetArgument (ArgumentList, "t", 0, false);
+            const CString strAlign = GetArgument (ArgumentList, "align", 0, false);
+            bIgnoreUnusedArgs = true;    // h, w, hspace, vspace
+            bool bShown = false;
+            Proto_MxpImage (*this, (LPCTSTR) strFilename, (LPCTSTR) strType, (LPCTSTR) strAlign, &bShown);
+            if (bShown)
+              break;
+            }
 
           if (!strArgument.IsEmpty ())
             {

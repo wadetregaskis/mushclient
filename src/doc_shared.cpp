@@ -3822,6 +3822,12 @@ CString strLine (lpszText, size);
                 {
                 StartNewLine (true, flags);
                 SetNewLineColour (flags);
+                // a line has ended: this is the place for what the protocols had to say
+                if (!(flags & NOTE_OR_COMMAND) && !m_pProto->notes.empty ())
+                  {
+                  Proto_FlushNotes (*this);
+                  SetNewLineColour (flags);
+                  }
                 }
             break;  // end of newline
 

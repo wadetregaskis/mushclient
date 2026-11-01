@@ -243,9 +243,12 @@ bool Proto_MxpLineComplete (CMUSHclientDoc & doc, const CString & strLine, POSIT
     if (tag == eMXP_room_name && doc.m_bMapping && !strLine.IsEmpty ())
       {
       CString strRoom = strLine;
+      CString strEntry = "{";
       strRoom.Replace ('{', '(');
       strRoom.Replace ('}', ')');
-      doc.m_strMapList.AddTail ("{" + strRoom + "}");
+      strEntry += strRoom;
+      strEntry += "}";
+      doc.m_strMapList.AddTail (strEntry);
       doc.DrawMappingStatusLine ();
       }
 

@@ -172,6 +172,42 @@ std::string PluginVar (CPlugin * p, const char * name)
 
 } // anonymous namespace
 
+// ------------------------------------------------------------- the options
+
+TEST (ProtoOptions, DefaultsAndWho)
+{
+  CMUSHclientDoc doc;
+  EXPECT_EQ (1L, doc.GetOption ("osc8_links"));
+  EXPECT_EQ (0L, doc.GetOption ("mtts_screen_reader"));
+  EXPECT_EQ (1L, doc.GetOption ("mssp_tls_hint"));
+  EXPECT_EQ (1L, doc.GetOption ("msp_native"));
+  EXPECT_EQ (0L, doc.GetOption ("msp_without_negotiation"));
+  EXPECT_EQ (0L, doc.GetOption ("msp_downloads"));
+  EXPECT_EQ (0L, doc.GetOption ("msp_allow_http"));
+  EXPECT_EQ (1L, doc.GetOption ("mxp_windows"));
+
+  EXPECT_EQ ((long) eOK, doc.SetOption ("mtts_screen_reader", 1));
+  EXPECT_TRUE (doc.m_bMttsScreenReader != 0);
+  EXPECT_EQ ((long) eOK, doc.SetAlphaOption ("msp_sound_directory", "c:/sounds"));
+  EXPECT_EQ (CString ("c:/sounds"), doc.m_strMSPSoundDirectory);
+
+  // a server's <RECOMMEND_OPTION> cannot turn on what it is not allowed to
+  World w (true);
+  w.feed ("\x1B[1z<RECOMMEND_OPTION msp_downloads=1 msp_allow_http=1>");
+  EXPECT_FALSE (w.doc.m_bMSPDownloads);
+  EXPECT_FALSE (w.doc.m_bMSPAllowHttp);
+}
+
+TEST (ProtoNotes, ComeAtTheEndOfALineAndNotInTheMiddleOfOne)
+{
+  World w;
+  Proto_Note (w.doc, "the note");
+  w.feed ("half a li");
+  EXPECT_TRUE (w.allOutput ().find ("the note") == std::string::npos);
+  w.feed ("ne\r\nnext");
+  EXPECT_EQ (std::string ("half a line\nthe note\nnext"), w.allOutput ());
+}
+
 // ------------------------------------------------------------- the guard
 
 TEST (ProtoGuard, TenThenMuted)

@@ -1890,6 +1890,7 @@
     <!-- The embedded scripting engines (MUSHclient.engines.props).  Empty
          translation units in Win32, which defines none of their switches. -->
     <ClCompile Include="src\platform\mc_dispatch.cpp" />
+    <ClCompile Include="src\platform\mc_ui_thread.cpp" />
     <ClCompile Include="src\platform\engines_selftest.cpp" />
     <ClCompile Include="src\platform\py_engine.cpp">
       <AdditionalIncludeDirectories>$(MCEngineIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>

@@ -12,6 +12,7 @@
 #include "MUSHclient.h"
 #include "pal/gdi_surface.h"   // Windows pal::ISurface adapter (self-guarded #ifdef _WIN32)
 #include "doc.h"
+#include "platform/mc_ui_thread.h"
 #include "ActivityDoc.h"
 #include "TextDocument.h"
 
@@ -1366,6 +1367,11 @@ void CMUSHclientApp::RestoreColumnConfiguration (LPCTSTR strName,
 
 int CMUSHclientApp::ExitInstance()
 {
+#ifdef MC_DISPATCH_AVAILABLE
+  // A script's thread waiting for the UI thread would wait for ever.
+  MC_UIThreadShutdown ();
+#endif
+
   // The system spell checker is a COM object on Windows: released while COM
   // is still there, not by a static destructor after it has gone.
   SetSystemSpellEngine (NULL);

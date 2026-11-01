@@ -38,6 +38,7 @@
 #include <vector>
 
 class CMUSHclientDoc;
+class CPlugin;
 #ifndef _WIN32
 struct VARIANT;
 #endif
@@ -163,6 +164,42 @@ bool MC_DispatchGetProperty(CMUSHclientDoc* doc, const char* name, VARIANT& resu
 // Write `value` to property `name` (and run its change handler, if any).
 // Returns false if there is no such property.
 bool MC_DispatchSetProperty(CMUSHclientDoc* doc, const char* name, const VARIANT& value);
+
+// ── A world call from a thread a script created ─────────────────────────────
+// Run on the UI thread (platform/mc_ui_thread.h), while it is doing whatever it
+// is doing: idle, or in the middle of some other plugin's callback.  m_CurrentPlugin
+// says which plugin that is, and every "my variable", "my trigger" looks there, so
+// for the length of the call this makes it the plugin whose engine the thread
+// belongs to (none, for the world's own script: `engine` is matched against the
+// plugins, so a stale one can only find nothing).
+class MCThreadCallScope
+  {
+  public:
+  MCThreadCallScope (CMUSHclientDoc* doc, const void* engine);
+  ~MCThreadCallScope ();
+
+  // Was a plugin's callback running, underneath this call?
+  bool PluginWasRunning () const { return m_previousPlugin != nullptr; }
+
+  private:
+  CMUSHclientDoc* m_doc;
+  CPlugin*        m_previousPlugin;
+  unsigned short  m_previousSource;
+  MCThreadCallScope (const MCThreadCallScope&) = delete;
+  MCThreadCallScope& operator= (const MCThreadCallScope&) = delete;
+  };
+
+// Does `engine` still belong to the world's script or one of its plugins?  A plugin
+// comes off the list some time before its engine closes, and in between it can raise
+// a message box (CPlugin::SaveState) whose message loop runs a thread's waiting call:
+// no plugin would be found for it, and it would run as the world.  UI thread only.
+bool MC_DispatchEngineInUse (CMUSHclientDoc* doc, const void* engine);
+
+// Does this world method delete a plugin?  UnloadPlugin refuses to delete "ourselves"
+// by comparing m_CurrentPlugin, which only protects the running plugin while it is the
+// current one -- and under an MCThreadCallScope it is not.  So while PluginWasRunning,
+// a thread's call to one of these gets eBadParameter instead of being made.
+bool MC_DispatchDeletesPlugin (const char* name);
 
 // Deep-free a VARIANT produced by MC_DispatchInvoke (frees an owned BSTR or
 // SAFEARRAY).  The stock VariantClear in mfc_ui.h only frees arrays, so the

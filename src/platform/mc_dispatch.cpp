@@ -5,6 +5,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "platform/mc_dispatch.h"
+#include "platform/mc_ui_thread.h"
 
 #ifdef MC_DISPATCH_AVAILABLE
 
@@ -664,6 +665,23 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
                       VARIANT& result, std::vector<VARIANT>* outargs,
                       unsigned flags)
   {
+  // Python and Ruby marshal before they get here, since they have a lock to let go
+  // of and a plugin to name.  This is for a thread nothing else knows about, like
+  // Perl's ithreads, which holds no lock the UI thread wants.
+  if (!MC_UIThreadIsCurrent())
+    {
+    VariantInit(&result);
+    int rc = MC_DISP_BADARGS;
+    MC_RunOnUIThread([&]
+      {
+      if (MC_DispatchDocIsLive(doc))
+        rc = MC_DispatchInvoke(doc, name, args, nargs, result, outargs, flags);
+      });
+    return rc;
+    }
+  if (MC_UIThreadHasWork())
+    MC_UIThreadService();
+
   build_table();
   VariantInit(&result);
   const std::string key = lc(name);
@@ -826,12 +844,60 @@ std::set<CMUSHclientDoc*>& live_docs()
   }
 }
 
-void MC_DispatchDocRegister   (CMUSHclientDoc* doc) { if (doc) live_docs().insert (doc); }
+void MC_DispatchDocRegister (CMUSHclientDoc* doc)
+  {
+  if (doc) live_docs().insert (doc);
+  MC_UIThreadInit ();
+  build_table ();     // here, so that a script's thread only ever reads the tables
+  }
+
 void MC_DispatchDocUnregister (CMUSHclientDoc* doc) { if (doc) live_docs().erase  (doc); }
 
+// UI thread only: the set changes as documents come and go.
 bool MC_DispatchDocIsLive(CMUSHclientDoc* doc)
   {
   return doc && live_docs().find (doc) != live_docs().end ();
+  }
+
+// A plugin still loading is the current one and not on the list yet.
+static CPlugin* plugin_with_engine (CMUSHclientDoc* doc, const void* engine)
+  {
+  if (!engine)
+    return nullptr;
+  if (doc->m_CurrentPlugin && doc->m_CurrentPlugin->m_ScriptEngine == engine)
+    return doc->m_CurrentPlugin;
+  for (CPlugin* plugin : doc->m_PluginList)
+    if (plugin->m_ScriptEngine == engine)
+      return plugin;
+  return nullptr;
+  }
+
+bool MC_DispatchEngineInUse (CMUSHclientDoc* doc, const void* engine)
+  {
+  return engine == doc->m_ScriptEngine || plugin_with_engine (doc, engine);
+  }
+
+MCThreadCallScope::MCThreadCallScope (CMUSHclientDoc* doc, const void* engine)
+  : m_doc (doc),
+    m_previousPlugin (doc->m_CurrentPlugin),
+    m_previousSource (doc->m_iCurrentActionSource)
+  {
+  doc->m_CurrentPlugin = plugin_with_engine (doc, engine);
+  doc->m_iCurrentActionSource = eUnknownActionSource;
+  }
+
+MCThreadCallScope::~MCThreadCallScope ()
+  {
+  if (!MC_DispatchDocIsLive (m_doc))    // the call closed the world
+    return;
+  m_doc->m_CurrentPlugin = m_previousPlugin;
+  m_doc->m_iCurrentActionSource = m_previousSource;
+  }
+
+bool MC_DispatchDeletesPlugin (const char* name)
+  {
+  const std::string key = lc (name);
+  return key == "unloadplugin" || key == "reloadplugin";
   }
 
 bool MC_DispatchHas(const char* name)
@@ -848,6 +914,14 @@ bool MC_DispatchHasProperty(const char* name)
 
 bool MC_DispatchGetProperty(CMUSHclientDoc* doc, const char* name, VARIANT& result)
   {
+  if (!MC_UIThreadIsCurrent())      // see MC_DispatchInvoke
+    {
+    VariantInit(&result);
+    bool ok = false;
+    MC_RunOnUIThread([&]
+      { if (MC_DispatchDocIsLive(doc)) ok = MC_DispatchGetProperty(doc, name, result); });
+    return ok;
+    }
   build_table();
   VariantInit(&result);
   auto it = prop_table().find(lc(name));
@@ -858,6 +932,13 @@ bool MC_DispatchGetProperty(CMUSHclientDoc* doc, const char* name, VARIANT& resu
 
 bool MC_DispatchSetProperty(CMUSHclientDoc* doc, const char* name, const VARIANT& value)
   {
+  if (!MC_UIThreadIsCurrent())      // see MC_DispatchInvoke
+    {
+    bool ok = false;
+    MC_RunOnUIThread([&]
+      { if (MC_DispatchDocIsLive(doc)) ok = MC_DispatchSetProperty(doc, name, value); });
+    return ok;
+    }
   build_table();
   auto it = prop_table().find(lc(name));
   if (it == prop_table().end() || !it->second.set) return false;

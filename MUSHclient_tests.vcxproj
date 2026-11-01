@@ -1472,6 +1472,7 @@
     <ClCompile Include="src\pal\win_transport.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <ClCompile Include="src\platform\mc_dispatch.cpp" />
+    <ClCompile Include="src\platform\mc_ui_thread.cpp" />
     <ClCompile Include="src\platform\engines_selftest.cpp" />
     <ClCompile Include="src\platform\py_engine.cpp">
       <AdditionalIncludeDirectories>$(MCEngineIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -1496,6 +1497,7 @@
     <ClCompile Include="tests\win\test_menu_rules_win.cpp" />
     <ClCompile Include="tests\win\test_win_transport.cpp" />
     <ClCompile Include="tests\win\test_text_boundary.cpp" />
+    <ClCompile Include="tests\win\test_ui_thread.cpp" />
     <ClCompile Include="tests\win\test_win_worldview.cpp" />
     <ClCompile Include="tests\win\test_user_data.cpp" />
     <ClCompile Include="tests\win\test_spell_engine.cpp" />

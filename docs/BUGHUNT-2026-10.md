@@ -295,12 +295,67 @@ loser, held sends, SOCKS 4 and 5), and `WinTransport.*` over the IPv6 loopback
 `WinTransportRace.*` (real sockets: a refused address giving way, both connecting
 with one closed, a disconnect mid-race).
 
+## World calls from a script's threads
+
+A `threading.Thread` calling `world.Note` ran the method on its own thread, against
+windows it does not own and a document nothing locks, as whichever plugin happened to
+be current: its `GetVariable` read another plugin's variables, or the world's.
+
+Now the call runs on the UI thread and the thread waits for it, without its GIL
+(`platform/mc_ui_thread.h` has the design). The UI thread gets to it from the message
+loop, so modal dialogs and open menus do not stop it; at its own next world call; and
+through `Py_AddPendingCall`, between the bytecodes of a callback that is busy but not
+blocked. A thread's call runs as the plugin that started it, whatever is current.
+
+The one way left to hang is a callback waiting for the thread, as in `t.join()`. So the
+UI thread says when it is in a script's own code, and if it stays there serving nothing
+for 5 seconds, the thread's call raises `RuntimeError` instead of running, which ends the
+thread or releases its lock and so frees the callback. The output window gets a note with
+the plugin and the blocked line, since an uncaught exception in a thread goes to a stderr
+nobody can see:
+
+    Python thread in plugin ThreadTest: world.Note could not run, because the main
+    thread has been blocked for 5 seconds at line 28, in join (waiting in threading.py,
+    in join).  A callback that waits for a thread stops that thread's world calls from
+    running: have the callback return instead.
+
+The UI thread busy anywhere else (a long Lua callback, a world method, C++) cannot be
+waiting for a script's thread, so that is not a deadlock and the thread keeps waiting.
+
+- **A false positive that is accepted.** A Python callback that blocks for over 5 seconds
+  for its own reasons (`time.sleep(10)`, a slow `recv`) looks the same, so a thread calling
+  the world meanwhile gets the exception, though nothing was deadlocked.
+- **`UnloadPlugin` and `ReloadPlugin`** return `eBadParameter` to a thread while any
+  plugin's callback is running underneath. Their "cannot delete ourselves" check compares
+  `m_CurrentPlugin`, which during a thread's call is the thread's plugin, so it would no
+  longer protect the running one.
+- **A thread that outlives its script** gets `RuntimeError` from its next world call, and
+  one already waiting gets it too. Python cannot stop a thread. That includes the time a
+  plugin is off the list but not yet closed: `~CPlugin` can put up a message box in that
+  state (`SaveState`, with no state folder), and its message loop would otherwise run a
+  waiting call as the world, so a call needs its engine to still belong to something.
+- **The Windows 64-bit builds and the port have this**; the Win32 build embeds no engines.
+  The port's half (a wake and a line in the wx poll timer) has not been compiled, and a
+  headless port build has no message loop to serve a thread's call. Ruby has the same
+  treatment, with its GVL released, though its threads only run while a callback lets them.
+  Its message does not name the blocked line and it leaves no note. Perl's ithreads, if
+  anyone uses them, reach the same queue through `MC_DispatchInvoke`, with no plugin.
+
+Quow's plugins and the roughly 580 surveyed use no threads at all, so none of them reach
+this. Lua's world calls do not come through here, so Quow's plugins, all Lua, pay nothing;
+a Python or Ruby callback's own world call pays a thread-id compare and a few atomic writes.
+
+Tested by `UIThread.*` (the queue and the parked rule), `--engines-selftest` for Python and
+Ruby (real threads: the call waits and then runs, join, lock, a spinning and a polling
+callback served, a long non-script delay, running as the plugin, the unload rule, the script
+closing, the client closing), and in the running client with a Python plugin: threads
+writing through an open menu and a modal About box, a `join` breaking after 5 seconds with
+the note above, a tight loop of about 15,000 world calls a second with the menus and aliases
+still answering, and the plugin unloaded, the world closed and the client exited with a
+thread still calling.
+
 ## Not fixed, and why
 
-- **Python threads calling world methods off the UI thread** are unsynchronised.
-  The choices are to marshal each call to the UI thread (which turns today's
-  race into a deadlock for a script whose main thread waits on such a worker)
-  or to refuse the call with a Python error; that is a decision, not a fix.
 - **Text in the client as a whole** is still bytes in each world's own encoding,
   shown through the machine's code page. Damage crossing world methods on
   double-byte or UTF-8 system code pages is fixed (`CarryBytesIn1252`,

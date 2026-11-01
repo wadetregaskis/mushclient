@@ -756,6 +756,7 @@ if(NOT WIN32)
         src/xml/xml_serialize.cpp
         src/scripting/methods/methods_xml.cpp
         src/platform/mc_dispatch.cpp
+        src/platform/mc_ui_thread.cpp
         src/scripting/mt19937ar.c
     )
 

@@ -53,6 +53,7 @@
 #include "MUSHclient.h"    // CMUSHclientApp full definition
 #include "mainfrm.h"       // CMainFrame full definition
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
+#include "platform/mc_ui_thread.h"    // MC_UIThreadService
 #include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
 #include "bundled_files.h"  // keeping the bundled plugins up to date
@@ -1629,12 +1630,16 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // while callbacks keep sending (each nudged poll can set the flag again),
     // so it cannot busy-loop an idle connection; a peer whose RTT exceeds
     // 1 ms simply falls back to the regular tick, exactly as before.
+    // ...and woken at once for them, or a thread's every call would sit out the tick.
+    MC_UIThreadAddWake([] { wxTheApp->CallAfter([] { MC_UIThreadService(); }); });
     wxTimer* nudgeTimer = new wxTimer(frame);
     auto pumpOnce = [nudgeTimer]() {
         CAsyncSocket::Poll(0);
         // Deliver PAL-transport main-thread completions (async DNS results)
         // alongside the socket pump — platform/posix_transport.h (T2d).
         pal::PumpTransportCompletions();
+        // World calls from a script's threads (platform/mc_ui_thread.h).
+        MC_UIThreadService();
         if (CAsyncSocket::ConsumeSendNudge() && !nudgeTimer->IsRunning())
             nudgeTimer->StartOnce(1);
     };

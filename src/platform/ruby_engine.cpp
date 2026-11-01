@@ -27,9 +27,14 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "scripting/scripting.h"
+#include "scripting/errors.h"
 #include "platform/mc_dispatch.h"
+#include "platform/mc_ui_thread.h"
+#include "platform/mc_ui_thread.h"
 #include "platform/mc_variant_args.h"
 
+#include <functional>
+#include <set>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -48,6 +53,7 @@
 
 #include <ruby.h>
 #include <ruby/encoding.h>  // rb_utf8_encoding: a non-ASCII callback name (intern_name)
+#include <ruby/thread.h>    // rb_thread_call_without_gvl
 
 #ifndef VT_ERROR
 #define VT_ERROR 10
@@ -171,11 +177,71 @@ void ruby_to_variant (VALUE r, VARIANT& out)
   out.bstrVal = MC_BstrFromBytes (RSTRING_PTR (s));
   }
 
+// ── A world call from a Ruby Thread ──────────────────────────────────────────
+// Its GVL is let go while the UI thread runs it (platform/mc_ui_thread.h).  What it
+// runs under is the engine's plugin, as in py_engine.cpp; g_openEngines is how a
+// call that was waiting learns that its engine has gone, since a Ruby thread can
+// outlive it, and only the UI thread reads or writes that.
+std::set<const void*> g_openEngines;
+
+struct UICall
+  {
+  const std::function<void ()>* call;
+  MCUIResult result;
+  };
+
+void* run_on_ui_thread_without_gvl (void* p)
+  {
+  UICall* c = (UICall*) p;
+  c->result = MC_RunOnUIThread (*c->call);
+  return nullptr;
+  }
+
+// Run `call` against the world.  False, with why in errmsg, if it could not.  No
+// Ruby in `call`: off the UI thread, nobody holds the GVL for it.
+template <class Call>
+bool on_world_thread (CMUSHclientDoc* doc, const void* engine, const std::string& name,
+                      char* errmsg, size_t errsize, Call&& call)
+  {
+  if (MC_UIThreadIsCurrent ())
+    {
+    MCUIScriptScope worldCall (false);
+    call (false);
+    return true;
+    }
+
+  bool closed = false;
+  const std::function<void ()> onUIThread = [&]
+    {
+    if (!MC_DispatchDocIsLive (doc) ||
+        (engine && (g_openEngines.find (engine) == g_openEngines.end () ||
+                    !MC_DispatchEngineInUse (doc, engine))))
+      { closed = true; return; }
+    MCThreadCallScope scope (doc, engine);
+    call (scope.PluginWasRunning ());
+    };
+  UICall c = { &onUIThread, MC_UI_RAN };
+  rb_thread_call_without_gvl (run_on_ui_thread_without_gvl, &c, nullptr, nullptr);
+
+  if (c.result == MC_UI_RAN && !closed)
+    return true;
+  const char* why = closed                       ? "failed: its world or script has been closed"
+                  : c.result == MC_UI_BLOCKED    ? "could not run, because the main thread is blocked: "
+                                                   "a callback that waits for a thread stops that "
+                                                   "thread's world calls from running"
+                  : c.result == MC_UI_CLOSING    ? "the client is closing"
+                                                 : "failed";
+  snprintf (errmsg, errsize, "world.%s %s", name.c_str (), why);
+  return false;
+  }
+
 // ── world.<Method|Property>[=] — World#method_missing ────────────────────────
 // argv[0] is the method name (a Symbol); argv[1..] are the arguments.
 VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   {
   CMUSHclientDoc* doc = (CMUSHclientDoc*) (intptr_t) NUM2LL (rb_iv_get (self, "@doc"));
+  const VALUE engineValue = rb_iv_get (self, "@engine");    // nil: what GetWorld returned
+  const void* engine = NIL_P (engineValue) ? nullptr : (const void*) (intptr_t) NUM2LL (engineValue);
 
   // rb_raise longjmps to the enclosing rb_protect and does NOT unwind C++
   // frames, so nothing with a destructor may be live when one fires.  Every such
@@ -198,7 +264,8 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
   // keeps what world.GetWorld returned and uses it after that world is closed
   // would dereference freed memory.
-  if (!MC_DispatchDocIsLive (doc))
+  // (Off the UI thread that question can only be asked on it: on_world_thread.)
+  if (MC_UIThreadIsCurrent () && !MC_DispatchDocIsLive (doc))
     {
     rb_raise (rb_eRuntimeError, "world: that world has been closed");
     }
@@ -216,9 +283,13 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       if (MC_DispatchHasProperty (name.c_str ()) && nargs >= 1)
         {
         VARIANT v; ruby_to_variant (a[0], v);
-        MC_DispatchSetProperty (doc, name.c_str (), v);
+        const bool ran = on_world_thread (doc, engine, name, errmsg, sizeof errmsg, [&] (bool)
+          { MC_DispatchSetProperty (doc, name.c_str (), v); });
         MC_VariantClear (v);
-        ret = nargs ? a[0] : Qnil;
+        if (ran)
+          ret = nargs ? a[0] : Qnil;
+        else
+          errclass = rb_eRuntimeError;
         }
       else
         {
@@ -232,11 +303,23 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       for (int i = 0; i < nargs; i++) ruby_to_variant (a[i], vargs[i]);
       VARIANT result; VariantInit (&result);
       std::vector<VARIANT> outargs;
-      int rc = MC_DispatchInvoke (doc, name.c_str (),
-                                  nargs ? vargs.data () : nullptr, nargs, result, &outargs);
+      int rc = MC_DISP_OK;
+      const bool ran = on_world_thread (doc, engine, name, errmsg, sizeof errmsg, [&] (const bool pluginRunning)
+        {
+        if (pluginRunning && MC_DispatchDeletesPlugin (name.c_str ()))
+          { result.vt = VT_I4; result.lVal = eBadParameter; return; }
+        rc = MC_DispatchInvoke (doc, name.c_str (),
+                                nargs ? vargs.data () : nullptr, nargs, result, &outargs);
+        });
       for (auto& x : vargs) MC_VariantClear (x);
 
-      if (rc != MC_DISP_OK)
+      if (!ran)
+        {
+        MC_VariantClear (result);
+        for (auto& o : outargs) MC_VariantClear (o);
+        errclass = rb_eRuntimeError;
+        }
+      else if (rc != MC_DISP_OK)
         {
         MC_VariantClear (result);
         for (auto& o : outargs) MC_VariantClear (o);   // was leaked on this path
@@ -254,12 +337,16 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
         rb_ary_push (ret, variant_to_ruby (result));
         for (auto& o : outargs) { rb_ary_push (ret, variant_to_ruby (o)); MC_VariantClear (o); }
         }
-      if (rc == MC_DISP_OK) MC_VariantClear (result);
+      if (ran && rc == MC_DISP_OK) MC_VariantClear (result);
       }
     else if (MC_DispatchHasProperty (name.c_str ()))   // a property read
       {
-      VARIANT v;
-      if (MC_DispatchGetProperty (doc, name.c_str (), v))
+      VARIANT v; VariantInit (&v);
+      bool found = false;
+      if (!on_world_thread (doc, engine, name, errmsg, sizeof errmsg, [&] (bool)
+            { found = MC_DispatchGetProperty (doc, name.c_str (), v); }))
+        errclass = rb_eRuntimeError;
+      else if (found)
         { ret = variant_to_ruby (v); MC_VariantClear (v); }
       else
         {
@@ -517,6 +604,8 @@ void CScriptEngine::OpenRuby ()
   rb_gc_register_address (&e->world);
   e->obj   = rb_obj_alloc (rb_cObject);     // the per-engine isolation object
   e->world = make_world (m_pDoc);
+  rb_iv_set (e->world, "@engine", LL2NUM ((long long) (intptr_t) this));
+  g_openEngines.insert (this);
   // Singleton method `world` on the object returns its world, so the script can
   // simply say world.Note("hi") while its def's stay isolated to this object.
   rb_ivar_set (e->obj, rb_intern ("@__world"), e->world);
@@ -528,6 +617,7 @@ void CScriptEngine::OpenRuby ()
 void CScriptEngine::CloseRuby ()
   {
   if (!m_rubyEngine) return;
+  g_openEngines.erase (this);
   rb_gc_unregister_address (&m_rubyEngine->obj);
   rb_gc_unregister_address (&m_rubyEngine->world);
   delete m_rubyEngine;          // the VM itself persists (Ruby cannot re-init)
@@ -539,7 +629,10 @@ bool CScriptEngine::ParseRuby (const CString & strCode, const CString & strWhat)
   if (!m_rubyEngine) return true;
   EvalCtx ctx { m_rubyEngine->obj, rb_str_new_cstr ((LPCTSTR) strCode) };
   int state = 0;
-  rb_protect (do_instance_eval, (VALUE) &ctx, &state);
+    {
+    MCUIScriptScope inScript (true);
+    rb_protect (do_instance_eval, (VALUE) &ctx, &state);
+    }
   if (state) { report_error (m_rubyEngine->doc, strWhat, ""); return true; }
   return false;
   }
@@ -610,7 +703,11 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   // free the argument array out from under the callee.
   CallCtx ctx { m_rubyEngine->obj, mid, RARRAY_LENINT (av), RARRAY_CONST_PTR (av) };
   int state = 0;
-  VALUE r = rb_protect (do_funcall, (VALUE) &ctx, &state);
+  VALUE r;
+    {
+    MCUIScriptScope inScript (true);
+    r = rb_protect (do_funcall, (VALUE) &ctx, &state);
+    }
   RB_GC_GUARD (av);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
 
@@ -670,7 +767,11 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = iReason;
   CallCtx ctx { m_rubyEngine->obj, mid, 1, &arg };
   int state = 0;
-  VALUE r = rb_protect (do_funcall, (VALUE) &ctx, &state);
+  VALUE r;
+    {
+    MCUIScriptScope inScript (true);
+    r = rb_protect (do_funcall, (VALUE) &ctx, &state);
+    }
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
 
   if (state) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, szType, szProcedure); return true; }

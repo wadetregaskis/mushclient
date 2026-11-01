@@ -18,6 +18,9 @@
 // socket.recv), except while some other Python callback happened to be
 // executing: plugins "worked while typing and stopped when idle".
 //
+// A world call from such a thread runs on the UI thread, with this thread's GIL
+// let go while it waits (on_world_thread below, platform/mc_ui_thread.h).
+//
 // Built only when CMake finds Python3 (MUSHCLIENT_PYTHON_SCRIPTING) in the full
 // (mushapp) build; scriptengine.cpp provides link stubs otherwise.
 
@@ -39,9 +42,13 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "scripting/scripting.h"
+#include "scripting/errors.h"
 #include "platform/mc_dispatch.h"
+#include "platform/mc_ui_thread.h"
 #include "platform/mc_variant_args.h"
 
+#include <atomic>
+#include <functional>
 #include <string>
 #include <vector>
 #include <cstring>
@@ -69,26 +76,187 @@ class CPythonEngine
 namespace {
 
 // ── world / world-method proxy types ────────────────────────────────────────
-struct WorldObject  { PyObject_HEAD; CMUSHclientDoc* doc; };
-struct MethodObject { PyObject_HEAD; CMUSHclientDoc* doc; char* name; };
+// `engine` is the script engine a proxy belongs to, and through it the plugin a
+// thread's world calls run as (MCThreadCallScope); null for what world.GetWorld
+// returns.  `closed` is its engine having closed, for a thread that outlives it:
+// Python cannot stop one.  It is written and read on the UI thread only, the
+// reference a call holds being what keeps it there to read.
+struct WorldObject  { PyObject_HEAD; CMUSHclientDoc* doc; const CScriptEngine* engine; bool closed; };
+struct MethodObject { PyObject_HEAD; WorldObject* world; char* name; };
 
 // Head-initialised (ob_refcnt=1, ob_type=NULL, rest zeroed); fields filled in
 // ensure_init() so the layout stays robust across CPython versions.
 PyTypeObject WorldType  = { PyVarObject_HEAD_INIT(NULL, 0) };
 PyTypeObject MethodType = { PyVarObject_HEAD_INIT(NULL, 0) };
 
-PyObject* make_world(CMUSHclientDoc* doc)
+PyObject* make_world(CMUSHclientDoc* doc, const CScriptEngine* engine = nullptr)
   {
   WorldObject* w = PyObject_New(WorldObject, &WorldType);
-  if (w) w->doc = doc;
+  if (w) { w->doc = doc; w->engine = engine; w->closed = false; }
   return (PyObject*) w;
   }
 
-PyObject* make_method(CMUSHclientDoc* doc, const char* name)
+PyObject* make_method(WorldObject* world, const char* name)
   {
   MethodObject* m = PyObject_New(MethodObject, &MethodType);
-  if (m) { m->doc = doc; m->name = strdup(name); }
+  if (m) { Py_INCREF(world); m->world = world; m->name = strdup(name); }
   return (PyObject*) m;
+  }
+
+// The thread that ran Py_Initialize, which is the UI thread (ensure_init).
+unsigned long g_mainThreadIdent = 0;
+
+// Where the main thread is, for a message: "line 12, in on_line (waiting in
+// threading.py, in join)".  Its own line is the last one not in the standard
+// library, a script's code being what the reader can do something about.
+std::string main_thread_position()
+  {
+  static const char code[] =
+    "def _where(ident):\n"
+    "    import os, sys, traceback\n"
+    "    frame = sys._current_frames().get(ident)\n"
+    "    if frame is None:\n"
+    "        return 'an unknown line'\n"
+    "    stack = traceback.extract_stack(frame)\n"
+    "    lib = os.path.dirname(getattr(os, '__file__', '') or '').lower()\n"
+    "    def theirs(f):\n"
+    "        name = f.filename.lower()\n"
+    "        return not name.startswith('<frozen') and not (lib and name.startswith(lib))\n"
+    "    mine = [f for f in stack if theirs(f)]\n"
+    "    at = mine[-1] if mine else stack[-1]\n"
+    "    text = 'line %d, in %s' % (at.lineno, at.name)\n"
+    "    if at is not stack[-1]:\n"
+    "        text += ' (waiting in %s, in %s)' % (os.path.basename(stack[-1].filename), stack[-1].name)\n"
+    "    return text\n";
+
+  std::string where = "an unknown line";
+  PyObject* ns = PyDict_New();
+  if (ns)
+    {
+    PyDict_SetItemString(ns, "__builtins__", PyEval_GetBuiltins());
+    PyObject* run = PyRun_String(code, Py_file_input, ns, ns);
+    Py_XDECREF(run);
+    PyObject* fn = run ? PyDict_GetItemString(ns, "_where") : nullptr;   // borrowed
+    PyObject* text = fn ? PyObject_CallFunction(fn, "k", g_mainThreadIdent) : nullptr;
+    const char* s = text ? PyUnicode_AsUTF8(text) : nullptr;
+    if (s) where = s;
+    Py_XDECREF(text);
+    Py_DECREF(ns);
+    }
+  PyErr_Clear();
+  return where;
+  }
+
+// The thread's call gave up on a blocked main thread: raise that, and leave a note
+// for when the main thread is free, because an uncaught exception in a thread goes
+// to a stderr nobody can see.
+void raise_blocked(WorldObject* w, const char* name)
+  {
+  const std::string where = main_thread_position();
+  const std::string message = std::string("world.") + name +
+    " could not run, because the main thread has been blocked for "
+    + std::to_string(kUIThreadParkedLimitMs / 1000) + " seconds at " + where +
+    ".  A callback that waits for a thread stops that thread's world calls from running:"
+    " have the callback return instead.";
+
+  Py_INCREF(w);
+  MC_PostToUIThread([w, message]
+    {
+    if (!w->closed && MC_DispatchDocIsLive(w->doc))
+      {
+      MCThreadCallScope scope(w->doc, w->engine);
+      CPlugin* plugin = w->doc->m_CurrentPlugin;
+      w->doc->ColourNote("white", "red",
+                         ("Python thread in " +
+                          (plugin ? "plugin " + std::string((LPCTSTR) plugin->m_strName)
+                                  : std::string("the world's script")) +
+                          ": " + message).c_str());
+      }
+    PyGILState_STATE gil = PyGILState_Ensure();
+    Py_DECREF(w);
+    PyGILState_Release(gil);
+    });
+  PyErr_SetString(PyExc_RuntimeError, message.c_str());
+  }
+
+// Run `call` against w's world.  False with a Python exception set if it could not.
+// `call` must not touch a Python object: off the UI thread nobody holds the GIL for
+// it.  It is told whether a plugin's callback is underneath it, so that it can
+// mind MC_DispatchDeletesPlugin.
+template <class Call>
+bool on_world_thread(WorldObject* w, const char* name, Call&& call)
+  {
+  if (MC_UIThreadIsCurrent())
+    {
+    // The proxy holds a bare CMUSHclientDoc* -- there is no COM here, so nothing
+    // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
+    // keeps what world.GetWorld() returned and uses it after that world is closed
+    // would dereference freed memory; report it instead.
+    if (w->closed || !MC_DispatchDocIsLive(w->doc))
+      { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
+        return false; }
+    MCUIScriptScope worldCall(false);
+    call(false);
+    return true;
+    }
+
+  bool scriptClosed = false, worldClosed = false;
+  const std::function<void ()> onUIThread = [&]
+    {
+    worldClosed = !MC_DispatchDocIsLive(w->doc);
+    if (worldClosed)
+      return;
+    scriptClosed = w->closed || (w->engine && !MC_DispatchEngineInUse(w->doc, w->engine));
+    if (scriptClosed)
+      return;
+    MCThreadCallScope scope(w->doc, w->engine);
+    call(scope.PluginWasRunning());
+    };
+
+  MCUIResult ran;
+  Py_BEGIN_ALLOW_THREADS
+  ran = MC_RunOnUIThread(onUIThread);
+  Py_END_ALLOW_THREADS
+
+  switch (ran)
+    {
+    case MC_UI_RAN:
+      if (!scriptClosed && !worldClosed)
+        return true;
+      PyErr_SetString(PyExc_RuntimeError, worldClosed
+                      ? "that world has been closed"
+                      : "the script that started this thread has been closed");
+      return false;
+    case MC_UI_BLOCKED:
+      raise_blocked(w, name);
+      return false;
+    case MC_UI_CLOSING:
+      PyErr_Format(PyExc_RuntimeError, "world.%s: the client is closing", name);
+      return false;
+    case MC_UI_THREW:
+    default:
+      PyErr_Format(PyExc_RuntimeError, "world.%s failed", name);
+      return false;
+    }
+  }
+
+// Why a callback running on the UI thread would ever see a request here: a thread
+// asked, and it is between two bytecodes.  That is the same place as a world call
+// the callback made itself.
+std::atomic<bool> g_pendingCallAdded { false };
+
+int run_thread_calls(void*)
+  {
+  g_pendingCallAdded = false;
+  MC_UIThreadService();
+  return 0;
+  }
+
+void add_pending_call()
+  {
+  if (!g_pendingCallAdded.exchange(true) &&
+      Py_AddPendingCall(run_thread_calls, nullptr) != 0)   // CPython's little queue is full
+    g_pendingCallAdded = false;
   }
 
 // ── PyObject <-> VARIANT marshalling ────────────────────────────────────────
@@ -217,13 +385,6 @@ PyObject* variant_to_py(const VARIANT& v)
 PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
   {
   MethodObject* m = (MethodObject*) self;
-  // The proxy holds a bare CMUSHclientDoc* -- there is no COM here, so nothing
-  // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
-  // keeps what world.GetWorld() returned and uses it after that world is closed
-  // would dereference freed memory; report it instead.
-  if (!MC_DispatchDocIsLive(m->doc))
-    { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
-      return nullptr; }
 
   Py_ssize_t n = PyTuple_GET_SIZE(args);
 
@@ -233,10 +394,21 @@ PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
 
   VARIANT result; VariantInit(&result);
   std::vector<VARIANT> outargs;
-  int rc = MC_DispatchInvoke(m->doc, m->name,
-                             n ? vargs.data() : nullptr, (int) n, result, &outargs);
+  int rc = MC_DISP_OK;
+  const bool ran = on_world_thread(m->world, m->name, [&] (const bool pluginRunning)
+    {
+    if (pluginRunning && MC_DispatchDeletesPlugin(m->name))
+      { result.vt = VT_I4; result.lVal = eBadParameter; return; }
+    rc = MC_DispatchInvoke(m->world->doc, m->name,
+                           n ? vargs.data() : nullptr, (int) n, result, &outargs);
+    });
 
   for (auto& a : vargs) MC_VariantClear(a);
+
+  if (!ran)     // nothing ran, or a world method threw, so nothing here needs keeping
+    { MC_VariantClear(result);
+      for (auto& o : outargs) MC_VariantClear(o);
+      return nullptr; }
 
   if (rc == MC_DISP_UNKNOWN)
     { PyErr_Format(PyExc_AttributeError, "world has no method '%s'", m->name); return nullptr; }
@@ -264,6 +436,7 @@ PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
 void Method_dealloc(PyObject* self)
   {
   free(((MethodObject*) self)->name);
+  Py_DECREF(((MethodObject*) self)->world);
   Py_TYPE(self)->tp_free(self);
   }
 
@@ -274,15 +447,16 @@ void Method_dealloc(PyObject* self)
 PyObject* Method_str(PyObject* self)
   {
   MethodObject* m = (MethodObject*) self;
-  if (!MC_DispatchDocIsLive(m->doc))
-    { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
-      return nullptr; }
   VARIANT result; VariantInit(&result);
   // MC_DISP_F_INTROSPECT: this 0-arg call is Python's string coercion, not
   // something the plugin author wrote, so strict argument checking must not
   // fire on it (see mc_dispatch.h).
-  if (MC_DispatchInvoke(m->doc, m->name, nullptr, 0, result, nullptr,
-                        MC_DISP_F_INTROSPECT) == MC_DISP_OK)
+  int rc = MC_DISP_OK;
+  if (!on_world_thread(m->world, m->name, [&] (bool)
+        { rc = MC_DispatchInvoke(m->world->doc, m->name, nullptr, 0, result, nullptr,
+                                 MC_DISP_F_INTROSPECT); }))
+    return nullptr;
+  if (rc == MC_DISP_OK)
     {
     PyObject* v = variant_to_py(result);
     MC_VariantClear(result);
@@ -299,11 +473,11 @@ PyObject* Method_str(PyObject* self)
 PyObject* World_getattro(PyObject* self, PyObject* nameobj)
   {
   const char* name = PyUnicode_AsUTF8(nameobj);
-  CMUSHclientDoc* doc = ((WorldObject*) self)->doc;
+  WorldObject* w = (WorldObject*) self;
   if (name)
     {
     if (MC_DispatchHas(name))
-      return make_method(doc, name);
+      return make_method(w, name);
     if (MC_DispatchHasProperty(name))
       {
       // The same stale-proxy rule Method_call keeps -- and it has to be INSIDE
@@ -311,11 +485,12 @@ PyObject* World_getattro(PyObject* self, PyObject* nameobj)
       // to the generic lookup.  A property is read off the doc's members
       // directly, with no method call anywhere, so Method_call's guard never
       // saw it: world.Trace on a proxy to a closed world read freed memory.
-      if (!MC_DispatchDocIsLive(doc))
-        { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
-          return nullptr; }
-      VARIANT v;
-      if (MC_DispatchGetProperty(doc, name, v))
+      VARIANT v; VariantInit(&v);
+      bool found = false;
+      if (!on_world_thread(w, name, [&] (bool)
+            { found = MC_DispatchGetProperty(w->doc, name, v); }))
+        return nullptr;
+      if (found)
         { PyObject* r = variant_to_py(v); MC_VariantClear(v); return r; }
       }
     }
@@ -326,16 +501,16 @@ PyObject* World_getattro(PyObject* self, PyObject* nameobj)
 int World_setattro(PyObject* self, PyObject* nameobj, PyObject* value)
   {
   const char* name = PyUnicode_AsUTF8(nameobj);
-  CMUSHclientDoc* doc = ((WorldObject*) self)->doc;
+  WorldObject* w = (WorldObject*) self;
   if (name && value && MC_DispatchHasProperty(name))
     {
-    if (!MC_DispatchDocIsLive(doc))
-      { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
-        return -1; }
     VARIANT v;
     py_to_variant(value, v);
-    bool ok = MC_DispatchSetProperty(doc, name, v);
+    bool ok = false;
+    const bool ran = on_world_thread(w, name, [&] (bool)
+      { ok = MC_DispatchSetProperty(w->doc, name, v); });
     MC_VariantClear(v);
+    if (!ran) return -1;
     if (ok) return 0;
     }
   return PyObject_GenericSetAttr(self, nameobj, value);
@@ -430,6 +605,9 @@ bool ensure_init()
   MethodType.tp_dealloc   = Method_dealloc;
   MethodType.tp_str       = Method_str;
   PyType_Ready(&MethodType);
+
+  g_mainThreadIdent = PyThread_get_thread_ident();
+  MC_UIThreadAddWake(add_pending_call);
 
   // Release the GIL that Py_Initialize left held.  From here on, every
   // host->interpreter entry point takes it for the call's duration (PyGIL
@@ -588,7 +766,7 @@ void CScriptEngine::OpenPython ()
   // what is, functionally, this script's entry point.
   PyObject* modname = PyUnicode_FromString ("__main__");
   if (modname) { PyDict_SetItemString (e->ns, "__name__", modname); Py_DECREF (modname); }
-  e->world = make_world (m_pDoc);
+  e->world = make_world (m_pDoc, this);
   if (e->world) PyDict_SetItemString (e->ns, "world", e->world);
   m_pyEngine = e;
   }
@@ -597,6 +775,8 @@ void CScriptEngine::ClosePython ()
   {
   if (!m_pyEngine) return;
   PyGIL gil;
+  if (m_pyEngine->world)
+    ((WorldObject*) m_pyEngine->world)->closed = true;
   Py_XDECREF (m_pyEngine->world);
   Py_XDECREF (m_pyEngine->ns);
   delete m_pyEngine;
@@ -632,7 +812,11 @@ bool CScriptEngine::ParsePython (const CString & strCode, const CString & strWha
       }
     }
 #endif
-  PyObject* r = PyRun_String (code, Py_file_input, m_pyEngine->ns, m_pyEngine->ns);
+  PyObject* r;
+    {
+    MCUIScriptScope inScript (true);
+    r = PyRun_String (code, Py_file_input, m_pyEngine->ns, m_pyEngine->ns);
+    }
   if (!r) { report_error (m_pDoc, strWhat, ""); return true; }
   Py_DECREF (r);
   return false;
@@ -726,7 +910,11 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = iReason;
 
-  PyObject* res = PyObject_CallObject (fn, argtuple);
+  PyObject* res;
+    {
+    MCUIScriptScope inScript (true);
+    res = PyObject_CallObject (fn, argtuple);
+    }
 
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
@@ -803,7 +991,11 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = iReason;
-  PyObject* res = PyObject_CallFunctionObjArgs (fn, arg, NULL);
+  PyObject* res;
+    {
+    MCUIScriptScope inScript (true);
+    res = PyObject_CallFunctionObjArgs (fn, arg, NULL);
+    }
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
 

@@ -40,6 +40,7 @@
 #include "scripting/errors.h"
 #include "flags.h"                 // eEnabled -- the nil-default battery seeds triggers
 #include "platform/mc_dispatch.h"   // MC_VariantDateToUnix
+#include "platform/mc_ui_thread.h"  // the thread-call batteries
 #include "childfrm.h"
 #include "mushview.h"
 #include "resource.h"
@@ -52,6 +53,8 @@
 #else
 #include <unistd.h>         // usleep -- an idle window with NO Python running
 #endif
+#include <chrono>
+#include <functional>
 #include <list>
 #include <map>
 #include <string>
@@ -2040,6 +2043,367 @@ void battery_py_threads(Engine& e, const Dialect& d)
           "a script-created thread runs while the app is idle (GIL released between callbacks)");
 }
 
+// 6a-quater. World calls from those threads run on the UI thread
+//     (platform/mc_ui_thread.h).  They used to run on the thread itself, against
+//     windows it does not own and a document nothing locks, as whichever plugin
+//     happened to be current.
+//
+// What a message loop does, as far as that goes.  The posted message is the route
+// being tested, so on Windows nothing here calls MC_UIThreadService.
+//
+// A script below that means its thread's call to find the main thread blocked sleeps
+// first: a call that arrives while the callback is still running bytecode, on its way
+// into the join, is served there, as it should be.
+void pump(const int ms, const std::function<bool ()>& until = nullptr)
+{
+    typedef std::chrono::steady_clock clock;
+    const clock::time_point end = clock::now() + std::chrono::milliseconds(ms);
+    while (clock::now() < end && !(until && until())) {
+#ifdef _WIN32
+        MSG msg;
+        while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE))
+            DispatchMessageA(&msg);
+#else
+        MC_UIThreadService();
+#endif
+        usleep(1000);
+    }
+}
+
+const char* const kPyThreadSource =
+  "import threading, time, sys\n"
+  "box = {}\n"
+  "def _call():\n"
+  "    time.sleep(0.05)\n"            // long enough for the callback to have returned
+  "    try:\n"
+  "        box['fromui'] = world.GetVariable('fromui')\n"
+  "        world.SetVariable('fromthread', 'ran')\n"
+  "        box['prop'] = world.Trace\n"
+  "        world.Trace = world.Trace\n"
+  "        box['str'] = str(world.GetWorldID)\n"
+  "    except Exception as e:\n"
+  "        box['error'] = repr(e)\n"
+  "    world.SetVariable('finished', '1')\n"
+  "def startcall():\n"
+  "    box['t'] = threading.Thread(target=_call)\n"
+  "    box['t'].start()\n"
+  "def reportcall():\n"
+  "    box['t'].join()\n"
+  "    world.SetVariable('r_error', box.get('error', 'none'))\n"
+  "    world.SetVariable('r_fromui', str(box.get('fromui')))\n"
+  "    world.SetVariable('r_prop', str(box.get('prop')))\n"
+  "    world.SetVariable('r_str', str(box.get('str') == world.GetWorldID()))\n"
+  "def parkjoin():\n"
+  "    res = {}\n"
+  "    def work():\n"
+  "        time.sleep(0.2)\n"
+  "        try:\n"
+  "            world.Note('must not appear')\n"
+  "            res['r'] = 'ran'\n"
+  "        except RuntimeError as e:\n"
+  "            res['r'] = str(e)\n"
+  "    t = threading.Thread(target=work)\n"
+  "    t.start()\n"
+  "    t.join()\n"
+  "    world.SetVariable('parked', res['r'])\n"
+  "def parklock():\n"
+  "    lock = threading.Lock()\n"
+  "    held = threading.Event()\n"
+  "    def work():\n"
+  "        with lock:\n"
+  "            held.set()\n"
+  "            time.sleep(0.2)\n"
+  "            world.Note('must not appear')\n"   // raises, which lets go of the lock
+  "    threading.Thread(target=work).start()\n"
+  "    held.wait()\n"
+  "    with lock:\n"
+  "        world.SetVariable('locked', 'got it')\n"
+  "def _waitfor(sleeping):\n"
+  "    done = []\n"
+  "    def work():\n"
+  "        world.SetVariable('served', 'yes')\n"
+  "        done.append(1)\n"
+  "    threading.Thread(target=work).start()\n"
+  "    end = time.monotonic() + 10\n"
+  "    while not done and time.monotonic() < end:\n"
+  "        if sleeping:\n"
+  "            time.sleep(0.01)\n"
+  "    world.SetVariable('waited', 'yes' if done else 'no')\n"
+  "def busyloop():\n"
+  "    _waitfor(False)\n"
+  "def sleeploop():\n"
+  "    _waitfor(True)\n"
+  "def _unload():\n"
+  "    time.sleep(0.05)\n"
+  "    world.SetVariable('unloaded', str(world.UnloadPlugin('bbbbbbbbbbbbbbbbbbbbbbbb')))\n"
+  "def startunload():\n"
+  "    threading.Thread(target=_unload).start()\n"
+  "def latego():\n"
+  "    sys._mc_go.set()\n"
+  "def latereport():\n"
+  "    world.SetVariable('late', getattr(sys, '_mc_late', '?'))\n"
+  "def _closing():\n"
+  "    time.sleep(0.05)\n"
+  "    try:\n"
+  "        world.Note('must not appear')\n"
+  "        box['closing'] = 'ran'\n"
+  "    except RuntimeError as e:\n"
+  "        box['closing'] = str(e)\n"
+  "def startclosing():\n"
+  "    box['t'] = threading.Thread(target=_closing)\n"
+  "    box['t'].start()\n"
+  "def reportclosing():\n"
+  "    box['t'].join()\n"
+  "    world.SetVariable('closing', box.get('closing', '?'))\n";
+
+CPlugin* add_plugin(CMUSHclientDoc* doc, const char* name, const char* id,
+                    const char* language, const char* script)
+{
+    CPlugin* p = new CPlugin(doc);
+    p->m_strName     = name;
+    p->m_strID       = id;
+    p->m_strLanguage = language;
+    p->m_bEnabled    = TRUE;
+    doc->m_PluginList.push_back(p);
+    if (script) {
+        CPlugin* const saved = doc->m_CurrentPlugin;
+        doc->m_CurrentPlugin = p;
+        p->m_ScriptEngine = new CScriptEngine(doc, language);
+        p->m_ScriptEngine->CreateScriptEngine();
+        p->m_ScriptEngine->Parse(script, "selftest plugin");
+        doc->m_CurrentPlugin = saved;
+    }
+    return p;
+}
+
+std::string plugin_var(CMUSHclientDoc* doc, CPlugin* p, const char* name)
+{
+    CPlugin* const saved = doc->m_CurrentPlugin;
+    doc->m_CurrentPlugin = p;
+    VARIANT v = doc->GetVariable(name);
+    doc->m_CurrentPlugin = saved;
+    return (v.vt == VT_BSTR) ? MC_BstrBytes(v.bstrVal) : std::string();
+}
+
+void battery_py_thread_calls(const Dialect& d)
+{
+    const char* L = d.display;
+    Engine e(d.language, kPyThreadSource);
+    if (!e.ok) { skip(L, "a thread's world call", "engine failed to open"); return; }
+    CMUSHclientDoc* doc = e.doc;
+    doc->m_ScriptEngine = e.eng;        // a thread's call needs its engine to belong to something
+    bool err = false;
+    const int limit = MC_UIThreadSetParkedLimit(1000);
+
+    // It waits for the UI thread, and the UI thread runs it.
+    e.seed("fromui", "from the UI");
+    e.callRich("startcall", &err);
+    usleep(300 * 1000);
+    check(!err && e.var("fromthread").empty(), L,
+          "a thread's world call does not run until the UI thread gets to it");
+    pump(5000, [&] { return e.var("finished") == "1"; });
+    check(e.var("fromthread") == "ran", L, "...and then it does, from the message loop");
+    e.callRich("reportcall", &err);
+    check(!err && e.var("r_error") == "none", L, "...with no error");
+    check(e.var("r_fromui") == "from the UI", L, "...and it returns what the method returned");
+    check(e.var("r_prop") != "None", L, "reading a property from a thread works");
+    check(e.var("r_str") == "True", L, "str(world.Method) from a thread works");
+
+    // The two ways of waiting for a thread that wants the UI thread.
+    e.callRich("parkjoin", &err);
+    const std::string parked = e.var("parked");
+    check(!err, L, "a callback joining a thread that calls the world gets its join back");
+    check(parked.find("main thread has been blocked") != std::string::npos, L,
+          "...the thread's call having raised, saying the main thread is blocked");
+    check(parked.find("in parkjoin") != std::string::npos, L,
+          "...at the callback's own line");
+    check(parked.find("waiting in threading.py") != std::string::npos, L,
+          "...in a thread join");
+    pump(100);
+    check(e.saw("Python thread in the world's script") && !e.saw("must not appear"), L,
+          "...and the output window says so, the call itself not having run");
+
+    e.callRich("parklock", &err);
+    check(!err && e.var("locked") == "got it", L,
+          "a callback waiting for a lock a thread holds gets it when the thread's call raises");
+
+    // A callback that is waiting but still running gets served in the meantime.
+    e.seed("served", "");
+    e.callRich("busyloop", &err);
+    check(!err && e.var("served") == "yes" && e.var("waited") == "yes", L,
+          "a callback spinning on bytecode serves the thread it is waiting for");
+    e.seed("served", "");
+    e.callRich("sleeploop", &err);
+    check(!err && e.var("served") == "yes" && e.var("waited") == "yes", L,
+          "a callback polling with short sleeps serves the thread it is waiting for");
+
+    // The UI thread busy somewhere other than a script is no deadlock.
+    e.seed("finished", "");
+    e.seed("fromthread", "");
+    MC_UIThreadSetParkedLimit(200);
+    e.callRich("startcall", &err);
+    usleep(800 * 1000);
+    pump(5000, [&] { return e.var("finished") == "1"; });
+    e.callRich("reportcall", &err);
+    check(e.var("fromthread") == "ran" && e.var("r_error") == "none", L,
+          "a UI thread busy outside any script, for longer than the limit, is just waited for");
+    MC_UIThreadSetParkedLimit(1000);
+
+    // A thread runs as the plugin that started it, whatever is current.
+    static const char kPluginScript[] =
+      "import threading, time\n"
+      "def _work():\n"
+      "    time.sleep(0.05)\n"
+      "    world.SetVariable('owner', world.GetPluginID())\n"
+      "threading.Thread(target=_work).start()\n";
+    CPlugin* mine  = add_plugin(doc, "Threaded", "aaaaaaaaaaaaaaaaaaaaaaaa", "Python", kPluginScript);
+    CPlugin* other = add_plugin(doc, "Other",    "bbbbbbbbbbbbbbbbbbbbbbbb", "Python", nullptr);
+    e.seed("owner", "untouched");
+    doc->m_CurrentPlugin = other;       // as if in the middle of Other's callback
+    pump(5000, [&] { return !plugin_var(doc, mine, "owner").empty(); });
+    check(doc->m_CurrentPlugin == other, L, "the plugin that was current is current again");
+    doc->m_CurrentPlugin = nullptr;
+    check(plugin_var(doc, mine, "owner") == "aaaaaaaaaaaaaaaaaaaaaaaa", L,
+          "a plugin's thread sets its own plugin's variable, as that plugin");
+    check(e.var("owner") == "untouched" && plugin_var(doc, other, "owner").empty(), L,
+          "...and neither the world's nor the current plugin's");
+
+    // Unloading a plugin whose callback is running underneath, which is what the
+    // call would be doing here.
+    e.seed("unloaded", "");
+    e.callRich("startunload", &err);
+    usleep(200 * 1000);
+    doc->m_CurrentPlugin = other;
+    pump(5000, [&] { return !e.var("unloaded").empty(); });
+    doc->m_CurrentPlugin = nullptr;
+    check(e.var("unloaded") == std::to_string(eBadParameter) &&
+          doc->GetPlugin("bbbbbbbbbbbbbbbbbbbbbbbb") == other, L,
+          "a thread cannot unload a plugin while a plugin's callback is running");
+    e.seed("unloaded", "");
+    e.callRich("startunload", &err);
+    pump(5000, [&] { return !e.var("unloaded").empty(); });
+    check(e.var("unloaded") == std::to_string(eOK) &&
+          doc->GetPlugin("bbbbbbbbbbbbbbbbbbbbbbbb") == nullptr, L,
+          "...and can when none is");
+
+    // A thread outliving its plugin, with a call already waiting when it goes.
+    static const char kLateScript[] =
+      "import threading, sys, time\n"
+      "def _late():\n"
+      "    sys._mc_go.wait()\n"
+      "    time.sleep(0.05)\n"
+      "    try:\n"
+      "        world.Note('must not appear')\n"
+      "        sys._mc_late = 'ran'\n"
+      "    except RuntimeError as e:\n"
+      "        sys._mc_late = str(e)\n"
+      "sys._mc_late = '?'\n"
+      "sys._mc_go = threading.Event()\n"
+      "threading.Thread(target=_late).start()\n";
+    const auto late_result = [&]
+      {
+      std::string result = "?";
+      pump(5000, [&]
+        {
+        e.callRich("latereport", &err);
+        result = e.var("late");
+        return result != "?";
+        });
+      return result;
+      };
+    CPlugin* late = add_plugin(doc, "Late", "cccccccccccccccccccccccc", "Python", kLateScript);
+    e.callRich("latego", &err);
+    usleep(200 * 1000);
+    doc->m_PluginList.remove(late);
+    delete late;
+    check(late_result() == "the script that started this thread has been closed", L,
+          "a thread's waiting call fails cleanly when its plugin is unloaded");
+
+    // ...and when the plugin is off the list but not yet closed.  ~CPlugin can put up
+    // a message box in that state (SaveState, with no state folder), whose message
+    // loop gets to the call.  It found no plugin, and so ran as the world.
+    late = add_plugin(doc, "Late", "cccccccccccccccccccccccc", "Python", kLateScript);
+    e.seed("late", "?");
+    e.callRich("latego", &err);
+    usleep(200 * 1000);
+    doc->m_PluginList.remove(late);
+    const std::string goingResult = late_result();
+    delete late;
+    check(goingResult == "the script that started this thread has been closed", L,
+          "...including while it is on its way out, off the list and not yet closed");
+
+    // Closing down.
+    e.callRich("startclosing", &err);
+    usleep(200 * 1000);
+    MC_UIThreadShutdown();
+    e.callRich("reportclosing", &err);
+    check(e.var("closing").find("client is closing") != std::string::npos, L,
+          "a thread's waiting call fails cleanly when the client closes");
+    MC_UIThreadInit();
+
+    doc->m_ScriptEngine = nullptr;      // ~Engine deletes it
+    MC_UIThreadSetParkedLimit(limit);
+}
+
+void battery_ruby_thread_calls(const Dialect& d)
+{
+    const char* L = d.display;
+    static const char kSource[] =
+      "def rstart\n"
+      "  $rt = Thread.new { world.SetVariable('rt', 'ran') }\n"
+      "end\n"
+      "def rslice\n"
+      "  $rt.join(0.02)\n"          // Ruby's threads only run while a callback lets them
+      "end\n"
+      "def rpark\n"
+      "  t = Thread.new do\n"
+      "    begin\n"
+      "      world.Note('must not appear')\n"
+      "      $rp = 'ran'\n"
+      "    rescue RuntimeError => e\n"
+      "      $rp = e.message\n"
+      "    end\n"
+      "  end\n"
+      "  t.join\n"
+      "  world.SetVariable('rp', $rp)\n"
+      "end\n";
+    Engine e(d.language, kSource);
+    if (!e.ok) { skip(L, "a thread's world call", "engine failed to open"); return; }
+    CMUSHclientDoc* doc = e.doc;
+    doc->m_ScriptEngine = e.eng;        // a thread's call needs its engine to belong to something
+    bool err = false;
+    const int limit = MC_UIThreadSetParkedLimit(1000);
+
+    e.callRich("rstart", &err);
+    e.callRich("rslice", &err);
+    check(!err && e.var("rt").empty(), L,
+          "a thread's world call does not run until the UI thread gets to it");
+    pump(5000, [&]
+      {
+      e.callRich("rslice", &err);
+      return !e.var("rt").empty();
+      });
+    check(e.var("rt") == "ran", L, "...and then it does, without a GVL deadlock");
+
+    e.callRich("rpark", &err);
+    check(!err && e.var("rp").find("main thread is blocked") != std::string::npos, L,
+          "a callback joining a thread that calls the world gets its join back");
+
+    static const char kPluginScript[] =
+      "$rt = Thread.new { world.SetVariable('owner', world.GetPluginID) }\n";
+    CPlugin* mine = add_plugin(doc, "Threaded", "aaaaaaaaaaaaaaaaaaaaaaaa", "Ruby", kPluginScript);
+    pump(5000, [&]
+      {
+      e.callRich("rslice", &err);
+      return !plugin_var(doc, mine, "owner").empty();
+      });
+    check(plugin_var(doc, mine, "owner") == "aaaaaaaaaaaaaaaaaaaaaaaa" && e.var("owner").empty(), L,
+          "a plugin's thread runs as that plugin");
+
+    doc->m_ScriptEngine = nullptr;      // ~Engine deletes it
+    MC_UIThreadSetParkedLimit(limit);
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -2116,7 +2480,10 @@ bool run_language(const Dialect& d)
         battery_py_namespace(e, d);
         battery_py_overflow (e, d);
         battery_py_threads  (e, d);
+        battery_py_thread_calls(d);
     }
+    if (strcmp(d.key, "ruby") == 0)
+        battery_ruby_thread_calls(d);
     battery_trace     (d);
     battery_error_routing(d);
     battery_stale_proxy  (d);

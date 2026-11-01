@@ -1,11 +1,10 @@
-# Continuous integration: build and test every platform on every push to main and
-# on every pull request.  Packaging stays in release.yml, run by hand.
+# Continuous integration: build and test every platform on any change to main, whether
+# pushed or merged (a merge is a push).  Packaging stays in release.yml, run by hand.
 #
-#   Every push   Windows x64, ARM64 and Win32; macOS universal, tested as both Apple
-#                Silicon and Intel; Linux x86-64 and AArch64.
-#   Each week    The same, plus the other OS and compiler versions below, so that a
-#                new runner image or a moved dependency shows up without a commit.
-#                Run it by hand with "Run workflow" and "all_versions".
+#   Windows  x64 and ARM64 and Win32 on Server 2025, x64 also on Server 2022
+#   macOS    universal on 15 and 26, tested as both Apple Silicon and Intel
+#   Linux    x86-64 and AArch64, on 24.04 and 26.04.  Not 22.04: its wxWidgets is 3.0,
+#            and the port needs 3.2.
 #
 # The first run of each job builds its dependencies from source, and takes a couple
 # of hours on macOS; they are cached after that, keyed on the scripts that fetch them.
@@ -15,15 +14,6 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
-  schedule:
-    - cron: "30 6 * * 1"       # Mondays
-  workflow_dispatch:
-    inputs:
-      all_versions:
-        description: "Also test the other OS and compiler versions"
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -39,32 +29,8 @@ jobs:
     name: Source checks
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    outputs:
-      windows: ${{ steps.versions.outputs.windows }}
-      macos: ${{ steps.versions.outputs.macos }}
-      linux: ${{ steps.versions.outputs.linux }}
     steps:
       - uses: actions/checkout@v4
-
-      # A job's "if" cannot see its matrix, so what each job runs on is chosen here.
-      - name: Which versions to test
-        id: versions
-        env:
-          ALL_VERSIONS: ${{ github.event_name == 'schedule' || inputs.all_versions }}
-        run: |
-          windows='{"platform":"x64","arch":"x64","runner":"windows-2025"},{"platform":"ARM64","arch":"arm64","runner":"windows-11-arm"},{"platform":"Win32","arch":"","runner":"windows-2025"}'
-          macos='{"runner":"macos-15"}'
-          linux='{"runner":"ubuntu-24.04"},{"runner":"ubuntu-24.04-arm"}'
-          if [ "$ALL_VERSIONS" = true ]; then
-            windows="$windows"',{"platform":"x64","arch":"x64","runner":"windows-2022"}'
-            macos="$macos"',{"runner":"macos-26"}'
-            # Not 22.04: its wxWidgets is 3.0, and the port needs 3.2.
-            linux="$linux"',{"runner":"ubuntu-26.04"},{"runner":"ubuntu-26.04-arm"}'
-          fi
-          echo "windows=[$windows]" >> "$GITHUB_OUTPUT"
-          echo "macos=[$macos]" >> "$GITHUB_OUTPUT"
-          echo "linux=[$linux]" >> "$GITHUB_OUTPUT"
-
       - name: Conflict markers, ASCII literals, test helpers, doc sections
         run: |
           python3 tests/check_conflict_markers.py
@@ -86,7 +52,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.checks.outputs.windows) }}
+        include:
+          - { platform: x64,   arch: x64,   runner: windows-2025 }
+          - { platform: ARM64, arch: arm64, runner: windows-11-arm }
+          - { platform: Win32, arch: "",    runner: windows-2025 }
+          - { platform: x64,   arch: x64,   runner: windows-2022 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     defaults:
@@ -150,7 +120,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.checks.outputs.macos) }}
+        include:
+          - { runner: macos-15 }
+          - { runner: macos-26 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 300
     steps:
@@ -198,7 +170,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.checks.outputs.linux) }}
+        include:
+          - { runner: ubuntu-24.04 }
+          - { runner: ubuntu-24.04-arm }
+          - { runner: ubuntu-26.04 }
+          - { runner: ubuntu-26.04-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     steps:

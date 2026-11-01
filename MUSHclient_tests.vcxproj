@@ -352,6 +352,7 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\unicode_width.cpp">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1550,6 +1551,7 @@
     <ClCompile Include="tests\test_telnet.cpp" />
     <ClCompile Include="tests\test_timers.cpp" />
     <ClCompile Include="tests\test_triggers.cpp" />
+    <ClCompile Include="tests\test_unicode.cpp" />
     <ClCompile Include="tests\test_utilities.cpp" />
     <ClCompile Include="tests\test_world_load.cpp" />
     <ClCompile Include="tests\test_xmlparse.cpp" />

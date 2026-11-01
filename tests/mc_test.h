@@ -724,8 +724,15 @@ inline _CrtMemState& McTestLeakBaseline()
             _CrtMemDumpStatistics(&diff_); \
         } \
         /* and stop the exit dump reporting App's live tables as leaks */ \
-        AfxEnableMemoryLeakDump(FALSE); \
+        MC_TEST_NO_EXIT_LEAK_DUMP(); \
     } while(0)
+
+// MFC only has this in Debug, and a Release build of the tests is how timings are taken.
+#ifdef _DEBUG
+#define MC_TEST_NO_EXIT_LEAK_DUMP() AfxEnableMemoryLeakDump(FALSE)
+#else
+#define MC_TEST_NO_EXIT_LEAK_DUMP() ((void)0)
+#endif
 
 // One line on stdout naming how many _CRT_ASSERTs the run raised, so a number
 // nobody was counting becomes one the runner can aggregate.

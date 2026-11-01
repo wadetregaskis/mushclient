@@ -632,6 +632,13 @@ if(NOT WIN32)
         src/ansi.cpp
         src/doc_aliasmenu_shared.cpp
         src/doc_shared.cpp
+        src/doc_autosave_shared.cpp     # saving a world a few seconds after it changes
+        src/world_backups.cpp           # ... and keeping earlier versions of it
+        src/update_logic.cpp            # deciding about a new version of the client
+        src/update_service.cpp          # ... and fetching it, off the UI thread
+        src/scrollback_store.cpp        # a world's saved output buffer, on disk
+        src/doc_scrollback_shared.cpp   # ... and in and out of the document
+        src/command_history_store.cpp   # a world's command history, likewise
         src/utilities_shared.cpp
         src/legacy_import.cpp      # importing a MUSHclient 5 (legacy_import.h)
         src/bundled_files.cpp      # keeping the bundled plugins up to date
@@ -1219,6 +1226,7 @@ if(NOT WIN32)
             # parent, so these hang off each world window like the status bar.
             src/platform/wx_toolbar.cpp
             src/platform/wx_notepad.cpp
+            src/platform/wx_update.cpp      # the update dialog and badge
             # In-app conformance harness for the notepad windows
             # (--notepad-selftest).  Lives here, not in mushgui_adapters, because
             # it drives the real CWxNotepadFrame and so includes wx headers.

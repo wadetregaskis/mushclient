@@ -398,6 +398,17 @@ int i;
 
   m_pCurrentLine = NULL;
   m_total_lines = 0;
+  m_pScrollback = NULL;
+  m_nLastRestoredLine = 0;
+  m_bScrollbackWanted = false;
+  m_tAutosaveFirstChange = 0;
+  m_tAutosaveLastChange = 0;
+  m_tAutosaveRetry = 0;
+  m_bAutosaving = false;
+  m_bAutosaveFailed = false;
+  m_bAutosaveReportedFailure = false;
+  m_bBackedUpThisSession = false;
+  m_bWorldIDIsNew = false;
 
   // set up the dialog box headings for the finding dialogs
   m_DisplayFindInfo.m_strTitle    = "Find in output buffer...";
@@ -709,7 +720,11 @@ int i;
 
 // delete aliass
 
-  DELETE_MAP (m_AliasMap, CAlias); 
+  DELETE_MAP (m_AliasMap, CAlias);
+
+// the last of the output goes to disk first
+
+  FlushSavedScrollback (true);
 
 // delete lines list
 

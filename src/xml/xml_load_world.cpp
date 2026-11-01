@@ -999,6 +999,12 @@ void CMUSHclientDoc::Load_General_XML (CXMLelement & parent,
 
     CheckUsed (*pWorldElement);
 
+    // A world file with no ID, written by hand, gets a new one each time it's opened
+    // until it's saved.  What's kept under its ID won't be found again until then.
+    CAttribute * pIDAttribute = NULL;
+    if (!pWorldElement->AttributeMap.Lookup ("id", pIDAttribute))
+      m_bWorldIDIsNew = true;
+
     // check world ID is unique  (maybe they duplicated a disk file)  
     for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos != NULL; )
       {
@@ -1010,6 +1016,7 @@ void CMUSHclientDoc::Load_General_XML (CXMLelement & parent,
         {
         m_strWorldID = GetUniqueID ();      // so change it ;)
         SetModifiedFlag ();
+        m_bWorldIDIsNew = true;
         }
 
       }      // end of looping through each world

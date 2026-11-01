@@ -668,6 +668,12 @@ SectionEnd
 Section "-Discworld plugins and maps (required)"
   SectionIn 1 2 3  ; typical, full, compact
 
+  ; How this copy knows it's the Discworld edition when it comes to update itself
+  ; (update::kEditionMarker).  The zip is this payload extracted, so has it too.
+  SetOutPath $INSTDIR
+  FileOpen $0 "$INSTDIR\discworld-edition.txt" w
+  FileClose $0
+
   SetOutPath $INSTDIR\worlds\plugins
   File "${DISCWORLD}\worlds\plugins\Quow*.xml"
   SetOutPath $INSTDIR
@@ -724,6 +730,7 @@ Section Uninstall
   Delete "$INSTDIR\help.db"
   Delete "$INSTDIR\MUSHclient.cnt"
   Delete "$INSTDIR\license.txt"
+  Delete "$INSTDIR\discworld-edition.txt"
 
   ; readme and tips
   Delete "$INSTDIR\readme.txt"

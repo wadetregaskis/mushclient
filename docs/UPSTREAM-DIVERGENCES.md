@@ -1490,3 +1490,97 @@ capture and what callouts see. See its README for how, and the commit that made 
 for the numbers. The patterns are every one in the plugins, Quow's, the worlds, Lua and the
 tests, and a large set of edge cases. `tests/test_regexp.cpp` and `tests/test_rex.cpp` pin the
 contract above. The macOS and Linux builds have not been compiled with this change.
+
+## 33 — A world's output and command history survive it being closed
+
+**Where:** `scrollback_store.*` (the file), `doc_scrollback_shared.cpp` (the document's half),
+`command_history_store.*`, the world option `save_scrollback`; World Properties > Output.
+
+**Upstream:** the output buffer goes when the world closes, and on Windows so does the
+command history.
+
+**Now:** on by default for every world, typed lines included: in the data folder,
+`scrollback/<world id>.mcsb` and `.history`.  A session starts with what the last one left,
+then a line marking where it ends, then the banner.  None of it goes through the line
+processing path, so no trigger, plugin callback or log sees a restored line arrive.
+
+What a plugin can see of a restored line, through `GetLineInfo` and the like, is what it
+would have seen before the world closed, with these differences:
+
+- `GetLinesInBufferCount` and `GetLineCount` include them, from the first moment a plugin
+  can ask.  Line numbers carry on from the saved ones.
+- Not logged, as far as `GetLineInfo (n, 6)` says, and opening a log doesn't write them
+  again, though upstream's retrospective log takes any note or command it finds.
+- `GetLineInfo (n, 13)`, elapsed time since the world started, is negative: how long before
+  this session it arrived.  `(n, 12)` is correspondingly earlier, and good to a second.
+- Links that send a command, or put one in the command box, no longer do anything: clicking
+  one would send it to a game that has moved on.  They keep their look.  Hyperlinks stay.
+- The last line has a hard return, whatever it had, so that new output isn't taken for
+  the rest of it.
+
+**File format:** see the head of `scrollback_store.h`.  A file saved with the world's UTF-8
+option the other way round isn't used; a file from a later version is left alone.
+
+**Why:** the owner asked for it, up to the full size of the buffer, unlimited included, and
+for reopening to be quick on a slow disk.  1,000,000 lines of styled text take 19 MB and
+0.48 s to restore on the test machine, of which reading and inflating is 0.08 s; the UI
+thread pays at most 13 ms per tick to save them.  Since that is quick enough, it loads
+synchronously and in full, which is the one way that can't show plugins a partial buffer.
+
+**Verification:** `tests/test_scrollback.cpp`.  `MC_SCROLLBACK_PERF=1` adds the timings, in a
+Release build of the tests.
+
+## 34 — Worlds save themselves, and keep earlier versions
+
+**Where:** `doc_autosave_shared.cpp`, `world_backups.*`; Global Preferences > Closing.
+
+**Upstream:** a world is saved when you say so, or, with the per-world option, on close.
+
+**Now**, unless the global preference is off: a few seconds after the last change (7, or 60
+if changes keep coming), and without asking when it closes.  A world that has never been
+saved has no name, and still asks for one.  If a save fails, that's a note in the window
+and another try in five minutes, and closing the world still asks.
+
+Before a world file is overwritten, a copy goes to `backups/<name>-<hash>/` in the data
+folder, at the first save of a session and then hourly, if it differs from the newest.  Kept:
+the newest 5, the newest 10 at least an hour apart, and the newest of each of the last 7
+days.  File > World Backups opens the folder.  To go back, open one and Save As.
+
+`on_world_save` and `OnPluginWorldSave` run for an automatic save as for any other, since
+something keeping state in world variables needs them to.  So a plugin that notes each
+save will be noting more of them.  `OnPluginSaveState` is not called any more often than
+it was: plugin state is saved when a plugin asks, or closes.
+
+**Why:** the owner asked for this over a periodic save.  The delay is on purpose: a change
+that crashes the client has a moment to do so before it's on disk, and if it gets there
+anyway, the copy taken before it is what the backups are for.
+
+**Verification:** `tests/test_autosave.cpp`, and `WorldBackups` in `tests/test_update.cpp`.
+
+## 35 — The client looks for new versions itself
+
+**Where:** `update_logic.*`, `update_service.*`, `dialogs/UpdateDlg.*`, `platform/wx_update.*`,
+`pal/https_get.*` (`HttpsDownload`); Global Preferences > Closing; Help > Check for Updates.
+`packaging/README.md` has how a release is signed.
+
+**Upstream, and this fork until now:** `plugins/Version_Check.xml`, which blocked the client
+while it asked and told you.
+
+**Now:** core, with a worker asking GitHub 30 seconds after starting and about daily after
+that.  A new version puts a clickable pane in the status bar.  The Update dialog shows
+what's new since this version, and installs only on a click, only with a good signature
+(Ed25519, over a list of SHA-256 hashes) from the key in `src/update_key.h`.
+
+The plugin keeps its ID and its `version_check` alias, which now asks the client to check.
+It no longer does anything by itself.
+
+**Limits:**
+
+- With no key in the source, which is how it starts, or for an unsigned release, the dialog
+  opens the release page instead.
+- A `.deb`, or any copy it can't replace, goes to the release page.
+- In a portable copy an update leaves everything under `worlds\` as it is, except to add what
+  isn't there, so a bundled plugin the copy already has stays at its old version.
+
+**Verification:** `tests/test_update.cpp`, with the network faked.  A real release and real
+elevation haven't been tried.

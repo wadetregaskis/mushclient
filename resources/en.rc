@@ -1212,12 +1212,34 @@ BEGIN
     CONTROL         "Convert IAC EOR/GA to new line",
                     IDC_CONVERT_GA_TO_NEWLINE,"Button",BS_AUTOCHECKBOX | 
                     WS_TABSTOP,315,179,121,10
+    CONTROL         "Keep output and commands between sessions",
+                    IDC_SAVE_SCROLLBACK,"Button",BS_AUTOCHECKBOX | 
+                    WS_TABSTOP,315,190,160,10
+    PUSHBUTTON      "Forget Saved Output",IDC_CLEAR_SAVED_OUTPUT,327,203,80,14
     RTEXT           "Telnet Terminal Type:",IDC_STATIC,314,317,55,19
     EDITTEXT        IDC_TERMINAL_TYPE,381,319,94,14,ES_AUTOHSCROLL
     LTEXT           "(0 = use font default)",IDC_STATIC,47,123,66,8
     LTEXT           "Show:",IDC_STATIC,17,197,21,8
     GROUPBOX        "Sound to play on new activity",IDC_STATIC,6,217,289,54
     GROUPBOX        "Output buffer size",IDC_STATIC,6,277,289,68
+END
+
+IDD_UPDATE DIALOG DISCARDABLE  0, 0, 320, 244
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Update MUSHclient"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "",IDC_UPDATE_HEADING,10,8,300,10
+    LTEXT           "What's new:",IDC_STATIC,10,22,100,8
+    EDITTEXT        IDC_UPDATE_NOTES,10,33,300,150,ES_MULTILINE | 
+                    ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL
+    LTEXT           "",IDC_UPDATE_STATUS,10,187,300,18
+    CONTROL         "",IDC_UPDATE_PROGRESS,"msctls_progress32",WS_BORDER,10,
+                    207,300,8
+    CONTROL         "&Don't ask me again",IDC_UPDATE_DONT_ASK,"Button",
+                    BS_AUTOCHECKBOX | WS_TABSTOP,10,225,100,10
+    DEFPUSHBUTTON   "Download and &Install",IDC_UPDATE_INSTALL,146,222,82,14
+    PUSHBUTTON      "Remind Me &Later",IDCANCEL,234,222,76,14
 END
 
 IDD_PASTE_PREAMBLES DIALOG DISCARDABLE  0, 0, 322, 241
@@ -1534,6 +1556,14 @@ BEGIN
     CONTROL         "Offer to save MXP &debug windows",
                     IDC_CONFIRM_BEFORE_CLOSING_MXP_DEBUG,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,15,64,125,10
+    CONTROL         "Save worlds &automatically, a few seconds after a change",
+                    IDC_AUTOSAVE_WORLDS,"Button",
+                    BS_AUTOCHECKBOX | WS_TABSTOP,15,88,200,10
+    LTEXT           "Worlds are then saved without asking, unless they have never been given a name.  Earlier versions are kept in the backups folder (File menu).",
+                    IDC_STATIC,27,100,220,26
+    CONTROL         "Check for new &versions of MUSHclient",
+                    IDC_CHECK_FOR_UPDATES,"Button",
+                    BS_AUTOCHECKBOX | WS_TABSTOP,15,134,150,10
 END
 
 IDD_GLOBAL_PREFSP4 DIALOG DISCARDABLE  0, 0, 262, 201
@@ -4457,6 +4487,7 @@ BEGIN
         MENUITEM "Regular &Expressions Web Page...", 
                                                 ID_HELP_REGULAREXPRESSIONSWEBPAGE
 
+        MENUITEM "Check for &Updates...",       ID_HELP_CHECK_FOR_UPDATES
         MENUITEM SEPARATOR
         MENUITEM "&About MUSHclient...",        ID_APP_ABOUT
     END
@@ -4552,6 +4583,7 @@ BEGIN
         MENUITEM "Regular &Expressions Web Page...", 
                                                 ID_HELP_REGULAREXPRESSIONSWEBPAGE
 
+        MENUITEM "Check for &Updates...",       ID_HELP_CHECK_FOR_UPDATES
         MENUITEM SEPARATOR
         MENUITEM "&About MUSHclient...",        ID_APP_ABOUT
     END
@@ -4573,6 +4605,7 @@ BEGIN
         MENUITEM "&Save World Details\tCtrl+S", ID_FILE_SAVE
         MENUITEM "Save World Details &As...",   ID_FILE_SAVE_AS
         MENUITEM "Save Selection...",           ID_FILE_SAVESELECTION
+        MENUITEM "World &Backups...",           ID_FILE_WORLD_BACKUPS
         MENUITEM SEPARATOR
         MENUITEM "&Print...\tCtrl+P",           ID_FILE_PRINT_WORLD
         MENUITEM "Print Se&tup...",             ID_FILE_PRINT_SETUP
@@ -4827,6 +4860,7 @@ BEGIN
         MENUITEM "Regular &Expressions Web Page...", 
                                                 ID_HELP_REGULAREXPRESSIONSWEBPAGE
 
+        MENUITEM "Check for &Updates...",       ID_HELP_CHECK_FOR_UPDATES
         MENUITEM SEPARATOR
         MENUITEM "&About MUSHclient...",        ID_APP_ABOUT
     END
@@ -5048,6 +5082,7 @@ BEGIN
         MENUITEM "Regular &Expressions Web Page...", 
                                                 ID_HELP_REGULAREXPRESSIONSWEBPAGE
 
+        MENUITEM "Check for &Updates...",       ID_HELP_CHECK_FOR_UPDATES
         MENUITEM SEPARATOR
         MENUITEM "&About MUSHclient...",        ID_APP_ABOUT
     END
@@ -5158,6 +5193,7 @@ BEGIN
 
         MENUITEM SEPARATOR
         MENUITEM "&Register MUSHclient...",     ID_HELP_REGISTERMUSHCLIENT
+        MENUITEM "Check for &Updates...",       ID_HELP_CHECK_FOR_UPDATES
         MENUITEM SEPARATOR
         MENUITEM "&About MUSHclient...",        ID_APP_ABOUT
     END
@@ -5941,6 +5977,9 @@ BEGIN
     ID_CONVERT_UNIXTODOS    "Converts selection from Unix text to DOS text"
     ID_CONVERT_DOSTOUNIX    "Converts selection from DOS text to Unix text"
     ID_STATUSLINE_LOG       "LOG"
+    ID_UPDATE_BADGE         " "
+    ID_HELP_CHECK_FOR_UPDATES "See whether there is a newer version of MUSHclient\nCheck for updates"
+    ID_FILE_WORLD_BACKUPS   "Open the folder of this world's earlier versions\nWorld backups"
     ID_CONVERT_MACTODOS     "Converts selection from Mac text to DOS text"
     ID_GAME_NORTH           "Go North\nNorth"
     ID_CONVERT_DOSTOMAC     "Converts selection from DOS text to Mac text"

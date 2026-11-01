@@ -251,6 +251,10 @@ if [ "$WITH_DISCWORLD" = 1 ]; then
     [ "$nseed" -gt 0 ] || die "nothing staged in $DISCWORLD_DIR"
     note "bundled Discworld edition: $nseed file(s)"
 
+    # How this copy knows it's the Discworld edition when it comes to update itself
+    # (update::kEditionMarker).
+    : > "$STAGE_APP/discworld-edition.txt"
+
     if [ -f "$SEED/worlds/Discworld.mcl" ]; then
         printf 'Discworld.mcl' > "$STAGE_APP/default-world"
         note "  default world: Discworld.mcl"

@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <cstdint>
+#include <functional>
 #include <string>
 
 namespace pal {
@@ -46,6 +48,16 @@ bool SafeGet (const std::string & url, const SafeGetOptions & options,
 // multicast, reserved or unspecified, in IPv4, in IPv6, or in IPv4 in disguise in IPv6.
 // The length is 4 or 16.
 bool IsPublicAddress (const unsigned char * address, size_t length);
+
+// The same, for something too big to hold in memory: a 200's content goes to `path`,
+// a piece at a time.  It is the wait for each piece that is limited to timeoutSeconds,
+// not the whole download.  `progress`, if any, is told how far it has got (total is 0
+// if the server didn't say), and returning false from it stops the download.  True
+// with *status if a response came back: only 200 will have written anything.
+bool HttpsDownload (const std::string & url, int timeoutSeconds,
+                    const std::string & userAgent, const std::string & path,
+                    const std::function<bool (uint64_t done, uint64_t total)> & progress,
+                    int * status, std::string * error);
 
 // For tests: a response's content, given its headers, with any chunked encoding
 // undone.  False if it is incomplete (a chunked body with no last chunk, or fewer

@@ -266,6 +266,8 @@ void CMUSHclientDoc::CheckTimers ()
   {
   Proto_Tick (*this);    // MSP repeats and downloads, a reconnection that was asked for
 
+  SavePendingWork ();
+
 #ifdef _WIN32
   // make sure status line is showing the right thing (after 5 seconds)
   if (m_pActiveCommandView || m_pActiveOutputView)
@@ -384,6 +386,24 @@ void CMUSHclientDoc::CheckTimers ()
     m_CurrentPlugin = NULL;
     }
   } // end of CMUSHclientDoc::CheckTimers
+
+// The periodic work that has nothing to do with the world's own timers, so it happens
+// whether or not they are enabled or the world is connected.  CheckTimers calls it first.
+void CMUSHclientDoc::SavePendingWork ()
+  {
+  ScrollbackTick ();
+  AutosaveTick ();
+#ifdef _WIN32
+  // The command box keeps its own history.  A view can't be asked for it through a
+  // base-class pointer without knowing what it is.
+  for (POSITION pos = GetFirstViewPosition (); pos; )
+    {
+    CView * pView = GetNextView (pos);
+    if (pView->IsKindOf (RUNTIME_CLASS (CSendView)))
+      ((CSendView *) pView)->SaveCommandHistoryIfChanged (false);
+    }
+#endif
+  } // end of CMUSHclientDoc::SavePendingWork
 
 #ifdef _WIN32
 

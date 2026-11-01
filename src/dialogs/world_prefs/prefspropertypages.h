@@ -1168,6 +1168,7 @@ public:
 	int		m_iPixelOffset;
 	BOOL	m_bAutoFreeze;
 	BOOL	m_bDisableCompression;
+	BOOL	m_bSaveScrollback;
 	BOOL	m_bFlashIcon;
 	BOOL	m_bShowItalic;
 	BOOL	m_bShowUnderline;
@@ -1213,6 +1214,7 @@ protected:
 	afx_msg void OnBrowseSounds2();
 	afx_msg void OnTestSound2();
 	afx_msg void OnNoSound();
+	afx_msg void OnClearSavedOutput();
 	//}}AFX_MSG
   afx_msg LRESULT OnKickIdle(WPARAM, LPARAM);
   afx_msg void OnUpdateNotUsingDefaults(CCmdUI* pCmdUI);

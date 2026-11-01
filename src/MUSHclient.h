@@ -139,6 +139,8 @@ public:
   unsigned int m_bConfirmBeforeClosingMushclient;
   unsigned int m_bConfirmBeforeClosingWorld;
   unsigned int m_bConfirmBeforeSavingVariables;
+  unsigned int m_bAutosaveWorlds;    // save a world a few seconds after it changes
+  unsigned int m_bCheckForUpdates;   // look for a new version, at startup and daily
   unsigned int m_bConfirmLogFileClose;
   unsigned int m_bEnableSpellCheck;  // is spell checker enabled?
   unsigned int m_bF1macro;

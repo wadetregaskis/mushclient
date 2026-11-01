@@ -776,6 +776,14 @@
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\scrollback_store.cpp" />
+    <ClCompile Include="src\doc_autosave_shared.cpp" />
+    <ClCompile Include="src\world_backups.cpp" />
+    <ClCompile Include="src\update_logic.cpp" />
+    <ClCompile Include="src\update_service.cpp" />
+    <ClCompile Include="src\dialogs\UpdateDlg.cpp" />
+    <ClCompile Include="src\command_history_store.cpp" />
+    <ClCompile Include="src\doc_scrollback_shared.cpp" />
     <ClCompile Include="src\legacy_import.cpp" />
     <ClCompile Include="src\bundled_files.cpp" />
     <ClCompile Include="src\spell_engine.cpp" />
@@ -2113,6 +2121,13 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\line_position_index.h" />
+    <ClInclude Include="src\scrollback_store.h" />
+    <ClInclude Include="src\world_backups.h" />
+    <ClInclude Include="src\update_logic.h" />
+    <ClInclude Include="src\update_service.h" />
+    <ClInclude Include="src\update_key.h" />
+    <ClInclude Include="src\dialogs\UpdateDlg.h" />
+    <ClInclude Include="src\command_history_store.h" />
     <ClInclude Include="src\option_table_offsetof.h" />
     <ClInclude Include="src\user_data.h" />
     <ClInclude Include="src\legacy_import.h" />

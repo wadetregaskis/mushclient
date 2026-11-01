@@ -3300,6 +3300,51 @@ TEST(LuaMarshal, SaveWritesWorldFile)
     lua_close(L);
 }
 
+// A copy under another name doesn't save the world's changes, so they still count as
+// unsaved: what the Automatic_Backup plugin does on connecting mustn't lose them.
+TEST(LuaMarshal, SavingACopyLeavesTheWorldModified)
+{
+    CMUSHclientDoc doc;
+    doc.m_mush_name = "SaveCopyTest";
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    char real[128], copy[128], code[256];
+    snprintf(real, sizeof real, "/tmp/mc_test_r4_%d_real.mcl", (int)getpid());
+    snprintf(copy, sizeof copy, "/tmp/mc_test_r4_%d_copy.mcl", (int)getpid());
+
+    // Named, saved, unmodified.
+    snprintf(code, sizeof code, "return world.Save('%s')", real);
+    ASSERT_EQ(1, run_ret(L, code));
+    lua_settop(L, 0);
+    EXPECT_TRUE(doc.IsModified() == 0);
+
+    // A copy of an unmodified world leaves it unmodified.
+    snprintf(code, sizeof code, "return world.Save('%s', true)", copy);
+    ASSERT_EQ(1, run_ret(L, code));
+    lua_settop(L, 0);
+    EXPECT_TRUE(doc.IsModified() == 0);
+
+    // And of a modified one, modified, with its variables still to be saved too.
+    doc.SetModifiedFlag(TRUE);
+    doc.m_bVariablesChanged = true;
+    ASSERT_EQ(1, run_ret(L, code));
+    lua_settop(L, 0);
+    EXPECT_TRUE(doc.IsModified() != 0);
+    EXPECT_TRUE(doc.m_bVariablesChanged);
+
+    // Whereas saving it for real does clear it.
+    ASSERT_EQ(1, run_ret(L, "return world.Save()"));
+    lua_settop(L, 0);
+    EXPECT_TRUE(doc.IsModified() == 0);
+    EXPECT_FALSE(doc.m_bVariablesChanged);
+
+    unlink(real);
+    unlink(copy);
+    lua_close(L);
+    doc.SetModifiedFlag(FALSE);
+}
+
 // world.SendPkt sends raw bytes (no telnet doubling, no line ending).
 TEST(LuaMarshal, SendPktSendsRawBytes)
 {

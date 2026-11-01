@@ -88,6 +88,16 @@ void CMyStatusBar::OnLButtonDown(UINT nFlags, CPoint point)
 
   RECT rect;
 
+#ifdef _WIN32
+  // "Update available": a click opens the update dialog.  It has no width when there
+  // is nothing to say, so this finds nothing then.
+  if (GetStatusBarCtrl ().GetRect (CommandToIndex (ID_UPDATE_BADGE), &rect ) && PtInRect (&rect, point))
+    {
+    Frame.PostMessage (WM_COMMAND, ID_UPDATE_BADGE, 0);
+    return;
+    }
+#endif
+
   // see which pane they clicked in
   if (GetStatusBarCtrl ().GetRect (CommandToIndex (ID_STATUSLINE_MUSHNAME), &rect ))
     {

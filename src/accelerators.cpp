@@ -49,6 +49,8 @@ tCommandIDMapping CommandIDs [] = {
 { ID_GAME_CHATSESSIONS,                 "ChatSessions"              },
 { ID_DISPLAY_CLEAR_COMMAND_HISTORY,     "ClearCommandHistory"       },
 { ID_DISPLAY_CLEAR_OUTPUT,              "ClearOutput"               },
+{ ID_HELP_CHECK_FOR_UPDATES,            "CheckForUpdates"           },
+{ ID_FILE_WORLD_BACKUPS,                "WorldBackups"              },
 { ID_FILE_CLOSE,                        "Close"                     },
 { ID_WINDOW_CLOSEALLNOTEPADWINDOWS,     "CloseAllNotepadWindows"    },
 { ID_EDIT_COLOURPICKER,                 "ColourPicker"              },

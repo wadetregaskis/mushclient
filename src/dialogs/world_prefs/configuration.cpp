@@ -407,6 +407,7 @@ void CMUSHclientDoc:: LoadPrefsP14 (CPrefsP14 &page14)
   page14.m_nWrapColumn = m_nWrapColumn;
   page14.m_bLineInformation = m_bLineInformation;
   page14.m_bStartPaused = m_bStartPaused;
+  page14.m_bSaveScrollback = m_bSaveScrollback;
   page14.m_bAutoFreeze = m_bAutoFreeze;
   page14.m_bShowBold = m_bShowBold;
   page14.m_bShowItalic = m_bShowItalic;
@@ -1130,6 +1131,7 @@ bool CMUSHclientDoc:: ChangedPrefsP14 (CPrefsP14 &page14)
     m_nWrapColumn     != page14.m_nWrapColumn ||
     m_bLineInformation!= page14.m_bLineInformation ||
     m_bStartPaused    != page14.m_bStartPaused ||
+    m_bSaveScrollback != page14.m_bSaveScrollback ||
     m_bAutoFreeze     != page14.m_bAutoFreeze ||
     m_bShowBold       != page14.m_bShowBold ||
     m_bShowItalic     != page14.m_bShowItalic ||
@@ -1590,6 +1592,7 @@ void CMUSHclientDoc:: SavePrefsP14 (CPrefsP14 &page14)
   m_bUTF_8          = page14.m_bUTF_8;
   m_bLineInformation= page14.m_bLineInformation;
   m_bStartPaused    = page14.m_bStartPaused;
+  m_bSaveScrollback = page14.m_bSaveScrollback;
   m_bAutoFreeze     = page14.m_bAutoFreeze;
   m_bShowBold       = page14.m_bShowBold;
   m_bShowItalic     = page14.m_bShowItalic;

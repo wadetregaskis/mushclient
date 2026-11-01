@@ -185,9 +185,10 @@ and whether to create a draft release.  It produces:
 | Linux x86-64, AArch64 | `.deb` + self-contained `.tar.xz` each | a runner of each architecture, under a virtual X display |
 | Windows x64, ARM64 | NSIS installer + portable `.zip` each (`windows/build-app.ps1`) | a runner of each architecture: the unit tests, then every scripting language's selftest run from the package |
 
-Release file names are part of the client's behaviour: `plugins/Version_Check.xml`
-finds the file for a copy of the client by its exact name, so renaming one here
-means changing it there too.  A release's tag is `v<version>`, as in `v6.00`.
+Release file names are part of the client's behaviour: the updater
+(`update::AssetNameFor`, `src/update_logic.cpp`) finds the file for a copy of the
+client by its exact name, so renaming one here means changing it there too.  A
+release's tag is `v<version>`, as in `v6.00`.
 
 | Platform | File | `<arch>` |
 |----------|------|----------|
@@ -198,8 +199,9 @@ means changing it there too.  A release's tag is `v<version>`, as in `v6.00`.
 | Linux, Debian | `mushclient_<version>_<arch>.deb` | `amd64`, `arm64` |
 
 The Discworld edition adds `-discworld` after the architecture (Windows, macOS) or
-after `mushclient` (Linux).  The version check never offers it: a Discworld copy is
-sent to the plain edition's file, or to the release page where there is none.
+after `mushclient` (Linux).  A copy knows it is that edition by a `discworld-edition.txt`
+packaging leaves beside the exe (in `Contents/Resources` on macOS), and updates to the
+edition's file.
 
 With *create draft release* on, the packages are attached to a **draft** GitHub
 release.  The macOS app is attached unsigned so that your Developer ID key never
@@ -216,6 +218,39 @@ packaging/sign-release.sh MUSHclient-<version>-macOS-universal-UNSIGNED.zip \
 It signs the app inside-out, notarizes and staples it, builds a signed DMG,
 notarizes and staples that too, and attaches both.  Delete the `-UNSIGNED`
 asset from the draft, then publish.  (Notarization setup: step 1 below.)
+
+### Signing a release for the updater
+
+The client checks for new releases itself.  It offers one in the status bar, and on
+a click downloads it and installs it, but only if the release is signed with the key
+whose public half is built into the client, `kUpdatePublicKey` in
+[`src/update_key.h`](../src/update_key.h).  While that is empty, or for a release that
+isn't signed, it says so and opens the release page instead.
+
+The private key doesn't go to GitHub, any more than the Developer ID key does.  Once,
+on your own machine:
+
+```bash
+packaging/make-update-key       # writes ~/.mushclient/update-signing-key.pem, prints the public key
+```
+
+Put the public key in `src/update_key.h`, and back the private one up: copies in the wild
+trust that one key, and can't be moved to another.  Then for each release, last of all,
+when every package is final (so after `sign-release.sh`):
+
+```bash
+gh release download v<version> --dir packages     # or wherever you have them all
+packaging/sign-update-manifest <version> packages --upload v<version>
+```
+
+That attaches `MUSHclient-<version>-SHA256SUMS.txt`, which is every package and its
+SHA-256 under a first line naming the version, and its Ed25519 signature,
+`...SHA256SUMS.txt.sig`.  The first line stops an old signed release being passed off as
+a new one.  A package changed or added after signing means signing again.
+
+Both scripts need OpenSSL 1.1.1 or later.  macOS's `/usr/bin/openssl` is LibreSSL and
+won't do: `OPENSSL=$(brew --prefix openssl@3)/bin/openssl packaging/make-update-key`,
+or use `packaging/openssl/` after `fetch-openssl.sh`.
 
 ---
 

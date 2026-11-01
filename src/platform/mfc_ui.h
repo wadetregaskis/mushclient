@@ -3301,10 +3301,14 @@ public:
     // Save the document to a file.  Opens the path for writing, wraps it in
     // a CArchive (store mode), and calls Serialize() so Save_World_XML can
     // write the XML via ar.WriteString().
+    //
+    // To a temporary name beside it, renamed over it once it is all there, as MFC's
+    // CMirrorFile does: a crash or a full disk leaves the old file, not half a new one.
     virtual BOOL OnSaveDocument(LPCTSTR lpszPathName) {
+        const std::string strTempPath = std::string(lpszPathName) + ".tmp";
         CFile* f = new CFile();
         UINT flags = CFile::modeWrite | CFile::modeCreate | CFile::shareDenyWrite;
-        if (!f->Open(lpszPathName, flags)) {
+        if (!f->Open(strTempPath.c_str(), flags)) {
             delete f;
             return FALSE;
         }
@@ -3329,6 +3333,10 @@ public:
             ok = FALSE;
         }
         delete f;
+        if (ok && rename(strTempPath.c_str(), lpszPathName) != 0)
+            ok = FALSE;
+        if (!ok)
+            remove(strTempPath.c_str());
         // Real MFC's CDocument::OnSaveDocument clears the modified flag on a
         // successful save.  Without this, a save that reaches here directly
         // (the m_bSaveWorldAutomatically auto-save at doc.cpp:2121, and

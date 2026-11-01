@@ -117,6 +117,8 @@ CMUSHclientApp::CMUSHclientApp()
     m_bColourGradient              = 1;
     m_bConfirmBeforeClosingWorld   = 1;
     m_bConfirmBeforeSavingVariables = 1;
+    m_bAutosaveWorlds              = 0;   // a headless world saves when asked
+    m_bCheckForUpdates             = 0;   // and doesn't go looking on the network
     m_bConfirmLogFileClose         = 1;
     m_bEnableSpellCheck            = 1;
     m_bEnablePackageLibrary        = 1;

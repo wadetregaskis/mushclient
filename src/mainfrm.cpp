@@ -23,6 +23,10 @@
 #include "dialogs/SendToAllDlg.h"
 #include "dialogs/UniqueIDDlg.h"
 #include "dialogs/WinsockInfoDlg.h"
+#ifdef _WIN32
+#include "dialogs/UpdateDlg.h"
+#include <memory>
+#endif
 
 #include "MakeWindowTransparent.h"
 
@@ -144,6 +148,12 @@ BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_STATUSLINE_LOG, OnUpdateStatuslineLog)
 	ON_UPDATE_COMMAND_UI(ID_STATUSLINE_TIME, OnUpdateStatuslineTime)
 	ON_COMMAND(ID_HELP_TIPOFTHEDAY, OnHelpTipoftheday)
+#ifdef _WIN32
+	ON_COMMAND(ID_HELP_CHECK_FOR_UPDATES, OnHelpCheckForUpdates)
+	ON_COMMAND(ID_UPDATE_BADGE, OnUpdateBadgeClicked)
+	ON_MESSAGE(update_ui::WM_UPDATE_POST, OnUpdatePost)
+	ON_UPDATE_COMMAND_UI(ID_UPDATE_BADGE, OnUpdateUpdateBadge)
+#endif
 	ON_UPDATE_COMMAND_UI(ID_DISPLAY_ACTIVITYLIST, OnUpdateDisplayActivitylist)
 	ON_COMMAND(ID_FILE_PREFERENCES, OnFilePreferences)
 	ON_WM_DRAWITEM()
@@ -250,6 +260,9 @@ static UINT BASED_CODE indicators[] =
   ID_STATUSLINE_TIME,
   ID_STATUSLINE_LINES,
   ID_STATUSLINE_LOG,
+#ifdef _WIN32
+  ID_UPDATE_BADGE,        // no width at all until there is something to say
+#endif
 	ID_INDICATOR_CAPS,
 };
 
@@ -441,6 +454,11 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
   FixUpTitleBar ();
 
   m_nPauseItem =  m_wndStatusBar.CommandToIndex (ID_STATUSLINE_FREEZE);
+
+#ifdef _WIN32
+  ShowUpdateBadge ();
+  update_ui::Start (m_hWnd);
+#endif
 
   // Tabbed Windows - if wanted
 
@@ -826,6 +844,10 @@ void CMainFrame::ProcessTimers (void)
 
   CTime tNow = CTime::GetCurrentTime();
 
+#ifdef _WIN32
+  update_ui::Tick ();
+#endif
+
   // if we have new activity, and we are minimised, flash the icon
   if (bFlashIcon && !m_bActive)
     {
@@ -912,7 +934,56 @@ void CMainFrame::OnUpdateStatuslineTime(CCmdUI* pCmdUI)
 }
 
 
-void CMainFrame::OnHelpTipoftheday() 
+#ifdef _WIN32
+void CMainFrame::OnHelpCheckForUpdates ()
+  {
+  update_ui::CheckFromMenu ();
+  }
+
+void CMainFrame::OnUpdateBadgeClicked ()
+  {
+  update_ui::OpenDialog ();
+  }
+
+void CMainFrame::OnUpdateUpdateBadge (CCmdUI * pCmdUI)
+  {
+  pCmdUI->Enable ();
+  pCmdUI->SetText (update::Controller::Get ().BadgeText ().c_str ());
+  }
+
+// What a worker wanted done on this thread.
+LRESULT CMainFrame::OnUpdatePost (WPARAM, LPARAM lParam)
+  {
+  std::unique_ptr<std::function<void ()>> pWork ((std::function<void ()> *) lParam);
+  (*pWork) ();
+  return 0;
+  }
+
+// A pane in the status bar that says so, and can be clicked.  Nothing else happens when
+// it appears: no focus moves, nothing opens, and the command box isn't disturbed.
+void CMainFrame::ShowUpdateBadge ()
+  {
+  if (m_wndStatusBar.m_hWnd == NULL)
+    return;
+  const int iPane = m_wndStatusBar.CommandToIndex (ID_UPDATE_BADGE);
+  if (iPane < 0)
+    return;
+  const CString strText (update::Controller::Get ().BadgeText ().c_str ());
+
+  int iWidth = 0;
+  if (!strText.IsEmpty ())
+    {
+    CClientDC dc (&m_wndStatusBar);
+    CFont * pOldFont = dc.SelectObject (m_wndStatusBar.GetFont ());
+    iWidth = dc.GetTextExtent (strText).cx + 8;
+    dc.SelectObject (pOldFont);
+    }
+  m_wndStatusBar.SetPaneInfo (iPane, ID_UPDATE_BADGE, iWidth ? SBPS_NORMAL : SBPS_NOBORDERS, iWidth);
+  m_wndStatusBar.SetPaneText (iPane, strText);
+  }
+#endif // _WIN32
+
+void CMainFrame::OnHelpTipoftheday()
 {
 	CTipDlg dlg;
 

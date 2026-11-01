@@ -4412,6 +4412,8 @@ void CMUSHclientDoc::DeleteHeadLines (long count)
     m_LineList.RemoveHead ();
     }
 
+  ScrollbackHeadDeleted ();   // cleared means cleared, on disk as well
+
   // Rebuild the jump index from what survived (one Append per chunk head)
   // BEFORE telling anyone.  Every entry above still points at a node that has
   // just been freed, and the view notification below is not necessarily
@@ -5000,6 +5002,8 @@ CLine * pLine = m_LineList.GetAt (GetLinePosition (LineNumber));
     pLine->flags |= BOOKMARK;
   else
     pLine->flags &= ~BOOKMARK;
+
+  ScrollbackLineFlagsChanged (pLine);
 
   // alter appearance of all output windows
 

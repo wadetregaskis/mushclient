@@ -1562,6 +1562,23 @@
 #define ID_DISPLAY_STOPSCRIPTSOUNDS     33055
 #define ID_FILE_IMPORT_MUSHCLIENT5      33056
 
+// Saved scrollback, autosave, updates.  Kept apart from the numbers the resource
+// editor hands out, so that other work adding IDs can't collide with them.
+#define IDD_UPDATE                      7000
+#define IDC_SAVE_SCROLLBACK             7100
+#define IDC_CLEAR_SAVED_OUTPUT          7101
+#define IDC_AUTOSAVE_WORLDS             7102
+#define IDC_CHECK_FOR_UPDATES           7103
+#define IDC_UPDATE_HEADING              7110
+#define IDC_UPDATE_NOTES                7111
+#define IDC_UPDATE_STATUS               7112
+#define IDC_UPDATE_PROGRESS             7113
+#define IDC_UPDATE_DONT_ASK             7114
+#define IDC_UPDATE_INSTALL              7115
+#define ID_FILE_WORLD_BACKUPS           34100
+#define ID_HELP_CHECK_FOR_UPDATES       34101
+#define ID_UPDATE_BADGE                 34102
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

@@ -514,6 +514,14 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\scrollback_store.cpp" />
+    <ClCompile Include="src\doc_autosave_shared.cpp" />
+    <ClCompile Include="src\world_backups.cpp" />
+    <ClCompile Include="src\update_logic.cpp" />
+    <ClCompile Include="src\update_service.cpp" />
+    <ClCompile Include="src\dialogs\UpdateDlg.cpp" />
+    <ClCompile Include="src\command_history_store.cpp" />
+    <ClCompile Include="src\doc_scrollback_shared.cpp" />
     <ClCompile Include="src\legacy_import.cpp" />
     <ClCompile Include="src\bundled_files.cpp" />
     <ClCompile Include="src\spell_engine.cpp" />
@@ -1660,6 +1668,7 @@
     <ClCompile Include="tests\test_accelerators.cpp" />
     <ClCompile Include="tests\test_aliases.cpp" />
     <ClCompile Include="tests\test_ansi.cpp" />
+    <ClCompile Include="tests\test_autosave.cpp" />
     <ClCompile Include="tests\test_bundled_files.cpp" />
     <ClCompile Include="tests\test_chat_protocol.cpp" />
     <ClCompile Include="tests\test_colour.cpp" />
@@ -1681,12 +1690,14 @@
     <ClCompile Include="tests\test_regexp.cpp" />
     <ClCompile Include="tests\test_rex.cpp" />
     <ClCompile Include="tests\test_scriptengine.cpp" />
+    <ClCompile Include="tests\test_scrollback.cpp" />
     <ClCompile Include="tests\test_speedwalk.cpp" />
     <ClCompile Include="tests\test_spellchecker.cpp" />
     <ClCompile Include="tests\test_tabcomplete.cpp" />
     <ClCompile Include="tests\test_telnet.cpp" />
     <ClCompile Include="tests\test_timers.cpp" />
     <ClCompile Include="tests\test_triggers.cpp" />
+    <ClCompile Include="tests\test_update.cpp" />
     <ClCompile Include="tests\test_utilities.cpp" />
     <ClCompile Include="tests\test_world_load.cpp" />
     <ClCompile Include="tests\test_xmlparse.cpp" />

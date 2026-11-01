@@ -487,6 +487,8 @@ CGlobalPrefsP3::CGlobalPrefsP3() : CPropertyPage(CGlobalPrefsP3::IDD)
 	m_bConfirmBeforeClosingWorld = FALSE;
 	m_bConfirmBeforeClosingMXPdebug = FALSE;
 	m_bConfirmBeforeSavingVariables = FALSE;
+	m_bAutosaveWorlds = FALSE;
+	m_bCheckForUpdates = FALSE;
 	//}}AFX_DATA_INIT
 }
 
@@ -502,6 +504,8 @@ void CGlobalPrefsP3::DoDataExchange(CDataExchange* pDX)
 	DDX_Check(pDX, IDC_CONFIRM_BEFORE_CLOSING_WORLD, m_bConfirmBeforeClosingWorld);
 	DDX_Check(pDX, IDC_CONFIRM_BEFORE_CLOSING_MXP_DEBUG, m_bConfirmBeforeClosingMXPdebug);
 	DDX_Check(pDX, IDC_CONFIRM_BEFORE_SAVING_VARIABLES, m_bConfirmBeforeSavingVariables);
+	DDX_Check(pDX, IDC_AUTOSAVE_WORLDS, m_bAutosaveWorlds);
+	DDX_Check(pDX, IDC_CHECK_FOR_UPDATES, m_bCheckForUpdates);
 	//}}AFX_DATA_MAP
 }
 
@@ -1310,6 +1314,8 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   propSheet.m_Page3.m_bConfirmBeforeClosingMushclient =  pApp->m_bConfirmBeforeClosingMushclient   ;
   propSheet.m_Page3.m_bConfirmBeforeClosingMXPdebug   =  pApp->m_bConfirmBeforeClosingMXPdebug   ;
   propSheet.m_Page3.m_bConfirmBeforeSavingVariables   =  pApp->m_bConfirmBeforeSavingVariables   ;
+  propSheet.m_Page3.m_bAutosaveWorlds                 =  pApp->m_bAutosaveWorlds                 ;
+  propSheet.m_Page3.m_bCheckForUpdates                =  pApp->m_bCheckForUpdates                ;
   propSheet.m_Page4.m_nPrinterFontSize                =  pApp->m_nPrinterFontSize                  ;
   propSheet.m_Page4.m_nPrinterLeftMargin              =  pApp->m_nPrinterLeftMargin                ;
   propSheet.m_Page4.m_nPrinterTopMargin               =  pApp->m_nPrinterTopMargin                 ;
@@ -1432,6 +1438,8 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   pApp->m_bConfirmBeforeClosingMushclient =  propSheet.m_Page3.m_bConfirmBeforeClosingMushclient   ;
   pApp->m_bConfirmBeforeClosingMXPdebug   =  propSheet.m_Page3.m_bConfirmBeforeClosingMXPdebug   ;
   pApp->m_bConfirmBeforeSavingVariables   =  propSheet.m_Page3.m_bConfirmBeforeSavingVariables   ;
+  pApp->m_bAutosaveWorlds                 =  propSheet.m_Page3.m_bAutosaveWorlds                 ;
+  pApp->m_bCheckForUpdates                =  propSheet.m_Page3.m_bCheckForUpdates                ;
   pApp->m_nPrinterFontSize                =  propSheet.m_Page4.m_nPrinterFontSize                  ;
   pApp->m_nPrinterLeftMargin              =  propSheet.m_Page4.m_nPrinterLeftMargin                ;
   pApp->m_nPrinterTopMargin               =  propSheet.m_Page4.m_nPrinterTopMargin                 ;

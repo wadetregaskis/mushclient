@@ -44,9 +44,9 @@ Copy from that page: Lua licence.txt
 
 ----
 
-PCRE (PERL-compatible regular expressions)
+PCRE2 (PERL-compatible regular expressions)
 
-  https://www.pcre.org/licence.txt
+  https://github.com/PCRE2Project/pcre2/blob/master/LICENCE.md
 
 Copy from that page: PCRE licence.txt
 

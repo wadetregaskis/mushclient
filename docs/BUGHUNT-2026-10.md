@@ -189,6 +189,10 @@ used. A match that outgrows even that is `PCRE_ERROR_JIT_STACKLIMIT`, reported
 ("JIT Stack Limit") and handled like the match limit. It is deliberately not
 rerun in the interpreter, which is shallower still.
 
+*Since then:* the client moved to PCRE2 (`docs/UPSTREAM-DIVERGENCES.md`), whose
+interpreter keeps its frames on the heap, so that crash is gone for good and such a
+match is now rerun in the interpreter, on every platform.
+
 Not on macOS or Linux: 8.45's sljit maps its code `MAP_JIT` but never calls
 `pthread_jit_write_protect_np`, so under the hardened runtime on Apple silicon
 writing the code would fault. The port keeps the interpreter.

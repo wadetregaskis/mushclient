@@ -137,7 +137,7 @@ language the build does not embed.
 | `<arch>-vcruntime140-ruby400.dll`, `lib\ruby\` | Ruby **4.0.9** from source, native MSVC build, with libyaml 0.2.5 (static), the repo's zlib, and the OpenSSL above | §2.4 |
 | `quickjs.lib` (linked in) | QuickJS-ng **0.17.0** (pinned) | §5 |
 | `vcruntime140.dll` (+ `vcruntime140_1.dll` on x64) | Visual Studio's own redistributable (`VC\Redist\MSVC\<ver>\<arch>\Microsoft.VC143.CRT`) | Python and Ruby are `/MD`; the exe itself links the CRT statically |
-| zlib, PCRE, libpng, SQLite, lpeg, lsqlite3, LuaCOM, bc, lrexlib | compiled into the exe from the repo | |
+| zlib, PCRE2 (`pcre2\`), libpng, SQLite, lpeg, lsqlite3, LuaCOM, bc, lrexlib | compiled into the exe from the repo | |
 
 ### 2.1 Why not vcpkg for OpenSSL
 

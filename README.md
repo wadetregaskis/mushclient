@@ -58,7 +58,7 @@ Pre-built binaries are available for:
 
 ## Building from Source
 
-All third-party libraries needed for _core_ functionality (PCRE, libpng, SQLite, zlib, Lua 5.1, miniaudio) are directly bundled in the repository. You do **not** need to manually download or unpack separate dependency archives.
+All third-party libraries needed for _core_ functionality (PCRE2, libpng, SQLite, zlib, Lua 5.1, miniaudio) are directly bundled in the repository. You do **not** need to manually download or unpack separate dependency archives.
 
 ### Prerequisites
 
@@ -184,4 +184,4 @@ MUSHclient is open source software released under the terms in the [LICENSE](LIC
 
 Copyright (c) 1995–2026 Nick Gammon & Wade Tregaskis. All rights reserved worldwide.
 
-Additional licenses for bundled third-party libraries (PCRE, libpng, SQLite, zlib, Lua, FIGlet, miniaudio) can be found in the [licences/](licences/) directory.
+Additional licenses for bundled third-party libraries (PCRE2, libpng, SQLite, zlib, Lua, FIGlet, miniaudio) can be found in the [licences/](licences/) directory.

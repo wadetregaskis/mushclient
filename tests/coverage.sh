@@ -74,7 +74,7 @@ xcrun llvm-profdata merge -sparse "$PROFDIR"/*.profraw -o "$BUILD/merged.profdat
 mv -f "$BUILD/merged.profdata.new" "$BUILD/merged.profdata"
 
 # Report over shipping sources only (exclude tests/, third-party, shims-with-no-logic).
-IGNORE='tests/|pcre/|sqlite|zlib|lua-5|miniaudio|luacom/|scripting/lpeg/|scripting/number.c|scripting/bits.c|scripting/lrexlib|/usr/|mc_test'
+IGNORE='tests/|pcre2/|sqlite|zlib|lua-5|miniaudio|luacom/|scripting/lpeg/|scripting/number.c|scripting/bits.c|scripting/lrexlib|/usr/|mc_test'
 
 # bash 3.2 (what macOS ships as /bin/bash) treats "${OBJS[@]}" on an EMPTY array
 # as an unbound variable under `set -u`, so a tree holding a single test binary

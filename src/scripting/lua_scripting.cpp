@@ -9,8 +9,6 @@
   #include <io.h>     // Windows low-level I/O (_open, _read, …)
 #endif
   #include <fcntl.h>
-  #include "../pcre/config.h"
-  #include "../pcre/pcre_internal.h"
   #include "../luacom/luacom.h"
 
 set<string> LuaFunctionsSet;
@@ -646,18 +644,20 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   if (regexp)
     {
     int i;
-    // Initialised: pcre_fullinfo returns an error WITHOUT writing its output
-    // (PCRE_ERROR_NULL / BADMAGIC), and `namecount` then drives a loop over
+    // Initialised: pcre2_pattern_info returns an error WITHOUT writing its output
+    // (PCRE2_ERROR_NULL / BADMAGIC), and `namecount` then drives a loop over
     // `name_table` -- both garbage.  Zero degrades to "no wildcards", which is
     // the right answer for a regexp we cannot interrogate.
-    int ncapt = 0;
-    int namecount = 0;
-    unsigned char *name_table = NULL;
-    int name_entry_size = 0;
-    unsigned char *tabptr;
+    uint32_t ncapt32 = 0;
+    uint32_t namecount = 0;
+    PCRE2_SPTR name_table = NULL;
+    uint32_t name_entry_size = 0;
+    PCRE2_SPTR tabptr;
     lua_newtable(L);                                                            
     paramCount++;   // we have one more parameter to the call
-    pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
+    if (regexp->m_program != NULL)
+      pcre2_pattern_info(regexp->m_program, PCRE2_INFO_CAPTURECOUNT, &ncapt32);
+    const int ncapt = (int) ncapt32;
 
     for (i = 0; i <= ncapt; i++) 
       {
@@ -667,16 +667,17 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
     }
 
     /* now do named subpatterns  */
-    pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_NAMECOUNT, &namecount);
+    if (regexp->m_program != NULL)
+      pcre2_pattern_info(regexp->m_program, PCRE2_INFO_NAMECOUNT, &namecount);
     if (namecount > 0)
       {
-      int jchanged = 0;
-      pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_NAMETABLE, &name_table);
-      pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_NAMEENTRYSIZE, &name_entry_size);
-      pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_JCHANGED, &jchanged);
+      uint32_t jchanged = 0;
+      pcre2_pattern_info(regexp->m_program, PCRE2_INFO_NAMETABLE, &name_table);
+      pcre2_pattern_info(regexp->m_program, PCRE2_INFO_NAMEENTRYSIZE, &name_entry_size);
+      pcre2_pattern_info(regexp->m_program, PCRE2_INFO_JCHANGED, &jchanged);
       tabptr = name_table;
       set<string> found_strings;
-      for (i = 0; i < namecount; i++, tabptr += name_entry_size) 
+      for (i = 0; i < (int) namecount; i++, tabptr += name_entry_size)
         {
         int n = (tabptr[0] << 8) | tabptr[1];
         const unsigned char * name = tabptr + 2;

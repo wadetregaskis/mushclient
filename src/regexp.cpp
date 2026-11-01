@@ -4,9 +4,6 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "dialogs/RegexpProblemDlg.h"
-#include "pcre/config.h"
-#include "pcre/pcre.h"
-#include "pcre/pcre_internal.h"
 #include "mc_pcre.h"
 
 #ifdef _DEBUG
@@ -21,10 +18,10 @@ t_regexp * regcomp(const char *exp, const int options)
 const char *error;
 int erroroffset;
 t_regexp * re;
-pcre * program;
-pcre_extra * extra;
+pcre2_code * program;
 
-  program = pcre_compile(exp, options, &error, &erroroffset, NULL);
+  // with the JIT, where it can be had
+  program = mc_pcre_compile(exp, options, NULL, 1, &error, &erroroffset);
 
   if (!program)
     {
@@ -35,21 +32,11 @@ pcre_extra * extra;
     ThrowErrorException("Failed: %s at offset %d", (LPCTSTR) Translate (error), erroroffset);
     }
 
-  // study it for speed purposes -- and compile it, where the JIT is built in
-  extra = mc_pcre_study (program, &error);
-
-  if (error)
-    {
-    pcre_free (program);
-    ThrowErrorException("Regexp study failed: %s", error);
-    }
-
   // we need to allocate memory for the substring offsets
   re = new t_regexp;
 
-  // remember program and extra stuff
+  // remember program
   re->m_program = program;
-  re->m_extra = extra;
   re->m_iExecutionError = 0; // no error now
 
 
@@ -73,15 +60,18 @@ int count;
 
   // inspired by a suggestion by Twisol (to remove a hard-coded limit on the number of wildcards)
   // capturecount is IMMUTABLE for a compiled program, so fetch it once and cache
-  // it; a per-call pcre_fullinfo + heap ovector was pure overhead on the ~99.8%
+  // it, and keep the match data; per-call they were pure overhead on the ~99.8%
   // NOMATCH calls (once per enabled trigger per line).
   if (prog->m_iCaptureCount < 0)
-    pcre_fullinfo(prog->m_program, NULL, PCRE_INFO_CAPTURECOUNT,
-                  &prog->m_iCaptureCount);
-  const size_t needOffsets = (size_t) (prog->m_iCaptureCount + 1) * 3;  // +1: whole match
-  if (prog->m_vScratch.size () < needOffsets)
-    prog->m_vScratch.resize (needOffsets);
-  vector<int> & offsets = prog->m_vScratch;   // reused across calls, never freed
+    {
+    uint32_t captures = 0;
+    pcre2_pattern_info(prog->m_program, PCRE2_INFO_CAPTURECOUNT, &captures);
+    prog->m_iCaptureCount = (int) captures;
+    }
+  if (prog->m_match == NULL)
+    prog->m_match = pcre2_match_data_create_from_pattern(prog->m_program, NULL);
+  if (prog->m_iJitOnly < 0)
+    prog->m_iJitOnly = mc_pcre_is_jit_only(prog->m_program);
 
   LARGE_INTEGER start, finish;
   if (App.m_iCounterFrequency)
@@ -89,9 +79,12 @@ int count;
   else
     { start.QuadPart = 0; finish.QuadPart = 0; }
 
-  pcre_callout = NULL;
-  count = mc_pcre_exec(prog->m_program, prog->m_extra, string, (int) strlen (string),
-                    start_offset, options, &offsets [0], offsets.size ());
+  if (prog->m_iJitOnly)
+    count = mc_pcre_match_jit(prog->m_program, &prog->m_match, string, (int) strlen (string),
+                              start_offset, options);
+  else
+    count = mc_pcre_match(prog->m_program, &prog->m_match, string, (int) strlen (string),
+                          start_offset, options, NULL, NULL);
 
   if (App.m_iCounterFrequency)
     {
@@ -107,10 +100,10 @@ int count;
   //  otherwise free program as an indicator that we can't keep trying to do this one
   if (count <= 0)
     {
-    pcre_free (prog->m_program);
+    pcre2_code_free (prog->m_program);
     prog->m_program = NULL;
-    pcre_free_study (prog->m_extra);
-    prog->m_extra = NULL;
+    pcre2_match_data_free (prog->m_match);
+    prog->m_match = NULL;
     prog->m_iExecutionError = count; // remember reason
 #ifdef _WIN32
     ThrowErrorException (TFormat ("Error executing regular expression: %s",
@@ -134,8 +127,8 @@ int count;
 
   prog->m_sTarget = string;  // for extracting wildcards
   prog->m_iCount = count;    // ditto
-  prog->m_vOffsets.clear (); 
-  copy (offsets.begin (), offsets.end (), back_inserter (prog->m_vOffsets));
+  prog->m_vOffsets.resize ((size_t) (prog->m_iCaptureCount + 1) * 2);   // +1: whole match
+  mc_pcre_get_offsets (prog->m_match, &prog->m_vOffsets [0], prog->m_iCaptureCount + 1);
   return true; // match
   }
 
@@ -145,13 +138,13 @@ bool CheckRegularExpression (const CString strRegexp, const int iOptions)
   {
 const char *error;
 int erroroffset;
-pcre * program;
+pcre2_code * program;
 
-  program = pcre_compile(strRegexp, iOptions, &error, &erroroffset, NULL);
+  program = mc_pcre_compile(strRegexp, iOptions, NULL, 0, &error, &erroroffset);
 
   if (program)
     {
-    pcre_free (program);
+    pcre2_code_free (program);
     return true;     // good
     }
 
@@ -219,25 +212,23 @@ string t_regexp::GetWildcard (const string& sName) const
     else
       {
       /* now do named subpatterns  */
-      // Initialised: pcre_fullinfo returns an error WITHOUT writing its
+      // Initialised: pcre2_pattern_info returns an error WITHOUT writing its
       // output, and `namecount` then drives a loop over `tabptr` -- both
       // garbage.  Zero means "no named subpatterns", the right degraded answer.
-      int namecount = 0;
-      pcre_fullinfo(m_program, m_extra, PCRE_INFO_NAMECOUNT, &namecount);
+      uint32_t namecount = 0;
+      pcre2_pattern_info(m_program, PCRE2_INFO_NAMECOUNT, &namecount);
 
 
       if (namecount > 0)
         {
-        int name_entry_size = 0;
-        unsigned char *tabptr = NULL;
-        int ncapt = 0;
-        int jchanged = 0;
-        pcre_fullinfo(m_program, m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
-        pcre_fullinfo(m_program, m_extra, PCRE_INFO_NAMETABLE, &tabptr);
-        pcre_fullinfo(m_program, m_extra, PCRE_INFO_NAMEENTRYSIZE, &name_entry_size);
-        pcre_fullinfo(m_program, m_extra, PCRE_INFO_JCHANGED, &jchanged);
+        uint32_t name_entry_size = 0;
+        PCRE2_SPTR tabptr = NULL;
+        uint32_t jchanged = 0;
+        pcre2_pattern_info(m_program, PCRE2_INFO_NAMETABLE, &tabptr);
+        pcre2_pattern_info(m_program, PCRE2_INFO_NAMEENTRYSIZE, &name_entry_size);
+        pcre2_pattern_info(m_program, PCRE2_INFO_JCHANGED, &jchanged);
         set<string> found_strings;
-        for (int i = 0; i < namecount; i++, tabptr += name_entry_size) 
+        for (uint32_t i = 0; i < namecount; i++, tabptr += name_entry_size)
           {
           int n = (tabptr[0] << 8) | tabptr[1];
           const unsigned char * name = tabptr + 2;
@@ -262,9 +253,9 @@ string t_regexp::GetWildcard (const string& sName) const
               found_strings.insert (sName);
             }
 
-          if (n >= 0 && n <= m_iCount) 
+          if (n >= 0 && n <= m_iCount)
             iNumber = n;
-      
+
           }   // end of wildcard loop
         } // end of having named wildcards
 
@@ -281,15 +272,16 @@ void t_regexp::GetCallbackWildcards (const bool bMakeLowerCase,
   {
   vResult.clear ();
 
-  // Initialised: pcre_fullinfo returns an error WITHOUT writing its output
-  // (PCRE_ERROR_NULL / BADMAGIC), so a regexp we cannot interrogate has to
+  // Initialised: pcre2_pattern_info returns an error WITHOUT writing its output
+  // (PCRE2_ERROR_NULL / BADMAGIC), so a regexp we cannot interrogate has to
   // degrade to "the whole match only" rather than loop over a garbage count.
-  int ncapt = 0;
-  pcre_fullinfo (m_program, m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
+  uint32_t ncapt = 0;
+  if (m_program != NULL)
+    pcre2_pattern_info (m_program, PCRE2_INFO_CAPTURECOUNT, &ncapt);
 
   vResult.reserve (ncapt + 1);
 
-  for (int i = 0; i <= ncapt; i++)
+  for (int i = 0; i <= (int) ncapt; i++)
     {
     string sWildcard (GetWildcard (i));
     if (bMakeLowerCase)

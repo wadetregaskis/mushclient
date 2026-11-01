@@ -114,7 +114,7 @@ include_directories(
 )
 
 # ── Compile definitions ───────────────────────────────────────────────────
-add_compile_definitions(HAVE_CONFIG_H)  # for PCRE config.h
+add_compile_definitions(HAVE_CONFIG_H)  # for PCRE2's config.h
 
 # ── Dialogs, menus and art (macOS / Linux) ────────────────────────────────
 # Compiled from resources/en.rc, Windows' own source for them, with llvm-rc:
@@ -512,31 +512,47 @@ if(NOT WIN32)
     endif()
 endif()
 
-# ── Vendored library: PCRE ────────────────────────────────────────────────
+# ── Vendored library: PCRE2 ────────────────────────────────────────────────
 
 set(PCRE_SOURCES
-    pcre/pcre_compile.c
-    pcre/pcre_config.c
-    pcre/pcre_dfa_exec.c
-    pcre/pcre_exec.c
-    pcre/pcre_fullinfo.c
-    pcre/pcre_get.c
-    pcre/pcre_globals.c
-    pcre/pcre_maketables.c
-    pcre/pcre_newline.c
-    pcre/pcre_ord2utf8.c
-    pcre/pcre_refcount.c
-    pcre/pcre_study.c
-    pcre/pcre_tables.c
-    pcre/pcre_ucd.c
-    pcre/pcre_valid_utf8.c
-    pcre/pcre_version.c
-    pcre/pcre_xclass.c
-    pcre/pcre_chartables.c
-    pcre/pcre_jit_compile.c   # stubs here: config.h enables the JIT on Windows only
+    pcre2/src/pcre2_auto_possess.c
+    pcre2/src/pcre2_chartables.c
+    pcre2/src/pcre2_chkdint.c
+    pcre2/src/pcre2_compile.c
+    pcre2/src/pcre2_compile_cgroup.c
+    pcre2/src/pcre2_compile_class.c
+    pcre2/src/pcre2_config.c
+    pcre2/src/pcre2_context.c
+    pcre2/src/pcre2_convert.c
+    pcre2/src/pcre2_dfa_match.c
+    pcre2/src/pcre2_error.c
+    pcre2/src/pcre2_extuni.c
+    pcre2/src/pcre2_find_bracket.c
+    pcre2/src/pcre2_jit_compile.c
+    pcre2/src/pcre2_maketables.c
+    pcre2/src/pcre2_match.c
+    pcre2/src/pcre2_match_data.c
+    pcre2/src/pcre2_match_next.c
+    pcre2/src/pcre2_newline.c
+    pcre2/src/pcre2_ord2utf.c
+    pcre2/src/pcre2_pattern_info.c
+    pcre2/src/pcre2_script_run.c
+    pcre2/src/pcre2_serialize.c
+    pcre2/src/pcre2_string_utils.c
+    pcre2/src/pcre2_study.c
+    pcre2/src/pcre2_substitute.c
+    pcre2/src/pcre2_substring.c
+    pcre2/src/pcre2_tables.c
+    pcre2/src/pcre2_ucd.c
+    pcre2/src/pcre2_valid_utf.c
+    pcre2/src/pcre2_xclass.c
+    src/mc_pcre.c
+    src/mc_utf8.c
 )
 add_library(mcpcre STATIC ${PCRE_SOURCES})
-target_include_directories(mcpcre PUBLIC ${CMAKE_SOURCE_DIR}/pcre)
+find_package(Threads REQUIRED)
+target_link_libraries(mcpcre PUBLIC Threads::Threads)
+target_include_directories(mcpcre PUBLIC ${CMAKE_SOURCE_DIR}/pcre2/src ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(mcpcre PUBLIC HAVE_CONFIG_H)
 # Suppress warnings in vendored code
 if(NOT WIN32)
@@ -573,7 +589,7 @@ if(NOT WIN32 AND NOT MUSHCLIENT_SYSTEM_LIBPNG)
     add_library(mcpng STATIC ${PNG_SOURCES})
     target_include_directories(mcpng PUBLIC ${CMAKE_SOURCE_DIR}/png)
     target_link_libraries(mcpng PUBLIC mczlib)
-    # HAVE_CONFIG_H is defined globally for PCRE; libpng takes it as a cue to
+    # HAVE_CONFIG_H is defined globally for PCRE2; libpng takes it as a cue to
     # include an autoconf config.h it does not have.
     target_compile_options(mcpng PRIVATE -w -UHAVE_CONFIG_H)
     add_library(PNG::PNG ALIAS mcpng)
@@ -912,7 +928,7 @@ if(NOT WIN32)
             ${CMAKE_SOURCE_DIR}/src/scripting
             ${CMAKE_SOURCE_DIR}/src/scripting/lpeg
             ${CMAKE_SOURCE_DIR}/src/dialogs
-            ${CMAKE_SOURCE_DIR}/pcre
+            ${CMAKE_SOURCE_DIR}/pcre2/src
             ${CMAKE_SOURCE_DIR}/sqlite3
             ${CMAKE_SOURCE_DIR}/lsqlite
         )

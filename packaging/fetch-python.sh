@@ -19,7 +19,7 @@
 #
 # Usage:
 #   packaging/fetch-python.sh                 # default version
-#   PYTHON_VERSION=3.13.1 packaging/fetch-python.sh
+#   PYTHON_VERSION=3.15.2 packaging/fetch-python.sh
 #   packaging/fetch-python.sh --system        # stage from host system/sysroot (Linux)
 #
 set -euo pipefail
@@ -34,7 +34,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/python"
-VERSION="${PYTHON_VERSION:-3.13.1}"
+VERSION="${PYTHON_VERSION:-3.15.2}"
 PKG_OVERRIDE=""
 FORCE_SYSTEM=0
 
@@ -59,8 +59,8 @@ mkdir -p "$DEST"
 # macOS: python.org universal2 framework
 # ════════════════════════════════════════════════════════════════════════════
 if [ "$OS" = "Darwin" ]; then
-    MACOS_VERSION="${VERSION:-${PYTHON_VERSION:-3.14.6}}"
-    SHORT="${MACOS_VERSION%.*}"                       # 3.14.6 -> 3.14
+    MACOS_VERSION="$VERSION"
+    SHORT="${MACOS_VERSION%.*}"                       # 3.15.2 -> 3.15
     PKG="python-$MACOS_VERSION-macos11.pkg"           # universal2 installer
     URL="https://www.python.org/ftp/python/$MACOS_VERSION/$PKG"
     CACHE="${PKG_OVERRIDE:-$DEST/$PKG}"
@@ -127,12 +127,12 @@ esac
 staged=0
 
 if [ "$FORCE_SYSTEM" = 0 ] && [ -n "$STANDALONE_ARCH" ]; then
-    RELEASE_TAG="20250115"
-    PKG="cpython-3.13.1+${RELEASE_TAG}-${STANDALONE_ARCH}-install_only.tar.gz"
+    RELEASE_TAG="20261026"
+    PKG="cpython-${VERSION}+${RELEASE_TAG}-${STANDALONE_ARCH}-install_only.tar.gz"
     URL="https://github.com/astral-sh/python-build-standalone/releases/download/${RELEASE_TAG}/${PKG}"
     CACHE="${PKG_OVERRIDE:-$DEST/$PKG}"
 
-    note "fetching standalone Python 3.13 ($ARCH)"
+    note "fetching standalone Python $VERSION ($ARCH)"
     if [ ! -f "$CACHE" ]; then
         if curl -fL --retry 3 -o "$CACHE" "$URL" 2>/dev/null; then
             note "downloaded $PKG"

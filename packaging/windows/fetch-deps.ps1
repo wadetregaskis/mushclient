@@ -148,10 +148,10 @@ $YamlUrl      = "https://github.com/yaml/libyaml/releases/download/$YamlVersion/
 $YamlSha256   = 'c642ae9b75fee120b2d96c712538bd2cf283228d2337df2cf2988e3c02678ef4'
 # python.org's own builds, as NuGet packages: one per architecture, each the
 # complete runtime (DLL, stdlib, extension modules, headers, import library).
-$PythonVersion = '3.14.10'
+$PythonVersion = '3.15.2'
 $PythonPkg     = @{ x64 = 'python'; ARM64 = 'pythonarm64' }
-$PythonSha256  = @{ x64   = 'f54ba67c9951c3d773ea47d2bb095150c037c399f0423a968bcda22809241784'
-                    ARM64 = '79cac95bc8219587eaf4b073a92162388f567a2509cd2bc497102feaf7dc8a38' }
+$PythonSha256  = @{ x64   = '294f5ed7ab97148fcbb57b8c06ba428f6d282c2bbaa266dbe3137284497998f0'
+                    ARM64 = 'aeb58f2bb6ba9a4cefacae6c23f720133f82bbdc91c8c9dc9a467d483a1a3534' }
 $TclVersion    = '8.6.18'
 $TclUrl        = "https://prdownloads.sourceforge.net/tcl/tcl$TclVersion-src.tar.gz"
 $TclSha256     = '14f9af32b1767ff718477a8f974ad03c34341097e6b43f4ce54644ee974e268e'

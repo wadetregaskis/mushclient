@@ -129,12 +129,12 @@ language the build does not embed.
 |---|---|---|
 | OpenSSL `libcrypto.lib`, `libssl.lib` | `fetch-deps.ps1`: newest 3.5.x, `VC-WIN64A` / `VC-WIN64-CLANGASM-ARM`, `no-shared`, checked against the release's `.sha256` | static, `/MT /Zl` -- the same recipe as the committed x86 libs (§2.1) |
 | `lua5.1.dll` + `.lib` | Lua **5.1.5** from lua.org (SHA-256 pinned), `LUA_BUILD_AS_DLL`, `/MT`; all 123 names the x86 DLL exports are checked | `luaconf.h` patched to round like x86 (§2.2) |
-| `socket\core.dll`, `mime\core.dll` | LuaSocket **v2.0.2** (pinned) | the version the committed `lua\socket*.lua` are written for |
+| `socket\core.dll`, `mime\core.dll` | LuaSocket **v3.1.0** (pinned) | the version the committed `lua\socket*.lua` are written for; `-Arch x86` builds the Win32 pair |
 | `locale\en.dll` | built from `resources\` (`resources\en.vcxproj`, referenced by `MUSHclient.vcxproj`), for every architecture | §2.3 |
 | `Dina.fon` | Joergen Ibsen's own release (`Dina.zip`, pinned; MIT), `DinaR.fon` shipped as `Dina.fon` | the font `Current_Output_Window` loads |
-| `python3XX.dll`, `python\Lib`, `python\DLLs` | python.org's NuGet package (`python` / `pythonarm64`, 3.14.x, SHA-256 pinned) | IDLE, Tk, the test suite and pip removed (no `python.exe` ships to run pip) |
-| `tcl86.lib` (linked in), `tcl8.6\` | Tcl **8.6.16** from source, `makefile.vc OPTS=static` | |
-| `<arch>-vcruntime140-ruby400.dll`, `lib\ruby\` | Ruby **4.0.5** from source, native MSVC build, with libyaml 0.2.5 (static), the repo's zlib, and the OpenSSL above | §2.4 |
+| `python3XX.dll`, `python\Lib`, `python\DLLs` | python.org's NuGet package (`python` / `pythonarm64`, 3.15.x, SHA-256 pinned) | IDLE, Tk, the test suite and pip removed (no `python.exe` ships to run pip) |
+| `tcl86.lib` (linked in), `tcl8.6\` | Tcl **8.6.18** from source, `makefile.vc OPTS=static` | |
+| `<arch>-vcruntime140-ruby400.dll`, `lib\ruby\` | Ruby **4.0.9** from source, native MSVC build, with libyaml 0.2.5 (static), the repo's zlib, and the OpenSSL above | §2.4 |
 | `quickjs.lib` (linked in) | QuickJS-ng **0.17.0** (pinned) | §5 |
 | `vcruntime140.dll` (+ `vcruntime140_1.dll` on x64) | Visual Studio's own redistributable (`VC\Redist\MSVC\<ver>\<arch>\Microsoft.VC143.CRT`) | Python and Ruby are `/MD`; the exe itself links the CRT statically |
 | zlib, PCRE, libpng, SQLite, lpeg, lsqlite3, LuaCOM, bc, lrexlib | compiled into the exe from the repo | |
@@ -282,7 +282,7 @@ JavaScriptCore does not exist on Windows.
 | Language name | 64-bit Windows | Win32 |
 |---|---|---|
 | Lua | native (unchanged) | native |
-| Python | embedded CPython 3.14 | ActiveScript (third-party engine) |
+| Python | embedded CPython 3.15 | ActiveScript (third-party engine) |
 | JScript / JavaScript / js | embedded QuickJS-ng (ES2023) | ActiveScript JScript (ES3) |
 | TclScript / Tcl | embedded Tcl 8.6 | ActiveScript (third-party engine) |
 | RubyScript / Ruby | embedded Ruby 4.0 | ActiveScript (third-party engine) |
@@ -311,6 +311,10 @@ Behaviour a plugin author may notice, against the 32-bit client:
   digits (Python, Ruby), not as a rounded double.
 - Python finds a per-user `site-packages` (install the matching python.org
   Python and `pip install --user`); the package has no `python.exe`.
+- Python's default text encoding, for a plain `open ()`, stays the ANSI code page.
+  Python 3.15 changed its default to UTF-8 (PEP 686); `py_engine.cpp` keeps the old
+  one on Windows, unless `PYTHONUTF8` is set, so that a plugin's existing text files
+  go on reading the same.
 
 Windows-specific engine fixes, each found by `--engines-selftest`:
 

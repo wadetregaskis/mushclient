@@ -529,6 +529,25 @@ bool ensure_init()
   if (g_inited) return true;
   if (!g_initError.empty ()) return false;
 
+#if defined (_WIN32) && PY_VERSION_HEX >= 0x030F0000
+  // Python 3.15 made UTF-8 the default encoding for open () and the like (PEP 686).
+  // On Windows that was the ANSI code page, which is what a plugin's text files
+  // are in, so a plain open () of one would start failing or misreading.  It stays
+  // as it was, unless the user set PYTHONUTF8.  (On macOS and Linux the locale's
+  // encoding was UTF-8 already, near enough always.)
+  if (GetEnvironmentVariableW (L"PYTHONUTF8", NULL, 0) == 0)
+    {
+    PyPreConfig preconfig;
+    PyPreConfig_InitPythonConfig (&preconfig);
+    preconfig.utf8_mode = 0;
+    PyStatus prestatus = Py_PreInitialize (&preconfig);
+    if (PyStatus_Exception (prestatus))
+      {
+      g_initError = prestatus.err_msg ? prestatus.err_msg : "Python could not be initialised";
+      return false;
+      }
+    }
+#endif
   PyConfig config;
   PyConfig_InitPythonConfig (&config);
 #if defined (__APPLE__)

@@ -587,7 +587,7 @@ assemble the full text of the original line.
       if ((m_iUTF8ErrorCount & 0x7F) == 1)
         ColourNote ("white", "red", 
           TFormat ("Previous line had a bad UTF-8 sequence at column %i, and was not evaluated for trigger matches",
-            iBad + 1));
+            erroroffset + 1));
         }
 
     }

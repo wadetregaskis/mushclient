@@ -398,6 +398,7 @@ int i;
   m_bAutosaveFailed = false;
   m_bAutosaveReportedFailure = false;
   m_bBackedUpThisSession = false;
+  m_bWorldIDIsNew = false;
 
   // set up the dialog box headings for the finding dialogs
   m_DisplayFindInfo.m_strTitle    = "Find in output buffer...";

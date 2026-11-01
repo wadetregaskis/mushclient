@@ -280,6 +280,24 @@ TEST (Autosave, SavingACopyStillWorks)
   EXPECT_EQ (std::string ("the world file"), ReadText (f.world));
   }
 
+// A world file with no ID gets one, and the file has to end up with it, or what's
+// filed under it would never be found again.
+TEST (Autosave, AWorldWithNoIDGetsOneSaved)
+  {
+  AutosaveFixture f ("noid");
+  f.doc.m_bWorldIDIsNew = true;
+  f.doc.m_strWorldID = "testnoid";
+  remove ((const char *) f.doc.ScrollbackFilePath ());
+  f.doc.RestoreSavedScrollback ();
+  EXPECT_TRUE (f.doc.IsModified () != 0);
+  EXPECT_FALSE (f.doc.m_bWorldIDIsNew);
+  f.Age (10);
+  f.doc.AutosaveTick ();
+  EXPECT_TRUE (ReadText (f.world).find ("testnoid") != std::string::npos);
+  f.doc.FlushSavedScrollback (true);
+  remove ((const char *) f.doc.ScrollbackFilePath ());
+  }
+
 // ---------------- command history ----------------
 
 TEST (CommandHistory, RoundTrips)

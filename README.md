@@ -53,6 +53,8 @@ Pre-built binaries are available for:
 * **MUD Protocol Support**: ANSI colors, 256-color xterm, 24-bit true color, MXP (Mud eXtension Protocol), MCCP (compression), Telnet subnegotiation, IPv6, and more.
 * **Secure Connections**: Built-in TLS / SSL connection support powered by OpenSSL.
 * **High Performance**: Optimised terminal engine capable of handling high-volume combat and deep scrollback buffers.
+* **Nothing Gets Lost**: A world's output and command history come back when you open it again. Worlds save themselves a few seconds after a change, and keep earlier versions you can go back to (File > World Backups).
+* **Updates**: MUSHclient tells you when there is a new version, and installs it when you say so. Downloads are checked against a signature before anything is run.
 
 ---
 

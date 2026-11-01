@@ -286,9 +286,8 @@ void Checked (const bool bUserAsked, const update::CheckResult & result)
 
 } // anonymous namespace
 
-void Start ()
+void Start (const HWND hFrame)
   {
-  const HWND hFrame = Frame.m_hWnd;
   update::Controller & controller = update::Controller::Get ();
   controller.Configure ([hFrame] (std::function<void ()> work)
     {

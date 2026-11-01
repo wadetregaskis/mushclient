@@ -37,7 +37,7 @@ namespace update_ui {
 
 // CMainFrame: after creation, once a second, and when the worker posts something (the
 // message's LPARAM is a new'd std::function<void()> for it to run and delete).
-void Start ();
+void Start (HWND hFrame);      // from OnCreate, when App doesn't know about it yet
 void Tick ();
 const UINT WM_UPDATE_POST = WM_APP + 0x70;
 

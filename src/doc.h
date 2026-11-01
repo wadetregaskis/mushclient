@@ -2282,6 +2282,9 @@ public:
   bool   m_bAutosaveFailed;
   bool   m_bAutosaveReportedFailure;
   bool   m_bBackedUpThisSession;
+  // Loading made up an ID for this world, which the file doesn't have yet.  (MFC clears
+  // the modified flag once a file has loaded, so that alone doesn't get it saved.)
+  bool   m_bWorldIDIsNew;
 #ifdef _WIN32
   virtual void ReportSaveLoadException (LPCTSTR lpszPathName, CException * e, BOOL bSaving, UINT nIDPDefault);
 #endif

@@ -457,7 +457,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 #ifdef _WIN32
   ShowUpdateBadge ();
-  update_ui::Start ();
+  update_ui::Start (m_hWnd);
 #endif
 
   // Tabbed Windows - if wanted

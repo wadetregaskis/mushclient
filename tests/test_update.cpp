@@ -17,13 +17,16 @@
 #include <zlib.h>
 #endif
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>

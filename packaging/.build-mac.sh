@@ -207,6 +207,9 @@ if [ "$WITH_DISCWORLD" = 1 ]; then
     [ -d "$DISCWORLD_DIR" ] || die "no Discworld staging dir: $DISCWORLD_DIR
   Stage Quow's plugins + maps first:  packaging/fetch-discworld-plugins.sh"
 
+    # A copy staged before the patch existed must not go out: docs/QUOW-HIDDEN-COMMAND-DROP.md.
+    DISCWORLD_PLUGINS_DIR="$DISCWORLD_DIR" bash "$SCRIPT_DIR/fetch-discworld-plugins.sh" --patch-only
+
     # The app seeds Contents/Resources/userdata-seed/** into the user's data dir
     # on first launch (see SeedBundledUserData).  The staging dir mirrors that
     # tree: worlds/plugins/Quow*.xml (the plugins) + quow_plugins/maps/ (the room

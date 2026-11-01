@@ -207,6 +207,11 @@ if ($WithDiscworld) {
   if (-not (Get-ChildItem (Join-Path $DiscworldDir 'worlds\plugins') -Filter 'Quow*.xml' -ErrorAction SilentlyContinue)) {
     throw "no Quow*.xml under $DiscworldDir\worlds\plugins: stage them first (bash packaging/fetch-discworld-plugins.sh)"
   }
+  # A copy staged before the patch existed must not go out: docs/QUOW-HIDDEN-COMMAND-DROP.md.
+  $cowbar = Join-Path $DiscworldDir 'worlds\plugins\QuowMinimap.xml'
+  if ((Test-Path $cowbar) -and ([IO.File]::ReadAllText($cowbar, [Text.Encoding]::GetEncoding(28591)) -match '(?m)^\s*return ANV\b')) {
+    throw "$cowbar is unpatched: run bash packaging/fetch-discworld-plugins.sh --patch-only"
+  }
 }
 
 # ── 2. the client ─────────────────────────────────────────────────────────────

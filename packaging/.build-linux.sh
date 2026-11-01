@@ -232,6 +232,9 @@ if [ "$WITH_DISCWORLD" = 1 ]; then
     [ -d "$DISCWORLD_DIR" ] || die "no Discworld staging dir: $DISCWORLD_DIR
   Stage Quow's plugins + maps first:  packaging/fetch-discworld-plugins.sh"
 
+    # A copy staged before the patch existed must not go out: docs/QUOW-HIDDEN-COMMAND-DROP.md.
+    DISCWORLD_PLUGINS_DIR="$DISCWORLD_DIR" bash "$SCRIPT_DIR/fetch-discworld-plugins.sh" --patch-only
+
     if [ -d "$DISCWORLD_DIR/worlds" ] || [ -d "$DISCWORLD_DIR/quow_plugins" ]; then
         for sub in worlds quow_plugins; do
             [ -d "$DISCWORLD_DIR/$sub" ] && cp -R "$DISCWORLD_DIR/$sub" "$SEED/"

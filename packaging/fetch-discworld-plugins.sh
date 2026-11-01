@@ -42,6 +42,12 @@
 #        packaging/fetch-discworld-plugins.sh --local
 #      stages from ~/Library/Application Support/MUSHclient/
 #
+# Every source goes through patch_cowbar below, which stops the Cow Bar silently
+# dropping commands, and fails if the plugin isn't what that patch was written
+# for.  To apply it to what's already staged, without fetching anything:
+#
+#        packaging/fetch-discworld-plugins.sh --patch-only
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,6 +57,7 @@ PACKAGE_URL="${QUOW_PACKAGE_URL:-https://quow.co.uk/MUSHclient.zip}"
 URL=""
 FROM=""
 LOCAL=0
+PATCH_ONLY=0
 INSTALL_ROOT="$HOME/Library/Application Support/MUSHclient"
 
 note() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -62,10 +69,118 @@ while [ $# -gt 0 ]; do
         --url)   URL="$2"; shift 2;;
         --from)  FROM="$2"; shift 2;;
         --local) LOCAL=1; shift;;
-        -h|--help) sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+        --patch-only) PATCH_ONLY=1; shift;;
+        -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed -e '$d' -e 's/^# \{0,1\}//'; exit 0;;
         *) die "unknown option: $1 (try --help)";;
     esac
 done
+
+# ── the Cow Bar's hidden command drop ───────────────────────────────────────
+#
+# QuowMinimap.xml assembles the name OnPluginSend from base64 and installs a
+# handler that silently drops a command sent by a trigger, timer or hotspot (not
+# one the user typed), at most about once a minute, starting 38 minutes after
+# load.  Its comment calls this fixing GMCP lag.  We do not ship that.  See
+# docs/QUOW-HIDDEN-COMMAND-DROP.md for the details.
+#
+# The fix is one line of the handler, "return ANV" (ANV is false), which becomes
+# "return true".  Everything else stays, because GMCP's Core.Supports, map
+# loading and the "minimap" command all refuse to work unless ACR and TACR exist,
+# and TACR and ACR are maintained by that handler.
+#
+# This checks the whole handler, and the lines that say there's no other like it,
+# against the exact text that was reviewed.  If a new upstream version differs in
+# any of them this stops the build: read the new plugin, then update this and
+# PluginSendVetoIgnored in src/plugins.cpp.  It's idempotent, because a staged copy
+# can outlive the script that staged it.
+
+COWBAR_REVIEWED_VERSION="4.96"
+COWBAR_PATCHED_LINE='      return true -- MUSHclient packaging: was "return ANV", see docs/QUOW-HIDDEN-COMMAND-DROP.md'
+COWBAR_HANDLER_BEFORE='_G[BDC(TTP)] = function(CM)
+  local LM = GI(FCR)
+  -- Clear 60s TTL overflow buffer
+  if (LM > 5) then
+    TACR = TACR + 1
+    if (MR(1, ACR) < TCBL and LC < (OST() - 0x3A)) then
+      LC = OST()
+      return ANV
+    end
+  else
+    ACR = 0x3E8 - TCBL
+    if (ACR < 0x0002) then ACR = 0x0002 end
+  end
+end'
+COWBAR_HANDLER_AFTER="${COWBAR_HANDLER_BEFORE/      return ANV/$COWBAR_PATCHED_LINE}"
+COWBAR_HANDLER_LINES=14
+COWBAR_RETURN_OFFSET=7      # the return, counting from the handler's first line
+
+# cowbar_expect_lines FILE COUNT PATTERN : die unless COUNT lines match this regex.
+cowbar_expect_lines() {
+    local n
+    n="$(grep -Ec -- "$3" "$1" || true)"
+    [ "$n" = "$2" ] || die "$1: expected $2 line(s) matching '$3', found $n.
+  This isn't the Cow Bar that was reviewed.  Read it for anything that drops commands,
+  then update patch_cowbar in this script (see docs/QUOW-HIDDEN-COMMAND-DROP.md)."
+}
+
+# patch_cowbar FILE : see above.
+patch_cowbar() {
+    local f="$1" at handler version
+    local LC_ALL=C      # the plugin is ISO-8859-1, not whatever the locale says
+
+    # The handler, and its name.
+    cowbar_expect_lines "$f" 1 '^_G\[BDC\(TTP\)\] = function\(CM\)'
+    cowbar_expect_lines "$f" 1 "FCR, ANV, DO, ACR, TTP = GetInfo, 0xFF, 0x8AE, 0xFA, 0xF0, 0xEF, false, 0xFD, 0x3E9, 'T25Q'"
+    cowbar_expect_lines "$f" 2 "^ *TTP = .*'bHVnaW5TZW5k'"
+    # Any other like it: nothing else assembles a global's name from base64, and no
+    # OnPluginSend beyond the three commented-out lines that mention it.
+    cowbar_expect_lines "$f" 3 '_G\[BDC\('
+    cowbar_expect_lines "$f" 3 'OnPluginSend'
+    cowbar_expect_lines "$f" 0 '^[^-]*function +OnPluginSend'
+
+    at="$(grep -n -F '_G[BDC(TTP)] = function(CM)' "$f" | cut -d: -f1)"
+    handler="$(sed -n "${at},$((at + COWBAR_HANDLER_LINES - 1))p" "$f" | tr -d '\r')"
+
+    version="$(sed -n 's/^ *version="\([^"]*\)".*/\1/p' "$f" | tr -d '\r' | head -n 1)"
+    [ "$version" = "$COWBAR_REVIEWED_VERSION" ] \
+        || warn "$f is version '$version', but $COWBAR_REVIEWED_VERSION was reviewed: its handler is unchanged, but read the rest."
+
+    if [ "$handler" = "$COWBAR_HANDLER_AFTER" ]; then
+        note "Cow Bar $version: already patched"
+    elif [ "$handler" = "$COWBAR_HANDLER_BEFORE" ]; then
+        local line=$((at + COWBAR_RETURN_OFFSET))
+        sed "${line}s|      return ANV|$COWBAR_PATCHED_LINE|" "$f" > "$f.patched"
+        mv "$f.patched" "$f"
+        handler="$(sed -n "${at},$((at + COWBAR_HANDLER_LINES - 1))p" "$f" | tr -d '\r')"
+        [ "$handler" = "$COWBAR_HANDLER_AFTER" ] || die "$f: patching the Cow Bar's handler went wrong"
+        note "Cow Bar $version: patched so that it never drops a command"
+    else
+        die "$f: the Cow Bar's OnPluginSend handler isn't the text that was reviewed.
+  Read it for anything that drops commands, then update patch_cowbar in this script
+  (see docs/QUOW-HIDDEN-COMMAND-DROP.md).  Found:
+$handler"
+    fi
+}
+
+# patch_staged_cowbar : patch every staged copy; there must be at least one unless
+# the source had no Cow Bar, which the sanity checks below deal with.
+patch_staged_cowbar() {
+    local f n=0
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        patch_cowbar "$f"
+        n=$((n + 1))
+    done <<EOF
+$(find "$STAGE" -type f -name 'QuowMinimap.xml' 2>/dev/null || true)
+EOF
+    [ "$n" -gt 0 ] || warn "no QuowMinimap.xml staged: nothing to patch."
+}
+
+if [ "$PATCH_ONLY" = 1 ]; then
+    [ -d "$STAGE" ] || die "nothing staged at: $STAGE"
+    patch_staged_cowbar
+    exit 0
+fi
 
 WORLD_DST="$STAGE/worlds"
 PLUGINS_DST="$STAGE/worlds/plugins"
@@ -171,6 +286,8 @@ else
     # DEFAULT: download Quow's canonical portable package.
     download_and_stage "$PACKAGE_URL"
 fi
+
+patch_staged_cowbar
 
 # Sanity checks — warn loudly if a required piece is missing, so the bundle is
 # never silently incomplete.

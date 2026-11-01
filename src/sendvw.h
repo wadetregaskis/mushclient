@@ -11,6 +11,9 @@
 // Microsoft Foundation Classes product.
 
 
+#include <set>
+#include <string>
+
 // for iHistoryStatus
 enum  {
     eAtTop,
@@ -85,6 +88,7 @@ public:
   void SaveCommandHistoryIfChanged (const bool bClosing);
   int     m_iHistorySavedCount = 0;
   CString m_strHistorySaved;
+  std::set<std::string> m_commandsNotSaved;   // typed with echo off
   time_t  m_tHistoryChecked = 0;
 
   void AdjustCommandWindowSize (void);

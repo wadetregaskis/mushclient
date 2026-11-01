@@ -1518,6 +1518,9 @@ would have seen before the world closed, with these differences:
 - The last line has a hard return, whatever it had, so that new output isn't taken for
   the rest of it.
 
+Nothing typed while the server has echo off reaches either file, since it may be a password.
+`always_record_command_history` still keeps such a line for the up arrow, in memory only.
+
 **File format:** see the head of `scrollback_store.h`.  A file saved with the world's UTF-8
 option the other way round isn't used; a file from a later version is left alone.
 

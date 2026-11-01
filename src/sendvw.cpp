@@ -1280,7 +1280,11 @@ void CSendView::SaveCommandHistoryIfChanged (const bool bClosing)
   std::vector<std::string> commands;
   commands.reserve ((size_t) iCount);
   for (POSITION pos = m_msgList.GetHeadPosition (); pos; )
-    commands.push_back ((const char *) m_msgList.GetNext (pos));
+    {
+    const char * command = m_msgList.GetNext (pos);
+    if (m_commandsNotSaved.count (command) == 0)
+      commands.push_back (command);
+    }
 
   if (command_history::Save ((const char *) strPath, commands))
     {
@@ -2289,6 +2293,10 @@ ASSERT_VALID(pDoc);
       m_inputcount++;
     m_msgList.AddTail (strCommand);
     m_last_command = strCommand;
+    // always_record_command_history keeps it for the up arrow, but it may be a password:
+    // it goes no further than memory (see SaveCommandHistoryIfChanged)
+    if (pDoc->m_bNoEcho)
+      m_commandsNotSaved.insert ((const char *) strCommand);
     }
 
   // history starts at bottom of list again - especially as we may have discarded lines

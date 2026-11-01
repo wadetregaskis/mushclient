@@ -1,6 +1,6 @@
 zlib built as follows:
 
-1. Download recent version from https://www.zlib.net/zlib131.zip
+1. Download recent version from https://www.zlib.net/zlib132.zip
 
 2. Unzip and untar the file
 
@@ -43,9 +43,15 @@ add:
 #undef ZLIB_DLL      // NJG
 
 
-4. Edit gzguts.h and remove the #ifdef / #endif from these lines:
+4. Edit gzguts.h and after the lines:
 
-#ifdef WINAPI_FAMILY
+#if defined(_WIN32) && !defined(WIDECHAR)
+#  define WIDECHAR
+#endif
+
+add:
+
+#if defined(_WIN32)     /* MUSHclient: the ISO names, see readme.txt */
 #  define open _open
 #  define read _read
 #  define write _write

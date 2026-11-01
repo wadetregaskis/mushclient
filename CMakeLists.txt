@@ -1000,6 +1000,7 @@ if(NOT WIN32)
             src/scripting/lpeg/lpvm.c
             src/scripting/lpeg/lpcap.c
             src/scripting/lpeg/lpcode.c
+            src/scripting/lpeg/lpcset.c
             lsqlite/lsqlite3.c
             src/scripting/lua_methods.cpp
             # The Lua `progress` library (2026-08-12: was adapter-side, and its

@@ -1,32 +1,19 @@
-/*
-** $Id: lpcode.h,v 1.7 2015/06/12 18:24:45 roberto Exp $
-*/
 
 #if !defined(lpcode_h)
 #define lpcode_h
 
-#ifdef LUA_52
-    #include "../../../lua52/src/lua.h"
-    #include "../../../lua52/src/lauxlib.h"
-#elif defined(_WIN32)
-    #include "../../lua.h"
-    #include "../../lauxlib.h"
-#else
-    #include "lua.h"
-    #include "lauxlib.h"
-#endif
+#include "lua.h"
 
 #include "lptypes.h"
 #include "lptree.h"
 #include "lpvm.h"
 
-int tocharset (TTree *tree, Charset *cs);
 int checkaux (TTree *tree, int pred);
-int fixedlenx (TTree *tree, int count, int len);
+int fixedlen (TTree *tree);
 int hascaptures (TTree *tree);
 int lp_gc (lua_State *L);
-Instruction *compile (lua_State *L, Pattern *p);
-void realloccode (lua_State *L, Pattern *p, int nsize);
+Instruction *compile (lua_State *L, Pattern *p, uint size);
+void freecode (lua_State *L, Pattern *p);
 int sizei (const Instruction *i);
 
 
@@ -43,8 +30,6 @@ int sizei (const Instruction *i);
 ** something
 */
 #define nullable(t)	checkaux(t, PEnullable)
-
-#define fixedlen(t)     fixedlenx(t, 0, 0)
 
 
 

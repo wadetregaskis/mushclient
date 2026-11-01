@@ -417,6 +417,14 @@
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|x64&apos;">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|ARM64&apos;">NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\scripting\lpeg\lpcset.c">
+      <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|x64&apos;">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|ARM64&apos;">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|x64&apos;">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|ARM64&apos;">NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\scripting\lpeg\lptree.c">
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|x64&apos;">NotUsing</PrecompiledHeader>

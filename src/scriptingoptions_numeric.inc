@@ -125,7 +125,9 @@
 {"proxy_type",                          eProxyServerNone,     O(m_iSocksProcessing), eProxyServerNone, eProxyServerLast - 1, OPT_PLUGIN_CANNOT_WRITE},                        
 {"re_evaluate_auto_say",                false, O(m_bReEvaluateAutoSay)},               
 {"save_deleted_command",                false, O(m_bSaveDeletedCommand)},               
-{"save_scrollback",                     true,  O(m_bSaveScrollback)},
+// A number, not a boolean: a world file with no mention of a boolean loads it as off,
+// and this has to be on for every world already out there, which don't mention it.
+{"save_scrollback",                     1,     O(m_bSaveScrollback), 0, 1},
 {"save_world_automatically",            false, O(m_bSaveWorldAutomatically)},
 {"script_reload_option",                eReloadConfirm, O(m_nReloadOption), 0, 2},
 {"script_errors_to_output_window",      false, O(m_bScriptErrorsToOutputWindow) },       

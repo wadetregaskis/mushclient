@@ -287,15 +287,39 @@ TEST (Autosave, AWorldWithNoIDGetsOneSaved)
   AutosaveFixture f ("noid");
   f.doc.m_bWorldIDIsNew = true;
   f.doc.m_strWorldID = "testnoid";
-  remove ((const char *) f.doc.ScrollbackFilePath ());
-  f.doc.RestoreSavedScrollback ();
+  f.doc.AutosaveTick ();
   EXPECT_TRUE (f.doc.IsModified () != 0);
   EXPECT_FALSE (f.doc.m_bWorldIDIsNew);
   f.Age (10);
   f.doc.AutosaveTick ();
   EXPECT_TRUE (ReadText (f.world).find ("testnoid") != std::string::npos);
-  f.doc.FlushSavedScrollback (true);
-  remove ((const char *) f.doc.ScrollbackFilePath ());
+  }
+
+// Every world file already out there doesn't mention save_scrollback, and it's to be on
+// for them, with an off switch that survives being saved and loaded.
+TEST (SaveScrollbackOption, OnForAnExistingWorldAndOffStaysOff)
+  {
+  const fs::path folder = TempFolder ("option");
+  const fs::path old = folder / "old.mcl";
+  {
+  std::ofstream f (old, std::ios::binary);
+  f << "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+       "<world name=\"Old\" site=\"example.com\" port=\"4000\" world_file_version=\"15\"></world>\n</muclient>\n";
+  }
+  {
+  CMUSHclientDoc fresh;
+  EXPECT_EQ (1, (int) fresh.m_bSaveScrollback);
+  ASSERT_TRUE (fresh.LoadWorldFromFile (old.u8string ().c_str ()));
+  EXPECT_EQ (1, (int) fresh.m_bSaveScrollback);
+
+  // Turned off, saved, and loaded again.
+  fresh.m_bSaveScrollback = 0;
+  fresh.SetPathName ((folder / "saved.mcl").u8string ().c_str (), FALSE);
+  ASSERT_TRUE (fresh.OnSaveDocument ((folder / "saved.mcl").u8string ().c_str ()));
+  CMUSHclientDoc again;
+  ASSERT_TRUE (again.LoadWorldFromFile ((folder / "saved.mcl").u8string ().c_str ()));
+  EXPECT_EQ (0, (int) again.m_bSaveScrollback);
+  }
   }
 
 // ---------------- command history ----------------

@@ -123,6 +123,14 @@ void CMUSHclientDoc::AutosaveTick (void)
   if (!App.m_bAutosaveWorlds)
     return;
 
+  // Its saved output is filed under its ID, so the ID has to reach the world file.  Not
+  // from the load: that ends by clearing the modified flag, more than once.
+  if (m_bWorldIDIsNew)
+    {
+    m_bWorldIDIsNew = false;
+    SetModifiedFlag ();
+    }
+
   const bool bModified = IsModified () != 0;
   if (!bModified && !m_bVariablesChanged)
     {

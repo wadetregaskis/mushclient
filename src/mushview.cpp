@@ -5070,6 +5070,7 @@ ASSERT_VALID(pDoc);
   CLine * pLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (m_selstart_line));
 
   pLine->flags ^= BOOKMARK;   // toggle bookmark
+  pDoc->ScrollbackLineFlagsChanged (pLine);
 
   BookmarkLine (m_selstart_line);
  

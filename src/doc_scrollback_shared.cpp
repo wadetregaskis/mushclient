@@ -130,14 +130,6 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
   if (strPath.IsEmpty ())
     return false;
 
-  // Its saved output is filed under its ID, so the ID has to reach the world file.
-  if (m_bWorldIDIsNew)
-    {
-    m_bWorldIDIsNew = false;
-    if (App.m_bAutosaveWorlds)
-      SetModifiedFlag ();
-    }
-
   // The cap leaves room for the session's first lines, because evicting a chunk
   // before the views are up would be a pointless way to start.
   long iPixelRows = (long) (INT_MAX / (m_FontHeight > 0 ? m_FontHeight : 1)) - 2 * JUMP_SIZE;

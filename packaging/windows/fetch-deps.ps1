@@ -140,9 +140,9 @@ $SocketSha256 = 'bf033aeb9e62bcaa8d007df68c119c966418e8c9ef7e4f2d7e96bddeca9cca6
 
 # The embedded scripting languages: the same versions packaging/fetch-*.sh
 # bundle on macOS and Linux, give or take a patch release.
-$RubyVersion  = '4.0.5'
+$RubyVersion  = '4.0.9'
 $RubyUrl      = "https://cache.ruby-lang.org/pub/ruby/4.0/ruby-$RubyVersion.tar.gz"
-$RubySha256   = '7d6149079a63f8ae1d326c9fa65c6019ba2dc3155eae7b39159817911c88958e'   # cache.ruby-lang.org/pub/ruby/index.txt
+$RubySha256   = 'c35350682ff050b79702d57ade4516e7336063f510155d19fb2fb5b3f3909511'   # ruby-lang.org/en/downloads
 $YamlVersion  = '0.2.5'
 $YamlUrl      = "https://github.com/yaml/libyaml/releases/download/$YamlVersion/yaml-$YamlVersion.tar.gz"
 $YamlSha256   = 'c642ae9b75fee120b2d96c712538bd2cf283228d2337df2cf2988e3c02678ef4'

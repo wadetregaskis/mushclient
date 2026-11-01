@@ -25,7 +25,7 @@
 #
 # Usage:
 #   packaging/fetch-ruby.sh                 # default versions (below)
-#   RUBY_VERSION=4.0.5 packaging/fetch-ruby.sh
+#   RUBY_VERSION=4.0.9 packaging/fetch-ruby.sh
 #
 set -euo pipefail
 
@@ -39,7 +39,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/ruby"
-RUBY_VERSION="${RUBY_VERSION:-4.0.5}"
+RUBY_VERSION="${RUBY_VERSION:-4.0.9}"
 YAML_VERSION="${YAML_VERSION:-0.2.5}"
 OPENSSL_PREFIX="${OPENSSL_PREFIX:-}"
 MACOS_MIN="${MACOS_MIN:-11.0}"

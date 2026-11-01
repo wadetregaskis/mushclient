@@ -29,6 +29,8 @@
 #include "dialogs/MultiLineTriggerDlg.h" // CMultiLineTriggerDlg (Display ▸ Multi-Line Trigger)
 #include "dialogs/TextAttributesDlg.h"   // CTextAttributesDlg (Display ▸ Text Attributes)
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
+#include "platform/wx_update.h"       // the update badge in the status bar
+#include "command_history_store.h"    // the up-arrow list between sessions
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
 #include <memory>
@@ -199,44 +201,6 @@ static std::string GetLegacyHistoryFilePath(const std::string& worldName)
     if (dir.empty()) return {};
     if (worldName.empty()) return dir + "/history.txt";
     return dir + "/history_" + SanitiseWorldNameForFile(worldName) + ".txt";
-}
-
-// ── History file line encoding ────────────────────────────────────────────
-// The file is one command per line, so a command that CONTAINS a newline —
-// composed with Shift+Return, or pasted — was written as several lines and came
-// back as several separate history entries on the next launch.  Escape on the
-// way out and undo it on the way in: backslash becomes "\\", newline becomes
-// "\n", nothing else changes.
-static std::string EncodeHistoryLine(const std::string& text)
-{
-    std::string out;
-    out.reserve(text.size());
-    for (char c : text) {
-        if (c == '\\')      out += "\\\\";
-        else if (c == '\n') out += "\\n";
-        else                out += c;
-    }
-    return out;
-}
-
-// Deliberately forgiving: an escape this does not know is passed through
-// verbatim, so a history file written before the encoding existed — one that
-// may hold literal backslashes — still loads.
-static std::string DecodeHistoryLine(const std::string& text)
-{
-    std::string out;
-    out.reserve(text.size());
-    for (size_t i = 0; i < text.size(); ++i) {
-        if (text[i] != '\\' || i + 1 >= text.size()) {
-            out += text[i];
-            continue;
-        }
-        const char next = text[i + 1];
-        if (next == '\\')      { out += '\\'; ++i; }
-        else if (next == 'n')  { out += '\n'; ++i; }
-        else                     out += text[i];   // unknown escape: verbatim
-    }
-    return out;
 }
 
 // The MUD should wrap to the VISIBLE text width: the full output width minus any
@@ -1758,7 +1722,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // The time pane is 150, not 90: its widest state is now two durations
         // ("0:01:30 (2:15:00)") rather than one.  Only the stretch pane at [0]
         // gives up the width.
-        const int widths[kStatusPaneCount] = { -1, 70, 160, 150, 130, 70 };
+        const int widths[kStatusPaneCount] = { -1, 70, 160, 150, 130, 70, 0 };
         m_statusBar->SetStatusWidths(kStatusPaneCount, widths);
     }
     // The four CMyStatusBar click shortcuts (MyStatusBar.cpp).  Bound here
@@ -1888,39 +1852,23 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     {
         std::string worldName = m_doc
             ? static_cast<const char*>(m_doc->m_mush_name) : "";
-        m_historyFilePath = GetHistoryFilePath(worldName);
+        m_historyFilePath = m_doc
+            ? static_cast<const char*>(m_doc->CommandHistoryFilePath()) : "";
 
-        const std::string histPath = m_historyFilePath;
-        if (!histPath.empty()) {
-            FILE* f = fopen(histPath.c_str(), "r");
-            if (!f) {
-                // Nothing under the hashed name yet: an older build may have
-                // written this world's history under the un-hashed one, and
-                // that is not to be thrown away.  Load only — the save side
-                // always writes m_historyFilePath, so the legacy file is read
-                // once and then superseded.
-                const std::string legacy = GetLegacyHistoryFilePath(worldName);
-                if (!legacy.empty() && legacy != histPath)
-                    f = fopen(legacy.c_str(), "r");
-            }
-            if (f) {
-                char buf[8192];
-                while (fgets(buf, (int)sizeof(buf), f)) {
-                    std::string line = buf;
-                    // Strip trailing newline / carriage-return.
-                    while (!line.empty() &&
-                           (line.back() == '\n' || line.back() == '\r'))
-                        line.pop_back();
-                    // Put back any newline the command itself contained.
-                    line = DecodeHistoryLine(line);
-                    if (!line.empty())
-                        m_history.push_back(wxString::FromUTF8(line.c_str()));
-                }
-                fclose(f);
-                // Trim to the maximum if the file was longer.
-                while ((int)m_history.size() > HistoryLimit())
-                    m_history.erase(m_history.begin());
-            }
+        // The world's own file (command_history_store.h), which is keyed by its ID
+        // and so survives a change of name.  Failing that, from before it was: under
+        // the world's name, hashed, and before that not even hashed.  Read once and
+        // then superseded, since saving always writes the first.
+        std::vector<std::string> commands;
+        if (m_doc && m_doc->m_bSaveScrollback && !m_historyFilePath.empty() &&
+            (command_history::Load(m_historyFilePath, commands) ||
+             command_history::Load(GetHistoryFilePath(worldName), commands) ||
+             command_history::Load(GetLegacyHistoryFilePath(worldName), commands))) {
+            for (const std::string& cmd : commands)
+                m_history.push_back(wxString::FromUTF8(cmd.c_str()));
+            // Trim to the maximum if the file was longer.
+            while ((int)m_history.size() > HistoryLimit())
+                m_history.erase(m_history.begin());
         }
     }
 
@@ -3431,6 +3379,18 @@ void CWorldChildFrame::UpdateStatusBar()
 {
     if (!m_doc || !m_statusBar) return;
 
+    // "Update available": a pane with no width until there's something to say,
+    // and nothing else happens when it appears.  Click it for the update dialog.
+    {
+        const wxString badge = wxString::FromUTF8(WxUpdate_BadgeText().c_str());
+        if (badge != m_statusBar->GetStatusText(kStatusPaneUpdate)) {
+            const int widths[kStatusPaneCount] =
+                { -1, 70, 160, 150, 130, 70, badge.empty() ? 0 : 180 };
+            m_statusBar->SetStatusWidths(kStatusPaneCount, widths);
+            m_statusBar->SetStatusText(badge, kStatusPaneUpdate);
+        }
+    }
+
     auto pane = [this](int field, const std::string& s) {
         // Lenient: world.SetStatus text and the world name can carry legacy-
         // charset bytes; bare FromUTF8 would blank the pane.
@@ -3551,7 +3511,9 @@ int CWorldChildFrame::StatusPaneCommand(int pane, bool doubleClick)
         default:                return 0;
         }
     }
-    // The single-click arm is the world-name pane alone (OnLButtonDown).
+    // The single-click arm is the world-name pane (OnLButtonDown) and the update badge.
+    if (pane == kStatusPaneUpdate)
+        return ID_UPDATE_BADGE;
     return (pane == kStatusPaneName) ? (int) kCmdWorldSwitcher : 0;
 }
 
@@ -3591,6 +3553,11 @@ void CWorldChildFrame::RunStatusPaneCommand(int cmd)
 
     case kCmdWorldSwitcher:
         ShowWorldSwitcher();
+        break;
+
+    case ID_UPDATE_BADGE:
+        WxUpdate_OpenDialog(this);
+        UpdateStatusBar();          // Remind Me Later takes the badge away
         break;
 
     default:
@@ -4031,15 +3998,20 @@ bool CWorldChildFrame::FireMacro(int idx)
 // which is why the up-arrow list could look frozen weeks out of date.
 void CWorldChildFrame::SaveCommandHistoryFile()
 {
-    if (m_history.empty() || m_historyFilePath.empty()) return;
-    if (FILE* f = fopen(m_historyFilePath.c_str(), "w")) {
-        for (const wxString& cmd : m_history) {
-            // Escaped, so a multi-line command stays ONE entry on reload.
-            const std::string line = EncodeHistoryLine(cmd.ToUTF8().data());
-            fprintf(f, "%s\n", line.c_str());
-        }
-        fclose(f);
+    if (m_historyFilePath.empty() || !m_doc) return;
+
+    // The world option covers this as well as the output, and a world that has
+    // never been saved has nowhere to come back to it from.
+    if (!m_doc->m_bSaveScrollback || m_doc->GetPathName().IsEmpty()) {
+        remove(m_historyFilePath.c_str());
+        return;
     }
+
+    std::vector<std::string> commands;
+    commands.reserve(m_history.size());
+    for (const wxString& cmd : m_history)
+        commands.push_back(cmd.ToUTF8().data());
+    command_history::Save(m_historyFilePath, commands);
 }
 
 // Everything OnClose writes to disk before the teardown begins.  BOTH close
@@ -4049,6 +4021,7 @@ void CWorldChildFrame::SaveCommandHistoryFile()
 void CWorldChildFrame::PersistBeforeTeardown()
 {
     SaveCommandHistoryFile();
+    if (m_doc) m_doc->FlushSavedScrollback(true);
     // CloseLog writes the user's configured POSTAMBLE and then fcloses.  It is
     // idempotent (eLogFileNotOpen on a second call), which is what lets the
     // quit hook call it again afterwards and the doc destructor call it on the
@@ -7071,8 +7044,12 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     // which then leaves the document unmodified so the prompt below does not
     // fire.  The port had no consumer for the option at all, so ticking it did
     // nothing and the user was still asked on every close.
-    if (m_doc && m_doc->m_bSaveWorldAutomatically && m_doc->IsModified() &&
-        g_wxhook_save_world)
+    // And the same with autosave on, which also covers a change to variables alone,
+    // and a world that has a name to save under (doc_autosave_shared.cpp).
+    if (m_doc && g_wxhook_save_world &&
+        ((m_doc->m_bSaveWorldAutomatically && m_doc->IsModified()) ||
+         (App.m_bAutosaveWorlds && !m_doc->GetPathName().IsEmpty() &&
+          (m_doc->IsModified() || m_doc->m_bVariablesChanged))))
     {
         g_wxhook_save_world(m_doc, /*saveAs=*/false, this);
         // Deliberately NOT an early return: Windows falls through to the

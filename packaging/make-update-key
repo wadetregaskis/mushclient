@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#
+# make-update-key -- make the Ed25519 key that signs releases for the client's updater.
+#
+#   packaging/make-update-key [private-key-file]
+#
+# Run it once, on your own machine.  The private key goes in the file named
+# (~/.mushclient/update-signing-key.pem unless you say otherwise), readable only by
+# you.  KEEP IT OFF GITHUB, as with the Developer ID key (packaging/sign-release.sh),
+# and keep a backup: lose it, and copies already out there can't be updated by a new
+# key, because the key they trust is built into them.
+#
+# It prints the public key.  Put that in src/update_key.h as kUpdatePublicKey, and from
+# the next release on, the client downloads and installs for itself.  Until a release
+# has that, it sends people to the release page.
+#
+# Needs OpenSSL 1.1.1 or later.  macOS's own "openssl" is LibreSSL, which can't do
+# this: see the note in packaging/README.md, or set OPENSSL to a real one.
+set -euo pipefail
+
+OPENSSL="${OPENSSL:-openssl}"
+KEY="${1:-$HOME/.mushclient/update-signing-key.pem}"
+
+die () { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+"$OPENSSL" version | grep -q '^OpenSSL' ||
+  die "'$OPENSSL' is not OpenSSL ($("$OPENSSL" version)).  Set OPENSSL to one that is."
+
+[ ! -e "$KEY" ] || die "$KEY already exists.  It's almost certainly the one to keep: refusing to overwrite it."
+
+mkdir -p "$(dirname "$KEY")"
+( umask 077; "$OPENSSL" genpkey -algorithm ed25519 -out "$KEY" )
+
+# A DER public key is a fixed 12-byte header and then the 32 bytes of the key.
+PUBLIC="$("$OPENSSL" pkey -in "$KEY" -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n')"
+[ "${#PUBLIC}" = 64 ] || die "the public key came out the wrong size: $PUBLIC"
+
+printf 'Private key: %s\n\n' "$KEY"
+printf 'Keep it safe, and off GitHub.  Now put this in src/update_key.h:\n\n'
+printf '  const char kUpdatePublicKey [] = "%s";\n\n' "$PUBLIC"

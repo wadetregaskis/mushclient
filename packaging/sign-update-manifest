@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#
+# sign-update-manifest -- sign a release's packages, so that the client will install them.
+#
+#   packaging/sign-update-manifest <version> <folder of packages> [--key FILE] [--upload TAG]
+#
+# Run it last, once every package is final (after packaging/sign-release.sh, which makes
+# the macOS ones), on the machine with the private key: packaging/make-update-key.
+#
+# It writes two files into the folder, which go on the release with the packages:
+#
+#   MUSHclient-<version>-SHA256SUMS.txt       "MUSHclient <version>", then every package
+#                                             and its SHA-256, as sha256sum writes them
+#   MUSHclient-<version>-SHA256SUMS.txt.sig   the Ed25519 signature of that, 64 bytes
+#
+# The client checks the signature, that the version on the first line is the one it
+# asked for, and the file against its hash.  (src/update_logic.h)
+#
+# --upload TAG attaches both to that release, with the GitHub CLI (gh auth login).
+set -euo pipefail
+
+OPENSSL="${OPENSSL:-openssl}"
+KEY="$HOME/.mushclient/update-signing-key.pem"
+UPLOAD=""
+
+die () { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+[ $# -ge 2 ] || die "usage: sign-update-manifest <version> <folder> [--key FILE] [--upload TAG]"
+VERSION="$1"
+FOLDER="$2"
+shift 2
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --key)    KEY="$2"; shift 2;;
+    --upload) UPLOAD="$2"; shift 2;;
+    *)        die "unknown option: $1";;
+  esac
+done
+
+[ -d "$FOLDER" ] || die "no such folder: $FOLDER"
+[ -f "$KEY" ] || die "no key at $KEY (packaging/make-update-key makes one)"
+"$OPENSSL" version | grep -q '^OpenSSL' ||
+  die "'$OPENSSL' is not OpenSSL ($("$OPENSSL" version)).  Set OPENSSL to one that is."
+
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA256="sha256sum"
+else
+  SHA256="shasum -a 256"
+fi
+
+MANIFEST="MUSHclient-$VERSION-SHA256SUMS.txt"
+SIGNATURE="$MANIFEST.sig"
+
+(
+  cd "$FOLDER"
+  # Everything of this version that isn't a list of hashes, nor unsigned.  Names are
+  # compared exactly by the client, so these are written as they are.
+  shopt -s nullglob
+  FILES=()
+  for f in MUSHclient-"$VERSION"-* MUSHclient_"$VERSION"_* mushclient-"$VERSION"-* mushclient_"$VERSION"_* \
+           mushclient-discworld-"$VERSION"-*; do
+    case "$f" in
+      *SHA256SUMS*|*-UNSIGNED*|*.sig) ;;
+      *) FILES+=("$f");;
+    esac
+  done
+  [ "${#FILES[@]}" -gt 0 ] || die "no packages for $VERSION in $FOLDER"
+
+  {
+    printf 'MUSHclient %s\n' "$VERSION"
+    $SHA256 "${FILES[@]}" | tr -d '\r'
+  } > "$MANIFEST"
+
+  printf 'Signing %d packages:\n' "${#FILES[@]}"
+  printf '  %s\n' "${FILES[@]}"
+)
+
+"$OPENSSL" pkeyutl -sign -rawin -inkey "$KEY" -in "$FOLDER/$MANIFEST" -out "$FOLDER/$SIGNATURE"
+
+# And check it, since nothing else will until a client tries.
+"$OPENSSL" pkey -in "$KEY" -pubout -out "$FOLDER/.update-public.pem"
+"$OPENSSL" pkeyutl -verify -rawin -pubin -inkey "$FOLDER/.update-public.pem" \
+    -in "$FOLDER/$MANIFEST" -sigfile "$FOLDER/$SIGNATURE" >/dev/null ||
+  { rm -f "$FOLDER/.update-public.pem"; die "the signature doesn't verify"; }
+rm -f "$FOLDER/.update-public.pem"
+
+[ "$(wc -c < "$FOLDER/$SIGNATURE" | tr -d ' ')" = 64 ] || die "the signature isn't 64 bytes"
+
+printf 'Wrote %s and %s\n' "$FOLDER/$MANIFEST" "$FOLDER/$SIGNATURE"
+
+if [ -n "$UPLOAD" ]; then
+  gh release upload "$UPLOAD" "$FOLDER/$MANIFEST" "$FOLDER/$SIGNATURE" --clobber
+  printf 'Attached them to %s.\n' "$UPLOAD"
+fi

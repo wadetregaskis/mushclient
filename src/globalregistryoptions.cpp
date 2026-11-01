@@ -27,6 +27,8 @@ static tGlobalConfigurationNumericOption GlobalOptionsTable [] = {
 { GLB_OPT (m_bConfirmBeforeClosingMushclient), "ConfirmBeforeClosingMushclient",0 },
 { GLB_OPT (m_bConfirmBeforeClosingWorld     ), "ConfirmBeforeClosingWorld",     1 },
 { GLB_OPT (m_bConfirmBeforeSavingVariables  ), "ConfirmBeforeSavingVariables",  1 },
+{ GLB_OPT (m_bAutosaveWorlds                ), "AutosaveWorlds",  1 },
+{ GLB_OPT (m_bCheckForUpdates               ), "CheckForUpdates",  1 },
 { GLB_OPT (m_bConfirmLogFileClose           ), "ConfirmLogFileClose",           1 },
 { GLB_OPT (m_bEnableSpellCheck              ), "EnableSpellCheck", 1 },
 { GLB_OPT (m_bEnablePackageLibrary          ), "AllowLoadingDlls", 1 },

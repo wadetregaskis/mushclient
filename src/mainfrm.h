@@ -49,6 +49,10 @@ public:
 // Attributes
 public:
 
+#ifdef _WIN32
+  void ShowUpdateBadge ();
+#endif
+
    int m_nPauseItem;
 
    UINT m_wDeviceID;
@@ -162,6 +166,12 @@ protected:
 	afx_msg void OnUpdateStatuslineLog(CCmdUI* pCmdUI);
 	afx_msg void OnUpdateStatuslineTime(CCmdUI* pCmdUI);
 	afx_msg void OnHelpTipoftheday();
+#ifdef _WIN32
+	afx_msg void OnHelpCheckForUpdates();
+	afx_msg void OnUpdateBadgeClicked();
+	afx_msg void OnUpdateUpdateBadge(CCmdUI* pCmdUI);
+	afx_msg LRESULT OnUpdatePost(WPARAM, LPARAM);
+#endif
 	afx_msg void OnUpdateDisplayActivitylist(CCmdUI* pCmdUI);
 	afx_msg void OnFilePreferences();
 	afx_msg void OnDrawItem(int nIDCtl, LPDRAWITEMSTRUCT lpDrawItemStruct);

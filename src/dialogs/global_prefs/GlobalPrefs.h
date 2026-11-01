@@ -142,6 +142,8 @@ public:
 	BOOL	m_bConfirmBeforeClosingWorld;
 	BOOL	m_bConfirmBeforeClosingMXPdebug;
 	BOOL	m_bConfirmBeforeSavingVariables;
+	BOOL	m_bAutosaveWorlds;
+	BOOL	m_bCheckForUpdates;
 	//}}AFX_DATA
 
 

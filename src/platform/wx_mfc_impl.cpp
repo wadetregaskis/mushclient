@@ -57,6 +57,7 @@
 #include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
 #include "bundled_files.h"  // keeping the bundled plugins up to date
+#include "platform/wx_update.h"  // Help > Check for Updates
 #include "version.h"        // VERSION_STRING: the seeded-version marker
 #include <strings.h>        // strcasecmp
 #include <memory>
@@ -966,6 +967,8 @@ static const CanonMenuCmd kCanonCmds[] = {
   { SEC_FILE, 32980, "&Import\xE2\x80\xA6\tCtrl+Alt+I",      'D', false, true  }, // ID_FILE_IMPORT
   // CMUSHclientApp::ImportFromVersion5 (legacy_import.h): from a Wine prefix here
   { SEC_FILE, 33056, "Import from MUSHclient 5\xE2\x80\xA6", 'A', false, false }, // ID_FILE_IMPORT_MUSHCLIENT5
+  // CMUSHclientDoc::OnFileWorldBackups: the folder of this world's earlier versions
+  { SEC_FILE, ID_FILE_WORLD_BACKUPS, "World &Backups\xE2\x80\xA6", 'D', false, true },
   // Checkable: OnUpdateFileLogsession does SetCheck (m_logfile != NULL)
   // (doc.cpp:1008), and the tick is how Windows says a session is being logged.
   // Declaring it uncheckable here forced `checked` back to -1 in
@@ -1013,6 +1016,7 @@ static const CanonMenuCmd kCanonCmds[] = {
   { SEC_GAME, 32967, "Test &Trigger\xE2\x80\xA6",            'D', false, true  }, // ID_DEBUG_WORLD_INPUT
   { SEC_GAME, 32234, "Minimize &Program\tCtrl+M",            'A', false, false }, // ID_GAME_MINIMISEPROGRAM
   // ── Help (web links use the working ShellExecute shim) ──
+  { SEC_HELP, ID_HELP_CHECK_FOR_UPDATES, "Check for &Updates\xE2\x80\xA6", 'F', false, false }, // WxUpdate_CheckNow, ahead of the dispatch
   { SEC_HELP, 32237, "&Tip Of The Day\xE2\x80\xA6",          'F', false, false }, // ID_HELP_TIPOFTHEDAY
   { SEC_HELP, 32294, "&Getting Started (web)",               'A', false, false }, // ID_HELP_GETTINGSTARTED (web here; Windows uses local .chm help)
   { SEC_HELP, 32986, "MUSHclient &Forum (web)",              'F', false, false }, // ID_HELP_FORUM
@@ -1999,6 +2003,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (const CanonMenuCmd* c = find_canon_cmd(id)) {
             if (CCmdTarget* tgt = canon_target(c->target, activeDoc()))
                 AfxDispatchCommand(tgt, 0 /*ON_COMMAND*/, id);
+            return;
+        }
+
+        // ── Updates (wx_update.cpp) ──
+        if (id == ID_HELP_CHECK_FOR_UPDATES) {
+            WxUpdate_CheckNow();
             return;
         }
 
@@ -3551,7 +3561,10 @@ static int hook_init_instance()
 
     int ok = App.InitInstance() != FALSE ? 1 : 0;
     if (ok)
+    {
         ApplyDockIconFromPrefs();   // honour the saved tray/taskbar-icon choice
+        WxUpdate_Start ();
+    }
     return ok;
 }
 

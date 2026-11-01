@@ -40,6 +40,9 @@
 #include "dialogs/ColourPickerDlg.h"
 
 #include "dialogs/Splash.h"
+#ifdef _WIN32
+#include "dialogs/UpdateDlg.h"
+#endif
 #include "direct.h"
 #ifndef _WIN32
 #include <sys/utsname.h>
@@ -289,6 +292,7 @@ BOOL CMUSHclientApp::InitInstance()
   // %APPDATA%\MUSHclient\, or beside the exe for a portable copy -- made the
   // current directory, so it is the working directory captured next
   UserData_SetUp (ExtractDirectory (m_strMUSHclientFileName));
+  update_ui::CleanUpAtStartup ();
 #endif
 
 // find the working directory at startup time
@@ -1414,6 +1418,12 @@ int CMUSHclientApp::ExitInstance()
 
   // free the resources DLL
   FreeLibrary (m_hInstDLL);
+
+  // an update has replaced this copy's files, and now's the time to run them
+#ifdef _WIN32
+  update_ui::RunAtExitIfWanted ();
+#endif
+
 	return CWinApp::ExitInstance();
 }
 

@@ -513,6 +513,7 @@ public:
         kStatusPaneTime,          // ID_STATUSLINE_TIME      — connected time
         kStatusPaneLines,         // ID_STATUSLINE_LINES     — lines in/out
         kStatusPaneLog,           // ID_STATUSLINE_LOG       — logging?
+        kStatusPaneUpdate,        // ID_UPDATE_BADGE         — no width unless there's one
         kStatusPaneCount
     };
 

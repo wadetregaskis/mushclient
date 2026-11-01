@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <memory>
@@ -160,10 +161,18 @@ std::string SslError (const char * what)
   return message;
   }
 
+// Where a download's content goes.  Null for "into *body".
+struct Sink
+  {
+  FILE * file;
+  int    stallSeconds;
+  const std::function<bool (uint64_t, uint64_t)> * progress;
+  };
+
 // One request.  True if a response came back, whatever its status.
 bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
-                const time_t deadline, int * status, std::string * headers,
-                std::string * body, std::string * error)
+                time_t deadline, int * status, std::string * headers,
+                std::string * body, std::string * error, const Sink * sink = nullptr)
   {
   std::unique_ptr<BIO, decltype (&BIO_free_all)> bio (BIO_new_ssl_connect (ctx), BIO_free_all);
   if (!bio)
@@ -238,14 +247,70 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
     }
 
   std::string raw;
-  char buffer [16384];
+  char buffer [65536];
   bool cleanEnd = false;
+  bool streaming = false;     // a download's 200, going to the file rather than to raw
+  uint64_t streamed = 0;
+  uint64_t expected = 0;
   for (;;)
     {
     const int n = BIO_read (bio.get (), buffer, sizeof buffer);
     if (n > 0)
       {
-      raw.append (buffer, (size_t) n);
+      if (sink)
+        deadline = time (NULL) + sink->stallSeconds;
+
+      if (!streaming)
+        raw.append (buffer, (size_t) n);
+
+      // Once a download's headers are in, its content can go straight to the file:
+      // unless it is chunked, which needs the whole thing, and which GitHub's
+      // file servers don't do.
+      const char * toWrite = nullptr;
+      size_t writeSize = 0;
+      if (streaming)
+        {
+        toWrite = buffer;
+        writeSize = (size_t) n;
+        }
+      else if (sink)
+        {
+        const size_t end = raw.find ("\r\n\r\n");
+        if (end != std::string::npos)
+          {
+          const std::string first = raw.substr (0, end);
+          const size_t space = first.find (' ');
+          const int code = space == std::string::npos ? 0 : atoi (first.c_str () + space + 1);
+          if (code == 200 && Lower (HeaderValue (first, "Transfer-Encoding")).find ("chunked") == std::string::npos)
+            {
+            *status = code;
+            *headers = first;
+            expected = strtoull (HeaderValue (first, "Content-Length").c_str (), NULL, 10);
+            streaming = true;
+            toWrite = raw.data () + end + 4;
+            writeSize = raw.size () - end - 4;
+            }
+          }
+        }
+
+      if (streaming)
+        {
+        if (writeSize && fwrite (toWrite, 1, writeSize, sink->file) != writeSize)
+          {
+          *error = "could not write the downloaded file (is the disk full?)";
+          return false;
+          }
+        streamed += writeSize;
+        if (raw.size () > 0)
+          raw.clear ();
+        if (*sink->progress && !(*sink->progress) (streamed, expected))
+          {
+          *error = "cancelled";
+          return false;
+          }
+        continue;
+        }
+
       if (raw.size () > kMaxResponseSize)
         {
         *error = "the response is too large";
@@ -267,6 +332,16 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
       }
     }
   ERR_clear_error ();
+
+  if (streaming)
+    {
+    if (expected ? streamed < expected : !cleanEnd)
+      {
+      *error = "the download was cut short";
+      return false;
+      }
+    return true;
+    }
 
   const size_t headersEnd = raw.find ("\r\n\r\n");
   if (headersEnd == std::string::npos || raw.compare (0, 5, "HTTP/") != 0)
@@ -323,8 +398,10 @@ bool HttpsGetDecodeBody (const std::string & headers, const std::string & raw, s
     }
   }
 
-bool HttpsGet (const std::string & url, const int timeoutSeconds, const std::string & userAgent,
-               int * status, std::string * body, std::string * error)
+namespace {
+
+bool FetchFollowingRedirects (const std::string & url, const int timeoutSeconds, const std::string & userAgent,
+                              int * status, std::string * body, std::string * error, const Sink * sink)
   {
   std::unique_ptr<SSL_CTX, decltype (&SSL_CTX_free)> ctx (SSL_CTX_new (TLS_client_method ()), SSL_CTX_free);
   if (!ctx)
@@ -336,7 +413,8 @@ bool HttpsGet (const std::string & url, const int timeoutSeconds, const std::str
   SSL_CTX_set_verify (ctx.get (), SSL_VERIFY_PEER, NULL);
   AddTrustAnchors (ctx.get ());
 
-  const time_t deadline = time (NULL) + (timeoutSeconds > 0 ? timeoutSeconds : kHttpsGetDefaultTimeoutSeconds);
+  const int seconds = timeoutSeconds > 0 ? timeoutSeconds : kHttpsGetDefaultTimeoutSeconds;
+  time_t deadline = time (NULL) + seconds;
   std::string current = url;
   for (int redirects = 0; ; redirects++)
     {
@@ -344,8 +422,12 @@ bool HttpsGet (const std::string & url, const int timeoutSeconds, const std::str
     if (!ParseUrl (current, &parsed, error))
       return false;
 
+    // Each hop of a download gets a fresh start: the file server is a different host.
+    if (sink)
+      deadline = time (NULL) + seconds;
+
     std::string headers;
-    if (!FetchOnce (ctx.get (), parsed, userAgent, deadline, status, &headers, body, error))
+    if (!FetchOnce (ctx.get (), parsed, userAgent, deadline, status, &headers, body, error, sink))
       return false;
 
     const std::string location = HeaderValue (headers, "Location");
@@ -363,6 +445,42 @@ bool HttpsGet (const std::string & url, const int timeoutSeconds, const std::str
     }
   }
 
+} // anonymous namespace
+
+bool HttpsGet (const std::string & url, const int timeoutSeconds, const std::string & userAgent,
+               int * status, std::string * body, std::string * error)
+  {
+  return FetchFollowingRedirects (url, timeoutSeconds, userAgent, status, body, error, nullptr);
+  }
+
+bool HttpsDownload (const std::string & url, const int timeoutSeconds, const std::string & userAgent,
+                    const std::string & path,
+                    const std::function<bool (uint64_t, uint64_t)> & progress,
+                    int * status, std::string * error)
+  {
+  FILE * file = fopen (path.c_str (), "wb");
+  if (!file)
+    {
+    *error = "could not create " + path;
+    return false;
+    }
+  const Sink sink = { file, timeoutSeconds > 0 ? timeoutSeconds : kHttpsGetDefaultTimeoutSeconds, &progress };
+  std::string body;
+  bool bOK = FetchFollowingRedirects (url, timeoutSeconds, userAgent, status, &body, error, &sink);
+  // A chunked answer came back whole, rather than going straight to the file.
+  if (bOK && *status == 200 && !body.empty () && fwrite (body.data (), 1, body.size (), file) != body.size ())
+    {
+    *error = "could not write the downloaded file (is the disk full?)";
+    bOK = false;
+    }
+  if (fclose (file) != 0 && bOK)
+    {
+    *error = "could not write the downloaded file (is the disk full?)";
+    bOK = false;
+    }
+  return bOK;
+  }
+
 } // namespace pal
 
 #else // no OpenSSL in this build
@@ -370,6 +488,13 @@ bool HttpsGet (const std::string & url, const int timeoutSeconds, const std::str
 namespace pal {
 
 bool HttpsGet (const std::string &, int, const std::string &, int *, std::string *, std::string * error)
+  {
+  *error = "this build has no TLS";
+  return false;
+  }
+
+bool HttpsDownload (const std::string &, int, const std::string &, const std::string &,
+                    const std::function<bool (uint64_t, uint64_t)> &, int *, std::string * error)
   {
   *error = "this build has no TLS";
   return false;

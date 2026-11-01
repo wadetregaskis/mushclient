@@ -1,155 +1,148 @@
-/* mc_pcre.h -- how MUSHclient studies and runs a PCRE pattern.
+/* mc_pcre.h -- how MUSHclient compiles and runs a regular expression.
 
-   Shared by regexp.cpp (triggers and aliases) and lrexlib.c (Lua's "rex").
+   Shared by regexp.cpp (triggers, aliases and the like) and lrexlib.c (Lua's
+   "rex"), both of which go through mc_pcre.c, over PCRE2 (pcre2/).
 
-   Studying: with the JIT where it is built in.  pcre/config.h turns it on for
-   Windows only; elsewhere pcre_study ignores the JIT flag (and
-   pcre_jit_compile.c supplies stubs).  An extra that may hold JIT code must be
-   freed with pcre_free_study.
+   The rest of the client, and every script, was written against PCRE 8, and a
+   plugin can hold any of its numbers: rex.flags() returns them, rex.new (p, 1)
+   uses one, and GetTriggerInfo's execution error is another.  So PCRE 8's
+   numbers go on being what the client deals in: the PCRE_* names below keep
+   their PCRE 8 values, and mc_pcre.c turns them into PCRE2's at the edge, in
+   one place.  Likewise a match's offsets are ints, -1 for "unset".
 
-   Running: PCRE's interpreter recurses on the machine stack, roughly once per
-   repeat of a group, and had no useful limit (MATCH_LIMIT_RECURSION is ten
-   million), so one long enough line crashed the client: "^(?:a|b)*c$"
-   against a thousand-character line overflows the 1 MB stack of a Debug
-   build, and against twenty thousand characters the Release build.
-   mc_pcre_exec caps the recursion at what the calling thread's remaining stack
-   holds -- PCRE reports its own frame size -- keeping MC_PCRE_STACK_RESERVE
-   spare, so such a line fails with PCRE_ERROR_RECURSIONLIMIT, which callers
-   answer like any runtime error.  The JIT ignores that cap: it backtracks on
-   a stack of its own, up to 8 MB per thread, and fails with
-   PCRE_ERROR_JIT_STACKLIMIT beyond it.  It is not rerun in the interpreter,
-   which is shallower still.  Where the stack cannot be located, the cap is
-   PCRE's own, as before. */
+   Patterns: a pattern PCRE 8 took has to go on meaning what it meant.  See
+   mc_pcre_compile in mc_pcre.c.
+
+   Running: since 10.30 the interpreter keeps its frames on the heap, so a deep
+   match no longer overflows the machine stack.  The JIT is on, on every
+   platform where it can get executable memory (a pattern it cannot compile, or
+   a platform where it fails, is interpreted).  It backtracks on a stack of its
+   own, up to 8 MB per thread; a match that outgrows that is rerun in the
+   interpreter, unless the pattern has a script's callout, which a rerun would
+   call twice. */
 
 #ifndef MUSHCLIENT_MC_PCRE_H
 #define MUSHCLIENT_MC_PCRE_H
 
 #include <stddef.h>
-#include <string.h>
-#include "pcre.h"
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <pthread.h>
+#ifndef PCRE2_CODE_UNIT_WIDTH
+#define PCRE2_CODE_UNIT_WIDTH 8
+#endif
+#ifndef PCRE2_STATIC
+#define PCRE2_STATIC
+#endif
+#include "pcre2.h"
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#if defined(_MSC_VER)
-#define MC_PCRE_THREAD __declspec(thread)
-#elif defined(__cplusplus)
-#define MC_PCRE_THREAD thread_local
-#else
-#define MC_PCRE_THREAD _Thread_local
+/* Options: PCRE 8's bits */
+#define PCRE_CASELESS           0x00000001  /* compile */
+#define PCRE_MULTILINE          0x00000002  /* compile */
+#define PCRE_DOTALL             0x00000004  /* compile */
+#define PCRE_EXTENDED           0x00000008  /* compile */
+#define PCRE_ANCHORED           0x00000010  /* compile, match */
+#define PCRE_DOLLAR_ENDONLY     0x00000020  /* compile */
+#define PCRE_EXTRA              0x00000040  /* compile: an unknown escape is an error */
+#define PCRE_NOTBOL             0x00000080  /* match */
+#define PCRE_NOTEOL             0x00000100  /* match */
+#define PCRE_UNGREEDY           0x00000200  /* compile */
+#define PCRE_NOTEMPTY           0x00000400  /* match */
+#define PCRE_UTF8               0x00000800  /* compile */
+#define PCRE_NO_AUTO_CAPTURE    0x00001000  /* compile */
+#define PCRE_NO_UTF8_CHECK      0x00002000  /* compile, match */
+#define PCRE_AUTO_CALLOUT       0x00004000  /* compile */
+#define PCRE_PARTIAL_SOFT       0x00008000  /* match */
+#define PCRE_PARTIAL            0x00008000  /* match */
+#define PCRE_NEVER_UTF          0x00010000  /* compile */
+#define PCRE_NO_AUTO_POSSESS    0x00020000  /* compile */
+#define PCRE_FIRSTLINE          0x00040000  /* compile */
+#define PCRE_DUPNAMES           0x00080000  /* compile */
+#define PCRE_NEWLINE_CR         0x00100000  /* compile */
+#define PCRE_NEWLINE_LF         0x00200000  /* compile */
+#define PCRE_NEWLINE_CRLF       0x00300000  /* compile */
+#define PCRE_NEWLINE_ANY        0x00400000  /* compile */
+#define PCRE_NEWLINE_ANYCRLF    0x00500000  /* compile */
+#define PCRE_BSR_ANYCRLF        0x00800000  /* compile */
+#define PCRE_BSR_UNICODE        0x01000000  /* compile */
+#define PCRE_JAVASCRIPT_COMPAT  0x02000000  /* compile */
+#define PCRE_NO_START_OPTIMIZE  0x04000000  /* compile, match */
+#define PCRE_PARTIAL_HARD       0x08000000  /* match */
+#define PCRE_NOTEMPTY_ATSTART   0x10000000  /* match */
+#define PCRE_UCP                0x20000000  /* compile */
+
+/* Run-time errors: PCRE 8's numbers.  They reach scripts, as
+   GetTriggerInfo (t, 28) and execution_error. */
+#define PCRE_ERROR_NOMATCH          (-1)
+#define PCRE_ERROR_NULL             (-2)
+#define PCRE_ERROR_BADOPTION        (-3)
+#define PCRE_ERROR_BADMAGIC         (-4)
+#define PCRE_ERROR_UNKNOWN_OPCODE   (-5)
+#define PCRE_ERROR_NOMEMORY         (-6)
+#define PCRE_ERROR_NOSUBSTRING      (-7)
+#define PCRE_ERROR_MATCHLIMIT       (-8)
+#define PCRE_ERROR_CALLOUT          (-9)
+#define PCRE_ERROR_BADUTF8         (-10)
+#define PCRE_ERROR_BADUTF8_OFFSET  (-11)
+#define PCRE_ERROR_PARTIAL         (-12)
+#define PCRE_ERROR_BADPARTIAL      (-13)
+#define PCRE_ERROR_INTERNAL        (-14)
+#define PCRE_ERROR_BADCOUNT        (-15)
+#define PCRE_ERROR_DFA_UITEM       (-16)
+#define PCRE_ERROR_DFA_UCOND       (-17)
+#define PCRE_ERROR_DFA_UMLIMIT     (-18)
+#define PCRE_ERROR_DFA_WSSIZE      (-19)
+#define PCRE_ERROR_DFA_RECURSE     (-20)
+#define PCRE_ERROR_RECURSIONLIMIT  (-21)
+#define PCRE_ERROR_NULLWSLIMIT     (-22)
+#define PCRE_ERROR_BADNEWLINE      (-23)
+#define PCRE_ERROR_BADOFFSET       (-24)
+#define PCRE_ERROR_SHORTUTF8       (-25)
+#define PCRE_ERROR_RECURSELOOP     (-26)
+#define PCRE_ERROR_JIT_STACKLIMIT  (-27)
+#define PCRE_ERROR_BADMODE         (-28)
+#define PCRE_ERROR_JIT_BADOPTION   (-31)
+
+/* Compile `pattern`, with PCRE 8's options, and the JIT too if `jit` is non-zero
+   (a failure there just leaves the pattern interpreted).  NULL on failure, with
+   the reason in *error (valid until the thread's next call here) and the byte
+   offset in the pattern in *erroffset.  tables: from pcre2_maketables, or NULL. */
+pcre2_code * mc_pcre_compile (const char * pattern, int options,
+                              const unsigned char * tables, int jit,
+                              const char ** error, int * erroffset);
+
+/* The pattern PCRE2 has to be given for it to act as PCRE 8 did on `pattern`:
+   malloc'd, or NULL if `pattern` will do as it stands.  Exposed for the tests. */
+char * mc_pcre_rewrite (const char * pattern, int options);
+
+/* Run a pattern.  options: PCRE 8's.  Returns what pcre_exec did: the highest
+   numbered capture set, plus one, or one of PCRE_ERROR_*.  callout, if any,
+   gets a pattern's (?C) points.  *md may be replaced: it is shrunk first if a
+   previous deep match left it holding a lot of memory. */
+int mc_pcre_match (const pcre2_code * code, pcre2_match_data ** md,
+                   const char * subject, int length, int start_offset, int options,
+                   int (* callout) (pcre2_callout_block *, void *), void * callout_data);
+
+/* The trigger path, which runs once per enabled trigger per line, and nearly
+   always fails to match, is worth a shorter way.  mc_pcre_match_jit is mc_pcre_match
+   with no callout, going straight into the JIT's code, for a pattern for which
+   mc_pcre_is_jit_only says that is right: JIT-compiled, and not UTF-8, because the
+   JIT does not check its subject.  */
+int mc_pcre_is_jit_only (const pcre2_code * code);
+int mc_pcre_match_jit (const pcre2_code * code, pcre2_match_data ** md,
+                       const char * subject, int length, int start_offset, int options);
+
+/* A match's offsets, as ints with -1 for unset: pairs of them to out[]. */
+void mc_pcre_get_offsets (pcre2_match_data * md, int * out, int pairs);
+
+/* The calling thread's match context, which holds its JIT stack.  Kept for the
+   thread's life.  Exposed for the tests. */
+pcre2_match_context * mc_pcre_match_context (void);
+
+#ifdef __cplusplus
+}
 #endif
-
-/* Stack an interpreted match leaves unused: for pcre_exec's own frame, a
-   callout's script, and the system's handling of the guard page. */
-#define MC_PCRE_STACK_RESERVE (128 * 1024)
-
-/* The calling thread's JIT stack, made on first use and kept for the thread's
-   life.  NULL (allocation failed) makes PCRE use 32 KB of the machine stack. */
-static __inline pcre_jit_stack * mc_pcre_jit_stack (void * unused)
-  {
-  static MC_PCRE_THREAD pcre_jit_stack * stack = NULL;
-  (void) unused;
-  if (stack == NULL)
-    stack = pcre_jit_stack_alloc (32 * 1024, 8 * 1024 * 1024);
-  return stack;
-  }
-
-/* pcre_study, compiling with the JIT where it is built in */
-static __inline pcre_extra * mc_pcre_study (const pcre * code, const char ** error)
-  {
-  pcre_extra * extra = pcre_study (code, PCRE_STUDY_JIT_COMPILE, error);
-  if (extra != NULL && (extra->flags & PCRE_EXTRA_EXECUTABLE_JIT) != 0)
-    pcre_assign_jit_stack (extra, mc_pcre_jit_stack, NULL);
-  return extra;
-  }
-
-/* The lowest address of the calling thread's stack, found once per thread;
-   NULL where the platform will not say. */
-static __inline const char * mc_pcre_stack_floor (void)
-  {
-  static MC_PCRE_THREAD const char * floor = NULL;
-  static MC_PCRE_THREAD int looked = 0;
-  if (!looked)
-    {
-    looked = 1;
-#if defined(_WIN32)
-    {
-    /* the stack's whole reservation, of which this variable is a part */
-    MEMORY_BASIC_INFORMATION mbi;
-    if (VirtualQuery (&mbi, &mbi, sizeof mbi) == sizeof mbi)
-      floor = (const char *) mbi.AllocationBase;
-    }
-#elif defined(__APPLE__)
-    {
-    pthread_t self = pthread_self ();
-    floor = (const char *) pthread_get_stackaddr_np (self)
-            - pthread_get_stacksize_np (self);
-    }
-#elif defined(__linux__) && defined(_GNU_SOURCE)
-    {
-    pthread_attr_t attr;
-    void * addr;
-    size_t size;
-    if (pthread_getattr_np (pthread_self (), &attr) == 0)
-      {
-      if (pthread_attr_getstack (&attr, &addr, &size) == 0)
-        floor = (const char *) addr;
-      pthread_attr_destroy (&attr);
-      }
-    }
-#endif
-    }
-  return floor;
-  }
-
-/* pcre_exec, with the interpreter's recursion capped by the stack left */
-static __inline int mc_pcre_exec (const pcre * code, const pcre_extra * extra,
-                                  const char * subject, int length,
-                                  int start_offset, int options,
-                                  int * ovector, int ovecsize)
-  {
-  static int frame = 0;   /* bytes of stack per recursion; the same on every thread */
-  const char * floor;
-  /* The JIT runs, and needs no cap, for compiled code without custom tables
-     and these options; anything else (partial matching, say) falls back to
-     the interpreter inside pcre_exec, so is capped. */
-  if (extra != NULL &&
-      (extra->flags & (PCRE_EXTRA_EXECUTABLE_JIT | PCRE_EXTRA_TABLES)) == PCRE_EXTRA_EXECUTABLE_JIT &&
-      extra->executable_jit != NULL &&
-      (options & ~(PCRE_NO_UTF8_CHECK | PCRE_NOTBOL | PCRE_NOTEOL |
-                   PCRE_NOTEMPTY | PCRE_NOTEMPTY_ATSTART)) == 0)
-    return pcre_exec (code, extra, subject, length, start_offset, options,
-                      ovector, ovecsize);
-  floor = mc_pcre_stack_floor ();
-  if (floor != NULL)
-    {
-    char here;
-    ptrdiff_t left = &here - floor - MC_PCRE_STACK_RESERVE;
-    unsigned long depth;
-    pcre_extra capped;
-    if (frame <= 0)
-      {
-      frame = -pcre_exec (NULL, NULL, NULL, -999, -999, 0, NULL, 0);
-      if (frame <= 0)
-        frame = 4096;   /* not reported: assume a large one */
-      }
-    depth = left > 0 ? (unsigned long) (left / frame) : 0;
-    if (extra != NULL)
-      capped = *extra;
-    else
-      memset (&capped, 0, sizeof capped);
-    if ((capped.flags & PCRE_EXTRA_MATCH_LIMIT_RECURSION) == 0 ||
-        capped.match_limit_recursion > depth)
-      capped.match_limit_recursion = depth;
-    capped.flags |= PCRE_EXTRA_MATCH_LIMIT_RECURSION;
-    return pcre_exec (code, &capped, subject, length, start_offset, options,
-                      ovector, ovecsize);
-    }
-  return pcre_exec (code, extra, subject, length, start_offset, options,
-                    ovector, ovecsize);
-  }
 
 #endif /* MUSHCLIENT_MC_PCRE_H */

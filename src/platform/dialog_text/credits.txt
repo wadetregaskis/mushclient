@@ -206,15 +206,16 @@ This is a library of functions to support regular expressions whose syntax and s
 
 Written by: Philip Hazel
 
-Copyright (c) 1997-2006 University of Cambridge
+Copyright (c) 1997-2007 University of Cambridge
+Copyright (c) 2007-2024 Philip Hazel
 
 For more information, see:
 
-  http://www.pcre.org/
+  https://www.pcre.org/
 
 The source may be obtained from:
 
-  ftp://ftp.csx.cam.ac.uk/pub/software/programming/pcre/
+  https://github.com/PCRE2Project/pcre2
 
 Note that Philip Hazel makes the following disclaimer about PCRE:
 

@@ -29,7 +29,7 @@ import os
 import re
 import sys
 
-# The project's own code.  Vendored trees (lua, pcre, sqlite3, zlib, png,
+# The project's own code.  Vendored trees (lua, pcre2, sqlite3, zlib, png,
 # openssl, spell, miniaudio…) are excluded: they are not ours to reformat, and
 # none of them writes to the world output window.
 INCLUDE_DIRS = ("src",)

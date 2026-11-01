@@ -1445,3 +1445,48 @@ every platform, and by hand on Windows: the document above says what was seen.
 - `<!ENTITY x y ADD>` and `REMOVE` are lists, where upstream ignored ADD and REMOVE deleted the entity.
 - MXP tags on a line with a line tag (modes 10 to 99) are parsed. Those modes used to replace the
   security mode, which left the tags on the line as literal text.
+
+---
+
+## 32 — Regular expressions are PCRE2, keeping PCRE 8's contract
+
+PCRE 8.45 reached its end of life in 2021, so triggers, aliases, the Find dialogs and Lua's
+`rex` now run on PCRE2 10.49 (`pcre2\`), through one small layer, `src/mc_pcre.c`. A plugin
+should not be able to tell, except as listed here. That layer holds to PCRE 8's contract:
+
+- **Numbers.** `rex.flags()` gives PCRE 8's values, and `rex.new (p, 1)` means caseless.
+  `EXTRA`, which PCRE2 does not have, still makes an unknown escape an error. Run-time errors,
+  which reach scripts as `execution_error` and through `GetTriggerInfo`, are PCRE 8's numbers:
+  the match limit is -8, not PCRE2's -47. A callout's last argument is -1 for "none so far".
+- **Patterns.** A pattern PCRE 8 took keeps its meaning. PCRE2 refuses `\j`, `[\w-_]`,
+  `\8`, `\x` alone and `\K` in a lookaround, and reads `x{,3}` and `x{ 2 }` as quantifiers.
+  These are rewritten just before compiling (`mc_pcre_rewrite`), or allowed by an option. A
+  pattern PCRE2 takes as it stands, nearly all of them, is never touched.
+
+**What is different:**
+
+- `rex.version ()` says `10.49 2026-09-28`, and the about box `PCRE 10.49`.
+- A compile error's wording, and sometimes its offset. Nothing bundled or of Quow's reads them.
+- Patterns that used to be refused and now work: `(?<=a{1,3})`, group names of 33 or more
+  characters, and PCRE2's other new syntax.
+- `(?i)\p{Lu}` now matches lower case as well, as in Perl. `\p{Greek}` and the like go by
+  Unicode's script extensions and a newer Unicode, so a few more characters match, such as
+  U+0342. `(?xx)` means something now. `\8(a)(b)(c)(d)(e)(f)(g)(h)` is a forward reference.
+  None of these was worth a rewrite; none appears in anything the comparison has seen.
+- The newline and `\R` bits of the match-time options of `re:match` and so on are ignored,
+  as PCRE2 has no such thing. Set at `rex.new`, they work as ever.
+- A very deep match is better. PCRE 8's interpreter recursed on the machine stack, and one long
+  line against `^(?:a|b)*c$` could crash the client; the guard against that returned
+  "Recursion Limit" for lines the JIT's stack could not hold either. PCRE2 keeps its frames on
+  the heap, up to 1 GB (256 MB on Win32), so such a line now simply matches. Past that limit it
+  is "Recursion Limit", as before. PCRE 8's JIT and PCRE2's count their limits differently,
+  so a pattern right at the match limit could fall on the other side of it.
+- The JIT is on for macOS and Linux as well as Windows, falling back to the interpreter if
+  the system refuses it the memory.
+
+**Verification:** `tools/pcre_compare` links 8.45 and `mc_pcre.c` over 10.49 into one program,
+and compares compile results, capture counts, names, return codes, the offsets of every
+capture and what callouts see. See its README for how, and the commit that made this change
+for the numbers. The patterns are every one in the plugins, Quow's, the worlds, Lua and the
+tests, and a large set of edge cases. `tests/test_regexp.cpp` and `tests/test_rex.cpp` pin the
+contract above. The macOS and Linux builds have not been compiled with this change.

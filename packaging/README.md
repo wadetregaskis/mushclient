@@ -341,10 +341,10 @@ world/plugin selects an unsupported language.
 
 Each `fetch-*` script is **idempotent and offline-friendly** — it caches the
 downloaded source and only rebuilds if the staged output is missing. Versions are
-overridable, e.g. `RUBY_VERSION=4.0.6 packaging/fetch-ruby.sh`,
-`TCL_VERSION=8.6.16 packaging/fetch-tcl.sh`,
-`PYTHON_VERSION=3.14.6 packaging/fetch-python.sh` (the last also accepts
-`--pkg ~/Downloads/python-3.14.6-macos11.pkg` for a fully offline run).
+overridable, e.g. `RUBY_VERSION=4.0.9 packaging/fetch-ruby.sh`,
+`TCL_VERSION=8.6.18 packaging/fetch-tcl.sh`,
+`PYTHON_VERSION=3.15.2 packaging/fetch-python.sh` (the last also accepts
+`--pkg ~/Downloads/python-3.15.2-macos11.pkg` for a fully offline run).
 
 Notes:
 - **Python** — `fetch-python.sh` downloads the official installer, extracts its

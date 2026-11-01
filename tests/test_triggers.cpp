@@ -2024,8 +2024,8 @@ TEST(TriggerApi, SetTriggerOptionIgnoreCaseAndRegexpAreReadOnly)
 // :782 ORs in PCRE_UTF8 from the WORLD's m_bUTF_8, which the user can turn on
 // long after the trigger was written (World Properties > Output > UTF-8).  A
 // pattern holding a Latin-1 byte compiles fine as bytes and is rejected the
-// instant PCRE is asked to read it as UTF-8 (pcre/pcre_compile.c:9263-9275,
-// ERR44 at :9268), which is exactly the situation this catch exists for.
+// instant PCRE is asked to read it as UTF-8 (PCRE2_ERROR_UTF8_ERR*,
+// at compile time), which is exactly the situation this catch exists for.
 //
 // What has to survive the rejection is the trigger's EXISTING compiled
 // program.  regcomp runs first and the old program is only freed afterwards

@@ -8,15 +8,13 @@
 
 #define MAX_WILDCARDS 10
 
-// This is Perl-Compatible Regular Expressions 
+// This is Perl-Compatible Regular Expressions
 
 /*************************************************
 *       Perl-Compatible Regular Expressions      *
 *************************************************/
 
 /* Copyright (c) 1997-2000 University of Cambridge */
-
-#define PCRE_EXP_DECL extern
 
 #ifndef _WIN32
 // On Windows these come via the precompiled header (stdafx.h).
@@ -27,29 +25,30 @@ using std::string;
 using std::vector;
 #endif
 
-#include "pcre/pcre.h"
-                 
+#include "mc_pcre.h"
+
 // compiled regular expression type
 
-class t_regexp 
+class t_regexp
   {
 
   public:
 
-  t_regexp () { 
-      m_program = NULL; 
-      m_extra = NULL;
+  t_regexp () {
+      m_program = NULL;
+      m_match = NULL;
       iTimeTaken = 0;
       m_iCaptureCount = -1;
+      m_iJitOnly = -1;
       m_iCount = 0;
       m_iMatchAttempts = 0;
       m_iExecutionError = 0;
                 };   // constructor
-  ~t_regexp () { 
-    if (m_program) 
-      pcre_free (m_program); 
-    if (m_extra) 
-      pcre_free_study (m_extra);   // it may hold JIT code
+  ~t_regexp () {
+    if (m_program)
+      pcre2_code_free (m_program);   // and its JIT code
+    if (m_match)
+      pcre2_match_data_free (m_match);
     };  // destructor
 
   // compiled by EvaluateTrigger from a trigger's pattern with its variables
@@ -58,12 +57,13 @@ class t_regexp
 
   // pairs of offsets from match
   vector<int> m_vOffsets;
-  // Reusable pcre_exec output buffer + cached capture count, so regexec does not
-  // heap-allocate an ovector and re-query PCRE_INFO_CAPTURECOUNT on every call --
-  // both are per-compiled-program invariants, and regexec runs once per enabled
-  // trigger per line.  Copied into m_vOffsets only on a successful match, so the
-  // NOMATCH path still leaves m_vOffsets untouched.
-  vector<int> m_vScratch;
+  // Reusable match data + cached capture count, so regexec does not heap-allocate
+  // them and re-query PCRE2_INFO_CAPTURECOUNT on every call -- both are
+  // per-compiled-program invariants, and regexec runs once per enabled trigger per
+  // line.  Copied into m_vOffsets only on a successful match, so the NOMATCH path
+  // still leaves m_vOffsets untouched.
+  pcre2_match_data * m_match;
+  int m_iJitOnly;        // mc_pcre_is_jit_only: -1 until asked
   int m_iCaptureCount;   // -1 until first computed from the compiled program
   // count of matching wildcards
   int m_iCount;
@@ -71,10 +71,7 @@ class t_regexp
   // the string we match on (to extract wildcards from)
   string m_sTarget;
   // the program itself
-  pcre * m_program;	    
-
-  // extra stuff for speed
-  pcre_extra * m_extra;
+  pcre2_code * m_program;
 
   LONGLONG iTimeTaken;
 
@@ -83,7 +80,9 @@ class t_regexp
   // returns a numbered wildcard
   string GetWildcard (const int iNumber) const
     {
-    if (iNumber >= 0 && iNumber < m_iCount)
+    // the second test: \K in a lookahead can leave the end before the start
+    if (iNumber >= 0 && iNumber < m_iCount &&
+        m_vOffsets [(iNumber * 2) + 1] >= m_vOffsets [iNumber * 2])
       return string (
       &m_sTarget.c_str () [m_vOffsets [iNumber * 2]],
       m_vOffsets [(iNumber * 2) + 1] - m_vOffsets [iNumber * 2]).c_str ();

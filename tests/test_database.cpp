@@ -1319,6 +1319,61 @@ TEST(DatabaseTest, Lsqlite3ModuleBandsExactlyAsWeDo)
     lua_settop(d.L, 0);
 }
 
+// What lsqlite3 0.9 changed, that we put back or keep from before it.
+TEST(DatabaseTest, Lsqlite3KeepsWhatPluginsRelyOn)
+{
+    Lsqlite3Fixture d;
+    ASSERT_NE(nullptr, d.L);
+
+    // A boolean binds as NULL.  Upstream 0.9 stores 0 or 1, which a plugin's
+    // "WHERE x IS NULL" would silently stop finding.
+    lua_settop(d.L, 0);
+    ASSERT_EQ(1, run_ret(d.L,
+        "local db = sqlite3.open_memory()\n"
+        "assert(db:exec('CREATE TABLE t (a, b);') == sqlite3.OK)\n"
+        "local vm = assert(db:prepare('INSERT INTO t VALUES (?, ?)'))\n"
+        "vm:bind(1, true) vm:bind(2, false)\n"
+        "assert(vm:step() == sqlite3.DONE)\n"
+        "vm:finalize()\n"
+        "local r for a, b in db:urows('SELECT typeof(a), typeof(b) FROM t') do r = a .. ',' .. b end\n"
+        "db:close()\n"
+        "return r"));
+    EXPECT_STREQ("null,null", lua_tostring(d.L, -1));
+    lua_settop(d.L, 0);
+
+    // A failed step says why, as the reset the old stepvm did used to show.
+    ASSERT_EQ(1, run_ret(d.L,
+        "local db = sqlite3.open_memory()\n"
+        "db:exec('CREATE TABLE t (a UNIQUE); INSERT INTO t VALUES (1);')\n"
+        "local vm = assert(db:prepare('INSERT INTO t VALUES (1)'))\n"
+        "local rc = vm:step()\n"
+        "vm:finalize() db:close()\n"
+        "return rc == sqlite3.CONSTRAINT"));
+    EXPECT_TRUE(lua_toboolean(d.L, -1));
+    lua_settop(d.L, 0);
+
+    // A row id a double cannot hold: the digits.  Both upstream's "%ll" and the
+    // old "%I64d" gave lua_pushfstring a conversion it doesn't have.
+    ASSERT_EQ(1, run_ret(d.L,
+        "local db = sqlite3.open_memory()\n"
+        "db:exec('CREATE TABLE t (i INTEGER PRIMARY KEY, a);')\n"
+        "db:exec('INSERT INTO t VALUES (9007199254740993, 1);')\n"
+        "local r = db:last_insert_rowid()\n"
+        "db:close()\n"
+        "return r"));
+    EXPECT_STREQ("9007199254740993", lua_tostring(d.L, -1));
+    lua_settop(d.L, 0);
+
+    // No way to load a DLL from a sandboxed script, and the new version is there.
+    ASSERT_EQ(1, run_ret(d.L,
+        "local db = sqlite3.open_memory()\n"
+        "local has = db.load_extension ~= nil\n"
+        "db:close()\n"
+        "return tostring(has) .. ' ' .. sqlite3.lversion()"));
+    EXPECT_STREQ("false 0.9.7", lua_tostring(d.L, -1));
+    lua_settop(d.L, 0);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

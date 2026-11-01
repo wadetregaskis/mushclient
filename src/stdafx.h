@@ -48,7 +48,6 @@
 #endif // _MSC_VER
 
 #ifndef HAVE_CONFIG_H
-#define HAVE_CONFIG_H   // for PCRE
 #endif
 
 // ── Standard C++ library (needed on all platforms) ─────────────────────────
@@ -1059,7 +1058,7 @@ extern "C"
 // if timer interval <= 0 use this
 #define MIN_TIMER_INTERVAL 100      // milliseconds
 
-// stuff we borrow from PCRE
+// stuff we borrowed from PCRE 8: mc_utf8.c
 
 extern "C" int _pcre_valid_utf(const unsigned char  *buf, int length, int * erroroffset);
 extern "C" int _pcre_ord2utf(int cvalue, unsigned char *buffer);

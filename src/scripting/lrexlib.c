@@ -369,21 +369,20 @@ static const luaL_Reg posixmeta[] = {
 
 #include <locale.h>
 
-#define PCRE_EXP_DECL extern
-
-#include "pcre.h"
 #include "mc_pcre.h"
 
 const char pcre_handle[] = "pcre_regex_handle";
 const char pcre_typename[] = "pcre_regex";
+static const char temp_match_handle[] = "pcre_temp_match_handle";
 
 typedef struct {
-  pcre *pr;
-  pcre_extra *extra;
-  int *match;
+  pcre2_code *pr;
+  pcre2_match_data *md;
+  int running;                /* in pcre2_match with a callout: see Lpcre_run */
+  int *match;                 /* the offsets of the last match, in ints */
   int ncapt;
   const unsigned char *tables;
-} pcre2;      /* a better name is needed */
+} lrex_pcre;
 
 static const unsigned char *Lpcre_maketables(lua_State *L, int stackpos)
 {
@@ -394,17 +393,18 @@ static const unsigned char *Lpcre_maketables(lua_State *L, int stackpos)
   strcpy(old_locale, setlocale(LC_CTYPE, NULL)); /* store the locale */
   if(NULL == setlocale(LC_CTYPE, locale))        /* set new locale */
     L_lua_error(L, "cannot set locale");
-  tables = pcre_maketables();              /* make tables with new locale */
+  tables = pcre2_maketables(NULL);         /* make tables with new locale */
   setlocale(LC_CTYPE, old_locale);         /* restore the old locale */
   return tables;
 }
 
 static int Lpcre_comp(lua_State *L)
 {
-  char buf[256];
+  char buf[512];
   const char *error;
   int erroffset;
-  pcre2 *ud;
+  uint32_t ncapt = 0;
+  lrex_pcre *ud;
   size_t clen;  /* clen isn't used in PCRE */
   const char *pattern = luaL_checklstring(L, 1, &clen);
   int cflags = luaL_optint(L, 2, 0);
@@ -413,71 +413,79 @@ static int Lpcre_comp(lua_State *L)
   if(lua_gettop(L) > 2 && !lua_isnil(L, 3))
     tables = Lpcre_maketables(L, 3);
 
-  ud = (pcre2*)lua_newuserdata(L, sizeof(pcre2));
+  ud = (lrex_pcre*)lua_newuserdata(L, sizeof(lrex_pcre));
   luaL_getmetatable(L, pcre_handle);
   lua_setmetatable(L, -2);
   ud->match = NULL;
-  ud->extra = NULL;
+  ud->md = NULL;
+  ud->running = 0;
   ud->tables = tables; /* keep this for eventual freeing */
-  ud->pr = pcre_compile(pattern, cflags, &error, &erroffset, tables);
-  if(!ud->pr) 
+  ud->pr = mc_pcre_compile(pattern, cflags, tables, 1, &error, &erroffset);
+  if(!ud->pr)
     {
     sprintf(buf, "%s (pattern offset: %d)", error, erroffset+1);
                      /* show offset 1-based as it's common in Lua */
     L_lua_error(L, buf);
     }
 
-  ud->extra = mc_pcre_study(ud->pr, &error);  /* the JIT, on Windows */
-  if(error) L_lua_error(L, error);
-
-  pcre_fullinfo(ud->pr, ud->extra, PCRE_INFO_CAPTURECOUNT, &ud->ncapt);
-  /* need (2 ints per capture, plus one for substring match) * 3/2 */
-  ud->match = (int *) Lmalloc(L, (ud->ncapt + 1) * 3 * sizeof(int));
+  pcre2_pattern_info(ud->pr, PCRE2_INFO_CAPTURECOUNT, &ncapt);
+  ud->ncapt = (int) ncapt;
+  ud->md = pcre2_match_data_create_from_pattern(ud->pr, NULL);
+  if(!ud->md)
+    L_lua_error(L, "malloc failed");
+  /* 2 ints per capture, plus 2 for the whole match */
+  ud->match = (int *) Lmalloc(L, (ud->ncapt + 1) * 2 * sizeof(int));
 
   return 1;
 }
 
-static void Lpcre_getargs(lua_State *L, pcre2 **pud, const char **text,
+static void Lpcre_getargs(lua_State *L, lrex_pcre **pud, const char **text,
                           size_t *text_len)
 {
-  *pud = (pcre2 *)luaL_checkudata(L, 1, pcre_handle);
+  *pud = (lrex_pcre *)luaL_checkudata(L, 1, pcre_handle);
   luaL_argcheck(L, *pud != NULL, 1, "compiled regexp expected");
   *text = luaL_checklstring(L, 2, text_len);
 }
 
 typedef void (*Lpcre_push_matches)
-  (lua_State *L, const char *text, pcre2 * ud);
+  (lua_State *L, const char *text, lrex_pcre * ud);
+
+/* The length of a capture.  \K in a lookahead can leave the end before the start. */
+static size_t capture_length (const int * match, int j)
+{
+  return match[j + 1] > match[j] ? (size_t) (match[j + 1] - match[j]) : 0;
+}
 
 static void Lpcre_push_substrings
-  (lua_State *L, const char *text, pcre2 * ud)
+  (lua_State *L, const char *text, lrex_pcre * ud)
 {
   int i;
-  int namecount;
-  unsigned char *name_table;
-  int name_entry_size;
-  unsigned char *tabptr;
+  uint32_t namecount = 0;
+  PCRE2_SPTR name_table = NULL;
+  uint32_t name_entry_size = 0;
+  PCRE2_SPTR tabptr;
   const int *match = ud->match;
 
   lua_newtable(L);
   for (i = 1; i <= ud->ncapt; i++) {
     int j = i * 2;
     if (match[j] >= 0)
-      lua_pushlstring(L, text + match[j], match[j + 1] - match[j]);
+      lua_pushlstring(L, text + match[j], capture_length(match, j));
     else
       lua_pushboolean(L, 0);
     lua_rawseti(L, -2, i);
   }
   /* now do named subpatterns - NJG */
-  pcre_fullinfo(ud->pr, ud->extra, PCRE_INFO_NAMECOUNT, &namecount); 
-  if (namecount <= 0)
+  pcre2_pattern_info(ud->pr, PCRE2_INFO_NAMECOUNT, &namecount);
+  if (namecount == 0)
     return;
-  pcre_fullinfo(ud->pr, ud->extra, PCRE_INFO_NAMETABLE, &name_table); 
-  pcre_fullinfo(ud->pr, ud->extra, PCRE_INFO_NAMEENTRYSIZE, &name_entry_size); 
+  pcre2_pattern_info(ud->pr, PCRE2_INFO_NAMETABLE, &name_table);
+  pcre2_pattern_info(ud->pr, PCRE2_INFO_NAMEENTRYSIZE, &name_entry_size);
 
   // to handle duplicates - first add every name as a non-match
 
   tabptr = name_table;
-  for (i = 0; i < namecount; i++) 
+  for (i = 0; i < (int) namecount; i++)
     {
     int n = (((int)tabptr[0]) << 8) | tabptr[1];
     const unsigned char * name = tabptr + 2;
@@ -493,17 +501,17 @@ static void Lpcre_push_substrings
   // now add the actual matches
 
   tabptr = name_table;
-  for (i = 0; i < namecount; i++) 
+  for (i = 0; i < (int) namecount; i++)
     {
     int n = (((int)tabptr[0]) << 8) | tabptr[1];
     const unsigned char * name = tabptr + 2;
-    if (n >= 0 && n <= ud->ncapt) 
+    if (n >= 0 && n <= ud->ncapt)
       {
       int j = n * 2;
       if (match[j] >= 0)
         {
         lua_pushstring (L, (const char *) name);  // name
-        lua_pushlstring (L, text + match[j], match[j + 1] - match[j]); // contents
+        lua_pushlstring (L, text + match[j], capture_length(match, j)); // contents
         lua_settable (L, -3);      // set it
         }   // this one matched
       }  // n in range of captures
@@ -512,7 +520,7 @@ static void Lpcre_push_substrings
 }
 
 static void Lpcre_push_offsets
-  (lua_State *L, const char *text, pcre2 * ud)
+  (lua_State *L, const char *text, lrex_pcre * ud)
 {
   int i, j, k;
   if(text) {
@@ -536,39 +544,42 @@ static void Lpcre_push_offsets
   }
 }
 
-// handle match callout - function might be in position 5 or 6
-static int callout_function_x (pcre_callout_block * cb, const int f_loc)
+// what a callout needs to know: the function is argument 5 or 6
+typedef struct {
+  lua_State *L;
+  int f_loc;
+  int failed;   /* it raised an error, which is on the Lua stack */
+} callout_info;
+
+// handle match callout
+static int callout_function (pcre2_callout_block * cb, void * data)
   {
-  // warning - the function called may change pcre_callout to NULL
-  //   because a line written may trigger "process previous line" which
-  //   will probably call regexp to match triggers
-  // OR, it may simply call other regexps
-  int (*f)(pcre_callout_block *) = pcre_callout;
+  callout_info * info = (callout_info *) data;
 
   // for substrings
   int i, j, k;
 
   int result;
-  lua_State *L = cb->callout_data;
+  lua_State *L = info->L;
   if (!L)
     return 0;   // bad data
 
-  lua_pushvalue(L, f_loc);    // get function
+  lua_pushvalue(L, info->f_loc);    // get function
   lua_pushnumber (L, cb->callout_number); // arg 1: which callout
 
   // arg 2: offset vectors
   lua_newtable(L);
-  for (i = 1, j = 1; i < cb->capture_top; i++) 
+  for (i = 1, j = 1; i < (int) cb->capture_top; i++)
     {
     k = i * 2;
-    if (cb->offset_vector[k] >= 0) 
+    if (cb->offset_vector[k] != PCRE2_UNSET)
       {
-      lua_pushnumber(L, cb->offset_vector[k] + 1);
+      lua_pushnumber(L, (lua_Number) cb->offset_vector[k] + 1);
       lua_rawseti(L, -2, j++);
-      lua_pushnumber(L, cb->offset_vector[k+1]);
+      lua_pushnumber(L, (lua_Number) cb->offset_vector[k+1]);
       lua_rawseti(L, -2, j++);
       }
-    else 
+    else
       {
       lua_pushboolean(L, 0);
       lua_rawseti(L, -2, j++);
@@ -577,11 +588,12 @@ static int callout_function_x (pcre_callout_block * cb, const int f_loc)
       }
     } // end of doing each capture
 
-  lua_pushlstring(L, cb->subject, cb->subject_length);  // arg 3: subject
-  lua_pushnumber (L, cb->start_match + 1); // arg 4: start match position (1 relative)
-  lua_pushnumber (L, cb->current_position + 1); // arg 5: current position (1 relative)
-  lua_pushnumber (L, cb->capture_top - 1); // arg 6: highest captured substring
-  lua_pushnumber (L, cb->capture_last); // arg 7: last captured substring
+  lua_pushlstring(L, (const char *) cb->subject, cb->subject_length);  // arg 3: subject
+  lua_pushnumber (L, (lua_Number) cb->start_match + 1); // arg 4: start match position (1 relative)
+  lua_pushnumber (L, (lua_Number) cb->current_position + 1); // arg 5: current position (1 relative)
+  lua_pushnumber (L, (lua_Number) cb->capture_top - 1); // arg 6: highest captured substring
+  // arg 7: last captured substring: PCRE 8 said -1 for none, PCRE2 says 0
+  lua_pushnumber (L, cb->capture_last == 0 ? -1 : (lua_Number) cb->capture_last);
 
 
   // args: 1 - callback number
@@ -592,74 +604,88 @@ static int callout_function_x (pcre_callout_block * cb, const int f_loc)
   //       6 - highest captured substring
   //       7 - last captured substring
 
-  lua_call(L, 7, 1);      // call function 
+  // Not lua_call: an error would longjmp out through the frames of JIT-compiled
+  // code, which have no unwind information, and that takes the client down on
+  // Windows.  The match is stopped first, and the error raised from Lpcre_run.
+  if (lua_pcall(L, 7, 1, 0) != 0)
+    {
+    info->failed = 1;
+    return PCRE2_ERROR_CALLOUT;
+    }
   result = (int) lua_tonumber (L, -1);
   lua_pop(L, 1);          // result not wanted now
 
-  // put it back
-  pcre_callout = f;
-
   if (result < 0)
-    result = PCRE_ERROR_NOMATCH;
+    result = PCRE2_ERROR_NOMATCH;
   return result;
   }
 
-// callout function - function is argument 5
-static int callout_function5 (pcre_callout_block * cb)
-  {
-  return callout_function_x (cb, 5);   // function is argument 5
-  }
+static int temp_match_gc (lua_State *L)
+{
+  pcre2_match_data **box = (pcre2_match_data **) lua_touserdata(L, 1);
+  if (box && *box)
+    pcre2_match_data_free(*box);
+  return 0;
+}
 
-// callout function - function is argument 6
-static int callout_function6 (pcre_callout_block * cb)
-  {
-  return callout_function_x (cb, 6);   // function is argument 6
-  }
-             
-// check to see if they supplied a callout function
-static void check_for_callout (lua_State *L, 
-                              pcre2 *ud, 
-                              const int which,   // arg 5 or 6
-                              int   (*f)(pcre_callout_block *))
-  {
-  pcre_callout = NULL;     // not yet they didn't
-
-  // if callout function wanted, set up for it
-  if (lua_isfunction (L, which))
+// Run the pattern, leaving the offsets in ud->match.  A callout's script may run
+// this same pattern, and the match data holds the outer match's frames, so an
+// inner match gets match data of its own.
+static int Lpcre_run (lua_State *L, lrex_pcre *ud, const char *text, size_t len,
+                      int startoffset, int eflags, callout_info * info)
+{
+  int res;
+  if (info)
+    info->failed = 0;
+  if (ud->running)
     {
-    if (!ud->extra)      // need to put state in extra field, so it must exist
-      {
-      ud->extra = (pcre_extra *)(pcre_malloc) (sizeof(pcre_extra));
+    pcre2_match_data **box = (pcre2_match_data **) lua_newuserdata(L, sizeof *box);
+    *box = NULL;
+    luaL_getmetatable(L, temp_match_handle);
+    lua_setmetatable(L, -2);
+    *box = pcre2_match_data_create_from_pattern(ud->pr, NULL);
+    if (!*box)
+      L_lua_error(L, "malloc failed");
+    res = mc_pcre_match(ud->pr, box, text, (int)len, startoffset, eflags,
+                        info ? callout_function : NULL, (void *) info);
+    if (info && info->failed)
+      lua_error(L);   /* the message is above the box */
+    if (res >= 0)
+      mc_pcre_get_offsets(*box, ud->match, ud->ncapt + 1);
+    lua_pop(L, 1);  /* the box, for the collector */
+    return res;
+    }
 
-      if (ud->extra == NULL)
-        L_lua_error (L, "failed to get memory for PCRE callback");
-
-      memset (ud->extra, 0, sizeof(pcre_extra));
-      }  // end of no extra yet
-
-    ud->extra->callout_data = L;  // need to know Lua state in callout
-    ud->extra->flags |= PCRE_EXTRA_CALLOUT_DATA;  // indicate we have it
-    pcre_callout = f;  // callout wanted
-    }    // function supplied
-  
-  }
+  ud->running = info != NULL;
+  res = mc_pcre_match(ud->pr, &ud->md, text, (int)len, startoffset, eflags,
+                      info ? callout_function : NULL, (void *) info);
+  ud->running = 0;
+  if (info && info->failed)
+    lua_error(L);
+  if (res >= 0)
+    mc_pcre_get_offsets(ud->md, ud->match, ud->ncapt + 1);
+  return res;
+}
 
 static int Lpcre_match_generic(lua_State *L, Lpcre_push_matches push_matches)
 {
   int res;
   const char *text;
-  pcre2 *ud;
+  lrex_pcre *ud;
   size_t elen;
   int startoffset;
   int eflags = luaL_optint(L, 4, 0);
+  callout_info info;
 
   Lpcre_getargs(L, &ud, &text, &elen);
   startoffset = get_startoffset(L, 3, elen);
 
-  check_for_callout (L, ud, 5, callout_function5);
+  // if callout function wanted, set up for it
+  info.L = L;
+  info.f_loc = 5;
 
-  res = mc_pcre_exec(ud->pr, ud->extra, text, (int)elen, startoffset, eflags,
-                  ud->match, (ud->ncapt + 1) * 3);
+  res = Lpcre_run(L, ud, text, elen, startoffset, eflags,
+                  lua_isfunction (L, 5) ? &info : NULL);
   if (res >= 0) {
     lua_pushnumber(L, ud->match[0] + 1);
     lua_pushnumber(L, ud->match[1]);
@@ -685,40 +711,36 @@ static int Lpcre_gmatch(lua_State *L)
   size_t len;
   int nmatch = 0, limit = 0;
   const char *text;
-  pcre2 *ud;
+  lrex_pcre *ud;
   int maxmatch = luaL_optint(L, 4, 0);
   int eflags = luaL_optint(L, 5, 0);
   int startoffset = 0;
+  callout_info info;
   Lpcre_getargs(L, &ud, &text, &len);
   luaL_checktype(L, 3, LUA_TFUNCTION);
 
   if(maxmatch > 0) /* this must be stated in the docs */
     limit = 1;
 
-  check_for_callout (L, ud, 6, callout_function6);
+  info.L = L;
+  info.f_loc = 6;
 
-  while (!limit || nmatch < maxmatch) 
+  while (!limit || nmatch < maxmatch)
     {
 
-    res = mc_pcre_exec(ud->pr, ud->extra, text, (int)len, startoffset, eflags,
-                    ud->match, (ud->ncapt + 1) * 3);
-    if (res >= 0) 
+    res = Lpcre_run(L, ud, text, len, startoffset, eflags,
+                    lua_isfunction (L, 6) ? &info : NULL);
+    if (res >= 0)
       {
-      // warning - the function called may change pcre_callout to NULL
-      //   because a line written may trigger "process previous line" which
-      //   will probably call regexp to match triggers
-      int (*f)(pcre_callout_block *) = pcre_callout;
-
       nmatch++;
       lua_pushvalue(L, 3);
-      lua_pushlstring(L, text + ud->match[0], ud->match[1] - ud->match[0]);
+      lua_pushlstring(L, text + ud->match[0], capture_length(ud->match, 0));
       Lpcre_push_substrings(L, text, ud);
+      startoffset = ud->match[1];
       lua_call(L, 2, 1);
       if(lua_toboolean(L, -1))
         break;
       lua_pop(L, 1);
-      startoffset = ud->match[1];
-      pcre_callout = f;
     } else
       break;
   }
@@ -728,11 +750,11 @@ static int Lpcre_gmatch(lua_State *L)
 
 static int Lpcre_gc (lua_State *L)
 {
-  pcre2 *ud = (pcre2 *)luaL_checkudata(L, 1, pcre_handle);
+  lrex_pcre *ud = (lrex_pcre *)luaL_checkudata(L, 1, pcre_handle);
   if (ud) {
-    if(ud->pr)      pcre_free(ud->pr);
-    if(ud->extra)   pcre_free_study(ud->extra);  /* it may hold JIT code */
-    if(ud->tables)  pcre_free((void *)ud->tables);
+    if(ud->pr)      pcre2_code_free(ud->pr);
+    if(ud->md)      pcre2_match_data_free(ud->md);
+    if(ud->tables)  pcre2_maketables_free(NULL, ud->tables);
     if(ud->match)   free(ud->match);
   }
   return 0;
@@ -744,10 +766,13 @@ static int Lpcre_tostring (lua_State *L) {
 
 static int Lpcre_vers (lua_State *L)
 {
-  lua_pushstring(L, pcre_version());
+  char version[64];
+  pcre2_config(PCRE2_CONFIG_VERSION, version);
+  lua_pushstring(L, version);
   return 1;
 }
 
+/* PCRE 8's numbers: mc_pcre.h.  A plugin may well hold one: rex.new (p, 1). */
 static flags_pair pcre_flags[] =
 {
   { "CASELESS",        PCRE_CASELESS },
@@ -765,23 +790,17 @@ static flags_pair pcre_flags[] =
 
   { "AUTO_CALLOUT",    PCRE_AUTO_CALLOUT     },
 
-
-#if PCRE_MAJOR >= 4
   { "NO_AUTO_CAPTURE", PCRE_NO_AUTO_CAPTURE },
 // NJG  { "NO_UTF8_CHECK",   PCRE_NO_UTF8_CHECK },
-#endif
 
-#if PCRE_MAJOR >= 7
   { "PARTIAL",         PCRE_PARTIAL          },
   { "FIRSTLINE",       PCRE_FIRSTLINE        },
   { "DUPNAMES",        PCRE_DUPNAMES         },
   { "NEWLINE_CR",      PCRE_NEWLINE_CR       },
   { "NEWLINE_LF",      PCRE_NEWLINE_LF       },
   { "NEWLINE_CRLF",    PCRE_NEWLINE_CRLF     },
-  { "NEWLINE_ANY",     PCRE_NEWLINE_ANY      },  
+  { "NEWLINE_ANY",     PCRE_NEWLINE_ANY      },
   { "NEWLINE_ANYCRLF", PCRE_NEWLINE_ANYCRLF  },
-                                             
-#endif                                           
 
   { NULL, 0 }
 };
@@ -835,6 +854,10 @@ LUALIB_API int luaopen_rex(lua_State *L)
 #ifdef LREXLIB_PCRE
   createmeta(L, pcre_handle);
   luaL_register (L, NULL, pcremeta);
+  lua_pop(L, 1);
+  luaL_newmetatable(L, temp_match_handle);
+  lua_pushcfunction(L, temp_match_gc);
+  lua_setfield(L, -2, "__gc");
   lua_pop(L, 1);
 #endif
   luaL_register (L, "rex", rexlib);

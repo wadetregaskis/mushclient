@@ -25,8 +25,8 @@ $ns = New-Object System.Xml.XmlNamespaceManager($app.NameTable)
 $ns.AddNamespace('m', 'http://schemas.microsoft.com/developer/msbuild/2003')
 
 # Keep the whole node, not just the path: 246 of the 286 carry PER-FILE
-# settings, and dropping them is not cosmetic.  The 36 pcre\*.c files need
-# HAVE_CONFIG_H, and without it pcre_internal.h stops the build with
+# settings, and dropping them is not cosmetic.  The pcre2\src\*.c files need
+# HAVE_CONFIG_H, and without it pcre2_internal.h stops the build with
 # "#error LINK_SIZE must be either 2, 3, or 4" -- which is how this was found.
 $sourceNodes = @($app.SelectNodes('//m:ClCompile[@Include]', $ns))
 $sources = $sourceNodes | ForEach-Object { $_.Include }
@@ -165,7 +165,7 @@ foreach ($cfg in @('Debug','Release')) {
   # OpenSSL's headers are per-architecture (openssl/configuration.h), so a
   # 64-bit build must not see the committed 32-bit ones.
   $sslInc = if ($win32) { '$(SolutionDir)openssl\include\' } else { $deps + 'include\' }
-  W ('      <AdditionalIncludeDirectories>$(SolutionDir)src\;$(SolutionDir);$(SolutionDir)luacom\;' + $sslInc + ';$(SolutionDir)tests\;$(SolutionDir)pcre\;$(SolutionDir)zlib\;$(SolutionDir)png\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>')
+  W ('      <AdditionalIncludeDirectories>$(SolutionDir)src\;$(SolutionDir);$(SolutionDir)luacom\;' + $sslInc + ';$(SolutionDir)tests\;$(SolutionDir)pcre2\src\;$(SolutionDir)zlib\;$(SolutionDir)png\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>')
   # _HAS_AUTO_PTR_ETC=1 goes with LanguageStandard stdcpp17 below: C++17
   # removed std::unary_function / std::binary_function / std::auto_ptr, and
   # this switch restores the three in MSVC's STL.  It was added when stdafx.h

@@ -443,28 +443,26 @@ TEST(RegexpTest, RecallTextDoesNotLeakItsCompiledRegexp) {
     EXPECT_LT(after - before, budget);
 }
 
-// ── The JIT (pcre/config.h builds it on Windows only) ────────────────────
+// ── The JIT (mc_pcre.c: on every platform, if it can get the memory) ──────
 
-// regcomp asks pcre_study for the JIT (mc_pcre.h); where it is built in,
-// every trigger and alias pattern runs compiled.  Elsewhere the same call
-// leaves the pattern interpreted and changes nothing else.
-TEST(RegexpTest, PatternsAreJitCompiledWhereTheJitIsBuiltIn) {
+// regcomp asks for the JIT; where it can run, every trigger and alias pattern
+// runs compiled.  Elsewhere the same call leaves the pattern interpreted and
+// changes nothing else.
+TEST(RegexpTest, PatternsAreJitCompiledWhereTheJitCanRun) {
     Regexp r("^You (?:hit|miss) (\\w+)");
-    int jit = -1;
-    ASSERT_EQ(0, pcre_fullinfo(r->m_program, r->m_extra, PCRE_INFO_JIT, &jit));
+    size_t jit = 0;
+    ASSERT_EQ(0, pcre2_pattern_info(r->m_program, PCRE2_INFO_JITSIZE, &jit));
 #ifdef _WIN32
-    EXPECT_EQ(1, jit);
-#else
-    EXPECT_EQ(0, jit);
+    EXPECT_GT(jit, (size_t) 0);
 #endif
     EXPECT_TRUE(regexec(r.get(), "You hit the troll"));
     EXPECT_EQ(std::string("the"), r->GetWildcard(1));
 }
 
-// ── Deep matches (mc_pcre.h) ──────────────────────────────────────────────
+// ── Deep matches ──────────────────────────────────────────────────────────
 
 // "ab...abc", n letters before the c: against ^(?:a|b)*c$ every letter is a
-// repeat of the group, and so a recursion of PCRE's interpreter.
+// repeat of the group, and so a frame of PCRE's interpreter.
 static std::string DeepLine(int n)
 {
     std::string s;
@@ -473,77 +471,268 @@ static std::string DeepLine(int n)
     return s + 'c';
 }
 
-// The interpreter recursed on the machine stack with no useful limit, so a
-// long enough line overflowed it and took the client down: 1,000 letters in a
-// Debug build, 20,000 in Release.  mc_pcre_exec caps the recursion at what
-// the thread's remaining stack holds, so the line is refused instead.
-// pcre_exec with no extra is the interpreter on every platform.
-TEST(RegexpTest, TheInterpreterRefusesALineTooDeepForTheStack) {
-    if (mc_pcre_stack_floor() == NULL) {
-        mc_test::skip_current("this platform does not say where the stack ends");
-        return;
-    }
+// PCRE 8's interpreter recursed on the machine stack, so a long enough line
+// took the client down: 1,000 letters in a Debug build, 20,000 in Release.
+// PCRE2's keeps its frames on the heap.
+TEST(RegexpTest, TheInterpreterTakesALineThatOverflowedTheStackInPcre8) {
     const char* error;
     int erroroffset;
-    pcre* code = pcre_compile("^(?:a|b)*c$", 0, &error, &erroroffset, NULL);
+    pcre2_code* code = mc_pcre_compile("^(?:a|b)*c$", 0, NULL, 0, &error, &erroroffset);
     ASSERT_NE(nullptr, code);
-    int ov[3];
-    const std::string deep = DeepLine(200000);     // past any thread's stack
-    EXPECT_EQ(PCRE_ERROR_RECURSIONLIMIT,
-              mc_pcre_exec(code, NULL, deep.c_str(), (int) deep.size(), 0, 0, ov, 3));
-    // ... while one the stack does hold still matches, all of it.  Short: a
-    // Debug x64 frame is 6,416 bytes, so 1 MB holds only ~90 letters.
-    const std::string fits = DeepLine(20);
-    EXPECT_EQ(1, mc_pcre_exec(code, NULL, fits.c_str(), (int) fits.size(), 0, 0, ov, 3));
-    EXPECT_EQ((int) fits.size(), ov[1]);
-    pcre_free(code);
+    pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, NULL);
+    const std::string deep = DeepLine(200000);
+    EXPECT_EQ(1, mc_pcre_match(code, &md, deep.c_str(), (int) deep.size(), 0, 0, NULL, NULL));
+    int offsets[2];
+    mc_pcre_get_offsets(md, offsets, 1);
+    EXPECT_EQ((int) deep.size(), offsets[1]);
+    // ... and it does not keep the frames for good
+    EXPECT_GT(pcre2_get_match_data_heapframes_size(md), (PCRE2_SIZE) 1024 * 1024);
+    const std::string shallow = DeepLine(20);
+    EXPECT_EQ(1, mc_pcre_match(code, &md, shallow.c_str(), (int) shallow.size(), 0, 0, NULL, NULL));
+    EXPECT_LT(pcre2_get_match_data_heapframes_size(md), (PCRE2_SIZE) 1024 * 1024);
+    pcre2_match_data_free(md);
+    pcre2_code_free(code);
 }
 
-// A trigger's view of the same line.  On Windows the pattern is JIT-compiled
-// and backtracks on its own stack (mc_pcre.h), so the line simply matches;
-// elsewhere the interpreter refuses it -- a runtime error like the match
-// limit, which drops the program -- where it used to crash.
-TEST(RegexpTest, ATriggerOnALineTooDeepForTheInterpreterDoesNotCrash) {
-    const std::string s = DeepLine(200000);
+// A trigger's view of such lines: the JIT takes the first on its own stack.  The
+// second outgrows even 8 MB (PCRE2_ERROR_JIT_STACKLIMIT), so it is rerun in the
+// interpreter, whose limit is the heap.
+TEST(RegexpTest, ATriggerOnAVeryDeepLineMatches) {
     Regexp r("^(?:a|b)*c$");
-#ifdef _WIN32
+    const std::string s = DeepLine(200000);
     EXPECT_TRUE(regexec(r.get(), s.c_str()));
     EXPECT_EQ(0, r->m_iExecutionError);
     EXPECT_EQ(s, r->GetWildcard(0));
-#else
-    if (mc_pcre_stack_floor() == NULL) {
-        mc_test::skip_current("this platform does not say where the stack ends");
-        return;
-    }
-    EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
-    EXPECT_EQ(PCRE_ERROR_RECURSIONLIMIT, r->m_iExecutionError);
+#if defined(_WIN64) || defined(__LP64__)    // the 32-bit heap limit is a quarter of that
+    const std::string t = DeepLine(1000000);
+    EXPECT_TRUE(regexec(r.get(), t.c_str()));
+    EXPECT_EQ(0, r->m_iExecutionError);
+    EXPECT_EQ(t, r->GetWildcard(0));
+    EXPECT_NE(nullptr, r->m_program);
 #endif
 }
 
-#ifdef _WIN32
-// A match that outgrows even the JIT's stack is a runtime error like the match
-// limit: reported, the program dropped, no match -- never a crash, and never a
-// rerun in the interpreter, which is shallower still.  The pattern's stack is
-// swapped for the smallest PCRE makes, so a modest line outgrows it.
-TEST(RegexpTest, AMatchTooDeepForTheJitStackIsAnErrorNotACrash) {
-    std::string s;
-    for (int i = 0; i < 1000; i++)
-        s += (i & 1) ? 'b' : 'a';
-    s += 'c';
-    pcre_jit_stack* tiny = pcre_jit_stack_alloc(8 * 1024, 8 * 1024);
+// A match too deep for the JIT's stack is rerun.  The smallest stack PCRE makes,
+// so a modest line outgrows it.
+TEST(RegexpTest, AMatchTooDeepForTheJitStackIsRerunInTheInterpreter) {
+    pcre2_match_context* context = mc_pcre_match_context();
+    ASSERT_NE(nullptr, context);
+    pcre2_jit_stack* tiny = pcre2_jit_stack_create(8 * 1024, 8 * 1024, NULL);
     ASSERT_NE(nullptr, tiny);
+    pcre2_jit_stack_assign(context, NULL, tiny);
+    const std::string s = DeepLine(100000);
     {
         Regexp r("^(?:a|b)*c$");
-        pcre_assign_jit_stack(r->m_extra, NULL, tiny);
-        EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
-        EXPECT_EQ(PCRE_ERROR_JIT_STACKLIMIT, r->m_iExecutionError);
-        EXPECT_EQ(nullptr, r->m_program);
-        EXPECT_EQ(std::string("JIT Stack Limit"),
-                  std::string((LPCTSTR) Convert_PCRE_Runtime_Error(PCRE_ERROR_JIT_STACKLIMIT)));
+        EXPECT_TRUE(regexec(r.get(), s.c_str()));
+        EXPECT_EQ(0, r->m_iExecutionError);
     }
-    pcre_jit_stack_free(tiny);
+    // A match too deep for that too is a runtime error like the match limit:
+    // reported, the program dropped, no match -- never a crash.
+    uint32_t limit = 0;
+    pcre2_config(PCRE2_CONFIG_HEAPLIMIT, &limit);
+    pcre2_set_heap_limit(context, 64);    // KB
+    {
+        Regexp r("^(?:a|b)*c$");
+        EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
+        EXPECT_EQ(PCRE_ERROR_RECURSIONLIMIT, r->m_iExecutionError);
+        EXPECT_EQ(nullptr, r->m_program);
+        EXPECT_EQ(std::string("Recursion Limit"),
+                  std::string((LPCTSTR) Convert_PCRE_Runtime_Error(PCRE_ERROR_RECURSIONLIMIT)));
+    }
+    pcre2_set_heap_limit(context, limit);
+    pcre2_jit_stack_assign(context, NULL, pcre2_jit_stack_create(32 * 1024, 8 * 1024 * 1024, NULL));
+    pcre2_jit_stack_free(tiny);
 }
-#endif
+
+// ── What scripts can see stays PCRE 8's ──────────────────────────────────
+
+// These reach scripts: GetTriggerInfo (t, 28), GetAliasInfo, execution_error.  In
+// PCRE2 the match limit is -47 and bad UTF-8 is -3 to -23.
+TEST(RegexpTest, RuntimeErrorCodesAreStillPcre8s) {
+    EXPECT_EQ(-8, PCRE_ERROR_MATCHLIMIT);
+    EXPECT_EQ(-10, PCRE_ERROR_BADUTF8);
+    EXPECT_EQ(-21, PCRE_ERROR_RECURSIONLIMIT);
+    EXPECT_EQ(-27, PCRE_ERROR_JIT_STACKLIMIT);
+    {
+        Regexp r("(*LIMIT_MATCH=10)(a+)+$");
+        std::string s(50, 'a');
+        s += '!';
+        EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
+        EXPECT_EQ(-8, r->m_iExecutionError);
+    }
+    {
+        Regexp r("a", PCRE_UTF8);
+        EXPECT_EQ(0, regexec_erroring(r.get(), "a\xff"));
+        EXPECT_EQ(-10, r->m_iExecutionError);
+    }
+    {
+        Regexp r("(a+)+$");
+        std::string s(50, 'a');
+        s += '!';
+        EXPECT_EQ(0, regexec_erroring(r.get(), s.c_str()));
+        EXPECT_EQ(-8, r->m_iExecutionError);
+    }
+}
+
+TEST(RegexpTest, OptionBitsAreStillPcre8s) {
+    EXPECT_EQ(1, PCRE_CASELESS);
+    EXPECT_EQ(2, PCRE_MULTILINE);
+    EXPECT_EQ(0x800, PCRE_UTF8);
+    {
+        Regexp r("hello", PCRE_CASELESS);
+        EXPECT_TRUE(regexec(r.get(), "say HeLLo"));
+    }
+    {
+        Regexp r("^b$", PCRE_MULTILINE);
+        EXPECT_TRUE(regexec(r.get(), "a\nb\nc"));
+    }
+    {
+        Regexp r("^.$", PCRE_UTF8);
+        EXPECT_TRUE(regexec(r.get(), "\xc3\xa9"));
+    }
+    {
+        Regexp r("^.$");    // raw bytes, in a world that isn't UTF-8
+        EXPECT_FALSE(regexec(r.get(), "\xc3\xa9"));
+        EXPECT_TRUE(regexec(r.get(), "\xe9"));
+    }
+    // pcre_compile refused what isn't a compile option
+    t_regexp* notcompiled = NULL;
+    try { notcompiled = regcomp("a", PCRE_NOTBOL); }
+    catch (CException* e) { e->Delete(); }
+    EXPECT_EQ(nullptr, notcompiled);
+    delete notcompiled;
+}
+
+// ── Patterns PCRE 8 took, that PCRE2 refuses or reads differently ─────────
+
+// (pattern, subject, what it must match)
+static void expect_matches(const char* pattern, const char* subject, const char* expected, int options = 0) {
+    Regexp r(pattern, options);
+    EXPECT_TRUE(regexec(r.get(), subject));
+    EXPECT_EQ(std::string(expected), r->GetWildcard(0));
+}
+
+static bool compiles(const char* pattern) {
+    t_regexp* r = NULL;
+    try { r = regcomp(pattern); }
+    catch (CException* e) { e->Delete(); }
+    const bool ok = r != NULL;
+    delete r;
+    return ok;
+}
+
+TEST(RegexpCompat, ALetterWithNoMeaningIsThatLetter) {
+    expect_matches("a\\jb", "xajby", "ajb");
+    expect_matches("\\y+", "ayyy", "yyy");
+    expect_matches("[\\j]", "xj", "j");
+    expect_matches("[a\\qz]+", "xaqz", "aqz");
+    expect_matches("\\i\\I\\J\\m\\M\\O\\T\\Y", "iIJmMOTY", "iIJmMOTY");
+    // ... and in a class, these too
+    expect_matches("[\\A\\B\\C\\G\\K\\R\\X\\Z\\z]+", "ABCGKRXZz", "ABCGKRXZz");
+    // while PCRE 8 refused these, and so must we
+    EXPECT_FALSE(compiles("\\u0041"));
+    EXPECT_FALSE(compiles("\\U00000041"));
+    EXPECT_FALSE(compiles("\\L"));
+    EXPECT_FALSE(compiles("\\p{Foo}"));
+    EXPECT_FALSE(compiles("[z-a]"));
+    EXPECT_FALSE(compiles("(a"));
+    EXPECT_FALSE(compiles("[a-\\d]"));
+}
+
+TEST(RegexpCompat, AHyphenAfterASetIsAHyphen) {
+    expect_matches("[\\w-_]+", "!a-_b!", "a-_b");
+    expect_matches("[\\d-a]+", "x1-ax", "1-a");
+    expect_matches("[[:alpha:]-z]+", "1ab-z1", "ab-z");
+    expect_matches("[\\s-x]+", "a x-a", " x-");
+    expect_matches("[^\\d-a]+", "1-a!b1", "!b");
+    // what was always right stays as it was
+    expect_matches("[a-c]+", "xabcx", "abc");
+    expect_matches("[a-c-e]+", "xa-ex", "a-e");
+    expect_matches("[+--]+", "a+,-a", "+,-");
+    expect_matches("[\\Qa-c\\E]+", "b-a", "-a");
+}
+
+TEST(RegexpCompat, ABackslashEightOrNineWithNoSuchGroupIsTheDigit) {
+    expect_matches("a\\8", "xa8", "a8");
+    expect_matches("a\\9b", "xa9b", "a9b");
+    expect_matches("\\89", "x89", "89");
+    expect_matches("(a)(b)(c)(d)(e)(f)(g)(h)\\8", "abcdefghh", "abcdefghh");
+    expect_matches("(a)\\1", "aa", "aa");
+}
+
+TEST(RegexpCompat, BracesPcre8ReadAsTextAreText) {
+    expect_matches("x{,3}", "xxx x{,3}", "x{,3}");
+    expect_matches("x{ 2 }", "xx x{ 2 }", "x{ 2 }");
+    expect_matches("x{2, 3}", "xxx x{2, 3}", "x{2, 3}");
+    expect_matches("x{2 ,3}", "xxx x{2 ,3}", "x{2 ,3}");
+    expect_matches("(x){,3}y", "xxxy (x){,3}y x{,3}y", "x{,3}y");
+    // real quantifiers stay quantifiers
+    expect_matches("x{2}", "xxx", "xx");
+    expect_matches("x{2,}", "xxx", "xxx");
+    expect_matches("x{1,2}", "xxx", "xx");
+    // not touched in a class, an escape, or a comment
+    expect_matches("[{,3}]+", "x{,3}", "{,3}");
+    expect_matches("\\x{41}{,2}", "A{,2}", "A{,2}");
+    expect_matches("\\Qx{,3}\\E", "x{,3}", "x{,3}");
+    expect_matches("(?#{,3})a{,2}", "a{,2}", "a{,2}");
+    expect_matches("(?x) a # {,3} [\n {,2}", "a{,2}", "a{,2}");
+    expect_matches("(?x: a # [ \n b) c#", "ab c#", "ab c#");
+    expect_matches("(?x: a # [ \n \\j) c{,2}", "aj c{,2}", "aj c{,2}");
+}
+
+TEST(RegexpCompat, KInALookaround) {
+    expect_matches("foo\\Kbar", "foobar", "bar");
+    {
+        Regexp r("foo(?=bar\\K)");
+        EXPECT_TRUE(regexec(r.get(), "foobar"));
+        EXPECT_EQ(std::string(""), r->GetWildcard(0));   // the end is before the start
+    }
+}
+
+TEST(RegexpCompat, NewlyAcceptedIsHarmless) {
+    expect_matches("(?<=a{1,3})b", "aab", "b");
+    expect_matches("(?<aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>x)", "x", "x");
+}
+
+// A pattern PCRE2 takes as it stands is never touched; the suspect ones are the
+// smallest change that does.
+TEST(RegexpCompat, TheRewrite) {
+    struct { const char* in; const char* out; } cases[] = {
+        { "abc",            NULL },
+        { "[a-z]+\\d{2}",   NULL },
+        { "\\j",            "j" },
+        { "[\\w-_]",        "[\\w\\-_]" },
+        { "x{,3}",          "x\\{,3}" },
+        { "x{ 2 }",         "x\\{ 2 }" },
+        { "x{2}",           NULL },
+        { "\\8",            "8" },
+        { "(?X)a",          "(?)a" },
+        { "\\x",            "\\x00" },
+    };
+    for (auto& c : cases) {
+        char* got = mc_pcre_rewrite(c.in, 0);
+        if (c.out == NULL)
+            EXPECT_EQ(nullptr, got);
+        else {
+            ASSERT_NE(nullptr, got);
+            EXPECT_EQ(std::string(c.out), std::string(got));
+        }
+        free(got);
+    }
+    // PCRE_EXTRA is PCRE 8's strict mode: \j stays an error
+    EXPECT_EQ(nullptr, mc_pcre_rewrite("\\j", PCRE_EXTRA));
+}
+
+// The complaint is about what is actually wrong, at the right place, whatever the
+// rewrite did on the way.
+TEST(RegexpCompat, AFailedCompileReportsThePatternAsWritten) {
+    const char* error = NULL;
+    int offset = -1;
+    EXPECT_EQ(nullptr, mc_pcre_compile("\\j[a", 0, NULL, 0, &error, &offset));
+    ASSERT_NE(nullptr, error);
+    EXPECT_NE(std::string::npos, std::string(error).find("missing terminating ]"));
+    EXPECT_EQ(4, offset);
+}
 
 
 MC_TEST_MAIN()

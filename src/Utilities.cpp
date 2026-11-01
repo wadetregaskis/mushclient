@@ -19,8 +19,7 @@
 
 #include "scripting/errors.h"
 
-#include "pcre/config.h"
-#include "pcre/pcre_internal.h"
+#include "mc_pcre.h"
 
 #define PNG_NO_CONSOLE_IO
 #include "png/png.h"

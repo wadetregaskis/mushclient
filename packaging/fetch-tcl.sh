@@ -19,7 +19,7 @@
 #
 # Usage:
 #   packaging/fetch-tcl.sh                 # default version (below)
-#   TCL_VERSION=8.6.16 packaging/fetch-tcl.sh
+#   TCL_VERSION=8.6.18 packaging/fetch-tcl.sh
 #   packaging/fetch-tcl.sh --force         # rebuild even if up to date
 #   MACOS_MIN=11.0 MACOS_ARCHS="arm64 x86_64" packaging/fetch-tcl.sh
 #
@@ -35,7 +35,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/tcl"
-VERSION="${TCL_VERSION:-8.6.16}"
+VERSION="${TCL_VERSION:-8.6.18}"
 MACOS_MIN="${MACOS_MIN:-11.0}"
 MACOS_ARCHS="${MACOS_ARCHS:-arm64 x86_64}"
 FORCE=0

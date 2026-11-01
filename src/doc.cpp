@@ -324,7 +324,7 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
   // show included library versions
   Note (TFormat ("Using: %s, PCRE %s, PNG %s, SQLite3 %s, Zlib %s", 
         LUA_RELEASE, 
-        XSTRING(PCRE_MAJOR.PCRE_MINOR), 
+        XSTRING(PCRE2_MAJOR.PCRE2_MINOR), 
         PNG_LIBPNG_VER_STRING, 
         SQLITE_VERSION, 
         ZLIB_VERSION));

@@ -245,6 +245,10 @@ int i;
   m_iDpi = Dpi_ForSystem ();    // a view on another monitor will say so
 #endif
   m_iRasterScale = 1;
+  m_bRasterOutputFont = false;
+  m_pWrapTrackerLine = NULL;
+  m_iWrapTrackerLen = 0;
+  m_bWrapTrackerPlainAscii = true;
   m_FontHeight = 0;
   m_FontWidth = 0;
   m_InputFontHeight = 0;

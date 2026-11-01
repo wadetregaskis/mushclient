@@ -1157,7 +1157,7 @@ int i;
   m_iRasterScale = 1;
 #ifdef _WIN32
   iFontDpi = m_iDpi;
-  if (iFontDpi > 96)
+  m_bRasterOutputFont = false;
     {
     CFont probe;
     probe.CreateFont (-MulDiv (nHeight ? nHeight : 10, iFontDpi, 72), 0, 0, 0, nWeight, 0, 0, 0,
@@ -1168,6 +1168,7 @@ int i;
     dc.SelectObject (pOldFont);
     if ((tmProbe.tmPitchAndFamily & (TMPF_VECTOR | TMPF_TRUETYPE)) == 0)
       {
+      m_bRasterOutputFont = true;
       m_iRasterScale = Dpi_RasterFactor (iFontDpi);
       iFontDpi = 96;
       }

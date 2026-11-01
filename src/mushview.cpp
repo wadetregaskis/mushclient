@@ -5,6 +5,8 @@
 
 #include "stdafx.h"
 #include "dpi.h"
+#include "dwrite_text.h"
+#include <string>
 #include "MUSHclient.h"
 
 #include "doc.h"
@@ -346,6 +348,9 @@ static inline short get_background (int style)
 
 #endif
 
+static long MeasureBitmapFontRun (HDC hdc, const char * p, const int iLength, const int iScale);
+static bool RunHasOnlyLatin (const char * p, const int iLength);
+
 long CMUSHView::calculate_width (const int & line,
                        const int len,
                        CMUSHclientDoc* pDoc,
@@ -391,6 +396,13 @@ CLine * pLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (line));
                             sUnicodeText, MAX_LINE_WIDTH);         // output
 
       // now calculate width of Unicode pixels
+      int iShapedWidth = 0;
+      if (pDoc->m_bRasterOutputFont && !RunHasOnlyLatin (&pLine->text [thiscol], thislen))
+        textsize.cx = MeasureBitmapFontRun (dc.m_hDC, &pLine->text [thiscol], thislen, pDoc->m_iRasterScale) / pDoc->m_iRasterScale;
+      else if (unicode::Utf8NeedsShaping (&pLine->text [thiscol], thislen) &&
+          dwtext::Measure (dc.m_hDC, sUnicodeText, iUnicodeCharacters, iShapedWidth))
+        textsize.cx = iShapedWidth;
+      else
       GetTextExtentPoint32W(
           dc.m_hDC,           // handle to device context
           sUnicodeText,  // pointer to text string
@@ -436,6 +448,74 @@ static inline void ExtTextOutBoth (HDC hdc, const WCHAR * pText, const int iLeng
 static inline void ExtTextOutBoth (HDC hdc, const char * pText, const int iLength)
   {
   ExtTextOutA (hdc, 0, 0, 0, NULL, pText, iLength, NULL);
+  }
+
+// A bitmap font has no emoji and no ideographs, and when GDI borrows them from another font
+// they come out monochrome and, blown up, blocky.  So in a UTF-8 world in FixedSys and
+// the like, what the font has stays the font's, and the clusters it can't have go to
+// DirectWrite.  Each is measured and drawn in turn, so that it all lines up.
+static bool ClusterIsForBitmapFont (const char * p, const size_t iLength)
+  {
+  unsigned int iCodePoint;
+  const int n = unicode::DecodeUtf8 (p, iLength, iCodePoint);
+  return (size_t) n == iLength && iCodePoint < 0x250;
+  }
+
+// Calls fn (pBytes, iBytes, bForBitmapFont) for each stretch of one kind.
+template <typename FN>
+static void ForEachFontSegment (const char * p, const int iLength, FN fn)
+  {
+  int iSegment = 0;
+  bool bSegment = true;
+  int i = 0;
+  while (i < iLength)
+    {
+    const int iEnd = (int) unicode::Utf8ClusterEnd (p + i, iLength - i, 1) + i;
+    const bool bBitmap = ClusterIsForBitmapFont (p + i, iEnd - i);
+    if (i > iSegment && bBitmap != bSegment)
+      {
+      fn (p + iSegment, i - iSegment, bSegment);
+      iSegment = i;
+      }
+    bSegment = bBitmap;
+    i = iEnd;
+    }
+  if (i > iSegment)
+    fn (p + iSegment, i - iSegment, bSegment);
+  }
+
+static std::wstring WideFromUtf8 (const char * p, const int iLength)
+  {
+  std::wstring s (iLength, L'\0');
+  s.resize (MultiByteToWideChar (CP_UTF8, 0, p, iLength, &s [0], iLength));
+  return s;
+  }
+
+static bool RunHasOnlyLatin (const char * p, const int iLength)
+  {
+  for (int i = 0; i < iLength; i++)
+    if ((unsigned char) p [i] >= 0xCA)    // the lead bytes from U+0280 on
+      return false;
+  return true;
+  }
+
+static long MeasureBitmapFontRun (HDC hdc, const char * p, const int iLength, const int iScale)
+  {
+  long iWidth = 0;
+  ForEachFontSegment (p, iLength, [&] (const char * pSegment, const int iBytes, const bool bBitmap)
+    {
+    const std::wstring s = WideFromUtf8 (pSegment, iBytes);
+    int iShaped = 0;
+    if (!bBitmap && dwtext::Measure (hdc, s.c_str (), (int) s.size (), iShaped, iScale, true))
+      iWidth += iShaped;
+    else
+      {
+      SIZE size = { 0, 0 };
+      GetTextExtentPoint32W (hdc, s.c_str (), (int) s.size (), &size);
+      iWidth += size.cx * iScale;
+      }
+    });
+  return iWidth;
   }
 
 // A bitmap font (FixedSys, Terminal, Dina) comes in fixed sizes, and on a high-dpi display
@@ -550,6 +630,8 @@ POSITION foundpos;
 
 
 int iUnicodeCharacters = 0;
+bool bShaped = false;    // DirectWrite's, rather than GDI's
+bool bMixedBitmapRun = false;    // a bitmap font, and some things it hasn't got
 
 // unicode conversion from UTF-8
 
@@ -560,6 +642,19 @@ int iUnicodeCharacters = 0;
                             sUnicodeText, MAX_LINE_WIDTH);         // output
 
       // now calculate width of Unicode pixels
+      int iShapedWidth = 0;
+      if (pDoc->m_bRasterOutputFont && !RunHasOnlyLatin (&pLine->text [thiscol], thislen))
+        {
+        textsize.cx = MeasureBitmapFontRun (pDC->m_hDC, &pLine->text [thiscol], thislen, pDoc->m_iRasterScale) / pDoc->m_iRasterScale;
+        bMixedBitmapRun = true;
+        }
+      else if (unicode::Utf8NeedsShaping (&pLine->text [thiscol], thislen) &&
+          dwtext::Measure (pDC->m_hDC, sUnicodeText, iUnicodeCharacters, iShapedWidth))
+        {
+        textsize.cx = iShapedWidth;
+        bShaped = true;
+        }
+      else
       GetTextExtentPoint32W(
           pDC->m_hDC,           // handle to device context
           sUnicodeText,  // pointer to text string
@@ -607,7 +702,36 @@ int iUnicodeCharacters = 0;
       }
     else
       {
-      if (pDoc->m_iRasterScale > 1)
+      if (bShaped && dwtext::Draw (pDC->m_hDC, r, sUnicodeText, iUnicodeCharacters, pDC->GetTextColor ()))
+        ;   // done
+      else if (bMixedBitmapRun)
+        {
+        const int iScale = pDoc->m_iRasterScale;
+        RECT rectSegment = r;
+        ForEachFontSegment (&pLine->text [thiscol], thislen, [&] (const char * pSegment, const int iBytes, const bool bBitmap)
+          {
+          const std::wstring s = WideFromUtf8 (pSegment, iBytes);
+          int iWidth = 0;
+          if (!bBitmap && dwtext::Measure (pDC->m_hDC, s.c_str (), (int) s.size (), iWidth, iScale, true))
+            {
+            rectSegment.right = rectSegment.left + iWidth;
+            dwtext::Draw (pDC->m_hDC, rectSegment, s.c_str (), (int) s.size (), pDC->GetTextColor (), iScale, true);
+            }
+          else
+            {
+            SIZE size = { 0, 0 };
+            GetTextExtentPoint32W (pDC->m_hDC, s.c_str (), (int) s.size (), &size);
+            iWidth = size.cx * iScale;
+            rectSegment.right = rectSegment.left + iWidth;
+            if (iScale > 1)
+              DrawBlownUpText (pDC, rectSegment, s.c_str (), (int) s.size (), iScale);
+            else
+              ExtTextOutW (pDC->m_hDC, rectSegment.left, rectSegment.top, 0, &rectSegment, s.c_str (), (int) s.size (), NULL);
+            }
+          rectSegment.left += iWidth;
+          });
+        }
+      else if (pDoc->m_iRasterScale > 1)
         {
         if (pDoc->m_bUTF_8)
           DrawBlownUpText (pDC, r, sUnicodeText, iUnicodeCharacters, pDoc->m_iRasterScale);
@@ -2068,22 +2192,23 @@ long pixel;
         lastx = pixel;
         pixel = calculate_width (line, col, pDoc, dc) + pDoc->PixelOffset () + pLine->m_iPreambleOffset;
 
-        // for a UTF-8 character, bypass the whole character not just one byte
-        if (pDoc->m_bUTF_8 && (col < pLine->len))
+        // for a UTF-8 character, bypass the whole grapheme cluster, not just one byte:
+        // an accent goes with its letter, and the parts of an emoji go together
+        if (pDoc->m_bUTF_8 && pixel < point.x && (col < pLine->len))
           {
-          int c = pLine->text [col];
-          if (c >= 128)
-            col += _pcre_utf8_table4 [c & 0x3f];   // number of additional bytes
+          // two ASCII characters in a row can't be anything but two clusters
+          const unsigned char c = pLine->text [col];
+          if (c >= 128 || (col + 1 < pLine->len && (unsigned char) pLine->text [col + 1] >= 128))
+            col = (int) unicode::Utf8ClusterEnd (pLine->text, pLine->len, col + 1) - 1;
           }
 
 
         }
 
   col--;    // columns are zero-relative
-  // don't stop half-way through a UTF-8 character
-  if (pDoc->m_bUTF_8)
-    while ((col > 0) && (col < pLine->len) && (pLine->text [col] & 0xC0) == 0x80)
-      col++;
+  // don't stop half-way through a UTF-8 character, or a cluster
+  if (pDoc->m_bUTF_8 && col > 0 && col < pLine->len && (unsigned char) pLine->text [col] >= 128)
+    col = (int) unicode::Utf8ClusterEnd (pLine->text, pLine->len, col);
 
 // if we are 50% through this character, take the next one, otherwise take the previous one
 
@@ -2094,10 +2219,9 @@ long pixel;
     if (point.x < lastx)
       {
       col--;
-      // don't stop half-way through a UTF-8 character
-      if (pDoc->m_bUTF_8)
-        while ((col > 0) && (pLine->text [col] & 0xC0) == 0x80)
-          col--;
+      // don't stop half-way through a UTF-8 character, or a cluster
+      if (pDoc->m_bUTF_8 && col > 0 && col < pLine->len)
+        col = (int) unicode::Utf8ClusterStart (pLine->text, pLine->len, col);
       }
     }
 

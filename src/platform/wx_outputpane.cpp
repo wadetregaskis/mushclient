@@ -3,6 +3,7 @@
 #ifndef _WIN32
 
 #include "platform/wx_outputpane.h"
+#include "unicode_width.h"
 #include <wx/dcbuffer.h>
 #include <wx/clipbrd.h>
 #include <wx/tooltip.h>
@@ -449,6 +450,81 @@ int LineCharLen(const SOutputLine& line)
     return chars;
 }
 
+// ── Cells ───────────────────────────────────────────────────────────────────
+// The grid keeps glyphs from drifting (DrawRunChunk), but not every character is one
+// cell of it.  These walk grapheme clusters; text below U+0300 can't contain anything
+// but one-cell characters, so that's checked first and most lines never go further.
+// Non-UTF-8 runs stay one cell per character, exactly as they always were.
+
+static bool OneCellEach(const wxString& s, size_t first, size_t count)
+{
+    const wchar_t* p = s.wc_str();
+    for (size_t i = first; i < first + count; ++i)
+        if ((unsigned long) p[i] >= 0x300)
+            return false;
+    return true;
+}
+
+// The cells taken by count characters from first.
+static int StringCells(const wxString& s, size_t first, size_t count, bool utf8)
+{
+    if (!utf8 || OneCellEach(s, first, count))
+        return (int) count;
+    const wchar_t* p = s.wc_str();
+    unicode::ClusterTracker tracker;
+    int cells = 0;
+    for (size_t i = first; i < first + count; ++i) {
+        tracker.Add((unsigned int) p[i]);
+        cells += tracker.iDelta;
+    }
+    return cells;
+}
+
+// How many characters from pos fit in avail cells, whole clusters only.  At least one
+// cluster if there is any room at all: a wide character in the last cell overhangs by
+// one, so that "cell / wrap columns" stays the row for every cell on the line.
+static int CharsThatFit(const wxString& s, int pos, int avail, bool utf8, int& cellsTaken)
+{
+    const int runLen = (int) s.size();
+    cellsTaken = 0;
+    if (avail <= 0 || pos >= runLen)
+        return 0;
+    if (!utf8 || OneCellEach(s, pos, runLen - pos)) {
+        const int n = std::min(avail, runLen - pos);
+        cellsTaken = n;
+        return n;
+    }
+    const wchar_t* p = s.wc_str();
+    unicode::ClusterTracker tracker;
+    int i = pos;
+    int cells = 0;
+    int doneChars = 0, doneCells = 0;
+    while (i < runLen) {
+        if (tracker.Add((unsigned int) p[i]) && i > pos) {
+            doneChars = i - pos;
+            doneCells = cells;
+            if (cells >= avail)
+                break;
+        }
+        cells += tracker.iDelta;
+        ++i;
+    }
+    if (i == runLen) {
+        doneChars = i - pos;
+        doneCells = cells;
+    }
+    cellsTaken = doneCells;
+    return doneChars;
+}
+
+int LineCellLen(const SOutputLine& line)
+{
+    int cells = 0;
+    for (const SOutputRun& run : line)
+        cells += run.utf8 ? unicode::Utf8Cells(run.text.data(), run.text.size()) : RunCharLen(run);
+    return cells;
+}
+
 // See the header.  Runs tile the line's column axis without gaps or overlap, so
 // at most one run can contain a given column -- which is why the old hand-rolled
 // walks could `break` on the first match and why a zero-length run (a horizontal
@@ -790,7 +866,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
     // Auto-detect plain http:// / https:// URLs and split them into link runs.
     line = DetectURLs(std::move(line));
 
-    int lineChars = LineCharLen(line);
+    int lineChars = LineCellLen(line);    // cells: this is what wrapping divides up
     if (lineChars > m_maxLineChars) m_maxLineChars = lineChars;
 
     // Append to wrap cache before the line is in m_lines so WrapCount() works.
@@ -1210,7 +1286,7 @@ int COutputPane::SelectionRowOf(const SelPoint& p) const
     const int line = std::max(0, std::min(n - 1, p.line));
     int row = RowStartOf(line);
     if (m_wrapCols > 0 && p.col > 0)
-        row += std::min(p.col / m_wrapCols, std::max(0, WrapCount(line) - 1));
+        row += std::min(CharToCell(line, p.col) / m_wrapCols, std::max(0, WrapCount(line) - 1));
     return row;
 }
 
@@ -2355,7 +2431,8 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         while (pos < runLen) {
             // How many chars fit on the current visual row.
             int avail = wrapCols - currentCol;
-            int chunk = std::min(avail, runLen - pos);
+            int chunkCells = 0;
+            int chunk = CharsThatFit(wxText, pos, avail, run.utf8, chunkCells);
 
             // Selection for this sub-chunk (absolute char range).
             int chunkAbs0 = globalChar + pos;
@@ -2367,7 +2444,7 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
             if (!inSel) {
                 // Whole sub-chunk: no selection overlap.
                 DrawRunChunk(dc, wxText.Mid(pos, chunk), x, currentY, run, false);
-                x += chunk * m_charW;
+                x += chunkCells * m_charW;
             } else {
                 // Split into up to three sub-segments: before / inside / after selection.
                 int lo = std::max(0, selColStart - chunkAbs0);
@@ -2375,19 +2452,19 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                                                                : selColEnd - chunkAbs0));
                 if (lo > 0) {
                     DrawRunChunk(dc, wxText.Mid(pos, lo), x, currentY, run, false);
-                    x += lo * m_charW;
+                    x += StringCells(wxText, pos, lo, run.utf8) * m_charW;
                 }
                 if (hi > lo) {
                     DrawRunChunk(dc, wxText.Mid(pos + lo, hi - lo), x, currentY, run, true);
-                    x += (hi - lo) * m_charW;
+                    x += StringCells(wxText, pos + lo, hi - lo, run.utf8) * m_charW;
                 }
                 if (hi < chunk) {
                     DrawRunChunk(dc, wxText.Mid(pos + hi, chunk - hi), x, currentY, run, false);
-                    x += (chunk - hi) * m_charW;
+                    x += StringCells(wxText, pos + hi, chunk - hi, run.utf8) * m_charW;
                 }
             }
 
-            currentCol += chunk;
+            currentCol += chunkCells;
             pos        += chunk;
 
             // Wrap to next visual row when this row is full and more text follows.
@@ -2400,9 +2477,9 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                     dc.SetPen(*wxTRANSPARENT_PEN);
                     dc.DrawRectangle(x, currentY, rightEdge - x, m_lineH);
                 }
-                currentCol = 0;
-                x          = 0;
-                currentY  += m_lineH;
+                currentCol -= wrapCols;      // one, if a wide character overhung
+                x           = currentCol * m_charW;
+                currentY   += m_lineH;
             }
         }
 
@@ -2492,8 +2569,9 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                     // batching contiguous characters on the same visual row.
                     int c = lo;
                     while (c < hi) {
-                        int vr       = c / wrapCols;   // visual row index within this line
-                        int vcol     = c % wrapCols;   // column within that visual row
+                        const int cellC = CharToCell(lineIdx, c);
+                        int vr       = cellC / wrapCols;   // visual row index within this line
+                        int vcol     = cellC % wrapCols;   // column within that visual row
                         int py       = yOff + vr * m_lineH;
                         // The preamble (timestamp) occupies whole cells at the
                         // start of the FIRST visual row and the text was drawn
@@ -2505,12 +2583,14 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                         int px       = vcol * m_charW
                                      + (vr == 0 ? PreambleCells(lineIdx) * m_charW : 0);
                         // Batch to end-of-match or end-of-visual-row, whichever comes first.
-                        int batchEnd = std::min(hi, (vr + 1) * wrapCols);
+                        int batchEnd = c + 1;
+                        while (batchEnd < hi && CharToCell(lineIdx, batchEnd) < (vr + 1) * wrapCols)
+                            ++batchEnd;
                         int nChars   = batchEnd - c;
                         // Pre-fill the highlight background rectangle.
                         dc.SetBrush(wxBrush(wxColour(255, 220, 0)));
                         dc.SetPen(*wxTRANSPARENT_PEN);
-                        dc.DrawRectangle(px, py, nChars * m_charW, m_lineH);
+                        dc.DrawRectangle(px, py, (CharToCell(lineIdx, batchEnd) - cellC) * m_charW, m_lineH);
                         // Per CELL, not one batched DrawText: a monospace font's
                         // natural advance can differ from the integer cell width
                         // m_charW on macOS, so flowing the whole substring drifts
@@ -2521,7 +2601,7 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                         // c - cx = offset of c within wxText.
                         for (int k = 0; k < nChars; ++k)
                             dc.DrawText(wxText.substr(c - cx + k, 1),
-                                        px + k * m_charW, py);
+                                        px + (CharToCell(lineIdx, c + k) - cellC) * m_charW, py);
                         c = batchEnd;
                     }
                 }
@@ -2592,7 +2672,8 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
 
     dc.SetBrush(wxBrush(bgFill));
     dc.SetPen(*wxTRANSPARENT_PEN);
-    dc.DrawRectangle(x, yOff, (int)text.size() * m_charW, m_lineH);
+    const int textCells = StringCells(text, 0, text.size(), run.utf8);
+    dc.DrawRectangle(x, yOff, textCells * m_charW, m_lineH);
 
     dc.SetTextForeground(textFg);
     dc.SetBackgroundMode(wxTRANSPARENT);
@@ -2625,19 +2706,94 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     // the text when a run is split for a partial selection.  Per-cell drawing
     // keeps glyph positions identical whether or not the run is split, and lined
     // up with the selection rectangle and click hit-testing (both grid-based).
-    for (size_t i = 0; i < text.size(); ++i)
-        dc.DrawText(text.Mid(i, 1), x + (int) i * m_charW, yOff);
+    //
+    // A "cell" is a whole grapheme cluster, drawn as one string so that the toolkit can
+    // shape it: an accent on its letter, a flag from its two letters, a joined emoji.
+    if (!run.utf8 || OneCellEach(text, 0, text.size())) {
+        for (size_t i = 0; i < text.size(); ++i)
+            dc.DrawText(text.Mid(i, 1), x + (int) i * m_charW, yOff);
+    } else {
+        const wchar_t* p = text.wc_str();
+        unicode::ClusterTracker tracker;
+        size_t start = 0;
+        int cell = 0;
+        int cells = 0;
+        for (size_t i = 0; i <= text.size(); ++i) {
+            const bool end = i == text.size();
+            if (end || (tracker.Add((unsigned int) p[i]) && i > 0)) {
+                dc.DrawText(text.Mid(start, i - start), x + cell * m_charW, yOff);
+                cell = cells;
+                start = i;
+            }
+            if (!end)
+                cells += tracker.iDelta;
+        }
+    }
 
     // Strikethrough: draw a horizontal line through the vertical centre of the glyph.
     if (run.strikethrough) {
         int midY = yOff + m_lineH / 2;
-        int textW = (int)text.size() * m_charW;
+        int textW = textCells * m_charW;
         dc.SetPen(wxPen(textFg, 1));
         dc.DrawLine(x, midY, x + textW, midY);
     }
 }
 
 // ── Wrap cache helpers ────────────────────────────────────────────────────────
+
+int COutputPane::CharToCell(int lineIdx, int charCol) const
+{
+    if (lineIdx < 0 || lineIdx >= LineCountI() || charCol <= 0)
+        return 0;
+    const SOutputLine& line = LineAt(lineIdx);
+    int chars = 0, cells = 0;
+    for (const SOutputRun& run : line) {
+        if (run.text.empty()) continue;
+        const wxString text = DecodeRunText(run);
+        const int runLen = (int) text.size();
+        if (charCol < chars + runLen)
+            return cells + StringCells(text, 0, charCol - chars, run.utf8);
+        cells += StringCells(text, 0, runLen, run.utf8);
+        chars += runLen;
+    }
+    return cells;
+}
+
+int COutputPane::CellToChar(int lineIdx, int cellCol, bool bNearest) const
+{
+    if (lineIdx < 0 || lineIdx >= LineCountI() || cellCol <= 0)
+        return 0;
+    const SOutputLine& line = LineAt(lineIdx);
+    int chars = 0, cells = 0;
+    for (const SOutputRun& run : line) {
+        if (run.text.empty()) continue;
+        const wxString text = DecodeRunText(run);
+        const int runLen = (int) text.size();
+        const int runCells = StringCells(text, 0, runLen, run.utf8);
+        if (cellCol < cells + runCells) {
+            if (!run.utf8 || OneCellEach(text, 0, runLen))
+                return chars + (cellCol - cells);
+            // whichever cluster this cell is in
+            const wchar_t* p = text.wc_str();
+            unicode::ClusterTracker tracker;
+            int clusterChar = 0, clusterCell = 0;
+            int c = 0;
+            for (int i = 0; i < runLen; ++i) {
+                if (tracker.Add((unsigned int) p[i]) && i > 0) {
+                    if (cells + c > cellCol)
+                        return chars + (bNearest && cellCol > cells + clusterCell ? i : clusterChar);
+                    clusterChar = i;
+                    clusterCell = c;
+                }
+                c += tracker.iDelta;
+            }
+            return chars + clusterChar;
+        }
+        cells += runCells;
+        chars += runLen;
+    }
+    return chars;
+}
 
 int COutputPane::WrapCount(int lineIdx) const
 {
@@ -2722,7 +2878,7 @@ void COutputPane::RebuildWrapCache()
     if ((int)m_lineChars.size() != n) {
         m_lineChars.assign((size_t)n, 0);
         for (int i = 0; i < n; ++i)
-            m_lineChars[(size_t)i] = LineCharLen(LineAt(i));
+            m_lineChars[(size_t)i] = LineCellLen(LineAt(i));
     }
 
     m_visualRowStart.assign((size_t)n, 0);
@@ -3012,7 +3168,7 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY,
     if (m_wrapCols > 0)
         colInRow = std::min(colInRow, halfway ? m_wrapCols : m_wrapCols - 1);
     int col      = vrOffset * m_wrapCols + colInRow;
-    return std::max(0, std::min(totalChars, col));
+    return std::max(0, std::min(totalChars, CellToChar(lineIdx, col, halfway)));
 }
 
 SelPoint COutputPane::MouseToSelPoint(const wxMouseEvent& evt) const

@@ -759,6 +759,7 @@ if(NOT WIN32)
         src/appearance.cpp
         src/unicode_width.cpp
         src/dpi.cpp
+        src/dwrite_text.cpp
         src/xml/xmlparse.cpp
         src/exceptions.cpp
         src/xml/xml_save_world.cpp

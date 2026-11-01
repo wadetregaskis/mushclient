@@ -300,10 +300,8 @@ TEST(WrapTest, Utf8TabStopCountsCharactersNotBytes)
 
 // A 4-byte UTF-8 character (an emoji, U+1F600) counts as ONE wrap column here:
 // wchar_t is 32-bit on this port, so LineLengthInChars / MultiByteToWideChar
-// returns code points, and a 4-byte character is one of them.  (On a 16-bit
-// wchar_t Windows build it is a UTF-16 surrogate pair, so it would count as two
-// there -- a divergence worth being explicit about; this pins the port side.)
-TEST(WrapTest, Utf8FourByteCharCountsAsOneColumn)
+// used to return code points on the port and UTF-16 units on Windows, and it's cells now.
+TEST(WrapTest, Utf8EmojiCountsAsTwoColumns)
 {
     CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
@@ -318,25 +316,18 @@ TEST(WrapTest, Utf8FourByteCharCountsAsOneColumn)
     CLine* l1 = nth_line(doc, 1);
     ASSERT_NE(nullptr, l0);
     ASSERT_NE(nullptr, l1);
-#ifdef _WIN32
-    // The other side of the divergence named above, pinned rather than
-    // skipped: 16-bit wchar_t, so each emoji is a surrogate pair -- TWO units
-    // -- and three of them (six units) fill a line before the five-column
-    // wrap is seen to be passed.
+    // Two cells each, on every platform: two fit in five columns, and the third would
+    // straddle the edge.  See test_unicode_wrap.cpp for the rest of it.
     CLine* l2 = nth_line(doc, 2);
+    CLine* l3 = nth_line(doc, 3);
     ASSERT_NE(nullptr, l2);
-    EXPECT_EQ(12, l0->len);   // 3 emoji
-    EXPECT_EQ(12, l1->len);   // 3 more
-    EXPECT_EQ(4,  l2->len);   // the last one
+    ASSERT_NE(nullptr, l3);
+    EXPECT_EQ(8, l0->len);
+    EXPECT_EQ(8, l1->len);
+    EXPECT_EQ(8, l2->len);
+    EXPECT_EQ(4, l3->len);
     EXPECT_FALSE(l0->hard_return);
-    EXPECT_FALSE(l1->hard_return);
-    EXPECT_TRUE(l2->hard_return);
-#else
-    EXPECT_EQ(20, l0->len);   // 5 emoji (each counted as ONE column) = 20 bytes
-    EXPECT_EQ(8,  l1->len);   // remaining 2 emoji
-    EXPECT_FALSE(l0->hard_return);
-    EXPECT_TRUE(l1->hard_return);
-#endif
+    EXPECT_TRUE(l3->hard_return);
 }
 
 // doc_shared.cpp AddToLine: "any character starting 10xxxxxx will *not* be

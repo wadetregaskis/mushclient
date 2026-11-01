@@ -152,9 +152,9 @@ $PythonVersion = '3.14.10'
 $PythonPkg     = @{ x64 = 'python'; ARM64 = 'pythonarm64' }
 $PythonSha256  = @{ x64   = 'f54ba67c9951c3d773ea47d2bb095150c037c399f0423a968bcda22809241784'
                     ARM64 = '79cac95bc8219587eaf4b073a92162388f567a2509cd2bc497102feaf7dc8a38' }
-$TclVersion    = '8.6.16'
+$TclVersion    = '8.6.18'
 $TclUrl        = "https://prdownloads.sourceforge.net/tcl/tcl$TclVersion-src.tar.gz"
-$TclSha256     = '91cb8fa61771c63c262efb553059b7c7ad6757afa5857af6265e4b0bdc2a14a5'
+$TclSha256     = '14f9af32b1767ff718477a8f974ad03c34341097e6b43f4ce54644ee974e268e'
 $QuickJsVersion = '0.17.0'
 $QuickJsUrl     = "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v$QuickJsVersion.tar.gz"
 $QuickJsSha256  = '559bc4c420475e55c7ab4510adbc562f55d7524d75e8e89d79ce4bb02f5687d9'   # GitHub's tag archive

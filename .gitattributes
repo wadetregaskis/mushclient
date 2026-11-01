@@ -26,3 +26,5 @@
 # codesign hands entitlements to the kernel's AMFI XML parser, which rejects
 # CRLF outright ("AMFIUnserializeXML: syntax error near line 1").
 *.plist text eol=lf
+packaging/make-update-key text eol=lf
+packaging/sign-update-manifest text eol=lf

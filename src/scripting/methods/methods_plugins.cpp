@@ -6,6 +6,7 @@
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../errors.h"
+#include "../../plugin_vetoes.h"
 
 // Implements:
 
@@ -162,6 +163,8 @@ VARIANT CMUSHclientDoc::GetPluginInfo(LPCTSTR PluginID, short InfoType)
       }
 
     case 25: SetUpVariantShort (vaResult, pPlugin->m_iSequence); break;
+    case 26: SetUpVariantLong  (vaResult, PluginCommandsStopped (pPlugin)); break;
+    case 27: SetUpVariantLong  (vaResult, PluginVetoesIgnored (pPlugin)); break;
 
     default:
       vaResult.vt = VT_NULL;

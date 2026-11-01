@@ -11,6 +11,7 @@
 #include "childfrm.h"
 #include "mushview.h"
 #include "TextDocument.h"
+#include "plugin_vetoes.h"
 
 #include "png/png.h"  // for version
 
@@ -840,6 +841,8 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
       Note (TFormat ("Language:   %s", (LPCTSTR) p->m_strLanguage));
       Note (TFormat ("Enabled:    %s", SHOW_TRUE (p->m_bEnabled)));
       Note (TFormat ("Sequence:   %d", p->m_iSequence));
+      Note (TFormat ("Commands stopped: %ld", PluginCommandsStopped (p)));
+      Note (TFormat ("Stops ignored:    %ld", PluginVetoesIgnored (p)));
 
       if (!p->m_strScript.IsEmpty ())
         {

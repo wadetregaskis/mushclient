@@ -16,6 +16,7 @@
 #include "pal/itransport.h"
 #include "fake_transport.h"
 #include "scripting/scripting.h"
+#include "plugin_vetoes.h"
 
 #include <chrono>
 #include <cstdio>
@@ -2456,6 +2457,277 @@ TEST(WizardTest, RemovingSelectedItemsSortsOncePerCategory)
     EXPECT_TRUE(big <= smallRun * 12 + 25.0);
     if (big > smallRun * 12 + 25.0)
         printf("    400 items %.3fms vs 2400 items %.3fms\n", smallRun, big);
+}
+
+// ── commands stopped by plugins (plugin_vetoes.h) ───────────────────────────
+
+#define COWBAR_ID "bfe35205f026786ea1d56e3b"
+
+static std::string write_versioned_plugin(const char* tag, const char* id,
+                                          const char* name, const char* version,
+                                          const char* script_body)
+{
+    static int s_seq = 0;
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_veto_%d_%d_%s.xml",
+             (int)getpid(), ++s_seq, tag);
+    FILE* f = fopen(path, "wb");
+    if (!f) return "";
+    fprintf(f,
+        "<?xml version=\"1.0\"?>\n"
+        "<!DOCTYPE muclient>\n"
+        "<muclient>\n"
+        "<plugin name=\"%s\" author=\"T\" id=\"%s\" language=\"Lua\" "
+        "version=\"%s\" />\n"
+        "<script><![CDATA[\n%s\n]]></script>\n"
+        "</muclient>\n", name, id, version, script_body);
+    fclose(f);
+    return path;
+}
+
+// Notes may be in the buffer or still batched, so look in both.
+static int count_in_notes(CMUSHclientDoc& doc, const char* text)
+{
+    int n = 0;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (CString(l->text, l->len).Find(text) != -1) n++;
+    }
+    for (const CPaneStyle& s : doc.m_OutstandingLines)
+        if (s.m_sText.find(text) != std::string::npos) n++;
+    return n;
+}
+
+static long stopped(CMUSHclientDoc& doc, const char* id)
+{
+    return doc.GetPluginInfo(id, 26).lVal;
+}
+
+static long ignored(CMUSHclientDoc& doc, const char* id)
+{
+    return doc.GetPluginInfo(id, 27).lVal;
+}
+
+// A live transport that records, and the doc set up to reach it.
+static RecordingTransport* attach_transport(CMUSHclientDoc& doc)
+{
+    make_doc(doc);
+    RecordingTransport* t = new RecordingTransport;   // the doc's dtor tears it down
+    doc.m_pTransport = t;
+    doc.m_display_my_input = false;
+    return t;
+}
+
+static const char* const REFUSE_ALL = "function OnPluginSend(t) return false end\n";
+
+TEST(PluginVetoGuard, CoversThatPluginAtOrBelowTheKnownVersionOnly)
+{
+    EXPECT_TRUE(PluginSendVetoIgnored(COWBAR_ID, 4.96));
+    EXPECT_TRUE(PluginSendVetoIgnored(COWBAR_ID, 4.5));
+    EXPECT_TRUE(PluginSendVetoIgnored(COWBAR_ID, 0.0));
+    EXPECT_TRUE(PluginSendVetoIgnored("BFE35205F026786EA1D56E3B", 4.96));
+    EXPECT_FALSE(PluginSendVetoIgnored(COWBAR_ID, 4.97));
+    EXPECT_FALSE(PluginSendVetoIgnored(COWBAR_ID, 5.0));
+    EXPECT_FALSE(PluginSendVetoIgnored(IDA, 4.96));
+}
+
+TEST(PluginVetoGuard, KnownPluginCannotStopASendAndTheNoteAppearsOnce)
+{
+    CMUSHclientDoc doc;
+    RecordingTransport* t = attach_transport(doc);
+    ASSERT_TRUE(load_plugin(doc, write_versioned_plugin("cowbar", COWBAR_ID,
+                                                        "CowBar", "4.96", REFUSE_ALL)));
+
+    doc.DoSendMsg("kill troll", false, false);
+    EXPECT_TRUE(t->sent.find("kill troll") != std::string::npos);
+    EXPECT_EQ(1, count_in_notes(doc, "CowBar 4.96 tried to stop this command"));
+    EXPECT_EQ(1, count_in_notes(doc, "appears once per session"));
+    EXPECT_EQ(1L, ignored(doc, COWBAR_ID));
+    EXPECT_EQ(0L, stopped(doc, COWBAR_ID));
+
+    doc.DoSendMsg("kill orc", false, false);
+    EXPECT_TRUE(t->sent.find("kill orc") != std::string::npos);
+    EXPECT_EQ(1, count_in_notes(doc, "CowBar 4.96 tried to stop this command"));
+    EXPECT_EQ(2L, ignored(doc, COWBAR_ID));
+}
+
+// The patched copy we package returns true, so it is never mentioned at all.
+TEST(PluginVetoGuard, KnownPluginThatApprovesIsNotMentioned)
+{
+    CMUSHclientDoc doc;
+    RecordingTransport* t = attach_transport(doc);
+    ASSERT_TRUE(load_plugin(doc, write_versioned_plugin("cowbar", COWBAR_ID, "CowBar", "4.96",
+        "function OnPluginSend(t) return true end\n")));
+
+    doc.DoSendMsg("look", false, false);
+    EXPECT_TRUE(t->sent.find("look") != std::string::npos);
+    EXPECT_EQ(0, count_in_notes(doc, "tried to stop"));
+    EXPECT_EQ(0L, ignored(doc, COWBAR_ID));
+    EXPECT_EQ(0L, stopped(doc, COWBAR_ID));
+}
+
+TEST(PluginVetoGuard, LaterVersionIsTakenAtItsWord)
+{
+    CMUSHclientDoc doc;
+    RecordingTransport* t = attach_transport(doc);
+    ASSERT_TRUE(load_plugin(doc, write_versioned_plugin("cowbar", COWBAR_ID,
+                                                        "CowBar", "4.97", REFUSE_ALL)));
+
+    doc.DoSendMsg("kill troll", false, false);
+    EXPECT_TRUE(t->sent.empty());
+    EXPECT_EQ(0, count_in_notes(doc, "tried to stop"));
+    EXPECT_EQ(0L, ignored(doc, COWBAR_ID));
+    EXPECT_EQ(1L, stopped(doc, COWBAR_ID));
+}
+
+// Only OnPluginSend: nothing else this plugin refuses is any of the guard's business.
+TEST(PluginVetoGuard, OnlyTheSendCallbackIsCovered)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(load_plugin(doc, write_versioned_plugin("cowbar", COWBAR_ID, "CowBar", "4.96",
+        "function OnPluginCommand(t) return false end\n"
+        "function OnPluginLineReceived(t) return false end\n")));
+
+    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_COMMAND, "x", false));
+    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_LINE_RECEIVED, "x", false));
+    EXPECT_EQ(0L, ignored(doc, COWBAR_ID));
+    EXPECT_EQ(1L, stopped(doc, COWBAR_ID));   // the command, not the line
+}
+
+// Another plugin's refusal still stands, whatever the known plugin's was.
+TEST(PluginVetoGuard, OtherPluginsKeepTheirVeto)
+{
+    CMUSHclientDoc doc;
+    RecordingTransport* t = attach_transport(doc);
+    ASSERT_TRUE(load_plugin(doc, write_versioned_plugin("cowbar", COWBAR_ID,
+                                                        "CowBar", "4.96", REFUSE_ALL)));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("other", IDA, "Filter", REFUSE_ALL)));
+
+    doc.DoSendMsg("kill troll", false, false);
+    EXPECT_TRUE(t->sent.empty());
+    EXPECT_EQ(1L, ignored(doc, COWBAR_ID));
+    EXPECT_EQ(1L, stopped(doc, IDA));
+    EXPECT_EQ(0L, ignored(doc, IDA));
+}
+
+TEST(PluginVetoCounts, CountedSilentlyUnlessTracing)
+{
+    CMUSHclientDoc doc;
+    RecordingTransport* t = attach_transport(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("veto", IDA, "Filter", REFUSE_ALL)));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tracer", IDB, "Tracer",
+        "function OnPluginTrace(m) world.SetVariable('trace', m) end\n")));
+
+    doc.DoSendMsg("one", false, false);
+    EXPECT_TRUE(t->sent.empty());
+    EXPECT_EQ(1L, stopped(doc, IDA));
+    EXPECT_EQ(0L, stopped(doc, IDB));
+    EXPECT_EQ(0, count_in_notes(doc, "stopped"));          // does not nag
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(doc.GetPlugin(IDB), "trace"));
+
+    doc.m_bTrace = true;
+    doc.DoSendMsg("two", false, false);
+    EXPECT_EQ(2L, stopped(doc, IDA));
+    CString trace = plugin_var(doc.GetPlugin(IDB), "trace");
+    EXPECT_TRUE(trace.Find("Filter") != -1);
+    EXPECT_TRUE(trace.Find("OnPluginSend") != -1);
+    EXPECT_TRUE(trace.Find("two") != -1);
+}
+
+TEST(PluginVetoCounts, ApprovingOrSayingNothingIsNotCounted)
+{
+    CMUSHclientDoc doc;
+    RecordingTransport* t = attach_transport(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("yes", IDA, "Yes",
+        "function OnPluginSend(t) return true end\n")));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("nil", IDB, "Nil",
+        "function OnPluginSend(t) end\n")));
+
+    doc.DoSendMsg("look", false, false);
+    EXPECT_TRUE(t->sent.find("look") != std::string::npos);
+    EXPECT_EQ(0L, stopped(doc, IDA));
+    EXPECT_EQ(0L, stopped(doc, IDB));
+}
+
+// A likely password must not end up in a trace.
+TEST(PluginVetoCounts, CommandTextIsHiddenWhileEchoIsOff)
+{
+    CMUSHclientDoc doc;
+    attach_transport(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("veto", IDA, "Filter", REFUSE_ALL)));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tracer", IDB, "Tracer",
+        "function OnPluginTrace(m) world.SetVariable('trace', m) end\n")));
+
+    doc.m_bTrace = true;
+    doc.m_bNoEcho = true;
+    doc.DoSendMsg("hunter2", false, false);
+    EXPECT_EQ(1L, stopped(doc, IDA));
+    CString trace = plugin_var(doc.GetPlugin(IDB), "trace");
+    EXPECT_TRUE(trace.Find("Filter") != -1);
+    EXPECT_EQ(-1, trace.Find("hunter2"));
+}
+
+TEST(PluginVetoCounts, OnPluginCommandEnteredDiscardsAreCounted)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tab", IDA, "Tab",
+        "function OnPluginCommandEntered(t) if t == 'drop' then return '\\t' end return t end\n")));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("cr", IDB, "Cr",
+        "function OnPluginCommandEntered(t) if t == 'keep' then return '\\r' end return t end\n")));
+
+    CString s = "look";
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, s);
+    EXPECT_STREQ("look", (const char*)s);
+    EXPECT_EQ(0L, stopped(doc, IDA));
+    EXPECT_EQ(0L, stopped(doc, IDB));
+
+    s = "drop";
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, s);
+    EXPECT_STREQ("\t", (const char*)s);
+    EXPECT_EQ(1L, stopped(doc, IDA));
+    EXPECT_EQ(0L, stopped(doc, IDB));
+
+    s = "keep";
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, s);
+    EXPECT_STREQ("\r", (const char*)s);
+    EXPECT_EQ(1L, stopped(doc, IDA));
+    EXPECT_EQ(1L, stopped(doc, IDB));
+}
+
+// The last word counts: a later plugin can turn a discard back into a command.
+TEST(PluginVetoCounts, DiscardOverturnedByALaterPluginIsNotCounted)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tab", IDA, "Tab",
+        "function OnPluginCommandEntered(t) return '\\t' end\n")));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("back", IDB, "Back",
+        "function OnPluginCommandEntered(t) return 'look' end\n")));
+
+    CString s = "drop";
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, s);
+    EXPECT_STREQ("look", (const char*)s);
+    EXPECT_EQ(0L, stopped(doc, IDA));
+    EXPECT_EQ(0L, stopped(doc, IDB));
+}
+
+TEST(PluginVetoCounts, ScriptsCanReadThemAndAReloadStartsAgain)
+{
+    CMUSHclientDoc doc;
+    attach_transport(doc);
+    const std::string path = write_plugin("veto", IDA, "Filter",
+        "function OnPluginSend(t) return false end\n"
+        "function Report() world.SetVariable('n', tostring(world.GetPluginInfo(world.GetPluginID(), 26))) end\n");
+    ASSERT_TRUE(load_plugin(doc, path));
+
+    doc.DoSendMsg("one", false, false);
+    doc.DoSendMsg("two", false, false);
+    EXPECT_EQ(2L, stopped(doc, IDA));
+    EXPECT_EQ((long)eOK, doc.CallPlugin(IDA, "Report", ""));
+    EXPECT_STREQ("2", (const char*)plugin_var(doc.GetPlugin(IDA), "n"));
+
+    EXPECT_EQ((long)eOK, doc.UnloadPlugin(IDA));
+    ASSERT_TRUE(load_plugin(doc, path));
+    EXPECT_EQ(0L, stopped(doc, IDA));
 }
 
 MC_TEST_MAIN()

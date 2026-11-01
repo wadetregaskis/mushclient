@@ -8,6 +8,7 @@
 #include "doc.h"
 #include "dialogs/plugins/PluginWizardSheet.h"
 #include "UDPsocket.h"        // a plugin's UDP listeners are closed with it
+#include "plugin_vetoes.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -179,9 +180,103 @@ CPlugin::CPlugin (CMUSHclientDoc * pDoc)
 
   } // end of constructor
 
-// destructor
-CPlugin::~CPlugin () 
+// What each plugin has done with commands (plugin_vetoes.h).  Beside CPlugin
+// rather than in it because doc.h includes plugins.h, and these few numbers are
+// not worth a rebuild of everything.  ~CPlugin removes a plugin's entry, so a
+// reload starts again from zero, and a new CPlugin at the same address never
+// inherits the old one's.
+
+struct CCommandVetoCounts
   {
+  long nStopped = 0;        // commands it stopped
+  long nIgnored = 0;        // refusals we did not honour
+  bool bNoteShown = false;  // has the user been told about those yet?
+  };
+
+static map<const CPlugin *, CCommandVetoCounts> s_CommandVetoes;
+
+long PluginCommandsStopped (const CPlugin * pPlugin)
+  {
+  map<const CPlugin *, CCommandVetoCounts>::const_iterator it = s_CommandVetoes.find (pPlugin);
+  return it == s_CommandVetoes.end () ? 0 : it->second.nStopped;
+  }
+
+long PluginVetoesIgnored (const CPlugin * pPlugin)
+  {
+  map<const CPlugin *, CCommandVetoCounts>::const_iterator it = s_CommandVetoes.find (pPlugin);
+  return it == s_CommandVetoes.end () ? 0 : it->second.nIgnored;
+  }
+
+// Quow's Cow Bar ("CowBar") assembles the name OnPluginSend at run time from
+// base64, and its handler quietly drops a command that a trigger, timer or
+// hotspot sent, about once a minute: see docs/QUOW-HIDDEN-COMMAND-DROP.md.  The
+// edition we package is patched (packaging/fetch-discworld-plugins.sh), but the
+// 5.x importer copies a user's existing copy, and people install it themselves.
+// This plugin has no other OnPluginSend, so ignoring its refusals costs nothing.
+// Version 4.96 was current when this was written.  A later one is presumed
+// fixed and is left alone.
+
+bool PluginSendVetoIgnored (const CString & strPluginID, const double dVersion)
+  {
+  return strPluginID.CompareNoCase ("bfe35205f026786ea1d56e3b") == 0 &&
+         dVersion < 4.96 + 0.001;
+  }
+
+// A plugin's callback has just refused sText.  Keep a record if that refusal
+// was about a command.  Returns whether the refusal stands.
+
+static bool CommandVetoStands (CMUSHclientDoc * pDoc,
+                               CPlugin * pPlugin,
+                               const string & sName,
+                               const char * sText)
+  {
+  if (sName != ON_PLUGIN_SEND && sName != ON_PLUGIN_COMMAND)
+    return true;     // not a command being stopped
+
+  CCommandVetoCounts & counts = s_CommandVetoes [pPlugin];
+
+  // the MUD has echo off, so this is very likely to be a password
+  const CString strCommand = pDoc->m_bNoEcho ? CString (Translate ("(hidden: echo is off)"))
+                                             : CString (sText);
+
+  if (sName == ON_PLUGIN_SEND && PluginSendVetoIgnored (pPlugin->m_strID, pPlugin->m_dVersion))
+    {
+    counts.nIgnored++;
+
+    pDoc->Trace ("%s", (LPCTSTR) TFormat ("Plugin %s: ignored its %s refusal of: %s",
+                                          (LPCTSTR) pPlugin->m_strName,
+                                          sName.c_str (),
+                                          (LPCTSTR) strCommand));
+
+    if (!counts.bNoteShown)
+      {
+      counts.bNoteShown = true;
+      pDoc->Note (TFormat ("Plugin %s %.2f tried to stop this command from being sent: %s",
+                           (LPCTSTR) pPlugin->m_strName,
+                           pPlugin->m_dVersion,
+                           (LPCTSTR) strCommand));
+      pDoc->Note (Translate ("MUSHclient ignored that, as it does for this version of this plugin. "
+                             "This note appears once per session."));
+      }
+
+    return false;
+    }
+
+  counts.nStopped++;
+
+  pDoc->Trace ("%s", (LPCTSTR) TFormat ("Plugin %s: %s stopped command: %s",
+                                        (LPCTSTR) pPlugin->m_strName,
+                                        sName.c_str (),
+                                        (LPCTSTR) strCommand));
+
+  return true;
+  } // end of CommandVetoStands
+
+// destructor
+CPlugin::~CPlugin ()
+  {
+  s_CommandVetoes.erase (this);
+
   // change to this plugin, call function, put current plugin back
   CPlugin * pSavedPlugin = m_pDoc->m_CurrentPlugin;
   m_pDoc->m_CurrentPlugin = this;
@@ -1637,9 +1732,11 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
     // change to this plugin, call function, put current plugin back
     m_CurrentPlugin = pPlugin;        // so plugin knows who it is
     CScriptCallInfo callinfo (sName, pPlugin->m_PluginCallbacks [sName]);
-    if (!pPlugin->ExecutePluginScript (callinfo, sText))
-        bResult = false;
+    const bool bApproved = pPlugin->ExecutePluginScript (callinfo, sText);
     m_CurrentPlugin = pSavedPlugin;  // back to current plugin
+
+    if (!bApproved && CommandVetoStands (this, pPlugin, sName, sText))
+        bResult = false;
 
     if (bStopOnFalse && !bResult && callinfo._dispid_info.isvalid ())
       {
@@ -1675,9 +1772,15 @@ void CMUSHclientDoc::SendToAllPluginCallbacksRtn (const string & sName, CString 
   const bool bSavedNotesNotWanted = m_bNotesNotWantedNow;
   m_bNotesNotWantedNow = true;  // batch up Note/Tell calls
 
+  // OnPluginCommandEntered discards the command by returning a tab or a carriage
+  // return. A later plugin can replace that, so who did it is only known at the end.
+  const bool bCommandEntered = sName == ON_PLUGIN_COMMAND_ENTERED;
+  const CString strEntered = bCommandEntered ? strResult : CString ();
+  CPlugin * pDiscardedBy = NULL;
+
   // tell a plugin the message
-  for (PluginListIterator pit = m_PluginList.begin (); 
-         pit != m_PluginList.end (); 
+  for (PluginListIterator pit = m_PluginList.begin ();
+         pit != m_PluginList.end ();
          ++pit)
     {
     CPlugin * pPlugin = *pit;
@@ -1688,10 +1791,23 @@ void CMUSHclientDoc::SendToAllPluginCallbacksRtn (const string & sName, CString 
     // change to this plugin, call function, put current plugin back
     m_CurrentPlugin = pPlugin;        // so plugin knows who it is
     CScriptCallInfo callinfo (sName, pPlugin->m_PluginCallbacks [sName]);
+    const CString strBefore = bCommandEntered ? strResult : CString ();
     pPlugin->ExecutePluginScriptRtn (callinfo, strResult);
     m_CurrentPlugin = pSavedPlugin;   // back to current plugin
 
+    if (bCommandEntered && strResult != strBefore)
+      pDiscardedBy = (strResult == "\t" || strResult == "\r") ? pPlugin : NULL;
+
     }   // end of doing each plugin
+
+  if (pDiscardedBy)
+    {
+    s_CommandVetoes [pDiscardedBy].nStopped++;
+    Trace ("%s", (LPCTSTR) TFormat ("Plugin %s: %s stopped command: %s",
+                                    (LPCTSTR) pDiscardedBy->m_strName,
+                                    sName.c_str (),
+                                    m_bNoEcho ? Translate ("(hidden: echo is off)") : (LPCTSTR) strEntered));
+    }
 
   m_bNotesNotWantedNow = bSavedNotesNotWanted;
   } // end of CMUSHclientDoc::SendToAllPluginCallbacks

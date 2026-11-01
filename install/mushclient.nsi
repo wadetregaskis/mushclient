@@ -258,7 +258,7 @@ Section "-MUSHclient program (required)"
   ; Write the uninstall keys for Windows (likewise 6.00's own, so a 5.x
   ; alongside keeps its entry in Apps)
   WriteRegStr HKLM "${UNINSTKEY}" "DisplayName" "${APPNAME}"
-  WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "Nick Gammon"
+  WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "Wade Tregaskis"
   WriteRegStr HKLM "${UNINSTKEY}" "UninstallString" "$INSTDIR\uninstall.exe"
 
   ; The folders a portable copy -- the zip, which build-app.ps1 makes from this

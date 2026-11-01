@@ -1370,7 +1370,7 @@ void CMainFrame::OnWebPage()
 {
 if ((INT_PTR) ShellExecute (Frame, _T("open"), MY_WEB_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
-            "Unable to open the Gammon Software Solutions web page: "
+            "Unable to open the MUSHclient web page: "
             MY_WEB_PAGE, 
             MB_ICONEXCLAMATION);
 }  // end of CMainFrame::OnWebPage
@@ -1622,7 +1622,7 @@ void CMainFrame::OnHelpBugreportsuggestion()
 {
 if ((INT_PTR) ShellExecute (Frame, _T("open"), BUG_REPORT_PAGE, NULL, NULL, SW_SHOWNORMAL) <= 32)
   ::TMessageBox(
-            "Unable to open the Gammon Software Solutions Bug Report web page: "
+            "Unable to open the MUSHclient bug report web page: "
             BUG_REPORT_PAGE, 
             MB_ICONEXCLAMATION);
 	

@@ -6,7 +6,7 @@ Friday, 29 March 2019
 
 Original author: Nick Gammon
 Fork (v6) author: Wade Tregaskis
-Web support: http://www.gammon.com.au/forum/
+Web support: https://github.com/wadetregaskis/mushclient/issues
 
 -----------------------------------------
 If you are reading this file with NotePad,
@@ -14,16 +14,16 @@ enable "Word Wrap" under the Edit menu for
 proper viewing of it.
 -----------------------------------------
 
-MUSHclient is produced by Gammon Software Solutions:
-  http://www.gammon.com.au/
+This version of MUSHclient is published by Wade Tregaskis.  It is a fork of Nick Gammon's
+MUSHclient, and he is not involved in publishing it or supporting it.
 
-MUSHclient home page:
-  http://www.gammon.com.au/mushclient/
+Home page:
+  https://github.com/wadetregaskis/mushclient
 
-A MUSHclient bug and suggestion list is at:
-  http://www.gammon.com.au/mushclient/buglist.htm
+Bugs and suggestions:
+  https://github.com/wadetregaskis/mushclient/issues
 
-Forum for MUSHclient discussions, submitting bugs and suggestions:
+The forum for discussing MUSHclient in general, Nick Gammon's:
   http://www.gammon.com.au/forum/?bbsection_id=1
 
 MUSHclient scripting functions (and a copy of the help file) are at:
@@ -82,13 +82,9 @@ build remains the primary distribution; for the macOS app see packaging/README.m
 Bug reports
 -----------
 
-Please submit bug reports or suggested enhancements to the MUSHclient forum:
+Please submit bug reports or suggested enhancements on GitHub, after checking whether the bug you are reporting is already known:
 
-  http://www.gammon.com.au/forum/?bbsection_id=1
-
-There is a "MUSHclient bug list" page on the Web, you may wish to check that page first to see if the bug you are reporting is already known. The bug list page is at:
-
-  http://www.mushclient.com/buglist.htm
+  https://github.com/wadetregaskis/mushclient/issues
 
 
 FAQ
@@ -107,7 +103,11 @@ Answers to common questions are also found at the MUSHclient forum:
 MUSHclient home page
 --------------------
 
-The MUSHclient home page on the Web is:
+The home page of this version is:
+
+	https://github.com/wadetregaskis/mushclient
+
+The original MUSHclient, by Nick Gammon, is at:
 
 	http://www.mushclient.com/
 
@@ -133,11 +133,11 @@ MUSHclient splash screen drawn by Isobel Gammon.
 Comments welcome
 ----------------
 
-Please let me know if you have any problems. Check out the web pages mentioned above for details about later versions or known bugs.
+Please let us know if you have any problems. Check out the web pages mentioned above for details about later versions or known bugs.
 
-Send support requests, bug reports, general queries or comments to the forum:
+Send support requests, bug reports, general queries or comments to:
 
-  http://www.gammon.com.au/forum/?bbsection_id=1
+  https://github.com/wadetregaskis/mushclient/issues
 
 
 
@@ -147,6 +147,4 @@ Thanks!
 Thanks to everyone who has supported MUSHclient, either by registering earlier versions, or by sending in comments. Your support is appreciated. 
 
 
-Thanks again. I hope you enjoy using MUSHclient, as much as I have writing it.
-
-- Nick Gammon
+Thanks to Nick Gammon, who wrote MUSHclient.  We hope you enjoy using it.

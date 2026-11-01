@@ -466,7 +466,7 @@ Version: ${VERSION}
 Section: games
 Priority: optional
 Architecture: ${DEB_ARCH}
-Maintainer: MUSHclient Community <mushclient@example.com>
+Maintainer: Wade Tregaskis <wadetregaskis@users.noreply.github.com>
 Description: MUSHclient MUD client with rich scripting
  MUSHclient is a fast, powerful, and extensible MUD/MUSH/MOO client.
  It features full ANSI colour, triggers, aliases, timers, speedwalking,

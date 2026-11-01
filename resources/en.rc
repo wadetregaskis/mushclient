@@ -6149,7 +6149,7 @@ BEGIN
     ID_CONNECT_DISCONNECT   "Connect or Disconnect from current world\nConnect / Disconnect"
     ID_FIND_AGAIN_FORWARDS  "Find again in the forwards direction\nFind again forwards (Shift+Ctrl+F)"
     ID_FIND_AGAIN_BACKWARDS "Find again in the backwards direction\nFind again backwards"
-    ID_MENUITEM32963        "Opens the Gammon Software Solutions web page"
+    ID_MENUITEM32963        "Opens the MUSHclient web page"
     ID_WEB_PAGE             "MUSHclient on the Web"
 END
 

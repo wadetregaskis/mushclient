@@ -1,0 +1,239 @@
+# Continuous integration: build and test every platform on every push to main and
+# on every pull request.  Packaging stays in release.yml, run by hand.
+#
+#   Every push   Windows x64, ARM64 and Win32; macOS universal, tested as both Apple
+#                Silicon and Intel; Linux x86-64 and AArch64.
+#   Each week    The same, plus the other OS and compiler versions below, so that a
+#                new runner image or a moved dependency shows up without a commit.
+#                Run it by hand with "Run workflow" and "all_versions".
+#
+# The first run of each job builds its dependencies from source, and takes a couple
+# of hours on macOS; they are cached after that, keyed on the scripts that fetch them.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "30 6 * * 1"       # Mondays
+  workflow_dispatch:
+    inputs:
+      all_versions:
+        description: "Also test the other OS and compiler versions"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# A newer push makes an older run of the same branch pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── The quick checks: seconds, and they need no build ────────────────────────
+  checks:
+    name: Source checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      windows: ${{ steps.versions.outputs.windows }}
+      macos: ${{ steps.versions.outputs.macos }}
+      linux: ${{ steps.versions.outputs.linux }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # A job's "if" cannot see its matrix, so what each job runs on is chosen here.
+      - name: Which versions to test
+        id: versions
+        env:
+          ALL_VERSIONS: ${{ github.event_name == 'schedule' || inputs.all_versions }}
+        run: |
+          windows='{"platform":"x64","arch":"x64","runner":"windows-2025"},{"platform":"ARM64","arch":"arm64","runner":"windows-11-arm"},{"platform":"Win32","arch":"","runner":"windows-2025"}'
+          macos='{"runner":"macos-15"}'
+          linux='{"runner":"ubuntu-24.04"},{"runner":"ubuntu-24.04-arm"}'
+          if [ "$ALL_VERSIONS" = true ]; then
+            windows="$windows"',{"platform":"x64","arch":"x64","runner":"windows-2022"}'
+            macos="$macos"',{"runner":"macos-26"}'
+            # Not 22.04: its wxWidgets is 3.0, and the port needs 3.2.
+            linux="$linux"',{"runner":"ubuntu-26.04"},{"runner":"ubuntu-26.04-arm"}'
+          fi
+          echo "windows=[$windows]" >> "$GITHUB_OUTPUT"
+          echo "macos=[$macos]" >> "$GITHUB_OUTPUT"
+          echo "linux=[$linux]" >> "$GITHUB_OUTPUT"
+
+      - name: Conflict markers, ASCII literals, test helpers, doc sections
+        run: |
+          python3 tests/check_conflict_markers.py
+          python3 tests/check_ascii_literals.py
+          python3 tests/check_duplicate_test_helpers.py
+          python3 tests/check_doc_sections.py
+      - name: Windows test project lists every engine source
+        run: python3 tests/check_win_test_sources.py
+      - name: Bundled plugin list matches the installer
+        run: python3 tests/check_bundled_plugins.py
+
+  # ── Windows ──────────────────────────────────────────────────────────────────
+  # run_tests.ps1 builds the test executable and runs every suite, each in its own
+  # process.  Then the Release client, for the engines selftest with real
+  # interpreters.  Win32 embeds no engines, so it has no selftest and no fetch-deps.
+  windows:
+    name: Windows ${{ matrix.platform }} (${{ matrix.runner }})
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.checks.outputs.windows) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: OpenSSL build prerequisites (Strawberry Perl; NASM for x64)
+        if: matrix.arch != ''
+        run: |
+          if (-not (Get-Command perl -ErrorAction SilentlyContinue) -or -not ((perl -v) -match 'MSWin32')) {
+            choco install strawberryperl -y --no-progress
+          }
+          "C:\Strawberry\perl\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          if ('${{ matrix.arch }}' -eq 'x64') {
+            choco install nasm -y --no-progress
+            "C:\Program Files\NASM" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+
+      - name: Cache the from-source dependencies
+        if: matrix.arch != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            packaging/windows/deps/${{ matrix.platform }}
+            packaging/windows/deps/common
+          key: windows-${{ matrix.platform }}-deps-${{ hashFiles('packaging/windows/fetch-deps.ps1') }}
+
+      - name: Dependencies
+        if: matrix.arch != ''
+        run: packaging\windows\fetch-deps.ps1 -Arch ${{ matrix.arch }} -StageTo WinDebug-${{ matrix.platform }}
+
+      - name: Tests
+        run: tests\win\run_tests.ps1 -Platform ${{ matrix.platform }}
+
+      # The package script builds Release, makes the zip, checks it is self-contained
+      # and runs every scripting language's selftest from the extracted package.
+      - name: Release build and the engines selftest
+        if: matrix.arch != ''
+        run: |
+          $version = (Select-String -Path src\version.h -Pattern '#define VERSION_STRING "(.*)"').Matches[0].Groups[1].Value
+          packaging\windows\build-app.ps1 -Arch ${{ matrix.arch }} -Version $version -SkipDeps -OutDir out
+
+      - name: Keep the logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.platform }}-${{ matrix.runner }}-logs
+          path: |
+            out/*-selftest.txt
+            WinTest*/*.log
+          if-no-files-found: ignore
+
+  # ── macOS ────────────────────────────────────────────────────────────────────
+  macos:
+    name: macOS (${{ matrix.runner }})
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.checks.outputs.macos) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rosetta 2 (builds Ruby's Intel half natively, and runs the Intel tests)
+        run: /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+
+      - name: Cache the from-source dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            packaging/openssl/install
+            packaging/wx/install
+            packaging/tcl/install
+            packaging/ruby/install
+            packaging/ruby/deps
+            packaging/python/Python.framework
+          key: ${{ matrix.runner }}-deps-${{ hashFiles('packaging/fetch-*.sh') }}
+
+      - name: Build tools (llvm-rc)
+        run: brew install llvm
+
+      - name: Build the app (universal, macOS 11+)
+        run: packaging/build-app.sh --no-dmg
+
+      - name: Build the test suite (same settings)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DwxWidgets_CONFIG_EXECUTABLE="$PWD/packaging/wx/install/bin/wx-config" \
+            -DMUSHCLIENT_BUNDLED_LUA=ON -DOPENSSL_ROOT_DIR="$PWD/packaging/openssl/install"
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Tests (Apple Silicon)
+        run: ctest --test-dir build -j"$(sysctl -n hw.ncpu)" --output-on-failure
+
+      - name: Tests (Intel, the x86_64 half under Rosetta)
+        run: python3 tools/ctest-arch.py build x86_64 -j"$(sysctl -n hw.ncpu)"
+
+  # ── Linux ────────────────────────────────────────────────────────────────────
+  linux:
+    name: Linux (${{ matrix.runner }})
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.checks.outputs.linux) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config xz-utils dpkg-dev file patchelf \
+            libwxgtk3.2-dev liblua5.1-0-dev libasound2-dev libssl-dev zlib1g-dev libffi-dev \
+            libperl-dev libjavascriptcoregtk-4.1-dev \
+            llvm clang \
+            xvfb xauth
+
+      - name: Cache the from-source runtimes
+        uses: actions/cache@v4
+        with:
+          path: |
+            packaging/tcl/install
+            packaging/ruby/install
+            packaging/ruby/deps
+            packaging/python/install
+          key: ${{ matrix.runner }}-runtimes-${{ hashFiles('packaging/fetch-tcl.sh', 'packaging/fetch-ruby.sh', 'packaging/fetch-python.sh') }}
+
+      - name: Tcl, Ruby and Python runtimes
+        run: |
+          [ -f packaging/tcl/install/lib/libtcl8.6.a ] || packaging/fetch-tcl.sh
+          [ -d packaging/ruby/install/lib ] || packaging/fetch-ruby.sh
+          [ -d packaging/python/install/lib ] || packaging/fetch-python.sh
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build -j"$(nproc)"
+
+      - name: Tests (under a virtual X display)
+        run: xvfb-run -a ctest --test-dir build -j"$(nproc)" --output-on-failure

@@ -104,6 +104,18 @@ CString CMUSHclientDoc::ScrollbackFilePath (void) const
   }
 
 
+CString CMUSHclientDoc::CommandHistoryFilePath (void) const
+  {
+  CString strPath = ScrollbackFilePath ();
+  if (!strPath.IsEmpty ())
+    {
+    strPath = strPath.Left (strPath.GetLength () - 5);    // ".mcsb"
+    strPath += ".history";
+    }
+  return strPath;
+  } // end of CMUSHclientDoc::CommandHistoryFilePath
+
+
 bool CMUSHclientDoc::RestoreSavedScrollback (void)
   {
   if (!m_bSaveScrollback)

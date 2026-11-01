@@ -80,6 +80,13 @@ public:
 
   void AddToCommandHistory (const CString & strCommand);
 
+  // Between sessions (command_history_store.h).
+  void LoadCommandHistory ();
+  void SaveCommandHistoryIfChanged (const bool bClosing);
+  int     m_iHistorySavedCount = 0;
+  CString m_strHistorySaved;
+  time_t  m_tHistoryChecked = 0;
+
   void AdjustCommandWindowSize (void);
   void CheckForSelectionChange (void);
   void CancelSelection (void);

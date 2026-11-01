@@ -2264,6 +2264,27 @@ public:
   void ScrollbackLineFlagsChanged (const CLine * pLine);
   // World Properties' button: forget what's saved, and leave what's on screen.
   void ClearSavedScrollback (void);
+  CString CommandHistoryFilePath (void) const;
+
+  // ── autosave (doc_autosave_shared.cpp) ──────────────────────────────────
+  // Hides CDocument's (virtual on Windows, plain on the port), to note when it happens.
+  void SetModifiedFlag (BOOL bModified = TRUE);
+  void AutosaveTick (void);
+  void SaveWorldBeforeClosing (void);
+  void BackUpWorldFileIfDue (const CString & strPath);
+  CString WorldBackupsRoot (void) const;
+  CString WorldBackupsFolder (void) const;
+  void FireWorldSaveCallbacks (void);
+  time_t m_tAutosaveFirstChange;    // since it last wasn't modified
+  time_t m_tAutosaveLastChange;
+  time_t m_tAutosaveRetry;          // after a failure, not before this
+  bool   m_bAutosaving;             // a save nobody asked for, so no dialogs
+  bool   m_bAutosaveFailed;
+  bool   m_bAutosaveReportedFailure;
+  bool   m_bBackedUpThisSession;
+#ifdef _WIN32
+  virtual void ReportSaveLoadException (LPCTSTR lpszPathName, CException * e, BOOL bSaving, UINT nIDPDefault);
+#endif
 
   bool m_bInPlaySoundFilePlugin;
   bool m_bInCancelSoundFilePlugin;
@@ -3228,6 +3249,8 @@ protected:
 protected:
 	//{{AFX_MSG(CMUSHclientDoc)
 	afx_msg void OnFileLogsession();
+	afx_msg void OnFileWorldBackups();
+	afx_msg void OnUpdateFileWorldBackups(CCmdUI* pCmdUI);
 	afx_msg void OnUpdateFileLogsession(CCmdUI* pCmdUI);
 	afx_msg void OnUpdateStatuslineLines(CCmdUI* pCmdUI);
 	afx_msg void OnUpdateStatuslineMushname(CCmdUI* pCmdUI);

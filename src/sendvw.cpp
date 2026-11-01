@@ -30,6 +30,10 @@
 #include "winplace.h"
 
 #include "scripting/errors.h"
+#include "command_history_store.h"
+
+#include <string>
+#include <vector>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -1210,7 +1214,80 @@ void CSendView::OnInitialUpdate()
 
   UpdateWrap();
 
+  LoadCommandHistory ();
+
 }   // end of CSendView::OnInitialUpdate
+
+
+// Up-arrow's list from last time.  See command_history_store.h for the file.  It goes
+// with the saved output: the world option covers both.
+void CSendView::LoadCommandHistory ()
+  {
+  CMUSHclientDoc * pDoc = GetDocument ();
+  if (!pDoc->m_bSaveScrollback || !m_msgList.IsEmpty ())
+    return;
+
+  const CString strPath = pDoc->CommandHistoryFilePath ();
+  std::vector<std::string> commands;
+  if (strPath.IsEmpty () ||
+      !command_history::Load ((const char *) strPath, commands, (size_t) pDoc->m_nHistoryLines))
+    return;
+
+  for (const std::string & command : commands)
+    {
+    // The edit control's idea of a new line, and the file's.
+    CString strCommand (command.c_str ());
+    strCommand.Replace ("\n", ENDLINE);
+    m_msgList.AddTail (strCommand);
+    }
+  m_inputcount = (int) m_msgList.GetCount ();
+  if (!m_msgList.IsEmpty ())
+    {
+    m_last_command = m_msgList.GetTail ();
+    m_strHistorySaved = m_last_command;
+    }
+  m_iHistorySavedCount = m_inputcount;
+  }   // end of CSendView::LoadCommandHistory
+
+
+// Every so often while playing, in case of a crash, and at the end.  Only if it has
+// changed, which a new last command or a different count shows.
+void CSendView::SaveCommandHistoryIfChanged (const bool bClosing)
+  {
+  const time_t tNow = time (NULL);
+  if (!bClosing && tNow - m_tHistoryChecked < 30)
+    return;
+  m_tHistoryChecked = tNow;
+
+  CMUSHclientDoc * pDoc = GetDocument ();
+  const CString strPath = pDoc->CommandHistoryFilePath ();
+  if (strPath.IsEmpty ())
+    return;
+
+  // With nowhere to come back to, or the option off, there should be no file at all.
+  if (!pDoc->m_bSaveScrollback || (bClosing && pDoc->GetPathName ().IsEmpty ()))
+    {
+    remove (strPath);
+    m_iHistorySavedCount = -1;
+    return;
+    }
+
+  const int iCount = (int) m_msgList.GetCount ();
+  const CString strLast = iCount ? m_msgList.GetTail () : CString ();
+  if (iCount == m_iHistorySavedCount && strLast == m_strHistorySaved)
+    return;
+
+  std::vector<std::string> commands;
+  commands.reserve ((size_t) iCount);
+  for (POSITION pos = m_msgList.GetHeadPosition (); pos; )
+    commands.push_back ((const char *) m_msgList.GetNext (pos));
+
+  if (command_history::Save ((const char *) strPath, commands))
+    {
+    m_iHistorySavedCount = iCount;
+    m_strHistorySaved = strLast;
+    }
+  }   // end of CSendView::SaveCommandHistoryIfChanged
 
 void CSendView::OnContextMenu(CWnd*, CPoint point)
 {
@@ -1545,7 +1622,9 @@ void CSendView::OnDestroy()
 
 	CMUSHclientDoc* pDoc = GetDocument();
 	ASSERT_VALID(pDoc);
-		
+
+  SaveCommandHistoryIfChanged (true);
+
   CWindowPlacement wp;
   wp.Save (CString (pDoc->m_mush_name + " World Position"), m_owner_frame);
 

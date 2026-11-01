@@ -5818,6 +5818,7 @@ CPrefsP14::CPrefsP14() : CPropertyPage(CPrefsP14::IDD)
 	m_iPixelOffset = 0;
 	m_bAutoFreeze = FALSE;
 	m_bDisableCompression = FALSE;
+	m_bSaveScrollback = FALSE;
 	m_bFlashIcon = FALSE;
 	m_bShowItalic = FALSE;
 	m_bShowUnderline = FALSE;
@@ -5875,6 +5876,7 @@ void CPrefsP14::DoDataExchange(CDataExchange* pDX)
 	DDV_MinMaxInt(pDX, m_iPixelOffset, 0, 20);
 	DDX_Check(pDX, IDC_AUTOFREEZE, m_bAutoFreeze);
 	DDX_Check(pDX, IDC_DISABLE_COMPRESSION, m_bDisableCompression);
+	DDX_Check(pDX, IDC_SAVE_SCROLLBACK, m_bSaveScrollback);
 	DDX_Check(pDX, IDC_FLASH_ICON, m_bFlashIcon);
 	DDX_Check(pDX, IDC_SHOW_ITALIC, m_bShowItalic);
 	DDX_Check(pDX, IDC_SHOW_UNDERLINE, m_bShowUnderline);
@@ -5954,6 +5956,7 @@ BEGIN_MESSAGE_MAP(CPrefsP14, CPropertyPage)
 	ON_BN_CLICKED(IDC_BROWSE_SOUNDS2, OnBrowseSounds2)
 	ON_BN_CLICKED(IDC_TEST_SOUND2, OnTestSound2)
 	ON_BN_CLICKED(IDC_NO_SOUND, OnNoSound)
+	ON_BN_CLICKED(IDC_CLEAR_SAVED_OUTPUT, OnClearSavedOutput)
 	//}}AFX_MSG_MAP
   ON_MESSAGE(WM_KICKIDLE, OnKickIdle)
   ON_UPDATE_COMMAND_UI(IDC_CHOOSE_FONT, OnUpdateNotUsingDefaults)
@@ -9089,6 +9092,14 @@ void CPrefsP14::OnTestSound2()
 {
   if (!m_sound_pathname.IsEmpty () && m_sound_pathname != NOSOUNDLIT)
     m_doc->PlaySoundFile (m_sound_pathname);	
+}
+
+// Now, not on OK: it can't be taken back either way, and they have just said so.
+void CPrefsP14::OnClearSavedOutput ()
+{
+  if (::UMessageBox ("Forget the output saved for this world?  What is on screen now stays there.",
+                     MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES)
+    m_doc->ClearSavedScrollback ();
 }
 
 void CPrefsP14::OnNoSound() 

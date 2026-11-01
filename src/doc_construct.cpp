@@ -391,6 +391,13 @@ int i;
   m_pScrollback = NULL;
   m_nLastRestoredLine = 0;
   m_bScrollbackWanted = false;
+  m_tAutosaveFirstChange = 0;
+  m_tAutosaveLastChange = 0;
+  m_tAutosaveRetry = 0;
+  m_bAutosaving = false;
+  m_bAutosaveFailed = false;
+  m_bAutosaveReportedFailure = false;
+  m_bBackedUpThisSession = false;
 
   // set up the dialog box headings for the finding dialogs
   m_DisplayFindInfo.m_strTitle    = "Find in output buffer...";

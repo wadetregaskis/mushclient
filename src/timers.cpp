@@ -390,6 +390,17 @@ void CMUSHclientDoc::CheckTimers ()
 void CMUSHclientDoc::SavePendingWork ()
   {
   ScrollbackTick ();
+  AutosaveTick ();
+#ifdef _WIN32
+  // The command box keeps its own history.  A view can't be asked for it through a
+  // base-class pointer without knowing what it is.
+  for (POSITION pos = GetFirstViewPosition (); pos; )
+    {
+    CView * pView = GetNextView (pos);
+    if (pView->IsKindOf (RUNTIME_CLASS (CSendView)))
+      ((CSendView *) pView)->SaveCommandHistoryIfChanged (false);
+    }
+#endif
   } // end of CMUSHclientDoc::SavePendingWork
 
 #ifdef _WIN32

@@ -10,6 +10,7 @@
 // #define SHOW_ALL_COMMS // for debugging connecting and other obscure problems
 
 #include "doc.h"
+#include "scrollback_store.h"
 #include "mushview.h"
 #include "mainfrm.h"
 #include "childfrm.h"
@@ -112,6 +113,8 @@ IMPLEMENT_DYNCREATE(CMUSHclientDoc, CDocument)
 BEGIN_MESSAGE_MAP(CMUSHclientDoc, CDocument)
 	//{{AFX_MSG_MAP(CMUSHclientDoc)
 	ON_COMMAND(ID_FILE_LOGSESSION, OnFileLogsession)
+	ON_COMMAND(ID_FILE_WORLD_BACKUPS, OnFileWorldBackups)
+	ON_UPDATE_COMMAND_UI(ID_FILE_WORLD_BACKUPS, OnUpdateFileWorldBackups)
 	ON_UPDATE_COMMAND_UI(ID_FILE_LOGSESSION, OnUpdateFileLogsession)
 	ON_UPDATE_COMMAND_UI(ID_STATUSLINE_LINES, OnUpdateStatuslineLines)
 	ON_UPDATE_COMMAND_UI(ID_STATUSLINE_MUSHNAME, OnUpdateStatuslineMushname)
@@ -668,6 +671,20 @@ void CMUSHclientDoc::ExecuteHotspotScript (DISPID & dispid,  // dispatch ID, wil
                  nInvocationCount); 
 
   }   // end of CMUSHclientDoc::ExecuteHotspotScript
+
+// The folder may not exist yet, on a world with no backups: it opens, and is empty.
+void CMUSHclientDoc::OnFileWorldBackups ()
+  {
+  const CString strFolder = WorldBackupsFolder ();
+  scrollback::MakeFoldersFor (std::string ((const char *) strFolder) + "\\");
+  ShellExecute (NULL, "open", strFolder, NULL, NULL, SW_SHOWNORMAL);
+  }
+
+void CMUSHclientDoc::OnUpdateFileWorldBackups (CCmdUI * pCmdUI)
+  {
+  DoFixMenus (pCmdUI);  // remove accelerators from menus
+  pCmdUI->Enable (!GetPathName ().IsEmpty ());
+  }
 
 void CMUSHclientDoc::OnFileLogsession() 
 {
@@ -2171,10 +2188,9 @@ CString str;
     }
 	
   // save world automatically on close if desired
-  if (m_bSaveWorldAutomatically && IsModified ())
-    DoSave (m_strPathName, TRUE);
+  SaveWorldBeforeClosing ();
 
-  if (!IsModified () && 
+  if (!IsModified () &&
       m_bVariablesChanged &&
       App.m_bConfirmBeforeSavingVariables)
     {
@@ -2327,6 +2343,25 @@ BOOL CMUSHclientDoc::DoSave(LPCTSTR lpszPathName, BOOL bReplace)
   else
     strNewName = lpszPathName;
 
+  FireWorldSaveCallbacks ();
+
+  // A copy of what's about to be replaced, if one's due.  Not for saving under some
+  // other name, like the Automatic_Backup plugin's world.Save (name, true).
+  if (strNewName.CompareNoCase (GetPathName ()) == 0)
+    BackUpWorldFileIfDue (strNewName);
+
+  BOOL bSuccess = CDocument::DoSave (strNewName, bReplace);
+
+  if (bSuccess)
+    m_bVariablesChanged = false;
+
+  return bSuccess;
+  }
+
+
+// A world is about to be saved, for whatever reason: on_world_save and OnPluginWorldSave.
+void CMUSHclientDoc::FireWorldSaveCallbacks (void)
+  {
  // execute "save" script
   if (m_ScriptEngine)
     {
@@ -2336,27 +2371,35 @@ BOOL CMUSHclientDoc::DoSave(LPCTSTR lpszPathName, BOOL bReplace)
       DISPPARAMS params = { NULL, NULL, 0, 0 };
       long nInvocationCount = 0;
 
-      ExecuteScript (m_dispidWorldSave,  
+      ExecuteScript (m_dispidWorldSave,
                    m_strWorldSave,
                    eWorldAction,
-                   "world save", 
+                   "world save",
                    "saving world",
-                   params, 
-                   nInvocationCount); 
+                   params,
+                   nInvocationCount);
       }
     } // end of executing save script
 
 
   // now do plugins "world save"
   SendToAllPluginCallbacks (ON_PLUGIN_WORLD_SAVE);
-
-  BOOL bSuccess = CDocument::DoSave (strNewName, bReplace);
-
-  if (bSuccess)
-    m_bVariablesChanged = false;
-
-  return bSuccess;
   }
+
+
+#ifdef _WIN32
+// MFC's way of saying a save failed is a message box.  One from a timer is not on, and
+// after a quiet attempt while closing, the unsaved-changes prompt says it anyway.
+void CMUSHclientDoc::ReportSaveLoadException (LPCTSTR lpszPathName, CException * e, BOOL bSaving, UINT nIDPDefault)
+  {
+  if (m_bAutosaving && bSaving)
+    {
+    m_bAutosaveFailed = true;
+    return;
+    }
+  CDocument::ReportSaveLoadException (lpszPathName, e, bSaving, nIDPDefault);
+  }
+#endif
 
 
 void CMUSHclientDoc::OnGameAutosay() 

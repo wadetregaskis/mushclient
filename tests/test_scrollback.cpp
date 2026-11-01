@@ -1276,7 +1276,6 @@ static void MeasureScrollback (const size_t lines)
   SessionFixture s (id, 0);
   load = seconds (start);
   restored = (size_t) s.Count ();
-  s.doc.SetPathName ("", FALSE);    // not worth saving again
   s.End ();
   }
 

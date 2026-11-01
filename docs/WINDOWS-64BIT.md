@@ -81,7 +81,12 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\fetch-deps.ps1 -Arch 
 #   -Force                  rebuild what is already built
 ```
 
-(`-Only a,b` needs the script run in-process -- `& .\packaging\windows\
+(`-Arch x86 -Only openssl,luasocket` builds the two Win32 pieces that come from source:
+the OpenSSL libraries committed in `openssl\` (the script's header says what to copy
+where), and `socket\core.dll` and `mime\core.dll`, which the 32-bit installer takes from
+`deps\Win32\bin\` and which a Win32 development copy wants beside its exe.
+
+`-Only a,b` needs the script run in-process -- `& .\packaging\windows\
 fetch-deps.ps1 ...` -- because `powershell -File` passes the list as one string.)
 
 What is built is skipped next time.  Ruby dominates a clean run (its MSVC

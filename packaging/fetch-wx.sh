@@ -11,7 +11,7 @@
 #
 # The version matches what the development build gets from Homebrew, so a
 # release and a development build run the same wxWidgets.  The download is
-# checked against the SHA-1 wxWidgets publishes in its release notes.
+# checked against the SHA-256 wxWidgets publishes in its release notes.
 #
 #   staging (git-ignored):
 #     packaging/wx/install/bin/wx-config      — what CMake is pointed at
@@ -30,8 +30,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/wx"
 INSTALL="$DEST/install"
-VERSION="3.3.2"
-SHA1="64ca276f82ccb2b1459bceb4b8fda33609461d69"
+VERSION="3.3.4"
+SHA256="815c16cafa4fcbfcf25c5c0a3418309c62257b8a3b6f91d85a1367a134f98c98"
 MACOS_MIN="${MACOS_MIN:-11.0}"
 MACOS_ARCHS="${MACOS_ARCHS:-arm64 x86_64}"
 FORCE=0
@@ -64,8 +64,8 @@ if [ ! -f "$CACHE" ]; then
     curl -fL --retry 3 -o "$CACHE.part" "$URL" || die "download failed: $URL"
     mv "$CACHE.part" "$CACHE"
 fi
-got="$(shasum -a 1 "$CACHE" | cut -d' ' -f1)"
-[ "$got" = "$SHA1" ] || { rm -f "$CACHE"; die "checksum mismatch for $PKG (got $got); deleted it, re-run to download again"; }
+got="$(shasum -a 256 "$CACHE" | cut -d' ' -f1)"
+[ "$got" = "$SHA256" ] || { rm -f "$CACHE"; die "checksum mismatch for $PKG (got $got); deleted it, re-run to download again"; }
 
 note "building wxWidgets $VERSION (static, $MACOS_ARCHS, macOS $MACOS_MIN+) — this takes a while"
 rm -rf "$INSTALL" "$DEST/src"

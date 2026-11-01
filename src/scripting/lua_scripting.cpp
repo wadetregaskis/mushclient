@@ -226,6 +226,23 @@ void CScriptEngine::OpenLuaDelayed ()
     } // have package table
 
   lua_pop (L, 1);   // get rid of package table from stack
+#else
+  // No COM here, but plugins that speak through SAPI.SpVoice still work: a11y_shims.cpp
+  lua_getglobal (L, LUA_LOADLIBNAME);
+  if (lua_istable (L, -1))
+    {
+    lua_getfield (L, -1, "preload");
+    if (lua_istable (L, -1))
+      {
+      extern const char * const kA11yLuacomShim;
+      if (luaL_loadstring (L, kA11yLuacomShim) == 0)
+        lua_setfield (L, -2, "luacom");
+      else
+        lua_pop (L, 1);   // the error message
+      }
+    lua_pop (L, 1);
+    }
+  lua_pop (L, 1);
 #endif
 
 #if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)

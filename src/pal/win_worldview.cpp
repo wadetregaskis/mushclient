@@ -75,6 +75,7 @@
 #include "winplace.h"   // CWindowPlacement — outputRect/mainRect GetWindowPlacement
 
 #include "pal/win_worldview.h"
+#include "pal/win_a11y_pane.h"
 
 namespace pal {
 
@@ -1214,8 +1215,64 @@ public:
         return s;
     }
 
+    // ── the accessible text pane (pal/win_a11y_pane.cpp) ──────────────────
+    void accessiblePaneShow(bool show) override
+    {
+        if (!show)
+        {
+            if (m_pPane)
+                WinA11yPane_Destroy(m_pPane);
+            m_pPane = nullptr;
+            return;
+        }
+        if (m_pPane)
+            return;
+        CMUSHView* pOutput = nullptr;
+        CSendView* pCommand = nullptr;
+        for (POSITION pos = m_pDoc->GetFirstViewPosition(); pos != NULL; )
+        {
+            CView* pView = m_pDoc->GetNextView(pos);
+            if (!pOutput && pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
+                pOutput = (CMUSHView*) pView;
+            else if (!pCommand && pView->IsKindOf(RUNTIME_CLASS(CSendView)))
+                pCommand = (CSendView*) pView;
+        }
+        if (pOutput && pCommand)
+            m_pPane = WinA11yPane_Create(pOutput->GetSafeHwnd(), pCommand->GetSafeHwnd(), m_pDoc);
+    }
+
+    void accessibleLine(const char* utf8) override
+    {
+        if (m_pPane)
+            WinA11yPane_Append(m_pPane, utf8);
+    }
+
+    void accessibleFlush() override
+    {
+        if (m_pPane)
+            WinA11yPane_Flush(m_pPane);
+    }
+
+    void accessibleReset(const char* utf8Text) override
+    {
+        if (m_pPane)
+            WinA11yPane_Reset(m_pPane, utf8Text);
+    }
+
+    bool accessiblePaneFocused() const override
+    {
+        return m_pPane && WinA11yPane_Focused(m_pPane);
+    }
+
+    void accessibleFocusPane(bool pane) override
+    {
+        if (m_pPane)
+            WinA11yPane_Focus(m_pPane, pane);
+    }
+
 private:
     CMUSHclientDoc* m_pDoc;
+    CWinA11yPane* m_pPane = nullptr;
 };
 
 

@@ -31,6 +31,7 @@
 #include "wx_dialog_resource.h"
 #include "wx_dialog_bridge.h"
 #include "wx_mfc_hooks.h"   // g_wxhook_make_owner_draw_button (BS_OWNERDRAW)
+#include "wx_a11y.h"   // McSetAccessibleName
 #include "wx_osx_text.h"    // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 
 namespace {
@@ -504,6 +505,7 @@ void PopulateWindowFromTemplate(wxWindow* target, const RcDialog& t)
     static const int kTrayArt[10] = { 129, 288, 289, 290, 291, 292, 293, 294, 295, 296 };
     int trayIconSeen = 0;
     wxWindow* prevCtrl = nullptr;   // previous control, for spin → buddy (UDS_AUTOBUDDY)
+    std::string a11yLabel;          // the static just before this control
 
     for (const RcControl& c : t.controls)
     {
@@ -518,6 +520,30 @@ void PopulateWindowFromTemplate(wxWindow* target, const RcDialog& t)
             imageResId = kTrayArt[trayIconSeen++];
 
         wxWindow* w = CreateControl(target, c, pos, sz, imageResId);
+
+        // A screen reader's name for a field: on Windows the static just before it
+        // gives it one.  Here they are unrelated siblings, so it has to be said
+        // (tests/check_dialog_labels.py keeps the resource's order true).
+        if (w)
+        {
+            if (c.className == "Edit" || c.className == "ComboBox" || c.className == "ListBox" ||
+                c.className == "SysListView32" || c.className == "SysTreeView32")
+            {
+                if (!a11yLabel.empty())
+                    McSetAccessibleName(w, a11yLabel.c_str());
+            }
+            else if (c.className == "Button" && !c.text.empty())
+                McSetAccessibleName(w, c.text.c_str());   // a swatch paints itself
+            a11yLabel.clear();
+            if (c.className == "Static")
+            {
+                for (const char ch : c.text)
+                    if (ch != '&')
+                        a11yLabel += ch;
+                if (c.cx == 0 && c.cy == 0)   // on Windows, only there to name the next one
+                    w->Hide();
+            }
+        }
         // A spin button steps its buddy edit (the control created just before it,
         // per UDS_AUTOBUDDY); wire them now that both wx widgets exist.
         if (w && c.className == "msctls_updown32" && g_wxhook_bind_spin)

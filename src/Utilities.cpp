@@ -397,6 +397,7 @@ CString GetSendToString (const unsigned short iWhere)
     case eSendToScript:       strWhere = "script";           break;
     case eSendImmediate:      strWhere = "immediate";        break;
     case eSendToScriptAfterOmit: strWhere = "script_after_omit"; break;
+    case eSendToSpeech:       strWhere = "speech";           break;
 #ifdef PANE
     case eSendToPane:         strWhere = "pane";             break;
 #endif // PANE

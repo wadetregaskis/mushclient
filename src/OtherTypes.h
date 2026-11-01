@@ -54,6 +54,7 @@ enum { eSendToWorld,        //  0   - send to MUD
 #ifdef PANE
        eSendToPane,         // 15   - send to a pane window
 #endif
+       eSendToSpeech,       // 15   - say it (PANE is never defined; world files hold this number)
 
        eSendToLast  // THIS MUST BE LAST!!!
       };

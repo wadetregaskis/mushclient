@@ -156,6 +156,13 @@ int i;
   m_bMSPAllowHttp = false;
   m_bMXPWindows = true;
   m_pProto = new CProtocolState;
+  m_bSpeechMute = false;
+  m_bSpeechBackground = false;
+  m_bSpeechReadAll = false;
+  m_bSpeechInterruptOnEnter = true;
+  m_bSpeechHoldWhileReviewing = true;
+  m_iSpeechFloodLines = 40;
+  m_pA11y = NULL;
   m_pSSL = NULL;
   m_pSSL_CTX = NULL;
   m_bSSL_Connected = false;
@@ -826,6 +833,8 @@ int i;
 
   delete m_pProto;      // last: a plugin's OnPluginClose may have called GMCP_Unsubscribe
   m_pProto = NULL;
+  delete m_pA11y;
+  m_pA11y = NULL;
 }   // end of CMUSHclientDoc::~CMUSHclientDoc
 
 

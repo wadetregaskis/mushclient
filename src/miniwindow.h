@@ -58,6 +58,8 @@ class CHotspot
 
   string m_sScrollwheelCallback; // mouse-wheel (scroll wheel) moved over hotspot
 
+  string m_sLabel;           // what a screen reader's hotspot list calls it (WindowHotspotLabel)
+
   // dispids for calling functions from NOT in a plugin (ignored in a plugin)
   DISPID m_dispid_MouseOver;       // function to call on mouseover
   DISPID m_dispid_CancelMouseOver; // function to call when mouse moves away or is clicked
@@ -123,6 +125,14 @@ class CMiniWindow
   bool m_bTemporarilyHide;   // no room right now
   bool m_bLaidOut;   // a layout pass has placed it (m_rect is meaningful)
   HotspotMap  m_Hotspots;   // where we can click with the mouse
+
+  // Text drawn with WindowText, while someone is using a screen reader: it is how an
+  // unlabelled hotspot gets a name.  Overdrawing a rectangle forgets what was in it.
+  struct SDrawnText { CRect rect; string text; };
+  vector<SDrawnText> m_DrawnText;
+  void   RememberDrawnText (long Left, long Top, long Right, long Bottom, const char * sText);
+  void   ForgetDrawnText (long Left, long Top, long Right, long Bottom);
+  string TextInRect (const CRect & rect) const;
 
   // where we last did things:
   CPoint m_last_mouseposition;

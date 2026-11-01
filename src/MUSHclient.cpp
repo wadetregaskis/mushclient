@@ -31,6 +31,10 @@
 #include "bundled_files.h"
 #include "spell_engine.h"
 #include "sqlite_path.h"   // ANSI file names for sqlite3_open
+#include "pal/ispeech.h"
+#ifdef _WIN32
+#include "pal/win_a11y_pane.h"
+#endif
 
 #include "dialogs/welcome.h"
 #include "dialogs/welcome1.h"
@@ -263,6 +267,7 @@ BOOL CMUSHclientApp::InitInstance()
   // the wx adapter (InstallWxSurfaceBridge, wx_app.cpp). Must precede any
   // miniwindow creation. Behaviour-identical to the pre-seam GDI code.
   InstallGdiSurfaceBridge();
+  pal::InstallPlatformSpeech ();     // finds nothing and loads nothing until a reader runs
 #endif
 
   char fullfilename [MAX_PATH];
@@ -1233,6 +1238,11 @@ BOOL CMUSHclientApp::PreTranslateMessage(MSG* pMsg)
 	// CG: The following lines were added by the Splash Screen component.
 	if (CSplashWnd::PreTranslateAppMessage(pMsg))
 		return TRUE;
+
+#ifdef _WIN32
+	if (WinA11y_PreTranslate (pMsg))    // the text pane's keys: the frame's accelerators would take them
+		return TRUE;
+#endif
 
 	return CWinApp::PreTranslateMessage(pMsg);
 }

@@ -82,6 +82,7 @@ BEGIN
     PUSHBUTTON      "&Edit...",IDC_EDIT,5,150,50,14
     CONTROL         "&Generate 'Help' Alias, Name:",IDC_GENERATE_HELP,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,10,172,106,10
+    LTEXT           "Help alias:",IDC_STATIC,119,170,0,0
     EDITTEXT        IDC_HELP_ALIAS,119,170,131,14,ES_AUTOHSCROLL
 END
 
@@ -90,12 +91,12 @@ STYLE WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "Triggers"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Select the triggers to be moved from this world to the plugin.",
+                    IDC_STATIC,5,5,188,8
     CONTROL         "List1",IDC_TRIGGER_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,5,15,245,145
     PUSHBUTTON      "Select &All",IDC_SELECT_ALL,5,165,50,14
     PUSHBUTTON      "Select &None",IDC_SELECT_NONE,65,165,50,14
-    LTEXT           "Select the triggers to be moved from this world to the plugin.",
-                    IDC_STATIC,5,5,188,8
     LTEXT           "Ctrl+Click to select/deselect.",IDC_STATIC,159,168,91,8
 END
 
@@ -104,12 +105,12 @@ STYLE WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "Aliases"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Select the aliases to be moved from this world to the plugin.",
+                    IDC_STATIC,5,5,187,8
     CONTROL         "List1",IDC_ALIAS_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,5,15,245,145
     PUSHBUTTON      "Select &All",IDC_SELECT_ALL,5,165,50,14
     PUSHBUTTON      "Select &None",IDC_SELECT_NONE,65,165,50,14
-    LTEXT           "Select the aliases to be moved from this world to the plugin.",
-                    IDC_STATIC,5,5,187,8
     LTEXT           "Ctrl+Click to select/deselect.",IDC_STATIC,159,168,91,8
 END
 
@@ -118,12 +119,12 @@ STYLE WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "Timers"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Select the timers to be moved from this world to the plugin.",
+                    IDC_STATIC,5,5,184,8
     CONTROL         "List1",IDC_TIMER_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,5,15,245,145
     PUSHBUTTON      "Select &All",IDC_SELECT_ALL,5,165,50,14
     PUSHBUTTON      "Select &None",IDC_SELECT_NONE,65,165,50,14
-    LTEXT           "Select the timers to be moved from this world to the plugin.",
-                    IDC_STATIC,5,5,184,8
     LTEXT           "Ctrl+Click to select/deselect.",IDC_STATIC,159,168,91,8
 END
 
@@ -132,14 +133,14 @@ STYLE WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "Variables"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Select the variables to be moved from this world to the plugin.",
+                    IDC_STATIC,5,5,194,8
     CONTROL         "List1",IDC_VARIABLE_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,5,15,245,145
     PUSHBUTTON      "Select &All",IDC_SELECT_ALL,5,165,50,14
     PUSHBUTTON      "Select &None",IDC_SELECT_NONE,65,165,50,14
     CONTROL         "&Retain State (Remember Variables)",IDC_RETAIN_STATE,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,125,167,126,10
-    LTEXT           "Select the variables to be moved from this world to the plugin.",
-                    IDC_STATIC,5,5,194,8
 END
 
 IDD_PLUGINWIZARDPAGE7 DIALOG DISCARDABLE  0, 0, 262, 181
@@ -152,6 +153,7 @@ BEGIN
                     WS_TABSTOP
     CONTROL         "&Include Standard Constants",IDC_INCLUDE_CONSTANTS,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,145,6,103,10
+    LTEXT           "Script:",IDC_STATIC,5,25,0,0
     EDITTEXT        IDC_SCRIPT,5,25,245,135,ES_MULTILINE | ES_WANTRETURN | 
                     WS_VSCROLL
     PUSHBUTTON      "&Edit...",IDC_EDIT,5,165,50,14
@@ -239,6 +241,7 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
 CAPTION "Command history"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Commands:",IDC_STATIC,10,5,0,0
     LISTBOX         IDC_COMMANDS,10,5,260,125,LBS_NOINTEGRALHEIGHT | 
                     WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
     DEFPUSHBUTTON   "&Recall",IDOK,9,176,50,14
@@ -248,6 +251,7 @@ BEGIN
     PUSHBUTTON      "Find &Next",IDC_FIND_NEXT,145,195,50,14
     PUSHBUTTON      "&Help",IDC_HELPBUTTON,213,176,50,14
     PUSHBUTTON      "Close",IDCANCEL,213,195,50,14
+    LTEXT           "Selected command:",IDC_STATIC,10,135,0,0
     EDITTEXT        IDC_HISTORY_ITEM,10,135,260,35,ES_MULTILINE | 
                     ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL
 END
@@ -305,85 +309,101 @@ STYLE WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CAPTION
 CAPTION "Custom Colours"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Custom colour 1 name:",IDC_STATIC,94,13,0,0
     EDITTEXT        IDC_CUSTOM_NAME1,94,13,98,14,ES_AUTOHSCROLL
-    CONTROL         "1",IDC_SWATCH_CUSTOM1,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 1 text",IDC_SWATCH_CUSTOM1,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,13,15,15
-    CONTROL         "1",IDC_SWATCH_CUSTOM17,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 1 background",IDC_SWATCH_CUSTOM17,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,13,15,15
+    LTEXT           "Custom colour 2 name:",IDC_STATIC,94,33,0,0
     EDITTEXT        IDC_CUSTOM_NAME2,94,33,98,14,ES_AUTOHSCROLL
-    CONTROL         "2",IDC_SWATCH_CUSTOM2,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 2 text",IDC_SWATCH_CUSTOM2,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,34,15,15
-    CONTROL         "2",IDC_SWATCH_CUSTOM18,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 2 background",IDC_SWATCH_CUSTOM18,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,34,15,15
+    LTEXT           "Custom colour 3 name:",IDC_STATIC,94,53,0,0
     EDITTEXT        IDC_CUSTOM_NAME3,94,53,98,14,ES_AUTOHSCROLL
-    CONTROL         "3",IDC_SWATCH_CUSTOM3,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 3 text",IDC_SWATCH_CUSTOM3,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,53,15,15
-    CONTROL         "3",IDC_SWATCH_CUSTOM19,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 3 background",IDC_SWATCH_CUSTOM19,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,53,15,15
+    LTEXT           "Custom colour 4 name:",IDC_STATIC,94,73,0,0
     EDITTEXT        IDC_CUSTOM_NAME4,94,73,98,14,ES_AUTOHSCROLL
-    CONTROL         "4",IDC_SWATCH_CUSTOM4,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 4 text",IDC_SWATCH_CUSTOM4,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,74,15,15
-    CONTROL         "4",IDC_SWATCH_CUSTOM20,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 4 background",IDC_SWATCH_CUSTOM20,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,74,15,15
+    LTEXT           "Custom colour 5 name:",IDC_STATIC,94,93,0,0
     EDITTEXT        IDC_CUSTOM_NAME5,94,93,98,14,ES_AUTOHSCROLL
-    CONTROL         "5",IDC_SWATCH_CUSTOM5,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 5 text",IDC_SWATCH_CUSTOM5,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,93,15,15
-    CONTROL         "5",IDC_SWATCH_CUSTOM21,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 5 background",IDC_SWATCH_CUSTOM21,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,93,15,15
+    LTEXT           "Custom colour 6 name:",IDC_STATIC,94,113,0,0
     EDITTEXT        IDC_CUSTOM_NAME6,94,113,98,14,ES_AUTOHSCROLL
-    CONTROL         "6",IDC_SWATCH_CUSTOM6,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 6 text",IDC_SWATCH_CUSTOM6,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,114,15,15
-    CONTROL         "6",IDC_SWATCH_CUSTOM22,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 6 background",IDC_SWATCH_CUSTOM22,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,114,15,15
+    LTEXT           "Custom colour 7 name:",IDC_STATIC,94,133,0,0
     EDITTEXT        IDC_CUSTOM_NAME7,94,133,98,14,ES_AUTOHSCROLL
-    CONTROL         "7",IDC_SWATCH_CUSTOM7,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 7 text",IDC_SWATCH_CUSTOM7,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,133,15,15
-    CONTROL         "7",IDC_SWATCH_CUSTOM23,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 7 background",IDC_SWATCH_CUSTOM23,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,133,15,15
+    LTEXT           "Custom colour 8 name:",IDC_STATIC,94,153,0,0
     EDITTEXT        IDC_CUSTOM_NAME8,94,153,98,14,ES_AUTOHSCROLL
-    CONTROL         "8",IDC_SWATCH_CUSTOM8,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 8 text",IDC_SWATCH_CUSTOM8,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,154,15,15
-    CONTROL         "8",IDC_SWATCH_CUSTOM24,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 8 background",IDC_SWATCH_CUSTOM24,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,154,15,15
+    LTEXT           "Custom colour 9 name:",IDC_STATIC,94,173,0,0
     EDITTEXT        IDC_CUSTOM_NAME9,94,173,98,14,ES_AUTOHSCROLL
-    CONTROL         "9",IDC_SWATCH_CUSTOM9,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 9 text",IDC_SWATCH_CUSTOM9,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,173,15,15
-    CONTROL         "9",IDC_SWATCH_CUSTOM25,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 9 background",IDC_SWATCH_CUSTOM25,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,173,15,15
+    LTEXT           "Custom colour 10 name:",IDC_STATIC,94,193,0,0
     EDITTEXT        IDC_CUSTOM_NAME10,94,193,98,14,ES_AUTOHSCROLL
-    CONTROL         "10",IDC_SWATCH_CUSTOM10,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 10 text",IDC_SWATCH_CUSTOM10,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,194,15,15
-    CONTROL         "10",IDC_SWATCH_CUSTOM26,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 10 background",IDC_SWATCH_CUSTOM26,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,194,15,15
+    LTEXT           "Custom colour 11 name:",IDC_STATIC,94,213,0,0
     EDITTEXT        IDC_CUSTOM_NAME11,94,213,98,14,ES_AUTOHSCROLL
-    CONTROL         "11",IDC_SWATCH_CUSTOM11,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 11 text",IDC_SWATCH_CUSTOM11,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,213,15,15
-    CONTROL         "11",IDC_SWATCH_CUSTOM27,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 11 background",IDC_SWATCH_CUSTOM27,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,213,15,15
+    LTEXT           "Custom colour 12 name:",IDC_STATIC,94,233,0,0
     EDITTEXT        IDC_CUSTOM_NAME12,94,233,98,14,ES_AUTOHSCROLL
-    CONTROL         "12",IDC_SWATCH_CUSTOM12,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 12 text",IDC_SWATCH_CUSTOM12,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,234,15,15
-    CONTROL         "12",IDC_SWATCH_CUSTOM28,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 12 background",IDC_SWATCH_CUSTOM28,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,234,15,15
+    LTEXT           "Custom colour 13 name:",IDC_STATIC,94,253,0,0
     EDITTEXT        IDC_CUSTOM_NAME13,94,253,98,14,ES_AUTOHSCROLL
-    CONTROL         "13",IDC_SWATCH_CUSTOM13,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 13 text",IDC_SWATCH_CUSTOM13,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,253,15,15
-    CONTROL         "13",IDC_SWATCH_CUSTOM29,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 13 background",IDC_SWATCH_CUSTOM29,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,253,15,15
+    LTEXT           "Custom colour 14 name:",IDC_STATIC,94,273,0,0
     EDITTEXT        IDC_CUSTOM_NAME14,94,273,98,14,ES_AUTOHSCROLL
-    CONTROL         "14",IDC_SWATCH_CUSTOM14,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 14 text",IDC_SWATCH_CUSTOM14,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,274,15,15
-    CONTROL         "14",IDC_SWATCH_CUSTOM30,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 14 background",IDC_SWATCH_CUSTOM30,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,274,15,15
+    LTEXT           "Custom colour 15 name:",IDC_STATIC,94,293,0,0
     EDITTEXT        IDC_CUSTOM_NAME15,94,293,98,14,ES_AUTOHSCROLL
-    CONTROL         "15",IDC_SWATCH_CUSTOM15,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 15 text",IDC_SWATCH_CUSTOM15,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,293,15,15
-    CONTROL         "15",IDC_SWATCH_CUSTOM31,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 15 background",IDC_SWATCH_CUSTOM31,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,293,15,15
+    LTEXT           "Custom colour 16 name:",IDC_STATIC,94,313,0,0
     EDITTEXT        IDC_CUSTOM_NAME16,94,313,98,14,ES_AUTOHSCROLL
-    CONTROL         "16",IDC_SWATCH_CUSTOM16,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 16 text",IDC_SWATCH_CUSTOM16,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,202,314,15,15
-    CONTROL         "16",IDC_SWATCH_CUSTOM32,"Button",BS_OWNERDRAW | 
+    CONTROL         "Custom colour 16 background",IDC_SWATCH_CUSTOM32,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,224,314,15,15
     LTEXT           "text/background",IDC_STATIC,196,2,54,8
     PUSHBUTTON      "<- Swap ->",IDC_SWAP,196,333,48,14
@@ -398,35 +418,35 @@ BEGIN
                     IDC_STATIC,265,272,205,45
     CONTROL         "B",IDC_BLACK_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,274,283,13,12
-    CONTROL         "",IDC_RED_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
+    CONTROL         "Red",IDC_RED_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,300,283,13,12
-    CONTROL         "",IDC_GREEN_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
+    CONTROL         "Green",IDC_GREEN_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,324,283,13,12
-    CONTROL         "",IDC_YELLOW_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
+    CONTROL         "Yellow",IDC_YELLOW_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,350,283,13,12
-    CONTROL         "",IDC_BLUE_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
+    CONTROL         "Blue",IDC_BLUE_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,374,283,13,12
-    CONTROL         "",IDC_MAGENTA_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Magenta",IDC_MAGENTA_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,400,283,13,12
-    CONTROL         "",IDC_CYAN_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
+    CONTROL         "Cyan",IDC_CYAN_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,424,283,13,12
     CONTROL         "T",IDC_WHITE_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,450,283,13,12
-    CONTROL         "",IDC_BLACK_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold black",IDC_BLACK_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,274,298,13,12
-    CONTROL         "",IDC_RED_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold red",IDC_RED_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,300,298,13,12
-    CONTROL         "",IDC_GREEN_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold green",IDC_GREEN_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,324,298,13,12
-    CONTROL         "",IDC_YELLOW_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold yellow",IDC_YELLOW_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,350,298,13,12
-    CONTROL         "",IDC_BLUE_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold blue",IDC_BLUE_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,374,298,13,12
-    CONTROL         "",IDC_MAGENTA_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold magenta",IDC_MAGENTA_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,400,298,13,12
-    CONTROL         "",IDC_CYAN_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold cyan",IDC_CYAN_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,424,298,13,12
-    CONTROL         "",IDC_WHITE_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold white",IDC_WHITE_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,450,298,13,12
     LTEXT           "Custom colour name",IDC_STATIC,94,1,65,8
     LTEXT           "Use the ANSI Colour configuration tab to change the ANSI colours",
@@ -484,12 +504,15 @@ BEGIN
     LTEXT           "Preamble",IDC_STATIC,148,266,30,8
     RTEXT           "Output lines:",IDC_STATIC,16,283,40,8
     EDITTEXT        IDC_LINE_PREAMBLE_OUTPUT,65,280,196,14,ES_AUTOHSCROLL
+    LTEXT           "Postamble for output:",IDC_STATIC,284,280,0,0
     EDITTEXT        IDC_LINE_POSTAMBLE_OUTPUT,284,280,196,14,ES_AUTOHSCROLL
     RTEXT           "Commands:",IDC_STATIC,18,302,38,8
     EDITTEXT        IDC_LINE_PREAMBLE_INPUT,65,299,196,14,ES_AUTOHSCROLL
+    LTEXT           "Postamble for commands:",IDC_STATIC,284,299,0,0
     EDITTEXT        IDC_LINE_POSTAMBLE_INPUT,284,299,196,14,ES_AUTOHSCROLL
     RTEXT           "Script notes:",IDC_STATIC,16,321,40,8
     EDITTEXT        IDC_LINE_PREAMBLE_NOTES,65,318,196,14,ES_AUTOHSCROLL
+    LTEXT           "Postamble for notes:",IDC_STATIC,284,318,0,0
     EDITTEXT        IDC_LINE_POSTAMBLE_NOTES,284,318,196,14,ES_AUTOHSCROLL
     LTEXT           "All fields above can include date fields, eg. %a %d %b %Y",
                     IDC_STATIC,65,340,181,8
@@ -512,36 +535,36 @@ BEGIN
     GROUPBOX        "Normal",IDC_STATIC,108,22,33,170
     CONTROL         "B",IDC_BLACK_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     118,32,15,15
-    CONTROL         "",IDC_RED_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,118,
+    CONTROL         "Red",IDC_RED_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,118,
                     52,15,15
-    CONTROL         "",IDC_GREEN_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
+    CONTROL         "Green",IDC_GREEN_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     118,72,15,15
-    CONTROL         "",IDC_YELLOW_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
+    CONTROL         "Yellow",IDC_YELLOW_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     118,92,15,15
-    CONTROL         "",IDC_BLUE_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
+    CONTROL         "Blue",IDC_BLUE_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     118,112,15,15
-    CONTROL         "",IDC_MAGENTA_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
+    CONTROL         "Magenta",IDC_MAGENTA_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     118,132,15,15
-    CONTROL         "",IDC_CYAN_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
+    CONTROL         "Cyan",IDC_CYAN_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     118,152,15,15
     CONTROL         "T",IDC_WHITE_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     118,172,15,15
     GROUPBOX        "Bold",IDC_STATIC,191,22,33,170
-    CONTROL         "",IDC_BLACK_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold black",IDC_BLACK_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,201,32,15,15
-    CONTROL         "",IDC_RED_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold red",IDC_RED_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,201,52,15,15
-    CONTROL         "",IDC_GREEN_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold green",IDC_GREEN_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,201,72,15,15
-    CONTROL         "",IDC_YELLOW_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold yellow",IDC_YELLOW_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,201,92,15,15
-    CONTROL         "",IDC_BLUE_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold blue",IDC_BLUE_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,201,112,15,15
-    CONTROL         "",IDC_MAGENTA_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold magenta",IDC_MAGENTA_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,201,132,15,15
-    CONTROL         "",IDC_CYAN_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold cyan",IDC_CYAN_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,201,152,15,15
-    CONTROL         "",IDC_WHITE_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
+    CONTROL         "Bold white",IDC_WHITE_SWATCH_BOLD,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,201,172,15,15
     PUSHBUTTON      "Lighter",IDC_NORMAL_LIGHTER,92,207,65,15
     PUSHBUTTON      "Darker",IDC_NORMAL_DARKER,92,225,65,15
@@ -572,6 +595,7 @@ STYLE WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CAPTION
 CAPTION "Macros"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Macros:",IDC_STATIC,10,3,0,0
     CONTROL         "Generic1",IDC_MACROS_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | 
                     WS_TABSTOP,10,3,499,282
@@ -614,6 +638,7 @@ STYLE WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CAPTION
 CAPTION "Aliases"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Aliases:",IDC_STATIC,10,3,0,0
     CONTROL         "Generic1",IDC_ALIASES_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,10,3,499,260
     CONTROL         "Ena&ble Aliases",IDC_ENABLE_ALIASES,"Button",
@@ -642,6 +667,7 @@ STYLE WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CAPTION
 CAPTION "Triggers"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Triggers:",IDC_STATIC,10,3,0,0
     CONTROL         "Generic1",IDC_TRIGGERS_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,10,3,499,260
     CONTROL         "Enable &Triggers",IDC_ENABLE_TRIGGERS,"Button",
@@ -676,17 +702,19 @@ BEGIN
     GROUPBOX        "Output Window",IDC_STATIC,7,8,256,38
     CONTROL         "Echo My &Input In:",IDC_ECHO_INPUT,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,14,24,72,10
+    LTEXT           "Echo colour:",IDC_STATIC,88,22,0,0
     COMBOBOX        IDC_ECHO_COLOUR,88,22,103,215,CBS_DROPDOWNLIST | 
                     CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | 
                     WS_TABSTOP
-    CONTROL         "",IDC_INPUT_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
+    CONTROL         "Command text colour",IDC_INPUT_SWATCH,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,207,20,15,15
-    CONTROL         "",IDC_INPUT_SWATCH2,"Button",BS_OWNERDRAW | WS_DISABLED | 
+    CONTROL         "Command background colour",IDC_INPUT_SWATCH2,"Button",BS_OWNERDRAW | WS_DISABLED | 
                     WS_TABSTOP,232,20,15,15
     GROUPBOX        "Speed Walking",IDC_STATIC,7,50,256,43
     CONTROL         "Enable &Speed Walking, prefix is:",
                     IDC_ENABLE_SPEED_WALK,"Button",BS_AUTOCHECKBOX | 
                     WS_TABSTOP,22,62,118,10
+    LTEXT           "Speed walk prefix:",IDC_STATIC,143,60,0,0
     EDITTEXT        IDC_SPEED_WALK_PREFIX,143,60,25,12,ES_AUTOHSCROLL
     RTEXT           "Filler:",IDC_STATIC,20,78,17,8
     EDITTEXT        IDC_SPEED_WALK_FILLER,43,76,60,12,ES_AUTOHSCROLL
@@ -697,13 +725,14 @@ BEGIN
     GROUPBOX        "Command Stacking",IDC_STATIC,7,101,256,29
     CONTROL         "&Command Stacking Using:",IDC_ENABLE_COMMAND_STACKING,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,23,113,99,10
+    LTEXT           "Command stack character:",IDC_STATIC,128,111,0,0
     EDITTEXT        IDC_COMMAND_STACK_CHARACTER,128,111,23,12,ES_AUTOHSCROLL
     GROUPBOX        "Command Window",IDC_STATIC,7,139,256,121
     GROUPBOX        "Command Colours",IDC_STATIC,19,153,226,39
-    CONTROL         "",IDC_TEXT_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,35,
+    CONTROL         "Text colour",IDC_TEXT_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,35,
                     166,15,15
     LTEXT           "on",IDC_STATIC,58,169,9,8
-    CONTROL         "",IDC_BACKGROUND_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Background colour",IDC_BACKGROUND_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,75,166,15,15
     GROUPBOX        "Font",IDC_STATIC,19,198,226,53
     PUSHBUTTON      "Change &Font...",IDC_INPUT_FONT,31,210,60,14
@@ -881,6 +910,7 @@ BEGIN
                     WS_TABSTOP,369,144,49,10
     CONTROL         "Multi-li&ne, match:",IDC_MULTI_LINE,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,369,156,69,10
+    LTEXT           "Lines to match:",IDC_STATIC,447,153,0,0
     EDITTEXT        IDC_LINES_TO_MATCH,447,153,33,14,ES_RIGHT | 
                     ES_AUTOHSCROLL | ES_NUMBER
     LTEXT           "lines.",IDC_STATIC,486,156,17,8
@@ -889,9 +919,11 @@ BEGIN
     CONTROL         "One-shot",IDC_ONE_SHOT,"Button",BS_AUTOCHECKBOX | 
                     WS_TABSTOP,369,180,44,10
     GROUPBOX        "Change colour and style to:",IDC_STATIC,206,196,300,42
+    LTEXT           "Change colour to:",IDC_STATIC,231,206,0,0
     COMBOBOX        IDC_TRIGGER_COLOUR,231,206,100,201,CBS_DROPDOWNLIST | 
                     CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | 
                     WS_TABSTOP
+    LTEXT           "Change colour of:",IDC_STATIC,349,206,0,0
     COMBOBOX        IDC_COLOUR_CHANGE_TYPE,349,206,45,47,CBS_DROPDOWNLIST | 
                     WS_VSCROLL | WS_TABSTOP
     CONTROL         "Bold",IDC_BOLD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,
@@ -900,9 +932,9 @@ BEGIN
                     WS_TABSTOP,264,223,31,10
     CONTROL         "Underline",IDC_UNDERLINE,"Button",BS_AUTOCHECKBOX | 
                     WS_TABSTOP,299,223,46,10
-    CONTROL         "",IDC_TRIGGER_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Text colour",IDC_TRIGGER_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,348,221,15,12
-    CONTROL         "",IDC_TRIGGER_SWATCH2,"Button",BS_OWNERDRAW | 
+    CONTROL         "Background colour",IDC_TRIGGER_SWATCH2,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,368,221,15,12
     GROUPBOX        "Sound",IDC_STATIC,206,243,300,44,WS_GROUP
     PUSHBUTTON      "&Browse...",IDC_BROWSE_SOUNDS,212,256,50,14
@@ -972,9 +1004,9 @@ BEGIN
     COMBOBOX        IDC_TRIGGER_COLOUR,50,160,100,185,CBS_DROPDOWNLIST | 
                     CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_DISABLED | 
                     WS_VSCROLL | WS_TABSTOP
-    CONTROL         "",IDC_TRIGGER_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Text colour",IDC_TRIGGER_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,157,160,15,12
-    CONTROL         "",IDC_TRIGGER_SWATCH2,"Button",BS_OWNERDRAW | 
+    CONTROL         "Background colour",IDC_TRIGGER_SWATCH2,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,177,160,15,12
 END
 
@@ -1018,6 +1050,7 @@ STYLE WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CAPTION
 CAPTION "Notes"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Notes:",IDC_STATIC,8,4,0,0
     EDITTEXT        IDC_NOTES,8,4,502,312,ES_MULTILINE | ES_NOHIDESEL | 
                     ES_WANTRETURN | WS_VSCROLL
     PUSHBUTTON      "&Load...",IDC_LOAD_NOTES,11,325,41,14
@@ -1168,6 +1201,7 @@ BEGIN
                     287,87,17
     CONTROL         "&Wrap output at column number:",IDC_WRAP_OUTPUT,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,19,308,115,10
+    LTEXT           "Wrap column:",IDC_STATIC,147,307,0,0
     EDITTEXT        IDC_WRAP_COLUMN,147,307,55,12,ES_AUTOHSCROLL | ES_NUMBER
     CONTROL         "Spin1",IDC_SPIN_WRAP_COLUMN,"msctls_updown32",
                     UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_AUTOBUDDY | 
@@ -1324,6 +1358,7 @@ STYLE WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CAPTION
 CAPTION "Timers"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Timers:",IDC_STATIC,10,3,0,0
     CONTROL         "Generic1",IDC_TIMERS_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,10,3,499,260
     CONTROL         "Enable &Timers",IDC_ENABLE_TIMERS,"Button",
@@ -1356,15 +1391,18 @@ BEGIN
                     BS_AUTORADIOBUTTON | WS_GROUP,40,4,61,10
     CONTROL         "&At the time:",IDC_BUTTON_AT,"Button",
                     BS_AUTORADIOBUTTON,40,64,51,10
+    LTEXT           "Interval hours:",IDC_STATIC,105,4,0,0
     EDITTEXT        IDC_INTERVAL_HOUR,105,4,25,12,ES_AUTOHSCROLL | ES_NUMBER
     CONTROL         "Spin1",IDC_SPIN_EVERY_HOUR,"msctls_updown32",UDS_WRAP | 
                     UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_AUTOBUDDY | 
                     UDS_ARROWKEYS,130,4,11,14
+    LTEXT           "Interval minutes:",IDC_STATIC,155,4,0,0
     EDITTEXT        IDC_INTERVAL_MINUTE,155,4,25,12,ES_AUTOHSCROLL | 
                     ES_NUMBER
     CONTROL         "Spin1",IDC_SPIN_EVERY_MINUTE,"msctls_updown32",UDS_WRAP | 
                     UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_AUTOBUDDY | 
                     UDS_ARROWKEYS,180,4,11,14
+    LTEXT           "Interval seconds:",IDC_STATIC,205,4,0,0
     EDITTEXT        IDC_INTERVAL_SECOND,205,4,37,12,ES_AUTOHSCROLL
     CTEXT           "hour",IDC_STATIC,105,17,25,8
     CTEXT           "minute",IDC_STATIC,156,17,25,8
@@ -1374,11 +1412,13 @@ BEGIN
     CONTROL         "Spin1",IDC_SPIN_OFFSET_HOUR,"msctls_updown32",UDS_WRAP | 
                     UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_AUTOBUDDY | 
                     UDS_ARROWKEYS,130,29,11,14
+    LTEXT           "Offset minutes:",IDC_STATIC,155,30,0,0
     EDITTEXT        IDC_OFFSET_MINUTE,155,30,25,12,ES_AUTOHSCROLL | 
                     ES_NUMBER
     CONTROL         "Spin1",IDC_SPIN_OFFSET_MINUTE,"msctls_updown32",
                     UDS_WRAP | UDS_SETBUDDYINT | UDS_ALIGNRIGHT | 
                     UDS_AUTOBUDDY | UDS_ARROWKEYS,180,29,11,14
+    LTEXT           "Offset seconds:",IDC_STATIC,205,30,0,0
     EDITTEXT        IDC_OFFSET_SECOND,205,30,37,12,ES_AUTOHSCROLL
     CTEXT           "hour",IDC_STATIC,105,44,25,8
     CTEXT           "minute",IDC_STATIC,156,44,25,8
@@ -1387,10 +1427,12 @@ BEGIN
     CONTROL         "Spin1",IDC_SPIN_AT_HOUR,"msctls_updown32",UDS_WRAP | 
                     UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_AUTOBUDDY | 
                     UDS_ARROWKEYS,130,63,11,14
+    LTEXT           "At minute:",IDC_STATIC,155,62,0,0
     EDITTEXT        IDC_AT_MINUTE,155,62,25,12,ES_AUTOHSCROLL | ES_NUMBER
     CONTROL         "Spin1",IDC_SPIN_AT_MINUTE,"msctls_updown32",UDS_WRAP | 
                     UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_AUTOBUDDY | 
                     UDS_ARROWKEYS,180,63,11,14
+    LTEXT           "At second:",IDC_STATIC,205,62,0,0
     EDITTEXT        IDC_AT_SECOND,205,62,37,12,ES_AUTOHSCROLL
     CTEXT           "hour",IDC_STATIC,105,76,25,8
     CTEXT           "minute",IDC_STATIC,156,76,25,8
@@ -1602,6 +1644,7 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Immediate"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Script to run:",IDC_STATIC,5,5,0,0
     EDITTEXT        IDC_EXPRESSION,5,5,250,155,ES_MULTILINE | ES_WANTRETURN | 
                     WS_VSCROLL
     DEFPUSHBUTTON   "&Run",IDOK,10,170,50,14
@@ -1643,9 +1686,9 @@ BEGIN
     COMBOBOX        IDC_TEXT_COLOUR,150,141,105,189,CBS_DROPDOWNLIST | 
                     CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | 
                     WS_TABSTOP
-    CONTROL         "",IDC_SCRIPT_TEXT_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Script error text colour",IDC_SCRIPT_TEXT_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,264,139,15,15
-    CONTROL         "",IDC_SCRIPT_TEXT_SWATCH2,"Button",BS_OWNERDRAW | 
+    CONTROL         "Script error background colour",IDC_SCRIPT_TEXT_SWATCH2,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,283,139,15,15
     GROUPBOX        "World Events",IDC_STATIC,7,171,294,170
     RTEXT           "&Open:",IDC_STATIC,32,188,20,8
@@ -1674,6 +1717,7 @@ STYLE WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CAPTION
 CAPTION "Variables"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Variables:",IDC_STATIC,10,3,0,0
     CONTROL         "Generic1",IDC_VARIABLES_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,10,3,499,260
     CONTROL         "F&ilter by:",IDC_FILTER,"Button",BS_AUTOCHECKBOX | 
@@ -1897,6 +1941,7 @@ BEGIN
     CONTROL         "&Periodically, every:",IDC_PERIODICALLY,"Button",
                     BS_AUTORADIOBUTTON,35,74,75,10
     CONTROL         "&Both",IDC_BOTH,"Button",BS_AUTORADIOBUTTON,35,90,31,10
+    LTEXT           "Refresh interval in seconds:",IDC_STATIC,115,70,0,0
     EDITTEXT        IDC_ACTIVITY_INTERVAL,115,70,30,14,ES_AUTOHSCROLL | 
                     ES_NUMBER
     CONTROL         "Spin1",IDC_PERIOD_SPIN,"msctls_updown32",
@@ -1980,6 +2025,7 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Credits"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Credits:",IDC_STATIC,5,5,0,0
     EDITTEXT        IDC_CREDITS_LIST,5,5,511,322,ES_MULTILINE | ES_READONLY | 
                     WS_VSCROLL
     DEFPUSHBUTTON   "OK",IDOK,8,332,50,14
@@ -2039,6 +2085,7 @@ FONT 8, "MS Sans Serif"
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,3,404,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,63,404,50,14
+    LTEXT           "Pages:",IDC_STATIC,5,5,0,0
     CONTROL         "Tree1",IDC_TREE1,"SysTreeView32",WS_BORDER | WS_TABSTOP,
                     5,5,106,390
 END
@@ -2093,6 +2140,7 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Send to multiple worlds"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Text to send:",IDC_STATIC,5,130,0,0
     EDITTEXT        IDC_SEND_TEXT,5,130,255,50,ES_MULTILINE | ES_WANTRETURN | 
                     WS_VSCROLL
     DEFPUSHBUTTON   "OK",IDOK,5,185,50,14
@@ -2143,13 +2191,17 @@ BEGIN
     EDITTEXT        IDC_DEFAULT_TIMERS,35,85,160,14,ES_AUTOHSCROLL
     PUSHBUTTON      "Browse...",IDC_BROWSE_TIMERS,204,85,50,14
     PUSHBUTTON      "Output Font...",IDC_SELECT_OUTPUT_FONT,5,115,50,14
+    LTEXT           "Default output font:",IDC_STATIC,61,115,0,0
     EDITTEXT        IDC_DEFAULT_OUTPUT_FONT,61,115,120,14,ES_AUTOHSCROLL | 
                     ES_READONLY
+    LTEXT           "Output font style:",IDC_STATIC,185,115,0,0
     EDITTEXT        IDC_OUTPUT_STYLE,185,115,70,14,ES_AUTOHSCROLL | 
                     ES_READONLY
     PUSHBUTTON      "Input Font...",IDC_SELECT_INPUT_FONT,5,135,50,14
+    LTEXT           "Default command font:",IDC_STATIC,61,135,0,0
     EDITTEXT        IDC_DEFAULT_INPUT_FONT,61,135,120,14,ES_AUTOHSCROLL | 
                     ES_READONLY
+    LTEXT           "Command font style:",IDC_STATIC,185,135,0,0
     EDITTEXT        IDC_INPUT_STYLE,185,135,70,14,ES_AUTOHSCROLL | 
                     ES_READONLY
 END
@@ -2185,12 +2237,12 @@ BEGIN
     RTEXT           "Text:",IDC_STATIC,57,111,17,8
     EDITTEXT        IDC_TEXT_COLOUR_RGB,84,108,74,14,ES_AUTOHSCROLL | 
                     ES_READONLY
-    CONTROL         "",IDC_RGB_TEXT_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Text colour",IDC_RGB_TEXT_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,171,108,15,15
     RTEXT           "Background:",IDC_STATIC,32,129,42,8
     EDITTEXT        IDC_BACK_COLOUR_RGB,84,126,73,14,ES_AUTOHSCROLL | 
                     ES_READONLY
-    CONTROL         "",IDC_RGB_BACKGROUND_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Background colour",IDC_RGB_BACKGROUND_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,171,126,15,15
     GROUPBOX        "RGB colour",IDC_STATIC,11,98,185,49
 END
@@ -2240,10 +2292,10 @@ BEGIN
     CONTROL         "&Word Wrap",IDC_WORD_WRAP,"Button",BS_AUTOCHECKBOX | 
                     WS_TABSTOP,10,25,53,10
     GROUPBOX        "Window colour",IDC_STATIC,155,5,90,33
-    CONTROL         "",IDC_TEXT_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
+    CONTROL         "Text colour",IDC_TEXT_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     173,18,15,15
     LTEXT           "on",IDC_STATIC,196,21,9,8
-    CONTROL         "",IDC_BACKGROUND_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Background colour",IDC_BACKGROUND_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,213,18,15,15
     GROUPBOX        "Parenthesis matching preferences",IDC_STATIC,5,45,240,
                     85
@@ -2263,8 +2315,10 @@ BEGIN
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,100,105,105,10
     PUSHBUTTON      "&Font...",IDC_SELECT_NOTEPAD_FONT,5,145,50,14,NOT 
                     WS_VISIBLE
+    LTEXT           "Notepad font:",IDC_STATIC,61,145,0,0
     EDITTEXT        IDC_DEFAULT_NOTEPAD_FONT,61,145,120,14,ES_AUTOHSCROLL | 
                     ES_READONLY | NOT WS_VISIBLE
+    LTEXT           "Notepad font style:",IDC_STATIC,185,145,0,0
     EDITTEXT        IDC_NOTEPAD_STYLE,185,145,70,14,ES_AUTOHSCROLL | 
                     ES_READONLY | NOT WS_VISIBLE
     LTEXT           "Quote string:",IDC_STATIC,9,168,41,8
@@ -2374,6 +2428,7 @@ FONT 8, "MS Sans Serif"
 BEGIN
     PUSHBUTTON      "->",IDC_REGEXP_BUTTON,135,185,15,14,NOT WS_VISIBLE | 
                     NOT WS_TABSTOP
+    LTEXT           "Text:",IDC_STATIC,0,0,0,0
     EDITTEXT        IDC_TEXT,0,0,291,175,ES_MULTILINE | WS_VSCROLL
     DEFPUSHBUTTON   "OK",IDOK,5,185,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,230,185,50,14
@@ -2489,6 +2544,7 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Colour picker"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Colours:",IDC_STATIC,5,2,0,0
     CONTROL         "List1",IDC_COLOURLIST,"SysListView32",LVS_REPORT | 
                     LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOCOLUMNHEADER | 
                     WS_BORDER | WS_TABSTOP,5,2,161,158
@@ -2506,7 +2562,7 @@ BEGIN
     CONTROL         "Slider2",IDC_BLUE_SLIDER,"msctls_trackbar32",TBS_BOTH | 
                     TBS_NOTICKS | WS_TABSTOP,25,227,118,15
     RTEXT           "255",IDC_BLUE,143,230,15,8
-    CONTROL         "",IDC_COLOUR_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
+    CONTROL         "Colour",IDC_COLOUR_SWATCH,"Button",BS_OWNERDRAW | WS_TABSTOP,
                     185,2,64,64
     DEFPUSHBUTTON   "OK",IDOK,185,69,64,14
     PUSHBUTTON      "R&andom",IDC_RANDOM,185,86,64,14
@@ -2546,7 +2602,7 @@ BEGIN
                     WS_VSCROLL | WS_TABSTOP
     GROUPBOX        "Hyperlinks",IDC_STATIC,88,144,215,125
     LTEXT           "Custom link colour:",IDC_STATIC,98,160,60,8
-    CONTROL         "",IDC_HYPERLINK_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Hyperlink colour",IDC_HYPERLINK_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,168,154,15,15
     CONTROL         "Use custom link colour",IDC_USE_CUSTOM_LINK,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,98,179,87,10
@@ -2611,6 +2667,7 @@ STYLE WS_POPUP | WS_CAPTION | WS_THICKFRAME
 CAPTION "Plugins"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Plugins:",IDC_STATIC,5,5,0,0
     CONTROL         "List1",IDC_PLUGINS_LIST,"SysListView32",LVS_REPORT | 
                     WS_BORDER | WS_TABSTOP,5,5,270,160
     PUSHBUTTON      "&Add...",IDC_ADD_PLUGIN,5,175,45,14
@@ -2628,6 +2685,7 @@ STYLE WS_POPUP | WS_CAPTION | WS_THICKFRAME
 CAPTION "Multi-line Edit"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Text:",IDC_STATIC,0,0,0,0
     EDITTEXT        IDC_TEXT,0,0,397,210,ES_MULTILINE | ES_WANTRETURN | 
                     WS_VSCROLL
     DEFPUSHBUTTON   "&OK",IDOK,5,217,50,14
@@ -2642,6 +2700,7 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Map Comment"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Comment:",IDC_STATIC,5,5,0,0
     EDITTEXT        IDC_COMMENT,5,5,310,14,ES_AUTOHSCROLL
     DEFPUSHBUTTON   "OK",IDOK,5,25,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,85,25,50,14
@@ -2651,6 +2710,7 @@ IDD_INFO DIALOG DISCARDABLE  0, 0, 671, 13
 STYLE WS_CHILD
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Information:",IDC_STATIC,3,2,0,0
     CONTROL         "",IDC_INFOTEXT,"RICHEDIT",ES_READONLY | WS_DISABLED,3,2,
                     667,10
 END
@@ -2667,15 +2727,16 @@ BEGIN
     GROUPBOX        "Incoming calls",IDC_STATIC,106,58,244,54
     CONTROL         "&Accept incoming calls on port:",IDC_ACCEPT_CALLS,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,115,73,111,10
+    LTEXT           "Port:",IDC_STATIC,231,71,0,0
     EDITTEXT        IDC_CHAT_PORT,231,71,35,14,ES_AUTOHSCROLL | ES_NUMBER
     CONTROL         "&Validate caller",IDC_VALIDATE_CALLS,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,115,92,60,10
     GROUPBOX        "Message Appearance",IDC_STATIC,106,121,244,83
     LTEXT           "&Messages in:",IDC_STATIC,117,137,42,8
-    CONTROL         "",IDC_CHAT_TEXT_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Chat text colour",IDC_CHAT_TEXT_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,162,134,15,15
     LTEXT           "on",IDC_STATIC,187,137,9,8
-    CONTROL         "",IDC_CHAT_BACK_SWATCH,"Button",BS_OWNERDRAW | 
+    CONTROL         "Chat background colour",IDC_CHAT_BACK_SWATCH,"Button",BS_OWNERDRAW | 
                     WS_TABSTOP,207,134,15,15
     CONTROL         "&Ignore incoming colours",IDC_IGNORE_COLOURS,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,131,155,91,10
@@ -2683,6 +2744,7 @@ BEGIN
     EDITTEXT        IDC_CHAT_PREFIX,191,174,85,14,ES_AUTOHSCROLL
     RTEXT           "Max. &lines per message:",IDC_STATIC,120,228,76,8
     GROUPBOX        "Message size limits",IDC_STATIC,106,215,244,50
+    LTEXT           "Maximum lines per message:",IDC_STATIC,203,225,0,0
     EDITTEXT        IDC_MAX_MESSAGE_LINES,203,225,44,14,ES_AUTOHSCROLL
     LTEXT           "(0 = no limit)",IDC_STATIC,266,228,38,8
     RTEXT           "Max. bytes per message:",IDC_STATIC,117,246,79,8
@@ -2704,6 +2766,7 @@ BEGIN
     LTEXT           "Status",IDC_STATUS,5,5,140,8
     PUSHBUTTON      "New Ca&ll...",IDC_CALL,165,3,50,14
     DEFPUSHBUTTON   "Close",IDOK,255,3,50,14
+    LTEXT           "Chat sessions:",IDC_STATIC,5,20,0,0
     CONTROL         "List1",IDC_CHAT_SESSIONS,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,5,20,300,115
     PUSHBUTTON      "&Edit...",IDC_EDIT,15,154,50,14
@@ -2909,6 +2972,32 @@ BEGIN
     PUSHBUTTON      "&Edit...",IDC_EDIT,8,182,50,14
 END
 
+IDD_GLOBAL_PREFSP14 DIALOG DISCARDABLE  0, 0, 262, 201
+STYLE WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+CAPTION "Accessibility"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "&Speak output:",IDC_STATIC,8,10,80,8
+    COMBOBOX        IDC_SPEECH_MODE,92,8,162,60,CBS_DROPDOWNLIST | WS_VSCROLL | 
+                    WS_TABSTOP
+    LTEXT           "&Text pane for review:",IDC_STATIC,8,28,80,8
+    COMBOBOX        IDC_TEXT_PANE_MODE,92,26,162,60,CBS_DROPDOWNLIST | 
+                    WS_VSCROLL | WS_TABSTOP
+    GROUPBOX        "System voice, when not using a screen reader",IDC_STATIC,
+                    8,46,246,62
+    LTEXT           "&Voice:",IDC_STATIC,16,60,70,8
+    COMBOBOX        IDC_SPEECH_VOICE,92,58,154,100,CBS_DROPDOWNLIST | 
+                    WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Rate (-10 to 10):",IDC_STATIC,16,76,70,8
+    EDITTEXT        IDC_SPEECH_RATE,92,74,30,14,ES_AUTOHSCROLL
+    LTEXT           "V&olume (0 to 100):",IDC_STATIC,16,92,70,8
+    EDITTEXT        IDC_SPEECH_VOLUME,92,90,30,14,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "Detected:",IDC_STATIC,8,116,50,8
+    LTEXT           "",IDC_SPEECH_STATUS,62,116,192,8
+    LTEXT           "Ctrl+Shift+F12 mutes.  Alt+Shift with the arrows moves a review cursor, and the words and keys are in docs\\ACCESSIBILITY.md.  Each world has its own speech options.",
+                    IDC_STATIC,8,134,246,28
+END
+
 IDD_HIGHLIGHT DIALOG DISCARDABLE  0, 0, 293, 122
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Highlight word or phrase"
@@ -2917,14 +3006,15 @@ BEGIN
     LTEXT           "&Highlight:",IDC_STATIC,7,10,30,8
     EDITTEXT        IDC_HIGHLIGHT_TEXT,7,23,281,14,ES_AUTOHSCROLL
     GROUPBOX        "&Colour:",IDC_STATIC,7,44,281,33
+    LTEXT           "Colour:",IDC_STATIC,25,57,0,0
     COMBOBOX        IDC_TRIGGER_COLOUR,25,57,121,201,CBS_DROPDOWNLIST | 
                     CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | 
                     WS_TABSTOP
     RTEXT           "&Text:",IDC_STATIC,154,59,23,8
-    CONTROL         "",IDC_TRIGGER_SWATCH_TEXT,"Button",BS_OWNERDRAW | 
+    CONTROL         "Text colour",IDC_TRIGGER_SWATCH_TEXT,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,186,57,15,12
     RTEXT           "&Background:",IDC_STATIC,209,59,47,8
-    CONTROL         "",IDC_TRIGGER_SWATCH_BGND,"Button",BS_OWNERDRAW | 
+    CONTROL         "Background colour",IDC_TRIGGER_SWATCH_BGND,"Button",BS_OWNERDRAW | 
                     WS_DISABLED | WS_TABSTOP,264,57,15,12
     CONTROL         "&Whole Word Only",IDC_WHOLE_WORD,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,11,84,75,10
@@ -2939,6 +3029,7 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Unique ID"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Unique ID:",IDC_STATIC,5,8,0,0
     EDITTEXT        IDC_ID,5,8,120,14,ES_AUTOHSCROLL | ES_READONLY
     DEFPUSHBUTTON   "Close",IDOK,41,34,50,14
 END
@@ -2962,10 +3053,10 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "MUSHclient"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Static",IDC_INPUT_BOX_MESSAGE,7,5,339,109
     EDITTEXT        IDC_INPUT_BOX_REPLY,7,121,339,14,ES_AUTOHSCROLL
     DEFPUSHBUTTON   "OK",IDOK,7,143,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,296,144,50,14
-    LTEXT           "Static",IDC_INPUT_BOX_MESSAGE,7,5,339,109
 END
 
 IDD_LUA_CHOOSE DIALOG DISCARDABLE  0, 0, 268, 89
@@ -2973,11 +3064,11 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION
 CAPTION "Choose ..."
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Static",IDC_CHOOSE_MSG,7,5,250,39
     COMBOBOX        IDC_CHOOSE_COMBO,7,50,195,124,CBS_DROPDOWNLIST | 
                     CBS_SORT | WS_VSCROLL | WS_TABSTOP
     DEFPUSHBUTTON   "OK",IDOK,211,50,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,211,67,50,14
-    LTEXT           "Static",IDC_CHOOSE_MSG,7,5,250,39
 END
 
 IDD_LUA_CHOOSE_LIST DIALOG DISCARDABLE  0, 0, 298, 221
@@ -2985,12 +3076,12 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION
 CAPTION "Choose ..."
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Static",IDC_CHOOSE_MSG,8,5,278,50
     CONTROL         "List1",IDC_CHOOSE_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_SORTASCENDING | 
                     LVS_NOCOLUMNHEADER | WS_BORDER | WS_TABSTOP,9,62,277,129
     DEFPUSHBUTTON   "OK",IDOK,9,200,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,236,200,50,14
-    LTEXT           "Static",IDC_CHOOSE_MSG,8,5,278,50
 END
 
 IDD_FUNCTION_LIST DIALOG DISCARDABLE  0, 0, 520, 350
@@ -2998,6 +3089,7 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Functions"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Functions:",IDC_STATIC,12,9,0,0
     CONTROL         "List1",IDC_FUNCTIONS_LIST,"SysListView32",LVS_LIST | 
                     LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_SORTASCENDING | 
                     WS_BORDER | WS_TABSTOP,12,9,485,304
@@ -3036,6 +3128,7 @@ IDD_COMPLETE_WORD DIALOG DISCARDABLE  0, 0, 108, 95
 STYLE WS_POPUP | WS_BORDER
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Words:",IDC_STATIC,0,0,0,0
     LISTBOX         IDC_WORD_LIST,0,0,107,94,LBS_SORT | LBS_NOINTEGRALHEIGHT | 
                     WS_VSCROLL | WS_TABSTOP
 END
@@ -3045,11 +3138,11 @@ STYLE WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
 CAPTION "MUSHclient"
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Static",IDC_INPUT_BOX_MESSAGE,6,4,370,40
     EDITTEXT        IDC_INPUT_BOX_REPLY,6,49,371,236,ES_MULTILINE | 
                     ES_WANTRETURN | WS_VSCROLL
     DEFPUSHBUTTON   "OK",IDOK,6,294,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,327,294,50,14
-    LTEXT           "Static",IDC_INPUT_BOX_MESSAGE,6,4,370,40
 END
 
 IDD_KEY_NAME DIALOG DISCARDABLE  0, 0, 186, 84
@@ -3070,12 +3163,12 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION
 CAPTION "Choose ..."
 FONT 8, "MS Sans Serif"
 BEGIN
+    LTEXT           "Static",IDC_CHOOSE_MSG,8,5,278,50
     CONTROL         "List1",IDC_CHOOSE_LIST,"SysListView32",LVS_REPORT | 
                     LVS_SHOWSELALWAYS | LVS_SORTASCENDING | 
                     LVS_NOCOLUMNHEADER | WS_BORDER | WS_TABSTOP,9,62,277,129
     DEFPUSHBUTTON   "OK",IDOK,9,200,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,236,200,50,14
-    LTEXT           "Static",IDC_CHOOSE_MSG,8,5,278,50
 END
 
 IDD_LUA_DEBUG DIALOG DISCARDABLE  0, 0, 309, 188
@@ -3872,6 +3965,8 @@ BEGIN
     IDC_SEND_TO, 0x403, 20, 0
 0x6353, 0x6972, 0x7470, 0x2820, 0x6661, 0x6574, 0x2072, 0x6d6f, 0x7469, 
 0x0029, 
+    IDC_SEND_TO, 0x403, 7, 0
+0x7053, 0x6565, 0x6863, "\000" 
     IDC_WILDCARD_CLIPBOARD, 0x403, 7, 0
 0x6e28, 0x6e6f, 0x2965, "\000" 
     IDC_WILDCARD_CLIPBOARD, 0x403, 2, 0
@@ -4201,6 +4296,8 @@ BEGIN
     IDC_SEND_TO, 0x403, 18, 0
 0x6f57, 0x6c72, 0x2064, 0x6928, 0x6d6d, 0x6465, 0x6169, 0x6574, 0x0029, 
 
+    IDC_SEND_TO, 0x403, 7, 0
+0x7053, 0x6565, 0x6863, "\000" 
     0
 END
 
@@ -4237,6 +4334,8 @@ BEGIN
     IDC_SEND_TO, 0x403, 18, 0
 0x6f57, 0x6c72, 0x2064, 0x6928, 0x6d6d, 0x6465, 0x6169, 0x6574, 0x0029, 
 
+    IDC_SEND_TO, 0x403, 7, 0
+0x7053, 0x6565, 0x6863, "\000" 
     0
 END
 

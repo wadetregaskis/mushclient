@@ -595,4 +595,26 @@ protected:
 	DECLARE_MESSAGE_MAP()
 
 };
+/////////////////////////////////////////////////////////////////////////////
+// CGlobalPrefsP14 dialog
+
+class CGlobalPrefsP14 : public CPropertyPage
+{
+	DECLARE_DYNCREATE(CGlobalPrefsP14)
+
+public:
+	CGlobalPrefsP14();
+
+	enum { IDD = IDD_GLOBAL_PREFSP14 };
+	int	m_iSpeechMode;
+	int	m_iTextPane;
+	int	m_iRate;
+	int	m_iVolume;
+	CString	m_strVoice;
+
+protected:
+	virtual BOOL OnInitDialog();
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
+	DECLARE_MESSAGE_MAP()
+};
 #endif // __CGlobalPREFS_H__

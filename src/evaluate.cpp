@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "a11y.h"
 #if defined(_WIN32) && defined(MUSHCLIENT_TESTS)
 #include "platform/wx_mfc_hooks.h"   // McTestCancelDialog (Load_Set's CFileDialog)
 #endif
@@ -97,6 +98,11 @@ const CSuppressInputLogging suppressInputLogging (*this, bOmitFromLog);
         
   if (input.IsEmpty ())
     return false;
+
+// tts, subst and so on, for someone using speech
+
+  if (!bTest && A11y_Command (*this, input))
+    return true;
 
 // ------------------------- SPEED WALKING ------------------------------
 

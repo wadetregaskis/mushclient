@@ -12,6 +12,7 @@
 #include "../EditMultiLine.h"
 
 #ifdef _WIN32
+#include "../../a11y.h"
 #include <shlobj.h>
 #include <cderr.h>
 #endif
@@ -58,6 +59,7 @@ IMPLEMENT_DYNCREATE(CGlobalPrefsP10, CPropertyPage)
 IMPLEMENT_DYNCREATE(CGlobalPrefsP11, CPropertyPage)
 IMPLEMENT_DYNCREATE(CGlobalPrefsP12, CPropertyPage)
 IMPLEMENT_DYNCREATE(CGlobalPrefsP13, CPropertyPage)
+IMPLEMENT_DYNCREATE(CGlobalPrefsP14, CPropertyPage)
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -1330,6 +1332,11 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   propSheet.m_Page12.m_strPluginList                  =  pApp->m_strPluginList                      ;
   propSheet.m_Page13.m_strLuaScript                   =  pApp->m_strLuaScript                      ;
   propSheet.m_Page13.m_bEnablePackageLibrary          =  pApp->m_bEnablePackageLibrary             ;
+  propSheet.m_Page14.m_iSpeechMode                    =  pApp->m_iSpeechMode;
+  propSheet.m_Page14.m_iTextPane                      =  pApp->m_iA11yTextPane;
+  propSheet.m_Page14.m_iRate                          =  pApp->m_iSpeechRate;
+  propSheet.m_Page14.m_iVolume                        =  pApp->m_iSpeechVolume;
+  propSheet.m_Page14.m_strVoice                       =  pApp->m_strSpeechVoice;
 
   // defaults
   propSheet.m_Page9.m_strDefaultColoursFile        =   pApp->m_strDefaultColoursFile   ;
@@ -1452,6 +1459,11 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   pApp->m_strPluginList                   =  propSheet.m_Page12.m_strPluginList                      ;
   pApp->m_strLuaScript                    =  propSheet.m_Page13.m_strLuaScript                      ;
   pApp->m_bEnablePackageLibrary           =  propSheet.m_Page13.m_bEnablePackageLibrary          ;
+  pApp->m_iSpeechMode                     =  propSheet.m_Page14.m_iSpeechMode;
+  pApp->m_iA11yTextPane                   =  propSheet.m_Page14.m_iTextPane;
+  pApp->m_iSpeechRate                     =  propSheet.m_Page14.m_iRate;
+  pApp->m_iSpeechVolume                   =  propSheet.m_Page14.m_iVolume;
+  pApp->m_strSpeechVoice                  =  propSheet.m_Page14.m_strVoice;
 
   // defaults
   pApp->m_strDefaultColoursFile        =  propSheet.m_Page9.m_strDefaultColoursFile   ;
@@ -1933,6 +1945,75 @@ void CGlobalPrefsP12::OnMoveDown()
   pList->SetCurSel (nIndex);
 	
 }
+/////////////////////////////////////////////////////////////////////////////
+// CGlobalPrefsP14 property page: accessibility
+
+CGlobalPrefsP14::CGlobalPrefsP14() : CPropertyPage(CGlobalPrefsP14::IDD)
+{
+	m_iSpeechMode = eSpeechAuto;
+	m_iTextPane = eTextPaneWithReader;
+	m_iRate = 0;
+	m_iVolume = 100;
+}
+
+BEGIN_MESSAGE_MAP(CGlobalPrefsP14, CPropertyPage)
+END_MESSAGE_MAP()
+
+BOOL CGlobalPrefsP14::OnInitDialog()
+{
+	// Filled here rather than in the resource, so they are in the order of the values
+	CComboBox * pMode = (CComboBox *) GetDlgItem (IDC_SPEECH_MODE);
+	pMode->AddString (Translate ("Never"));
+	pMode->AddString (Translate ("When a screen reader is running"));
+	pMode->AddString (Translate ("Always, with the system voice if need be"));
+
+	CComboBox * pPane = (CComboBox *) GetDlgItem (IDC_TEXT_PANE_MODE);
+	pPane->AddString (Translate ("Never"));
+	pPane->AddString (Translate ("When output is being read"));
+	pPane->AddString (Translate ("Always"));
+
+	// Only asking for the voices if they are not going to be using a reader
+	CComboBox * pVoice = (CComboBox *) GetDlgItem (IDC_SPEECH_VOICE);
+	pVoice->AddString (Translate ("(default)"));
+	pal::ISpeech * pReader = pal::g_speechPlatform ? pal::g_speechPlatform->screenReader () : NULL;
+	pal::ISpeech * pOwn = pal::g_speechPlatform ? pal::g_speechPlatform->ownVoice () : NULL;
+	if (pOwn)
+		for (const std::string & voice : pOwn->voices ())
+			pVoice->AddString (voice.c_str ());
+
+	CString strStatus = pReader ? pReader->name () : Translate ("No screen reader");
+	if (pOwn)
+		strStatus += CString (", ") + pOwn->name ();
+	SetDlgItemText (IDC_SPEECH_STATUS, strStatus);
+
+	return CPropertyPage::OnInitDialog ();
+}
+
+void CGlobalPrefsP14::DoDataExchange(CDataExchange* pDX)
+{
+	CPropertyPage::DoDataExchange(pDX);
+	DDX_CBIndex(pDX, IDC_SPEECH_MODE, m_iSpeechMode);
+	DDX_CBIndex(pDX, IDC_TEXT_PANE_MODE, m_iTextPane);
+	DDX_Text(pDX, IDC_SPEECH_RATE, m_iRate);
+	DDV_MinMaxInt(pDX, m_iRate, -10, 10);
+	DDX_Text(pDX, IDC_SPEECH_VOLUME, m_iVolume);
+	DDV_MinMaxInt(pDX, m_iVolume, 0, 100);
+
+	CComboBox * pVoice = (CComboBox *) GetDlgItem (IDC_SPEECH_VOICE);
+	if (pDX->m_bSaveAndValidate)
+		{
+		const int i = pVoice->GetCurSel ();
+		m_strVoice.Empty ();
+		if (i > 0)
+			pVoice->GetLBText (i, m_strVoice);
+		}
+	else
+		{
+		const int i = m_strVoice.IsEmpty () ? 0 : pVoice->FindStringExact (0, m_strVoice);
+		pVoice->SetCurSel (i >= 0 ? i : 0);
+		}
+}
+
 /////////////////////////////////////////////////////////////////////////////
 // CGlobalPrefsP13 property page
 

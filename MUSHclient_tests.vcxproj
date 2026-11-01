@@ -1624,6 +1624,11 @@
     <ClCompile Include="src\protocols_mxp.cpp" />
     <ClCompile Include="src\msp.cpp" />
     <ClCompile Include="src\gmcp.cpp" />
+    <ClCompile Include="src\speech_router.cpp" />
+    <ClCompile Include="src\a11y.cpp" />
+    <ClCompile Include="src\a11y_shims.cpp" />
+    <ClCompile Include="src\pal\win_speech.cpp" />
+    <ClCompile Include="src\pal\win_a11y_pane.cpp" />
     <ClCompile Include="src\platform\ma_decode.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <ClCompile Include="src\platform\mc_dispatch.cpp" />
@@ -1655,6 +1660,7 @@
     <ClCompile Include="tests\win\test_ui_thread.cpp" />
     <ClCompile Include="tests\win\test_https_get.cpp" />
     <ClCompile Include="tests\win\test_win_worldview.cpp" />
+    <ClCompile Include="tests\win\test_win_a11y_pane.cpp" />
     <ClCompile Include="tests\win\test_user_data.cpp" />
     <ClCompile Include="tests\win\test_spell_engine.cpp" />
     <ClCompile Include="tests\test_accelerators.cpp" />
@@ -1681,6 +1687,7 @@
     <ClCompile Include="tests\test_regexp.cpp" />
     <ClCompile Include="tests\test_rex.cpp" />
     <ClCompile Include="tests\test_scriptengine.cpp" />
+    <ClCompile Include="tests\test_speech_router.cpp" />
     <ClCompile Include="tests\test_speedwalk.cpp" />
     <ClCompile Include="tests\test_spellchecker.cpp" />
     <ClCompile Include="tests\test_tabcomplete.cpp" />

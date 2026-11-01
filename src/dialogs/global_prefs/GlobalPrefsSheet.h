@@ -38,6 +38,7 @@ public:
 	CGlobalPrefsP11 m_Page11;
 	CGlobalPrefsP12 m_Page12;
 	CGlobalPrefsP13 m_Page13;
+	CGlobalPrefsP14 m_Page14;
 
 // Operations
 public:

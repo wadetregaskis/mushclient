@@ -252,6 +252,19 @@ public:
                              int style) = 0;
     // GetInfo(257/258): the info bar's pixel size (0,0 when hidden).
     virtual Size infobarSize() const = 0;
+
+    // ── core → frontend: the accessible text pane ─────────────────────────
+    // A real text control holding the same text as the output window, for a screen
+    // reader to read as it reads any other (docs/ACCESSIBILITY.md).  Windows paints by
+    // pull, so this is the one place a finished line is pushed there too.  Text is
+    // UTF-8, whatever the world's encoding.  Not pure, for the reason isPaused gives:
+    // an adapter with no pane just has none.  Both real adapters override.
+    virtual void accessiblePaneShow(bool /*show*/) {}
+    virtual void accessibleLine(const char* /*utf8*/) {}
+    virtual void accessibleFlush() {}                       // from the tick: lines may be batched
+    virtual void accessibleReset(const char* /*utf8Text*/) {}     // all of it at once
+    virtual bool accessiblePaneFocused() const { return false; }
+    virtual void accessibleFocusPane(bool /*pane: else the command box*/) {}
 };
 
 } // namespace pal

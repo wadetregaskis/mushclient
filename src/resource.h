@@ -186,6 +186,13 @@
 #define IDD_GLOBAL_PREFSP12             318
 #define IDR_PANETYPE                    319
 #define IDD_GLOBAL_PREFSP13             319
+#define IDD_GLOBAL_PREFSP14             369
+#define IDC_SPEECH_MODE                 2899
+#define IDC_TEXT_PANE_MODE              2900
+#define IDC_SPEECH_VOICE                2901
+#define IDC_SPEECH_RATE                 2902
+#define IDC_SPEECH_VOLUME               2903
+#define IDC_SPEECH_STATUS               2904
 #define IDR_LUA_SCRIPT                  320
 #define IDR_REGEXP_MENU                 320
 #define IDD_HIGHLIGHT                   323
@@ -1567,9 +1574,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
-#define _APS_NEXT_RESOURCE_VALUE        369
+#define _APS_NEXT_RESOURCE_VALUE        370
 #define _APS_NEXT_COMMAND_VALUE         33057
-#define _APS_NEXT_CONTROL_VALUE         2899
+#define _APS_NEXT_CONTROL_VALUE         2905
 #define _APS_NEXT_SYMED_VALUE           312
 #endif
 #endif

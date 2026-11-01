@@ -65,6 +65,10 @@ static tGlobalConfigurationNumericOption GlobalOptionsTable [] = {
 { GLB_OPT (m_nPrinterLinesPerPage           ), "PrinterLinesPerPage",           60 },
 { GLB_OPT (m_nPrinterTopMargin              ), "PrinterTopMargin",              15 },
 { GLB_OPT (m_nTimerInterval                 ), "TimerInterval",                 0 },
+{ GLB_OPT (m_iSpeechMode                    ), "SpeechMode",                    1 },
+{ GLB_OPT (m_iSpeechRate                    ), "SpeechRate",                    0 },
+{ GLB_OPT (m_iSpeechVolume                  ), "SpeechVolume",                  100 },
+{ GLB_OPT (m_iA11yTextPane                  ), "A11yTextPane",                  1 },
 { GLB_OPT (m_iFixedPitchFontSize            ), "FixedPitchFontSize",            9 },
 { GLB_OPT (m_bTabInsertsTab                 ), "TabInsertsTabInMultiLineDialogs", 0 },
 
@@ -105,6 +109,7 @@ static tGlobalConfigurationAlphaOption AlphaGlobalOptionsTable  [] = {
 { GLB_ALPHA_OPT (m_strLuaScript                ), "LuaScript",                  "" },
 { GLB_ALPHA_OPT (m_strLocale                   ), "Locale",                  "EN" },
 { GLB_ALPHA_OPT (m_strFixedPitchFont           ), "FixedPitchFont",          "FixedSys" },
+{ GLB_ALPHA_OPT (m_strSpeechVoice              ), "SpeechVoice",             "" },
 
 {0}   // end of table marker
 

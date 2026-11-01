@@ -32,6 +32,7 @@
 {"name",                          "",         A(m_mush_name), OPT_PLUGIN_CANNOT_WRITE},
 {"new_activity_sound",            NOSOUNDLIT, A(m_new_activity_sound)},
 {"notes",                         "",         A(m_notes), OPT_MULTLINE},
+{"speech_categories",             "",         A(m_strSpeechCategories), OPT_MULTLINE},
 {"on_mxp_close_tag",              "",         A(m_strOnMXP_CloseTag)},
 {"on_mxp_error",                  "",         A(m_strOnMXP_Error)},
 {"on_mxp_open_tag",               "",         A(m_strOnMXP_OpenTag)},

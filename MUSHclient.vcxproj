@@ -1887,6 +1887,12 @@
     <ClCompile Include="src\text_edges.cpp" />
     <ClCompile Include="src\pal\win_transport.cpp" />
     <ClCompile Include="src\pal\https_get.cpp" />
+    <ClCompile Include="src\protocols.cpp" />
+    <ClCompile Include="src\protocols_telnet.cpp" />
+    <ClCompile Include="src\protocols_mxp.cpp" />
+    <ClCompile Include="src\msp.cpp" />
+    <ClCompile Include="src\gmcp.cpp" />
+    <ClCompile Include="src\platform\ma_decode.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <!-- The embedded scripting engines (MUSHclient.engines.props).  Empty
          translation units in Win32, which defines none of their switches. -->

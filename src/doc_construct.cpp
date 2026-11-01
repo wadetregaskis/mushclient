@@ -6,6 +6,7 @@
 #include "mainfrm.h"
 
 #include "doc.h"
+#include "protocols.h"
 #include "platform/mc_dispatch.h"
 #include "genprint.h"
 #include "dialogs/QuickConnectDlg.h"
@@ -146,6 +147,15 @@ int i;
   m_iSocksProcessing = 0;   // no socks processing wanted
   m_iProxyServerPort = 1080; // default socks port
   m_bUseSSL = false;
+  m_bOsc8Links = true;
+  m_bMttsScreenReader = false;      // it discloses a disability: the player's choice
+  m_bMsspTlsHint = true;
+  m_bNativeMSP = true;
+  m_bMSPWithoutNegotiation = false;
+  m_bMSPDownloads = false;
+  m_bMSPAllowHttp = false;
+  m_bMXPWindows = true;
+  m_pProto = new CProtocolState;
   m_pSSL = NULL;
   m_pSSL_CTX = NULL;
   m_bSSL_Connected = false;
@@ -814,6 +824,8 @@ int i;
          delete dbit->second;      // now delete memory used by it
          }
 
+  delete m_pProto;      // last: a plugin's OnPluginClose may have called GMCP_Unsubscribe
+  m_pProto = NULL;
 }   // end of CMUSHclientDoc::~CMUSHclientDoc
 
 

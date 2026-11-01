@@ -23,6 +23,7 @@
 #endif
 
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
+#include "protocols.h"
 #include "scripting/scripting.h"   // CScriptEngine (ExecuteScript delegates to it)
 
 // The transport adapter — the ONE per-platform choice this TU makes (T5).
@@ -832,6 +833,7 @@ bool bWasClosed = m_iConnectPhase == eConnectNotConnected;
   UpdateAllViews (NULL);
 
   MXP_Off (true);   // turn off MXP now
+  Proto_ConnectionClosed (*this);
 
   // update button bar - make button red
   if (m_view_number >= 1 &&
@@ -1028,6 +1030,7 @@ void CMUSHclientDoc::ConnectionEstablished (void)
   m_strLastCommandSent.Empty ();  // no command sent yet
   m_iNoteStyle = NORMAL;    // back to default style
   m_ttype_sequence = 0;     // back to sending terminal name
+  m_pProto->ResetForConnection ();
 
 
   ZeroMemory (&m_bClient_sent_IAC_DO,   sizeof m_bClient_sent_IAC_DO);
@@ -1181,7 +1184,8 @@ CString strIpAddress = inet_ntoa (*((struct in_addr *) lpHostEntry->h_addr));
 
 // they didn't supply a password, so ask for it now
 
-    if (password.IsEmpty () && 
+    if (!m_pProto->bRelocated &&    // MXP RELOCATE: this is not the host they were for
+        password.IsEmpty () && 
           (
           (m_connect_now && !m_name.IsEmpty ()) ||
           (m_connect_text.Find ("%password%") != -1)
@@ -1201,7 +1205,7 @@ CString strIpAddress = inet_ntoa (*((struct in_addr *) lpHostEntry->h_addr));
 #endif
       }
 
-  switch (m_connect_now)
+  switch (m_pProto->bRelocated ? (int) eNoAutoConnect : (int) m_connect_now)
     {
 
     // send CONNECT name password
@@ -1237,7 +1241,7 @@ CString strIpAddress = inet_ntoa (*((struct in_addr *) lpHostEntry->h_addr));
 
 // now send the extra connect string
 
-  if (!m_connect_text.IsEmpty ())
+  if (!m_connect_text.IsEmpty () && !m_pProto->bRelocated)
     {
     CString strText = ::Replace (m_connect_text, "%name%", m_name);
     strText.Replace ("%password%", password);
@@ -1674,6 +1678,7 @@ void CMUSHclientDoc::OnConnectionDisconnect()
   App.m_bUpdateActivity = TRUE;   // new activity!
 
   MXP_Off (true);   // turn off MXP now
+  Proto_ConnectionClosed (*this);
 
 // clean up SSL before closing the socket
 
@@ -1841,6 +1846,8 @@ void  CMUSHclientDoc::SendPacket (const char * lpBuf, const int nBufLen)
     m_pTransport->send (lpBuf, nBufLen);
 
   m_nBytesOut += nBufLen;
+
+  Proto_GmcpWatchSent (*this, lpBuf, nBufLen);
 
   } // end of CMUSHclientDoc::SendPacket
 
@@ -3396,7 +3403,10 @@ CString strLine (lpszText, size);
 // then we will set the default style depending on the flags, this will
 // affect the rest of the line
 
-  if (m_pCurrentLine->len == 0)
+  // (not if the last packet ended with an MXP tag or an OSC 8 link opening the line:
+  // that style is what this text is for, and a tag on its own in a packet is common)
+  if (m_pCurrentLine->len == 0 &&
+      ((flags & NOTE_OR_COMMAND) || (!m_pProto->bLinkOpen && m_ActiveTagList.IsEmpty ())))
     SetNewLineColour (flags | (m_pCurrentLine->flags & BOOKMARK));
 
   for (p = lpszText; size > 0; p++, size--)
@@ -3445,6 +3455,14 @@ CString strLine (lpszText, size);
           case HAVE_MXP_WELCOME:
               MXP_mode_change (-1);
               break;
+          case HAVE_OSC:
+              Proto_OscInterrupted (*this, c);
+              break;
+          case HAVE_MSP_TRIGGER:
+          case HAVE_MSP_AFTER:
+              if (Proto_MspInterrupted (*this, c))
+                continue;     // the line ending of a trigger line goes with it
+              break;
           } // end of switch
 
         m_phase = NONE;   // cannot be in middle of escape sequence
@@ -3460,7 +3478,17 @@ CString strLine (lpszText, size);
       switch (m_phase)
         {
         case HAVE_ESC:            Phase_ESC (c); continue;
-        case HAVE_OSC:            Phase_OSC (c); continue;
+        case HAVE_OSC:
+            Phase_OSC (c);
+            if (!m_pProto->bOscReprocess)
+              continue;
+            m_pProto->bOscReprocess = false;
+            break;                // it gave up: this byte is ordinary text
+        case HAVE_MSP_TRIGGER:
+        case HAVE_MSP_AFTER:
+            if (Proto_MspByte (*this, c))
+              continue;
+            break;                // not a trigger after all: this byte is text
         case HAVE_UTF8_CHARACTER: Phase_UTF8 (c); continue;
 
         case HAVE_FOREGROUND_256_START:    // these 12 are similar to Phase_ANSI
@@ -3680,6 +3708,30 @@ CString strLine (lpszText, size);
         continue;   // back to main loop
         } // end of Pueblo startup
 
+// MSP: a line beginning with ! may be a trigger, which is gagged before anything sees it
+
+    if (c == '!' &&
+        !(flags & NOTE_OR_COMMAND) &&
+        m_pCurrentLine->len == 0 &&
+        !m_pProto->bMspReplaying &&
+        Proto_MspParsing (*this))
+      {
+      m_pProto->mspBuffer = "!";
+      m_phase = HAVE_MSP_TRIGGER;
+      continue;
+      }
+
+// MXP: text going to a frame instead of here
+
+    if (!(flags & NOTE_OR_COMMAND) &&
+        Proto_MxpTextDiverted (*this) &&
+        c != ESC && c != IAC &&
+        !((c == '<' || c == '&') && m_bMXP && (MXP_Open () || MXP_Secure ())))
+      {
+      Proto_MxpDivertByte (*this, c);
+      continue;
+      }
+
 // here when phase is NONE
 
     // do not display UTF-8 characters until they have completely arrived
@@ -3713,12 +3765,25 @@ CString strLine (lpszText, size);
             m_iNoteStyle = NORMAL;  // new line cancels style flags
             m_nTotalLinesReceived++;
 
+            if (!(flags & NOTE_OR_COMMAND))
+              {
+              Proto_OscCloseLink (*this);     // an OSC 8 link ends with its line
+              Proto_MxpEndOfLine (*this);     // as does an MXP line tag's element
+              }
+
             if (m_bMXP && !(flags & NOTE_OR_COMMAND) && !m_bPuebloActive)
               {
               if (!MXP_Open ())
                 MXP_CloseOpenTags (); // close all open tags
               MXP_mode_change (-1);  // switch to default mode
               }   // end of MXP stuff
+
+            if (m_pProto->bNoBreak && !(flags & NOTE_OR_COMMAND))   // <NOBR>
+              {
+              m_pProto->bNoBreak = false;
+              break;
+              }
+
             if (m_bInParagraph && !(flags & NOTE_OR_COMMAND))  // for <P>
               {
               if (m_cLastChar == c)
@@ -3902,6 +3967,12 @@ CString strLine (lpszText, size);
 
   } // end of processing input
       
+
+  if (!fake && !(flags & NOTE_OR_COMMAND))
+    {
+    Proto_MxpPaint (*this);
+    Proto_FlushNotes (*this);
+    }
 
   // to avoid flicker, only update the line if:
   //   a) It is MUD output (eg. a prompt line); or

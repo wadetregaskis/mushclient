@@ -1471,6 +1471,12 @@
     <ClCompile Include="src\text_edges.cpp" />
     <ClCompile Include="src\pal\win_transport.cpp" />
     <ClCompile Include="src\pal\https_get.cpp" />
+    <ClCompile Include="src\protocols.cpp" />
+    <ClCompile Include="src\protocols_telnet.cpp" />
+    <ClCompile Include="src\protocols_mxp.cpp" />
+    <ClCompile Include="src\msp.cpp" />
+    <ClCompile Include="src\gmcp.cpp" />
+    <ClCompile Include="src\platform\ma_decode.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <ClCompile Include="src\platform\mc_dispatch.cpp" />
     <ClCompile Include="src\platform\mc_ui_thread.cpp" />
@@ -1523,6 +1529,7 @@
     <ClCompile Include="tests\test_mxp.cpp" />
     <ClCompile Include="tests\test_netaddress.cpp" />
     <ClCompile Include="tests\test_plugins.cpp" />
+    <ClCompile Include="tests\test_protocols.cpp" />
     <ClCompile Include="tests\test_regexp.cpp" />
     <ClCompile Include="tests\test_scriptengine.cpp" />
     <ClCompile Include="tests\test_speedwalk.cpp" />

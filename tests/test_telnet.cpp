@@ -1194,7 +1194,7 @@ TEST(TelnetR4, TerminalTypeSequenceAndMttsBits)
     // The TRUECOLOR bit is what MUDs gate 24-bit output on, and this client
     // really does render it (tests/test_ansi.cpp drives ESC[38;2;r;g;b through
     // to COLOUR_RGB); the port used to drop the bit and get banded output.
-    EXPECT_TRUE(t->sent.find("MTTS 2317") != std::string::npos);
+    EXPECT_TRUE(t->sent.find("MTTS 2829") != std::string::npos);
 }
 
 // Phase_UTF8: a byte with the high bits wrong mid-sequence flushes the

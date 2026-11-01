@@ -29,6 +29,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "protocols.h"
 #include "scripting/errors.h"   // eOK / eNoSuchPlugin / eNoSuchRoutine / ...
 
 eHyperlinkOutcome CMUSHclientDoc::HyperlinkClicked (const CString strActionArg,
@@ -72,6 +73,8 @@ eHyperlinkOutcome CMUSHclientDoc::HyperlinkClicked (const CString strActionArg,
         strArg = strArg.Left (strArg.GetLength () - 1); // drop trailing )
         if (strPluginID == DEBUG_PLUGIN_ID)  // just made that up ;)
           DebugHelper (strScriptName, strArg);
+        else if (strPluginID == kProtoActionID)     // the client's own links
+          Proto_RunAction (*this, strScriptName, strArg);
         else
           {
           long iResult = CallPlugin (strPluginID, strScriptName, strArg);

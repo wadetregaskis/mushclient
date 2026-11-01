@@ -199,6 +199,7 @@ class CAction : public CObject
   CString m_strAction;   // What to send - multiple ones delimited by |
   CString m_strHint;     // Hint - flyover hint, and prompts for actions
   CString m_strVariable; // which variable to set (FLAG in MXP)
+  CString m_strExpire;   // MXP expire= name: <EXPIRE name> kills the link
   unsigned long m_iHash;       // for quick lookups - hash of action, hint, variable
 
   protected: 
@@ -355,6 +356,9 @@ class CLine : public CObject
 
   long m_nLineNumber;
   short m_iPreambleOffset;  // how far in the preamble took us
+  unsigned char m_iMXPLineTag;  // MXP line tag: 10 room name, 11 description, 12 exits,
+                                // 13 room number, 14 prompt, 19 welcome, 20-99 the
+                                // server's own; 0 if none.  GetLineInfo (line, 14)
 
   CLine (const long nLineNumber,
          const unsigned int nWrapColumn,
@@ -368,7 +372,7 @@ class CLine : public CObject
   // and for test fixtures on every platform — several of them want a blank
   // line to hang a document off without inventing a wrap column and a palette.
   CLine() : hard_return(false), flags(0), len(0), text(nullptr),
-            iMemoryAllocated(0), m_nLineNumber(0), m_iPreambleOffset(0)
+            iMemoryAllocated(0), m_nLineNumber(0), m_iPreambleOffset(0), m_iMXPLineTag(0)
   { m_lineHighPerformanceTime.QuadPart = 0; }
 #endif
   ~CLine ();    // destructor

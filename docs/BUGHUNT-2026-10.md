@@ -12,7 +12,7 @@ performance survey, measured in the running client.
 **Method.** Reviewers read each area adversarially and reported findings with
 failure scenarios; every finding below was re-read against the code before it
 was fixed, and each Windows-reachable fix carries a test or was checked in the
-running client. Tests: 1777 pass on ARM64, x64 and Win32 (after the fixes made afterwards, and IPv6, below); the packaged ARM64
+running client. Tests: 1780 pass on ARM64 and x64, 1778 on Win32 (after the fixes made afterwards, and IPv6, below); the packaged ARM64
 build's engine selftest passes 471/471 (19 skipped).
 
 ## Fixed
@@ -301,10 +301,11 @@ with one closed, a disconnect mid-race).
   The choices are to marshal each call to the UI thread (which turns today's
   race into a deadlock for a script whose main thread waits on such a worker)
   or to refuse the call with a Python error; that is a decision, not a fix.
-- **Text crossing world methods on multi-byte (CJK) or UTF-8 system code pages**
-  round-trips through the ANSI code page (`mc_dispatch.cpp`); Tcl re-encodes
-  Latin-1 bytes. Fixing it means passing the world's bytes through unconverted,
-  a change to the engine boundary on every platform.
+- **Text in the client as a whole** is still bytes in each world's own encoding,
+  shown through the machine's code page. Damage crossing world methods on
+  double-byte or UTF-8 system code pages is fixed (`CarryBytesIn1252`,
+  `mc_dispatch.cpp`; `TextBoundary.*`), and new worlds are UTF-8, but Tcl still
+  re-encodes non-UTF-8 bytes. The rest is `docs/UTF8-PLAN-2026-10.md`.
 - Nothing port-side in this pass has been compiled (Mac/Enchant spell engines,
   the toolbar drag guard, the bundled-files dialog, the importer's Wine search,
   the toolbar selftest change above, and IPv6's half of

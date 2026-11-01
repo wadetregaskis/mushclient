@@ -834,6 +834,12 @@ BOOL CMUSHclientDoc::OnNewDocument()
   SetDefaults (false);        // set up numeric/boolean defaults
   SetAlphaDefaults (false);   // set up alpha defaults
 
+  // A NEW world is UTF-8.  Not the option's default in the table: that is what
+  // a world file with no utf_8 in it loads as, and those were all saved by
+  // something that meant "not UTF-8".  A server that turns out to send Latin-1
+  // still reads correctly (Phase_UTF8 takes what is not UTF-8 as Windows-1252).
+  m_bUTF_8 = TRUE;
+
    // if defaults are wanted, overwrite what we loaded with them :)
              
   if (m_bLoaded)

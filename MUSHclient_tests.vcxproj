@@ -1494,6 +1494,7 @@
     <ClCompile Include="tests\win\test_notepad_win.cpp" />
     <ClCompile Include="tests\win\test_menu_rules_win.cpp" />
     <ClCompile Include="tests\win\test_win_transport.cpp" />
+    <ClCompile Include="tests\win\test_text_boundary.cpp" />
     <ClCompile Include="tests\win\test_win_worldview.cpp" />
     <ClCompile Include="tests\win\test_user_data.cpp" />
     <ClCompile Include="tests\win\test_spell_engine.cpp" />

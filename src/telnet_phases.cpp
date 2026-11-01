@@ -1098,9 +1098,12 @@ void CMUSHclientDoc::OutputBadUTF8characters (void)
   for (int i = 0; m_UTF8Sequence [i]; i++)
     {
 #ifdef _WIN32
-    // convert ANSI to Unicode, then back to UTF-8
+    // convert from Windows-1252 to Unicode, then to UTF-8.  1252 rather than
+    // the machine's code page, which was never known to be the server's: on a
+    // double-byte one a lone byte converts to nothing, and elsewhere to a
+    // character unrelated to what a Latin-1 server sent.  The port does the same.
     WCHAR sUnicode [1];
-    MultiByteToWideChar (CP_THREAD_ACP, MB_PRECOMPOSED, (const char *) &m_UTF8Sequence [i], 1, sUnicode, 1);
+    MultiByteToWideChar (1252, MB_PRECOMPOSED, (const char *) &m_UTF8Sequence [i], 1, sUnicode, 1);
     char sOutput [5];
     memset (sOutput, 0, sizeof sOutput);  // ensure trailing null
     WideCharToMultiByte (CP_UTF8, 0, sUnicode, 1, sOutput, sizeof sOutput, NULL, NULL);
@@ -1113,9 +1116,7 @@ void CMUSHclientDoc::OutputBadUTF8characters (void)
     // whole coloured run it landed in.  Windows never produces that state,
     // because it re-encodes the byte here.
     //
-    // CP_THREAD_ACP is the machine's ANSI codepage, which on the Western
-    // Windows this behaviour was written for is CP1252; that is what we
-    // reproduce.  0x80-0x9F are CP1252's own assignments (the five it leaves
+    // CP1252, as on Windows.  0x80-0x9F are CP1252's own assignments (the five it leaves
     // undefined map to the matching C1 control, as MultiByteToWideChar does);
     // 0xA0-0xFF are Latin-1, i.e. the code point equals the byte.
     static const unsigned short cp1252_80_9F [32] = {

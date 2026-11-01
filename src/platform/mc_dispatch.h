@@ -43,10 +43,10 @@ struct VARIANT;
 #endif
 
 // A BSTR's text as the document's own bytes, and back.  Off Windows a BSTR IS
-// those bytes.  On Windows it is UTF-16 converted from them with the thread's
-// ANSI code page -- what CString::AllocSysString does to every string a world
-// method returns -- so converting back with that code page recovers the
-// document's bytes exactly, whatever they hold (a UTF-8 world's UTF-8, too).
+// those bytes.  On Windows it is UTF-16 converted from them as Windows-1252, the
+// code page MC_DispatchInvoke runs world methods under -- so CString::AllocSysString
+// in a method uses it too -- and converting back recovers the document's bytes
+// exactly, whatever they hold (a UTF-8 world's UTF-8, too), on any machine.
 #ifdef _WIN32
 std::string MC_BstrBytes     (const BSTR b);        // null -> ""
 BSTR        MC_BstrFromBytes (const char * s);      // null -> ""; free with SysFreeString

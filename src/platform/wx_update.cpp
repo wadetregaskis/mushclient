@@ -8,13 +8,13 @@
 // one and starts the new one.  A .deb, or a copy somewhere it can't write, doesn't update
 // itself and goes to the release page.
 
-#include "stdafx.h"
-#include "MUSHclient.h"
-
 #include <wx/wx.h>
 #include <wx/stdpaths.h>
 #include <wx/gauge.h>
 #include <wx/filename.h>
+
+#include "../stdafx.h"
+#include "../MUSHclient.h"
 
 #include "wx_update.h"
 #include "compat.h"

@@ -7,6 +7,7 @@
 #include "update_logic.h"
 #include "update_service.h"
 #include "world_backups.h"
+#include "pal/https_get.h"
 
 #if defined(_WIN32) || defined(OPENSSL_FOUND)
 #define HAVE_CRYPTO_FOR_TESTS 1
@@ -735,6 +736,43 @@ TEST (UpdateController, CheckNowReportsUpToDateAndErrors)
 
   c.SetOnChecked (nullptr);
   c.SetNetwork (nullptr, nullptr);
+  }
+
+// The real thing, on request, since a test suite shouldn't need the internet:
+// MC_UPDATE_NET=1 fetches a page from GitHub by way of the redirect its downloads use.
+TEST (UpdateRealNetwork, DownloadFollowsARedirectAndCanBeCancelled)
+  {
+  if (!getenv ("MC_UPDATE_NET"))
+    return;
+  const fs::path folder = TempFolder ("realnet");
+  const std::string path = (folder / "file").u8string ();
+  const std::string url = "https://github.com/wadetregaskis/mushclient/raw/main/LICENSE";
+
+  int status = 0;
+  std::string error;
+  uint64_t last = 0, total = 0;
+  const bool bOK = pal::HttpsDownload (url, 20, "MUSHclient-test", path,
+                                       [&] (uint64_t done, uint64_t all) { last = done; total = all; return true; },
+                                       &status, &error);
+  printf ("  download: ok=%d status=%d error='%s' got=%llu of %llu, on disk %llu\n", (int) bOK, status, error.c_str (),
+          (unsigned long long) last, (unsigned long long) total, (unsigned long long) fs::file_size (path));
+  EXPECT_TRUE (bOK);
+  EXPECT_EQ (200, status);
+  EXPECT_GT ((unsigned long long) fs::file_size (path), 100ull);
+  EXPECT_EQ ((unsigned long long) last, (unsigned long long) fs::file_size (path));
+
+  error.clear ();
+  EXPECT_FALSE (pal::HttpsDownload (url, 20, "MUSHclient-test", path,
+                                    [] (uint64_t, uint64_t) { return false; }, &status, &error));
+  EXPECT_EQ (std::string ("cancelled"), error);
+
+  // The list of releases, for real, through the real fetcher.
+  const CheckResult check = RunCheck (DefaultFetcher (), "0.01");
+  printf ("  releases: ok=%d error='%s' newer than 0.01: %u\n", (int) check.ok, check.error.c_str (), (unsigned) check.newer.size ());
+  for (const Release & r : check.newer)
+    printf ("    %s, %u files\n", r.version.c_str (), (unsigned) r.assets.size ());
+  fflush (stdout);
+  EXPECT_TRUE (check.ok);
   }
 
 // ---------------- zip files ----------------

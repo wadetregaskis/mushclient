@@ -5194,6 +5194,8 @@ static int L_Save (lua_State *L)
   {
   CMUSHclientDoc *pDoc = doc (L);
   CString strOldName = pDoc->GetPathName ();
+  const BOOL bWasModified = pDoc->IsModified ();
+  const bool bVariablesWereChanged = pDoc->m_bVariablesChanged;
   bool bSaveAs = optboolean (L, 2, 0);  // Save-As flag
   if (bSaveAs) 
     lua_pushboolean (L, pDoc->Save (my_checkstring (L, 1)));
@@ -5206,8 +5208,18 @@ static int L_Save (lua_State *L)
   // one threw an MFC exception out of this binding instead of returning --
   // see docs/UPSTREAM-BUGS.md.  With no previous name to restore, keep the one
   // just written, which is what File > Save As does for an untitled document.
+  //
+  // Going back to the old name has to mean its unsaved changes are still unsaved: a copy
+  // written elsewhere doesn't save them.  Upstream leaves the world marked unmodified, so
+  // the stock Automatic_Backup plugin, on connecting, would clear the flag on a change
+  // and neither the autosave nor the question on closing would ever get to it.
   if (bSaveAs && !strOldName.IsEmpty ())
+    {
     pDoc->SetPathName (strOldName, FALSE);
+    if (bWasModified)
+      pDoc->SetModifiedFlag ();
+    pDoc->m_bVariablesChanged = bVariablesWereChanged;
+    }
   return 1;  // number of result fields
   } // end of L_Save
 

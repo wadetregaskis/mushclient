@@ -2730,4 +2730,17 @@ TEST(PluginVetoCounts, ScriptsCanReadThemAndAReloadStartsAgain)
     EXPECT_EQ(0L, stopped(doc, IDA));
 }
 
+TEST(PluginVetoCounts, DebugPluginsShowsThem)
+{
+    CMUSHclientDoc doc;
+    attach_transport(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("veto", IDA, "Filter", REFUSE_ALL)));
+
+    doc.DoSendMsg("one", false, false);
+    doc.DoSendMsg("two", false, false);
+    doc.Debug("plugins");
+    EXPECT_EQ(1, count_in_notes(doc, "Commands stopped: 2"));
+    EXPECT_EQ(1, count_in_notes(doc, "Stops ignored:    0"));
+}
+
 MC_TEST_MAIN()

@@ -294,6 +294,11 @@ packaging/discworld-plugins/
   quow_plugins/maps/*.png  *.wav                 # map images + sounds
 ```
 
+The script also patches the staged `QuowMinimap.xml` so that it can't silently drop
+commands, and stops if the plugin isn't the text that was reviewed: see
+[`docs/QUOW-HIDDEN-COMMAND-DROP.md`](../docs/QUOW-HIDDEN-COMMAND-DROP.md). A copy staged
+before that existed needs `packaging/fetch-discworld-plugins.sh --patch-only` once.
+
 (The per-user database `_quowmap_userdata.db` — combat stats, hotspots — is
 **not** staged; the plugin creates a fresh one per user.) `fetch` finds the maps
 folder automatically from your install (`~/Library/Application Support/

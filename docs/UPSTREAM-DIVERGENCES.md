@@ -1398,3 +1398,29 @@ on Windows, with Ctrl+J on "teh quikc grue goes nort":
 
 "Add to System" was not clicked on this machine, so as not to change its real
 dictionary. The macOS and Linux engines have not been built or run.
+
+---
+
+## 30 — Plugins that stop commands are recorded, and one plugin's refusals are ignored
+
+**Where:** `plugin_vetoes.h`, `plugins.cpp` (`CommandVetoStands`, and the one-argument
+and returning `SendToAllPluginCallbacks`), `GetPluginInfo` in `methods_plugins.cpp`,
+`Debug "plugins"` in `world_debug.cpp`.
+
+**Upstream:** a plugin can stop a command through `OnPluginSend`, `OnPluginCommand` or
+`OnPluginCommandEntered`, with no sign that anything happened.
+
+**Now:** each time, there is a Trace message, and a per-plugin count, in
+`GetPluginInfo(id, 26)` and `Debug "plugins"`. The command's text is left out while the MUD
+has echo off. Nothing else changes for any plugin but this one:
+
+`OnPluginSend` refusals from plugin ID `bfe35205f026786ea1d56e3b` (Quow's Cow Bar) at version
+4.96 or below are ignored, counted in `GetPluginInfo(id, 27)`, and mentioned in one note per
+loaded plugin. A later version is treated like any other.
+
+**Why:** that version silently drops commands sent by triggers, timers and hotspots:
+`docs/QUOW-HIDDEN-COMMAND-DROP.md`. The Discworld edition's copy is patched when it is
+packaged, but the 5.x importer copies a user's own, and people install it themselves.
+
+**Verification:** `PluginVetoGuard` and `PluginVetoCounts` in `tests/test_plugins.cpp`, on
+every platform, and by hand on Windows: the document above says what was seen.

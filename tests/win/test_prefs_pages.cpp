@@ -27,6 +27,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "chatlistensock.h"
 #include "OtherTypes.h"                            // CTrigger, CTimer
 #include "dialogs/world_prefs/prefspropertypages.h"
 #include "dialogs/world_prefs/triggdlg.h"
@@ -233,19 +234,6 @@ TEST(PrefsChange, ChatAcceptTickShowsThePreferenceNotTheSocket)
     CMUSHclientDoc doc;
     CPrefsP23 page23;
 
-    // The bind that OK retries really is made, on every address, and Windows
-    // Firewall asks the player about each new place an exe doing that is built.
-    // Holding the port, on loopback only, makes it the failed bind described above.
-    SOCKET holder = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    ASSERT_TRUE(holder != INVALID_SOCKET);
-    int iExclusive = 1;
-    ::setsockopt(holder, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*) &iExclusive, sizeof iExclusive);
-    sockaddr_in sa{};
-    sa.sin_family      = AF_INET;
-    sa.sin_port        = htons(45123);
-    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    ASSERT_EQ(0, ::bind(holder, (sockaddr*) &sa, sizeof sa));
-
     // Seed the four fields LoadPrefsP23 substitutes defaults for, so that
     // ChangedPrefsP23 below isolates the accept tick.  Their defaulting is
     // deliberate and its "changed" verdict is correct — see UPSTREAM-BUGS 95,
@@ -263,9 +251,14 @@ TEST(PrefsChange, ChatAcceptTickShowsThePreferenceNotTheSocket)
     EXPECT_TRUE(page23.m_bAcceptIncomingChatConnections);   // shown as set...
     EXPECT_FALSE(doc.ChangedPrefsP23(page23));              // ...so OK is a no-op
 
+    // OK retries the bind, a real one on every address, and Windows Firewall asks
+    // the player about each new place an exe doing that is built.  A socket that
+    // appears to be listening already (never opened) makes ChatAcceptCalls decline.
+    CChatListenSocket notListening(&doc);
+    doc.m_pChatListenSocket = &notListening;
+
     doc.SavePrefsP23(page23);
     EXPECT_TRUE(doc.m_bAcceptIncomingChatConnections);      // and survives OK
-    EXPECT_TRUE(doc.m_pChatListenSocket == NULL);           // the retry failed
 
     // Non-vacuous: the tick still tracks the preference when it is off, so the
     // pass above is not "always true".
@@ -278,8 +271,8 @@ TEST(PrefsChange, ChatAcceptTickShowsThePreferenceNotTheSocket)
     EXPECT_TRUE(doc.ChangedPrefsP23(page23));
     doc.SavePrefsP23(page23);
     EXPECT_TRUE(doc.m_bAcceptIncomingChatConnections);
-    EXPECT_TRUE(doc.m_pChatListenSocket == NULL);
-    ::closesocket(holder);
+
+    doc.m_pChatListenSocket = NULL;
 }
 
 // ── A world with no chat name adopts the default without announcing it ──────

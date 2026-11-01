@@ -3,6 +3,7 @@
 
 #include "stdafx.h"
 #include "MUSHclient.h"
+#include "appearance.h"
 
 #include "doc.h"
 #include "mainfrm.h"
@@ -80,6 +81,36 @@ void CMyToolBar::OnNcPaint()
 }
 void CMyToolBar::EraseNonClient()
 {
+#ifdef _WIN32
+	// MFC's borders and gripper come from the light palette it cached at startup.
+	if (Appearance_IsDark ())
+		{
+		CWindowDC dc(this);
+		CRect rectClient;
+		GetClientRect(rectClient);
+		CRect rectWindow;
+		GetWindowRect(rectWindow);
+		ScreenToClient(rectWindow);
+		rectClient.OffsetRect(-rectWindow.left, -rectWindow.top);
+		dc.ExcludeClipRect(rectClient);
+		rectWindow.OffsetRect(-rectWindow.left, -rectWindow.top);
+		dc.FillSolidRect(rectWindow, Appearance_FaceColour ());
+		if (m_dwStyle & CBRS_GRIPPER)
+			{
+			const bool bHorz = (m_dwStyle & CBRS_ORIENT_HORZ) != 0;
+			for (int i = 0; i < 4; i++)
+				{
+				CRect rectDot;
+				if (bHorz)
+					rectDot = CRect (3, 5 + i * 4, 5, 7 + i * 4);
+				else
+					rectDot = CRect (5 + i * 4, 3, 7 + i * 4, 5);
+				dc.FillSolidRect(rectDot, Appearance_EdgeColour ());
+				}
+			}
+		return;
+		}
+#endif
 
 	// Get window DC that is clipped to the non-client area.
 	CWindowDC dc(this);
@@ -108,6 +139,11 @@ void CMyToolBar::DoPaint(CDC* pDC)
 	ASSERT_VALID(this);
 	ASSERT_VALID(pDC);
 
+#ifdef _WIN32
+	if (Appearance_IsDark ())
+		return;
+#endif
+
 	// Paint inside the client area.
 	CRect rect;
 	GetClientRect(rect);
@@ -125,11 +161,27 @@ void CMyToolBar::DrawGripper(CDC* pDC, const CRect& rect)
 /////////////////////////////////////////////////////////////////////////////
 // CMainFrame
 
+#ifdef _WIN32
+void CMyToolBar::UseBitmap (UINT iBitmapId)
+{
+	m_iBitmapId = iBitmapId;
+	LoadBitmap (iBitmapId);
+	RefreshImages ();
+}
+
+void CMyToolBar::RefreshImages ()
+{
+	if (m_iBitmapId && m_hWnd)
+		Appearance_ApplyToolbarImages (m_hWnd, m_iBitmapId, 16, 15, 96);
+}
+#endif
+
 IMPLEMENT_DYNAMIC(CMainFrame, CMDIFrameWnd)
 
 BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 	ON_WM_CONTEXTMENU()
 #ifdef _WIN32
+	ON_WM_SETTINGCHANGE()
 #endif
 	//{{AFX_MSG_MAP(CMainFrame)
 	ON_WM_CREATE()
@@ -278,6 +330,46 @@ CMainFrame::~CMainFrame()
 {
 }
 
+#ifdef _WIN32
+void CMainFrame::OnSettingChange(UINT uFlags, LPCTSTR lpszSection)
+{
+  CMDIFrameWnd::OnSettingChange (uFlags, lpszSection);
+  Appearance_OnSettingChange (lpszSection);
+}
+
+// The system or the preference has changed the chrome: what isn't a window of its own.
+void CMainFrame::AppearanceChanged ()
+{
+  m_wndToolBar.RefreshImages ();
+  m_wndGameToolBar.RefreshImages ();
+  m_wndActivityToolBar.RefreshImages ();
+  ColourInfoBar (true);
+  RecalcLayout ();
+}
+
+// The info bar is grey with black text until a plugin says otherwise.
+void CMainFrame::ColourInfoBar (const bool bChanged)
+{
+  if (!m_wndInfoBar.m_hWnd || !bChanged)
+    return;
+  CRichEditCtrl * pRichEdit = (CRichEditCtrl *) m_wndInfoBar.GetDlgItem (IDC_INFOTEXT);
+  if (!pRichEdit)
+    return;
+  const bool bDark = Appearance_IsDark ();
+  if (!m_bInfoBackgroundSet)
+    pRichEdit->SetBackgroundColor (FALSE, bDark ? RGB (60, 60, 60) : RGB (192, 192, 192));
+  m_defaultInfoBarFormat.dwMask |= CFM_COLOR;
+  m_defaultInfoBarFormat.dwEffects &= ~CFE_AUTOCOLOR;
+  m_defaultInfoBarFormat.crTextColor = bDark ? Appearance_TextColour () : RGB (0, 0, 0);
+  pRichEdit->SetDefaultCharFormat (m_defaultInfoBarFormat);
+}
+
+static void AppearanceChangedHandler ()
+{
+  Frame.AppearanceChanged ();
+}
+#endif
+
 int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 {
 #ifndef _WIN32
@@ -306,6 +398,10 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
   if (App.m_bFlatToolbars)
     iToolbarFlags = TBSTYLE_FLAT;
 
+#ifdef _WIN32
+  Appearance_SetChangeHandler (AppearanceChangedHandler);
+#endif
+
   if (CMDIFrameWnd::OnCreate(lpCreateStruct) == -1)
     {
     ::TMessageBox ("Failed to create MDI Frame Window", MB_ICONSTOP);
@@ -326,6 +422,10 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
     ::TMessageBox ("Failed to create toolbar", MB_ICONSTOP);
 		return -1;      // fail to create
 	}
+#ifdef _WIN32
+  m_wndToolBar.m_iBitmapId = IDR_MAINFRAME;
+  m_wndToolBar.RefreshImages ();
+#endif
 
 
 	if (!m_wndStatusBar.Create(this) ||
@@ -346,6 +446,10 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
     ::TMessageBox ("Failed to create game toolbar", MB_ICONSTOP);
 		return -1;      // fail to create
 	}
+#ifdef _WIN32
+  m_wndGameToolBar.m_iBitmapId = IDR_GAME_TOOLBAR;
+  m_wndGameToolBar.RefreshImages ();
+#endif
 
 	if (!m_wndActivityToolBar.CreateEx(this, iToolbarFlags, WS_CHILD | WS_VISIBLE | CBRS_TOP
 		| CBRS_GRIPPER | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC, 
@@ -382,6 +486,10 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
     // grey background
     pRichEdit->SetBackgroundColor (FALSE, RGB(192, 192, 192));
+#ifdef _WIN32
+    if (Appearance_IsDark ())
+      ColourInfoBar (true);
+#endif
 
     // select all
     pRichEdit->SetSel (0, -1);
@@ -404,7 +512,11 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
   if (App.m_iActivityButtonBarStyle < 0 || App.m_iActivityButtonBarStyle >= NUMITEMS (ActivityToolBarResourceNames))
     App.m_iActivityButtonBarStyle = 0;
   
+#ifdef _WIN32
+  m_wndActivityToolBar.UseBitmap (ActivityToolBarResourceNames [App.m_iActivityButtonBarStyle]);
+#else
   m_wndActivityToolBar.LoadBitmap (ActivityToolBarResourceNames [App.m_iActivityButtonBarStyle]);
+#endif
   m_wndActivityToolBar.Invalidate (); // redraw it
 
   m_wndToolBar.EnableDocking(CBRS_ALIGN_ANY);

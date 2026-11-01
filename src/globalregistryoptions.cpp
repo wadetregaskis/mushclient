@@ -39,6 +39,7 @@ static tGlobalConfigurationNumericOption GlobalOptionsTable [] = {
 { GLB_OPT (m_bOpenActivityWindow            ), "OpenActivityWindow",            0 },
 { GLB_OPT (m_bOpenWorldsMaximised           ), "OpenWorldsMaximised",           0 },
 { GLB_OPT (m_iWindowTabsStyle               ), "WindowTabsStyle",           0 },
+{ GLB_OPT (m_iAppearance                    ), "Appearance",           0 },
 { GLB_OPT (m_bReconnectOnLinkFailure        ), "ReconnectOnLinkFailure",        0 },
 { GLB_OPT (m_bRegexpMatchEmpty              ), "RegexpMatchEmpty",  1 },
 { GLB_OPT (m_bShowGridLinesInListViews      ), "ShowGridLinesInListViews",  1 },

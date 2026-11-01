@@ -5,6 +5,7 @@
 // xgettext  -kTranslateFormat -o mushclient_formatted.po *.cpp
 
 #include "stdafx.h"
+#include "appearance.h"
 #ifdef _WIN32
 #include <afxstat_.h>   // _AFX_THREAD_STATE (CMUSHclientApp::PumpMessage)
 #include <afxpriv.h>   // WM_KICKIDLE
@@ -628,6 +629,9 @@ BOOL CMUSHclientApp::InitInstance()
   // read global prefs from the database
 
   LoadGlobalsFromDatabase ();
+
+  // before any window exists: the app mode has to be set before the first one
+  Appearance_Init (m_iAppearance);
 
 #ifdef MUSHCLIENT_EMBEDDED_ENGINES
   // --engines-selftest[=<language>]: the scripting-language conformance suite

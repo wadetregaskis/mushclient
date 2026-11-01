@@ -3,6 +3,7 @@
 #include "mainfrm.h"
 
 #include "MDIClientWnd.h"
+#include "appearance.h"
 
 // CMDIClientWnd
 
@@ -31,6 +32,17 @@ BOOL CMDIClientWnd::OnEraseBkgnd(CDC* pDC)
 {
 
   // if colour is 0xFFFFFFFF then use Windows default (same as before)
+#ifdef _WIN32
+  // a plugin's colour (utils.setbackgroundcolour) still wins
+  if (Frame.m_backgroundColour == 0xFFFFFFFF && Appearance_IsDark ())
+    {
+    CRect rectDark;
+    pDC->GetClipBox(&rectDark);
+    pDC->FillSolidRect(&rectDark, RGB (24, 24, 24));
+    return TRUE;
+    }
+#endif
+
   if (Frame.m_backgroundColour == 0xFFFFFFFF)
       return CWnd::OnEraseBkgnd(pDC);
 

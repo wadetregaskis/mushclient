@@ -344,6 +344,17 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\appearance.cpp">
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\appearance_win.cpp">
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="src\globalregistryoptions.cpp">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -1512,6 +1523,7 @@
     <ClCompile Include="tests\test_accelerators.cpp" />
     <ClCompile Include="tests\test_aliases.cpp" />
     <ClCompile Include="tests\test_ansi.cpp" />
+    <ClCompile Include="tests\test_appearance.cpp" />
     <ClCompile Include="tests\test_bundled_files.cpp" />
     <ClCompile Include="tests\test_chat_protocol.cpp" />
     <ClCompile Include="tests\test_colour.cpp" />

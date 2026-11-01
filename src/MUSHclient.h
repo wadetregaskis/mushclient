@@ -150,6 +150,7 @@ public:
   unsigned int m_bOpenActivityWindow;
   unsigned int m_bOpenWorldsMaximised;
   unsigned int m_iWindowTabsStyle;
+  unsigned int m_iAppearance;   // APPEARANCE_SYSTEM etc. (appearance.h)
   unsigned int m_bReconnectOnLinkFailure;
   unsigned int m_bRegexpMatchEmpty;
   unsigned int m_bShowGridLinesInListViews;

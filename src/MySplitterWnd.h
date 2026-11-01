@@ -12,6 +12,10 @@
 
 class CMySplitterWnd : public CSplitterWnd
 {
+public:
+#ifdef _WIN32
+	virtual void OnDrawSplitter(CDC* pDC, ESplitType nType, const CRect& rect) override;
+#endif
 // Construction
 public:
 	CMySplitterWnd();

@@ -1143,6 +1143,7 @@ public:
         CRichEditCtrl* pRichEdit =
             (CRichEditCtrl*)frame()->m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
 
+        frame()->m_bInfoBackgroundSet = true;   // so a change of appearance leaves it alone
         pRichEdit->SetBackgroundColor(FALSE, c);
     }
 

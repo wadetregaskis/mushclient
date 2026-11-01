@@ -5281,6 +5281,57 @@ static int L_SendNoEcho (lua_State *L)
   } // end of L_SendNoEcho
 
 //----------------------------------------
+//  world.GMCP_Subscribe
+//----------------------------------------
+static int L_GMCP_Subscribe (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  // a number or a string, and it may be left out
+  lua_pushnumber (L, pDoc->GMCP_Subscribe (my_checkstring (L, 1), my_optstring (L, 2, "")));
+  return 1;  // number of result fields
+  } // end of L_GMCP_Subscribe
+
+//----------------------------------------
+//  world.GMCP_Unsubscribe
+//----------------------------------------
+static int L_GMCP_Unsubscribe (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  lua_pushnumber (L, pDoc->GMCP_Unsubscribe (my_checkstring (L, 1)));
+  return 1;  // number of result fields
+  } // end of L_GMCP_Unsubscribe
+
+//----------------------------------------
+//  world.GMCP_Send
+//----------------------------------------
+static int L_GMCP_Send (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  lua_pushnumber (L, pDoc->GMCP_Send (my_checkstring (L, 1), my_optstring (L, 2, "")));
+  return 1;  // number of result fields
+  } // end of L_GMCP_Send
+
+//----------------------------------------
+//  world.GMCP_Get
+//----------------------------------------
+static int L_GMCP_Get (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  VARIANT v = pDoc->GMCP_Get (my_checkstring (L, 1));
+  return pushVariant (L, v);
+  } // end of L_GMCP_Get
+
+//----------------------------------------
+//  world.MXPEntityInfo
+//----------------------------------------
+static int L_MXPEntityInfo (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  VARIANT v = pDoc->MXPEntityInfo (my_checkstring (L, 1), (short) my_checknumber (L, 2));
+  return pushVariant (L, v);
+  } // end of L_MXPEntityInfo
+
+//----------------------------------------
 //  world.SendPkt
 //----------------------------------------
 static int L_SendPkt (lua_State *L)
@@ -7197,6 +7248,11 @@ static const struct luaL_Reg worldlib [] =
   {"SendImmediate", L_SendImmediate},
   {"SendNoEcho", L_SendNoEcho},
   {"SendPkt", L_SendPkt},
+  {"GMCP_Subscribe", L_GMCP_Subscribe},
+  {"GMCP_Unsubscribe", L_GMCP_Unsubscribe},
+  {"GMCP_Send", L_GMCP_Send},
+  {"GMCP_Get", L_GMCP_Get},
+  {"MXPEntityInfo", L_MXPEntityInfo},
   {"SendPush", L_SendPush},
   {"SendSpecial", L_SendSpecial},
   {"SendToNotepad", L_SendToNotepad},

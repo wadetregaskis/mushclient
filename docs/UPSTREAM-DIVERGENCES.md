@@ -1398,3 +1398,22 @@ on Windows, with Ctrl+J on "teh quikc grue goes nort":
 
 "Add to System" was not clicked on this machine, so as not to change its real
 dictionary. The macOS and Linux engines have not been built or run.
+
+## 30 — Telnet, MXP, MSP and GMCP do more for themselves
+
+`docs/PROTOCOLS.md` has the details. What a world that upstream handled differently will notice:
+
+- The client answers `IAC DO 39` (NEW-ENVIRON) and `IAC WILL 70` (MSSP), where it said `WONT` and
+  `DONT`, unless a plugin claims them. It answers `IAC WILL 90` (MSP) with `DO`, and plays the
+  sounds itself, unless a plugin claims it or `msp.xml` is loaded.
+- MTTS says 777, not 265, and CHARSET no longer says US-ASCII for a Latin-1 world.
+- A repeated `WILL` or `DO` does not run a plugin's `SENT_DO` or `SENT_WILL` handshake again within
+  a minute. Ten negotiations of an option in a minute silences it for ten seconds.
+- `<VERSION>` says MXP 1.0, and `<SUPPORT>` now says yes to a good deal more.
+- `OSC 8` links work. Other OSC sequences stay swallowed, but an unterminated one past 64 KB stops
+  being swallowed.
+- An MXP tag or link alone at the start of a line, with the text in the next packet, keeps its
+  style. Upstream reset it when the next packet arrived.
+- `<!ENTITY x y ADD>` and `REMOVE` are lists, where upstream ignored ADD and REMOVE deleted the entity.
+- MXP tags on a line with a line tag (modes 10 to 99) are parsed. Those modes used to replace the
+  security mode, which left the tags on the line as literal text.

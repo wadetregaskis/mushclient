@@ -6,6 +6,7 @@
 #include "MUSHclient.h"
 
 #include "doc.h"
+#include "protocols.h"
 #include "dialogs/plugins/PluginWizardSheet.h"
 #include "UDPsocket.h"        // a plugin's UDP listeners are closed with it
 
@@ -74,6 +75,8 @@ const string ON_PLUGIN_TICK                  ("OnPluginTick");
 const string ON_PLUGIN_MOUSE_MOVED           ("OnPluginMouseMoved");    
 
 // MXP stuff
+const string ON_PLUGIN_MXP_FLAG              ("OnPluginMXPflag");
+const string ON_PLUGIN_GMCP                  ("OnPluginGMCP");
 const string ON_PLUGIN_MXP_START             ("OnPluginMXPstart");
 const string ON_PLUGIN_MXP_STOP              ("OnPluginMXPstop");
 const string ON_PLUGIN_MXP_OPENTAG           ("OnPluginMXPopenTag");    
@@ -123,7 +126,9 @@ string PluginCallbacksNames [] = {
    ON_PLUGIN_MOUSE_MOVED,           
 
    ON_PLUGIN_MXP_CLOSETAG,          
-   ON_PLUGIN_MXP_ERROR,             
+   ON_PLUGIN_MXP_ERROR,
+   ON_PLUGIN_MXP_FLAG,
+   ON_PLUGIN_GMCP,
    ON_PLUGIN_MXP_OPENTAG,           
    ON_PLUGIN_MXP_SETENTITY,         
    ON_PLUGIN_MXP_SETVARIABLE,       
@@ -180,8 +185,12 @@ CPlugin::CPlugin (CMUSHclientDoc * pDoc)
   } // end of constructor
 
 // destructor
-CPlugin::~CPlugin () 
+CPlugin::~CPlugin ()
   {
+  // its GMCP subscriptions go with it
+  if (m_pDoc && m_pDoc->m_pProto)
+    Proto_GmcpPluginGone (*m_pDoc, (const char *) m_strID);
+
   // change to this plugin, call function, put current plugin back
   CPlugin * pSavedPlugin = m_pDoc->m_CurrentPlugin;
   m_pDoc->m_CurrentPlugin = this;
@@ -365,6 +374,72 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
 
   return true;    // assume they OK'd it
 
+  }  // end of CPlugin::ExecutePluginScript
+
+// two strings: OnPluginGMCP (package, rawText)
+bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
+                                   const char * sText1,
+                                   const char * sText2)
+  {
+  DISPID & iRoutine = callinfo._dispid_info._dispid;
+
+  if (!m_ScriptEngine || iRoutine == DISPID_UNKNOWN)
+    return true;
+
+  callinfo._dispid_info._count++;
+
+  long nInvocationCount = 0;
+
+  CString strType = TFormat ("Plugin %s", (LPCTSTR) m_strName);
+  CString strReason = TFormat ("Executing plugin %s sub %s",
+                               (LPCTSTR) m_strName,
+                               callinfo._name.c_str () );
+
+  if (m_ScriptEngine->UsesEmbeddedCallback ())
+    {
+    list<double> nparams;
+    list<string> sparams;
+    sparams.push_back (sText1);
+    sparams.push_back (sText2);
+    bool result = true;
+    m_ScriptEngine->ExecuteLua (iRoutine,
+                                callinfo._name.c_str (),
+                                eDontChangeAction,
+                                strType,
+                                strReason,
+                                nparams,
+                                sparams,
+                                nInvocationCount,
+                                NULL, NULL, NULL,
+                                &result);
+    return result;
+    }
+
+  // WARNING - arguments should appear in REVERSE order to what the sub expects them!
+  enum
+    {
+    eText2,
+    eText1,
+    eArgCount,     // this MUST be last
+    };
+
+  CScriptVariant args [eArgCount];
+  DISPPARAMS params = { args, NULL, eArgCount, 0 };
+
+  args [eText1] = sText1;
+  args [eText2] = sText2;
+
+  CScriptVariant result;
+
+  m_ScriptEngine->Execute (iRoutine,
+                           callinfo._name.c_str (),
+                           eDontChangeAction,
+                           strType,
+                           strReason,
+                           params,
+                           nInvocationCount,
+                           &result);
+  return true;
   }  // end of CPlugin::ExecutePluginScript
 
 bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo, 

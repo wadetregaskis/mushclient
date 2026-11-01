@@ -23,6 +23,30 @@ bool HttpsGet (const std::string & url, int timeoutSeconds,
                const std::string & userAgent,
                int * status, std::string * body, std::string * error);
 
+// A fetch on behalf of a server, rather than of the player's own script.  The server
+// chose the URL, so it might point anywhere, and this one will not go just anywhere:
+//
+//   Every address the name resolves to must be a public one (see IsPublicAddress), and
+//   the connection is made to the address that was checked, so a name cannot be made to
+//   change its mind between the check and the connection.  http only if bAllowHttp.
+//   Redirects stay on the same host, and never from https to http.  Nothing past maxBytes.
+struct SafeGetOptions
+  {
+  bool bAllowHttp;
+  size_t maxBytes;
+  int timeoutSeconds;
+  std::string userAgent;
+  SafeGetOptions () : bAllowHttp (false), maxBytes (16 * 1024 * 1024), timeoutSeconds (60) { }
+  };
+
+bool SafeGet (const std::string & url, const SafeGetOptions & options,
+              int * status, std::string * body, std::string * error);
+
+// Is this an address on the internet proper?  Not loopback, private, link-local, CGNAT,
+// multicast, reserved or unspecified, in IPv4, in IPv6, or in IPv4 in disguise in IPv6.
+// The length is 4 or 16.
+bool IsPublicAddress (const unsigned char * address, size_t length);
+
 // For tests: a response's content, given its headers, with any chunked encoding
 // undone.  False if it is incomplete (a chunked body with no last chunk, or fewer
 // bytes than Content-Length).

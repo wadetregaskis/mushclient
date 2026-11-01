@@ -4,6 +4,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "protocols.h"
 #include "mushview.h"
 #include "mxp/mxp.h"
 #include "scripting/errors.h"
@@ -472,6 +473,10 @@ assemble the full text of the original line.
 
   if (m_bPluginProcessesLine &&
       !SendToAllPluginCallbacks (ON_PLUGIN_LINE_RECEIVED, strCurrentLine))
+    m_bLineOmittedFromOutput = true;
+
+  // an MXP line tag: tell the plugins, and <!TAG> may send it elsewhere
+  if (m_pProto->lineTag && Proto_MxpLineComplete (*this, strCurrentLine, prevpos))
     m_bLineOmittedFromOutput = true;
 
   m_iCurrentActionSource = eUnknownActionSource;

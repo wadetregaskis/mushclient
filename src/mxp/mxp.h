@@ -48,6 +48,8 @@ enum
   MXP_ACTION_GAUGE,       // gauge                  
   MXP_ACTION_STAT,        // status
   MXP_ACTION_EXPIRE,      // expire
+  MXP_ACTION_MUSIC,       // play music
+  MXP_ACTION_SBR,         // soft line break
 
   // non-standard yet
   MXP_ACTION_RESET,       // close all open tags 

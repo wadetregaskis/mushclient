@@ -35,35 +35,39 @@ tMXP_element MXP_elements [] =
                                 "fore,back" },    
     { "c",        TAG_OPEN,     MXP_ACTION_COLOR ,          // same as COLOR
                                 "fore,back" },    
-    { "s",        TAG_OPEN | TAG_NOT_IMP,     MXP_ACTION_STRIKE , "" },   // Strikethrough 
-    { "strike",   TAG_OPEN | TAG_NOT_IMP,     MXP_ACTION_STRIKE , "" },   // Strikethrough  
+    { "s",        TAG_OPEN,     MXP_ACTION_STRIKE , "" },   // Strikethrough
+    { "strike",   TAG_OPEN,     MXP_ACTION_STRIKE , "" },   // Strikethrough
+    { "strikeout",TAG_OPEN,     MXP_ACTION_STRIKE , "" },   // Strikethrough
     { "strong",   TAG_OPEN,     MXP_ACTION_BOLD , "" },     // Same as Bold                
-    { "small",    TAG_OPEN | TAG_NOT_IMP,     MXP_ACTION_SMALL , "" },    // Small text               
-    { "tt",       TAG_OPEN | TAG_NOT_IMP,     MXP_ACTION_TT , "" },       // Non-proportional font                
+    { "small",    TAG_OPEN,     MXP_ACTION_SMALL , "" },    // Small text: dimmer, on a fixed grid
+    { "tt",       TAG_OPEN,     MXP_ACTION_TT , "" },       // Non-proportional font: always so here
     { "font",     TAG_OPEN,     MXP_ACTION_FONT ,           // Font appearance
                                 "color,back,fgcolor,bgcolor" },                          
 
   // secure tags
 
-    { "frame",    TAG_NOT_IMP,  MXP_ACTION_FRAME , "" },    // frame   (secure)                
-    { "dest",     TAG_NOT_IMP,  MXP_ACTION_DEST , "" },     // destination frame  (secure)                 
-    { "image",    TAG_COMMAND | TAG_NOT_IMP,  MXP_ACTION_IMAGE ,          // show image  (secure)  
-                                "url,fname" },    
+    { "frame",    TAG_COMMAND,  MXP_ACTION_FRAME ,          // frame   (secure)
+                                "name,action,title,internal,align,left,top,width,height,scrolling" },
+    { "dest",     0,            MXP_ACTION_DEST ,           // destination frame  (secure)
+                                "x,y,eol,eof" },
+    { "image",    TAG_COMMAND,  MXP_ACTION_IMAGE ,          // show image  (secure)
+                                "url,fname,t,align" },
     { "filter",   TAG_NOT_IMP,  MXP_ACTION_FILTER , "" },   // sound/image filter  (secure)                 
     { "a",        0,            MXP_ACTION_HYPERLINK ,      // Hyperlink (secure) 
-                                "href,xch_cmd,xch_hint" },         
-    { "h1",       TAG_NOT_IMP,  MXP_ACTION_H1 , "" },       // Level 1 heading (secure)                 
-    { "h2",       TAG_NOT_IMP,  MXP_ACTION_H2 , "" },       // Level 2 heading (secure)                 
-    { "h3",       TAG_NOT_IMP,  MXP_ACTION_H3 , "" },       // Level 3 heading (secure)                 
-    { "h4",       TAG_NOT_IMP,  MXP_ACTION_H4 , "" },       // Level 4 heading (secure)                 
-    { "h5",       TAG_NOT_IMP,  MXP_ACTION_H5 , "" },       // Level 5 heading (secure)                 
-    { "h6",       TAG_NOT_IMP,  MXP_ACTION_H6 , "" },       // Level 6 heading (secure)                 
+                                "href,hint,expire,xch_cmd,xch_hint" },
+    { "h1",       0,            MXP_ACTION_H1 , "" },       // Level 1 heading (secure)                 
+    { "h2",       0,            MXP_ACTION_H2 , "" },       // Level 2 heading (secure)                 
+    { "h3",       0,            MXP_ACTION_H3 , "" },       // Level 3 heading (secure)                 
+    { "h4",       0,            MXP_ACTION_H4 , "" },       // Level 4 heading (secure)                 
+    { "h5",       0,            MXP_ACTION_H5 , "" },       // Level 5 heading (secure)                 
+    { "h6",       0,            MXP_ACTION_H6 , "" },       // Level 6 heading (secure)                 
     { "hr",       TAG_COMMAND,  MXP_ACTION_HR , "" },       // Horizontal rule (secure)              
-    { "nobr",     TAG_NOT_IMP,  MXP_ACTION_NOBR , "" },     // non-breaking newline               
+    { "nobr",     TAG_COMMAND,  MXP_ACTION_NOBR , "" },     // the next newline is ignored
+    { "sbr",      TAG_COMMAND,  MXP_ACTION_SBR , "" },      // soft line break: a space to wrap at
     { "p",        0,            MXP_ACTION_P , "" },        // Paragraph break (secure)              
     { "script",   TAG_NOT_IMP,  MXP_ACTION_SCRIPT , "" },   // Client script (secure)             
     { "send",     0,            MXP_ACTION_SEND ,           // eg. <send href="go west"> west </send> (secure) 
-                                "href,hint,xch_cmd,xch_hint,prompt" },     
+                                "href,hint,expire,xch_cmd,xch_hint,prompt" },
     { "ul",       0,            MXP_ACTION_UL , "" },       // Unordered list              
     { "ol",       0,            MXP_ACTION_OL , "" },       // Ordered list
     { "samp",     0,            MXP_ACTION_SAMP , "" },     // Sample text
@@ -72,23 +76,28 @@ tMXP_element MXP_elements [] =
     { "v",        0,            MXP_ACTION_VAR , "" },      // set variable
 
     // recent additions
-    { "gauge",    TAG_NOT_IMP,  MXP_ACTION_GAUGE , "" },    // gauge   (secure)                
-    { "stat",     TAG_NOT_IMP,  MXP_ACTION_STAT , "" },     // stat   (secure)                
-    { "expire",   TAG_NOT_IMP,  MXP_ACTION_EXPIRE , "" },   // expire (secure)                
+    { "gauge",    TAG_COMMAND,  MXP_ACTION_GAUGE ,          // gauge   (secure)
+                                "max,caption,color" },
+    { "stat",     TAG_COMMAND,  MXP_ACTION_STAT ,           // stat   (secure)
+                                "max,caption" },
+    { "expire",   TAG_COMMAND,  MXP_ACTION_EXPIRE , "" },   // expire (secure)
 
     // strictly speaking <LI> isn't a command, but few people bother with </li>
     { "li",       TAG_COMMAND,  MXP_ACTION_LI , "" },       // List item
 
   // secure, command tags
 
-    { "sound",    TAG_COMMAND | TAG_NOT_IMP,  MXP_ACTION_SOUND , "" },    // play sound                  
-    { "music",    TAG_COMMAND | TAG_NOT_IMP,  MXP_ACTION_SOUND , "" },    // play music                  
+    { "sound",    TAG_COMMAND,  MXP_ACTION_SOUND ,          // play sound
+                                "fname,v,l,p,t,u" },
+    { "music",    TAG_COMMAND,  MXP_ACTION_MUSIC ,          // play music
+                                "fname,v,l,c,t,u" },
     { "br",       TAG_COMMAND,  MXP_ACTION_BR , "" },       // Hard Line break (secure)                 
     { "username", TAG_COMMAND,  MXP_ACTION_USER , "" },     // send username (secure)                  
     { "user",     TAG_COMMAND,  MXP_ACTION_USER , "" },     // send username (secure)                   
     { "password", TAG_COMMAND,  MXP_ACTION_PASSWORD , "" }, // send password (secure)                  
     { "pass",     TAG_COMMAND,  MXP_ACTION_PASSWORD , "" }, // send password (secure)                 
-    { "relocate", TAG_COMMAND | TAG_NOT_IMP,  MXP_ACTION_RELOCATE , "" }, // causes a new connect to open (secure)                    
+    { "relocate", TAG_COMMAND,  MXP_ACTION_RELOCATE ,       // offers a new connection (secure)
+                                "hostname,port" },
     { "version",  TAG_COMMAND,  MXP_ACTION_VERSION , "" },  // version request (secure) 
 
   // my extension tags

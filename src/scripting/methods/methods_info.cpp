@@ -1315,6 +1315,8 @@ CLine * pLine = m_LineList.GetAt (GetLinePosition (LineNumber - 1));
       }
       break;
 
+    case  14: SetUpVariantShort  (vaResult, pLine->m_iMXPLineTag); break;
+
     default:
       vaResult.vt = VT_NULL;
       break;

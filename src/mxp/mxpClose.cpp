@@ -8,6 +8,7 @@
 #include "../mushview.h"
 #include "../mainfrm.h"
 #include "mxp.h"
+#include "../protocols.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -285,9 +286,14 @@ bool bHaveVariable = false;
                               (LPCTSTR) strVariable,
                               (LPCTSTR) strText));
 
+    // FLAG=RoomName and the like, for a mapper
+    if (strTag != "var" && strTag != "v")
+      Proto_MxpFlagClosed (*this, strVariable.Mid (4), strText);
+
     if (strTag == "var"|| strTag == "v") // add entity to map
       {
       m_CustomEntityMap.SetAt (strVariable, strText);
+      Proto_MxpEntityChanged (*this);
 
       // tell each plugin what we have received
       if (m_bPluginProcessesSetEntity)

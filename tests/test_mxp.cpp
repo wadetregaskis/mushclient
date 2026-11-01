@@ -870,7 +870,7 @@ TEST(MXPOpenAtomic, VersionTagSendsVersionResponse)
     CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     mud(doc, "<VERSION>\n");
-    EXPECT_TRUE(contains(sent_of(doc), "<VERSION MXP=\"0.5\" CLIENT=MUSHclient"));
+    EXPECT_TRUE(contains(sent_of(doc), "<VERSION MXP=\"1.0\" CLIENT=MUSHclient"));
     EXPECT_TRUE(contains(sent_of(doc), "REGISTERED=YES"));
 }
 
@@ -891,10 +891,10 @@ TEST(MXPOpenAtomic, SupportTagAnswersSpecificQueries)
     CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     // color implemented → +color; image flagged NOT_IMP → -image
-    mud(doc, "<SUPPORT color image>\n");
+    mud(doc, "<SUPPORT color filter>\n");
     std::string sent = sent_of(doc);
     EXPECT_TRUE(contains(sent, "+color "));
-    EXPECT_TRUE(contains(sent, "-image "));
+    EXPECT_TRUE(contains(sent, "-filter "));
 }
 
 TEST(MXPOpenAtomic, SupportTagSubOptionAndWildcardQueries)

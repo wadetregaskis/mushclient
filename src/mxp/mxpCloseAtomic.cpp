@@ -6,6 +6,7 @@
 #include "../mushview.h"
 #include "../mainfrm.h"
 #include "mxp.h"
+#include "../protocols.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -51,11 +52,13 @@ void CMUSHclientDoc::MXP_CloseAtomicTag (const int iAction,
             CString strAction;
             CString strHint;
             CString strVariable;
+            CString strExpire;
             if (pStyle2->pAction)
               {
               strAction = pStyle2->pAction->m_strAction;
               strHint = pStyle2->pAction->m_strHint;
               strVariable = pStyle2->pAction->m_strVariable;
+              strExpire = pStyle2->pAction->m_strExpire;
               }
 
             if (m_bUseCustomLinkColour && !m_bMudCanChangeLinkColour)
@@ -79,7 +82,7 @@ void CMUSHclientDoc::MXP_CloseAtomicTag (const int iAction,
               { // no action defined - use &text; as the action
                if (pAction == NULL)
                  {
-                 pAction = GetAction (strText, strHint, strVariable);
+                 pAction = GetAction (strText, strHint, strVariable, strExpire);
                  pStyle2->pAction = pAction;
                  }
                else
@@ -94,7 +97,7 @@ void CMUSHclientDoc::MXP_CloseAtomicTag (const int iAction,
               strAction.Replace ("&text;", strText);
               strHint.Replace ("&text;", strText);
               pStyle2->pAction->Release ();
-              pStyle2->pAction = GetAction (strAction, strHint, strVariable);
+              pStyle2->pAction = GetAction (strAction, strHint, strVariable, strExpire);
               // remember replacement text for next time
               if (pAction == NULL)
                 pAction = pStyle2->pAction; 
@@ -139,9 +142,13 @@ void CMUSHclientDoc::MXP_CloseAtomicTag (const int iAction,
 
        break;  // end of MXP_ACTION_OL
 
-      case MXP_ACTION_VAR: 
+      case MXP_ACTION_VAR:
         {
         }
+        break;
+
+      case MXP_ACTION_DEST:
+        Proto_MxpDestClose (*this);
         break;
     } // end of switch on action type
 

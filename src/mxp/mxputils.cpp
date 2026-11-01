@@ -52,7 +52,8 @@ bool GetWord (CString & strResult, CString & str)
   // is it a word or number?
   if (isalnum (*p) ||
       *p == '+' ||
-      *p == '-')
+      *p == '-' ||
+      (*p == '_' && isalnum (p [1])))    // the frame names _top and _previous
     {
     // skip initial character, and then look for terminator
     for (p++, len++; *p; p++, len++)
@@ -434,6 +435,14 @@ CAction * CMUSHclientDoc::GetAction (const CString & strAction,
                                      const CString & strHint,
                                      const CString & strVariable)
   {
+  return GetAction (strAction, strHint, strVariable, "");
+  }
+
+CAction * CMUSHclientDoc::GetAction (const CString & strAction,
+                                     const CString & strHint,
+                                     const CString & strVariable,
+                                     const CString & strExpire)
+  {
 
   // not needed if all these are empty
   if (strAction.IsEmpty () &&
@@ -450,7 +459,8 @@ unsigned long iHash = MakeActionHash (strAction, strHint, strVariable);
     if (pAction->m_iHash == iHash &&
         pAction->m_strAction == strAction &&
         pAction->m_strHint == strHint &&
-        pAction->m_strVariable == strVariable)
+        pAction->m_strVariable == strVariable &&
+        pAction->m_strExpire == strExpire)
       {
       pAction->AddRef (); // one more user of it
       return pAction;
@@ -461,6 +471,7 @@ unsigned long iHash = MakeActionHash (strAction, strHint, strVariable);
   // here when action not found
 
   CAction * pAction = new CAction (strAction, strHint, strVariable, this);
+  pAction->m_strExpire = strExpire;
 
   pAction->AddRef ();
   m_ActionList.AddTail (pAction);   

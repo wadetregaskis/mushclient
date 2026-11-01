@@ -12,6 +12,9 @@
 #include "dialogs/global_prefs/GlobalPrefs.h"
 #include "dialogs/global_prefs/GlobalPrefsSheet.h"
 
+#include <UIAutomation.h>
+#include <functional>
+#include <thread>
 #include <oleacc.h>
 #include <richedit.h>
 #include <string>
@@ -255,6 +258,109 @@ TEST (WinA11yPrefs, ThePageCreatesAndRoundTrips)
   FreeLibrary (hDll);
 }
 
+
+// ---------------------------------------------------------------- UI Automation notifications
+
+namespace pal { bool RaiseUiaNotification (HWND hWnd, const char * utf8, int processing); }
+
+namespace {
+
+class NotificationListener : public IUIAutomationNotificationEventHandler
+  {
+  LONG m_refs = 1;
+  public:
+  volatile LONG count = 0;
+  std::wstring text;
+  ULONG STDMETHODCALLTYPE AddRef () override { return InterlockedIncrement (&m_refs); }
+  ULONG STDMETHODCALLTYPE Release () override { return InterlockedDecrement (&m_refs); }
+  HRESULT STDMETHODCALLTYPE QueryInterface (REFIID riid, void ** ppv) override
+    {
+    if (riid == __uuidof (IUnknown) || riid == __uuidof (IUIAutomationNotificationEventHandler))
+      {
+      *ppv = this;
+      AddRef ();
+      return S_OK;
+      }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
+    }
+  HRESULT STDMETHODCALLTYPE HandleNotificationEvent (IUIAutomationElement *, NotificationKind,
+                                                     NotificationProcessing, BSTR t, BSTR) override
+    {
+    text = t ? t : L"";
+    InterlockedIncrement (&count);
+    return S_OK;
+    }
+  };
+
+void Pump (const DWORD ms, const std::function<bool ()> & done)
+  {
+  const DWORD start = GetTickCount ();
+  while (GetTickCount () - start < ms && !done ())
+    {
+    MSG msg;
+    while (PeekMessageW (&msg, NULL, 0, 0, PM_REMOVE))
+      {
+      TranslateMessage (&msg);
+      DispatchMessageW (&msg);
+      }
+    Sleep (10);
+    }
+  }
+
+}  // namespace
+
+// What Narrator gets.  The listener is a real UIA client on its own thread, as a client would
+// be in its own process.  The window is off the screen, so it shows nobody anything.
+TEST (WinUia, ANotificationReachesAClient)
+{
+  HWND hWnd = CreateWindowExW (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"a11y test", WS_POPUP,
+                               -3000, -3000, 100, 100, NULL, NULL, NULL, NULL);
+  ASSERT_TRUE (hWnd != NULL);
+  ShowWindow (hWnd, SW_SHOWNA);
+
+  NotificationListener listener;
+  volatile LONG ready = 0, finished = 0, stop = 0;
+  std::thread client ([&]
+    {
+    CoInitializeEx (NULL, COINIT_MULTITHREADED);
+    IUIAutomation5 * uia = nullptr;
+    IUIAutomationElement * element = nullptr;
+    if (SUCCEEDED (CoCreateInstance (__uuidof (CUIAutomation8), NULL, CLSCTX_INPROC_SERVER,
+                                     __uuidof (IUIAutomation5), (void **) &uia)) &&
+        SUCCEEDED (uia->ElementFromHandle (hWnd, &element)) && element &&
+        SUCCEEDED (uia->AddNotificationEventHandler (element, TreeScope_Subtree, NULL, &listener)))
+      {
+      InterlockedExchange (&ready, 1);
+      while (!stop)
+        Sleep (10);
+      uia->RemoveNotificationEventHandler (element, &listener);
+      }
+    else
+      InterlockedExchange (&ready, -1);
+    if (element)
+      element->Release ();
+    if (uia)
+      uia->Release ();
+    CoUninitialize ();
+    InterlockedExchange (&finished, 1);
+    });
+
+  Pump (10000, [&] { return ready != 0; });
+  EXPECT_EQ (1, (int) ready);
+  if (ready == 1)
+    {
+    Pump (300, [] { return false; });
+    EXPECT_TRUE (pal::RaiseUiaNotification (hWnd, "caf\xC3\xA9 is open", 2));
+    Pump (5000, [&] { return listener.count > 0; });
+    EXPECT_EQ (1, (int) listener.count);
+    EXPECT_TRUE (listener.text.size () == 12 && listener.text [3] == 0xE9);
+    }
+  InterlockedExchange (&stop, 1);
+  Pump (5000, [&] { return finished != 0; });
+  client.join ();
+  DestroyWindow (hWnd);
+}
 // The system voice, for real, at volume 0: nobody hears a test.
 TEST (WinSapi, ItSpeaksAndItsVoicesAreThere)
 {

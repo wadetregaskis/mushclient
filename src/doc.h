@@ -1065,6 +1065,7 @@ public:
   unsigned short m_bSpeechMute;              // this world says nothing
   unsigned short m_bSpeechBackground;        // speak this world's lines when it is not the active one
   unsigned short m_bSpeechReadAll;           // read output aloud even with no screen reader
+  unsigned short m_bSpeechBraille;           // what is said goes to a braille display too
   unsigned short m_bSpeechInterruptOnEnter;  // sending a command silences speech
   unsigned short m_bSpeechHoldWhileReviewing;// new lines wait while the player is reading old ones
   long m_iSpeechFloodLines;                  // lines waiting before the middle is dropped; 0 is never

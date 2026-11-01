@@ -117,12 +117,15 @@ bool OtherSpeechPlugin (CMUSHclientDoc & doc)
   return false;
   }
 
+void LoadSubstitutions (CA11yState & state);
+
 CA11yState & State (CMUSHclientDoc & doc)
   {
   if (!doc.m_pA11y)
     {
     doc.m_pA11y = new CA11yState;
     CA11yState & state = *doc.m_pA11y;
+    LoadSubstitutions (state);
     state.router.onCue = [&doc, &state] (const std::string &, const a11y::CategorySettings & settings)
       {
       if (state.pSound)
@@ -211,6 +214,7 @@ void SyncSettings (CMUSHclientDoc & doc, CA11yState & state)
   {
   a11y::SpeechRouter & router = state.router;
   router.setMuted (doc.m_bSpeechMute != 0);
+  router.setBraille (doc.m_bSpeechBraille != 0);
   router.policy ().maxPending = (size_t) doc.m_iSpeechFloodLines;
 
   const std::string strCategories = (const char *) doc.m_strSpeechCategories;
@@ -634,8 +638,6 @@ bool A11y_Command (CMUSHclientDoc & doc, const char * sCommand)
     router.say (A11y_ToUtf8 (doc, rest.c_str ()), a11y::kCategoryScript, pal::SpeechPriority::Normal, true);
   else if (verb == "subst")
     {
-    if (!state.bExplicitVoice || router.substitutions ().entries.empty ())
-      LoadSubstitutions (state);
     SubstCommand (doc, state, rest);
     }
   else if (lower == "mushreader help" || lower == "mushreader:help" || lower == "mushreader")

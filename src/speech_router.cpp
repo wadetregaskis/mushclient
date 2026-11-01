@@ -797,6 +797,12 @@ bool SpeechRouter::backendReady (int64_t nowMs)
 void SpeechRouter::deliver (const std::string & text, pal::SpeechPriority priority, bool bFlush, int64_t nowMs)
   {
   m_backend->speak (text.c_str (), priority, bFlush);
+  if (m_braille && (m_backend->capabilities () & pal::kSpeechBraille))
+    {
+    // A display holds a line or so: the newest of what went together.
+    const size_t newline = text.find_last_of ('\n');
+    m_backend->braille ((newline == std::string::npos ? text : text.substr (newline + 1)).c_str ());
+    }
   m_totalSpoken++;
   m_lastSpoken = text;
   m_lastSpeakAt = nowMs;

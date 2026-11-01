@@ -26,7 +26,7 @@ static BOOL CALLBACK EachTop (HWND h, LPARAM l)
   FindWindowData * d = (FindWindowData *) l;
   DWORD pid = 0;
   GetWindowThreadProcessId (h, &pid);
-  if (pid == d->pid && IsWindowVisible (h) && !GetWindow (h, GW_OWNER))
+  if (pid == d->pid && IsWindowVisible (h) && !GetWindow (h, GW_OWNER) && GetWindowTextLengthW (h) > 0)
     {
     d->found = h;
     return FALSE;

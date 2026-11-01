@@ -159,6 +159,7 @@ int i;
   m_bSpeechMute = false;
   m_bSpeechBackground = false;
   m_bSpeechReadAll = false;
+  m_bSpeechBraille = true;
   m_bSpeechInterruptOnEnter = true;
   m_bSpeechHoldWhileReviewing = true;
   m_iSpeechFloodLines = 40;

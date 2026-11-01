@@ -149,6 +149,7 @@
 {"show_underline",                      true,  O(m_bShowUnderline), 0, 0, OPT_UPDATE_VIEWS | OPT_UPDATE_OUTPUT_FONT},                    
 {"spam_line_count",                     20,    O(m_iSpamLineCount), 5, 500 },                    
 {"speech_background",                   false, O(m_bSpeechBackground)},
+{"speech_braille",                      true,  O(m_bSpeechBraille)},
 {"speech_flood_lines",                  40,    O(m_iSpeechFloodLines), 0, 100000},
 {"speech_hold_while_reviewing",         true,  O(m_bSpeechHoldWhileReviewing)},
 {"speech_interrupt_on_enter",           true,  O(m_bSpeechInterruptOnEnter)},

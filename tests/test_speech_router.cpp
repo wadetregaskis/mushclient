@@ -48,6 +48,8 @@ struct FakeSpeech : pal::ISpeech
     }
   void stop () override { stops++; }
   bool isBusy () override { return busy; }
+  std::vector<std::string> brailled;
+  void braille (const char * utf8) override { brailled.push_back (utf8); }
   void setRate (int r) override { rate = r; }
   void setVoice (const char * v) override { voice = v; }
   };
@@ -87,6 +89,28 @@ TEST (SpeechRouter, LinesArriveTogetherAtTheNextTick)
   r.tick (1000);
   ASSERT_EQ (1u, s.said.size ());
   EXPECT_STREQ ("one\ntwo", s.said [0].c_str ());
+}
+
+TEST (SpeechRouter, BrailleGetsTheNewestLineIfTheBackendCanDoIt)
+{
+  SpeechRouter r;
+  FakeSpeech s;
+  r.setBackend (&s);
+  r.line ("no display here", "output");
+  r.tick (1000);
+  EXPECT_TRUE (s.brailled.empty ());
+
+  s.caps |= pal::kSpeechBraille;
+  r.line ("one", "output");
+  r.line ("two", "output");
+  r.tick (9000);
+  ASSERT_EQ (1u, s.brailled.size ());
+  EXPECT_STREQ ("two", s.brailled [0].c_str ());
+
+  r.setBraille (false);
+  r.line ("three", "output");
+  r.tick (20000);
+  EXPECT_EQ (1u, s.brailled.size ());
 }
 
 TEST (SpeechRouter, BlankLinesAreRememberedButNotSaid)

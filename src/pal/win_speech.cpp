@@ -25,11 +25,10 @@
 #include <sapi.h>
 #undef byte
 
+#include <UIAutomationCore.h>
 #include <string>
 
 namespace pal {
-
-ISpeechPlatform * g_speechPlatformWin = nullptr;
 
 namespace {
 
@@ -232,6 +231,13 @@ class JawsSpeech : public ISpeech
     DISPID m_idStop = DISPID_UNKNOWN;
   };
 
+}  // namespace
+
+// tests reach this one directly: with a client listening, in tests/win/test_win_a11y_pane.cpp
+bool RaiseUiaNotification (HWND hWnd, const char * utf8, int processing);
+
+namespace {
+
 // ---------------------------------------------------------------- UI Automation
 
 // From uiautomationcoreapi.h, which hides them from a 0x0501 build.
@@ -243,26 +249,82 @@ enum
   kNotificationProcessingMostRecent = 3
   };
 
-typedef HRESULT (WINAPI * RaiseNotification) (void *, int, int, BSTR, BSTR);
-typedef HRESULT (WINAPI * HostProviderFromHwnd) (HWND, void **);
+typedef HRESULT (WINAPI * RaiseNotification) (IRawElementProviderSimple *, int, int, BSTR, BSTR);
+typedef HRESULT (WINAPI * HostProviderFromHwnd) (HWND, IRawElementProviderSimple **);
+
+RaiseNotification g_raise = nullptr;
+HostProviderFromHwnd g_hostProvider = nullptr;
+
+bool LoadUia ()
+  {
+  static bool bTried = false;
+  if (!bTried)
+    {
+    bTried = true;
+    if (HMODULE hDll = LoadLibraryW (L"uiautomationcore.dll"))
+      {
+      g_raise = (RaiseNotification) GetProcAddress (hDll, "UiaRaiseNotificationEvent");
+      g_hostProvider = (HostProviderFromHwnd) GetProcAddress (hDll, "UiaHostProviderFromHwnd");
+      }
+    }
+  return g_raise && g_hostProvider;
+  }
+
+// The element a notification comes from.  The window's own host provider will not do: raising
+// on that returns S_OK and no client hears anything (measured, with tests/win/uia_probe).
+class NotificationSource : public IRawElementProviderSimple
+  {
+  public:
+    explicit NotificationSource (HWND hWnd) : m_hWnd (hWnd) {}
+
+    ULONG STDMETHODCALLTYPE AddRef () override { return InterlockedIncrement (&m_refs); }
+    ULONG STDMETHODCALLTYPE Release () override
+      {
+      const LONG refs = InterlockedDecrement (&m_refs);
+      if (!refs)
+        delete this;
+      return refs;
+      }
+    HRESULT STDMETHODCALLTYPE QueryInterface (REFIID riid, void ** ppv) override
+      {
+      if (riid == __uuidof (IUnknown) || riid == __uuidof (IRawElementProviderSimple))
+        {
+        *ppv = static_cast <IRawElementProviderSimple *> (this);
+        AddRef ();
+        return S_OK;
+        }
+      *ppv = nullptr;
+      return E_NOINTERFACE;
+      }
+    HRESULT STDMETHODCALLTYPE get_ProviderOptions (ProviderOptions * pOptions) override
+      {
+      *pOptions = (ProviderOptions) (ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading);
+      return S_OK;
+      }
+    HRESULT STDMETHODCALLTYPE GetPatternProvider (PATTERNID, IUnknown ** ppResult) override
+      {
+      *ppResult = nullptr;
+      return S_OK;
+      }
+    HRESULT STDMETHODCALLTYPE GetPropertyValue (PROPERTYID, VARIANT * pResult) override
+      {
+      pResult->vt = VT_EMPTY;   // the window's own host provider answers for all of it
+      return S_OK;
+      }
+    HRESULT STDMETHODCALLTYPE get_HostRawElementProvider (IRawElementProviderSimple ** ppResult) override
+      {
+      return g_hostProvider (m_hWnd, ppResult);
+      }
+
+  private:
+    LONG m_refs = 1;
+    HWND m_hWnd;
+  };
 
 class UiaSpeech : public ISpeech
   {
   public:
-    bool Load ()
-      {
-      if (m_bTried)
-        return m_raise != nullptr;
-      m_bTried = true;
-      HMODULE hDll = LoadLibraryW (L"uiautomationcore.dll");
-      if (!hDll)
-        return false;
-      m_raise = (RaiseNotification) GetProcAddress (hDll, "UiaRaiseNotificationEvent");
-      m_hostProvider = (HostProviderFromHwnd) GetProcAddress (hDll, "UiaHostProviderFromHwnd");
-      if (!m_hostProvider)
-        m_raise = nullptr;
-      return m_raise != nullptr;
-      }
+    bool Load () { return LoadUia (); }
 
     unsigned capabilities () const override { return kSpeechScreenReader; }
     const char * name () const override { return "UI Automation"; }
@@ -270,31 +332,15 @@ class UiaSpeech : public ISpeech
     bool speak (const char * utf8, SpeechPriority priority, bool bFlush) override
       {
       CWnd * pMain = AfxGetMainWnd ();
-      if (!m_raise || !pMain)
+      if (!pMain)
         return false;
-
-      void * pProvider = nullptr;
-      if (FAILED (m_hostProvider (pMain->GetSafeHwnd (), &pProvider)) || !pProvider)
-        return false;
-
-      BSTR text = SysAllocString (Wide (utf8).c_str ());
-      BSTR activity = SysAllocString (L"MUSHclient.output");
       const int processing = bFlush ? kNotificationProcessingMostRecent :
                              priority == SpeechPriority::Assertive ? kNotificationProcessingImportantAll :
                                                                      kNotificationProcessingAll;
-      const HRESULT hr = m_raise (pProvider, kNotificationKindOther, processing, text, activity);
-      SysFreeString (text);
-      SysFreeString (activity);
-      ((IUnknown *) pProvider)->Release ();
-      return SUCCEEDED (hr);
+      return RaiseUiaNotification (pMain->GetSafeHwnd (), utf8, processing);
       }
 
     void stop () override {}    // a notification cannot be called back
-
-  private:
-    bool m_bTried = false;
-    RaiseNotification m_raise = nullptr;
-    HostProviderFromHwnd m_hostProvider = nullptr;
   };
 
 // ---------------------------------------------------------------- SAPI
@@ -453,6 +499,20 @@ class WinSpeechPlatform : public ISpeechPlatform
   };
 
 }  // namespace
+
+bool RaiseUiaNotification (HWND hWnd, const char * utf8, const int processing)
+  {
+  if (!LoadUia ())
+    return false;
+  NotificationSource * pSource = new NotificationSource (hWnd);
+  BSTR text = SysAllocString (Wide (utf8).c_str ());
+  BSTR activity = SysAllocString (L"MUSHclient.output");
+  const HRESULT hr = g_raise (pSource, kNotificationKindOther, processing, text, activity);
+  SysFreeString (text);
+  SysFreeString (activity);
+  pSource->Release ();
+  return SUCCEEDED (hr);
+  }
 
 void InstallPlatformSpeech ()
   {

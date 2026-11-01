@@ -170,6 +170,9 @@ class SpeechRouter
     void setMuted (bool bMuted);
     bool muted () const { return m_muted; }
 
+    // What is said also goes to a braille display, if the backend has a way there.
+    void setBraille (bool bBraille) { m_braille = bBraille; }
+
     // While held, what is not urgent waits: the player is reading something.
     void setHold (bool bHold);
     bool held () const { return m_hold; }
@@ -217,6 +220,7 @@ class SpeechRouter
     uint64_t m_nextSeq = 1;
 
     bool m_muted = false;
+    bool m_braille = true;
     bool m_hold = false;
     size_t m_heldNew = 0;      // lines that have waited for a hold
     size_t m_skipped = 0;      // dropped, and not yet said so

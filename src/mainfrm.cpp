@@ -556,7 +556,12 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
   if (m_wndInfoBar.m_hWnd)
     {
     CRichEditCtrl * pRichEdit = (CRichEditCtrl *) m_wndInfoBar.GetDlgItem (IDC_INFOTEXT);
-    pRichEdit->SetWindowPos (NULL, 0, 0, 3000, ::MulDiv (20, Dpi_ForWindow (m_hWnd), 96), 
+#ifdef _WIN32
+    const int iInfoBarDpi = Dpi_ForWindow (m_hWnd);
+#else
+    const int iInfoBarDpi = 96;    // the port's toolkit scales for the display itself
+#endif
+    pRichEdit->SetWindowPos (NULL, 0, 0, 3000, ::MulDiv (20, iInfoBarDpi, 96),
       SWP_NOMOVE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
     // remember default format

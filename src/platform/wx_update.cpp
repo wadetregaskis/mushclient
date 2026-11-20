@@ -22,6 +22,7 @@
 #include "../update_service.h"
 #include "../version.h"
 
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -79,7 +80,6 @@ update::ThisCopy DescribeThisCopy ()
   // The whole folder is replaced, and the old one removed: so it has to be one of ours,
   // as the package unpacked it, and not wherever the program was copied to (~/bin).
   const char * home = getenv ("HOME");
-  std::error_code ec;
   const bool bHome = home && *home && fs::equivalent (root, fs::u8path (home), ec);
   copy.foreignFolder = !copy.systemManaged &&
                        (bHome || root == root.root_path () ||
@@ -195,15 +195,30 @@ bool ReplaceThisCopy (const std::string & package, const std::string & sha256, s
 
   // Whatever they added to the tarball's folder comes too, as on Windows.  (Not into a
   // .app, where anything added would break its signature.)  If any of it couldn't be
-  // moved, the old folder stays, with it.
+  // moved, the old folder stays, with it: renamed out of the way of the next update,
+  // which removes <root>.mcold as its own leftover, and would take their files with it.
   bool bRemoveOld = true;
 #ifndef __APPLE__
   std::string why;
   if (!update::CarryOverUserFiles (old.u8string (), root.u8string (), &why))
     {
     bRemoveOld = false;
-    *notice = "Some of what was in the old folder couldn't be moved to the new one (" + why +
-              "), so the old one has been kept, as " + old.u8string () + ".";
+    char stamp [32] = "";
+    const time_t now = time (NULL);
+    struct tm local;
+    if (localtime_r (&now, &local))
+      strftime (stamp, sizeof stamp, "%Y%m%d-%H%M%S", &local);
+    fs::path kept = root;
+    kept += std::string (".mcold-kept-") + stamp;
+    std::error_code renameError;
+    fs::rename (old, kept, renameError);
+    const std::string start = "Some of what was in the old folder couldn't be moved to the new one (" + why + "), ";
+    if (renameError)
+      *notice = start + "so the old one has been kept, as " + old.u8string () +
+                ".  Move it somewhere else before the next update, which would remove it.";
+    else
+      *notice = start + "so the old one has been kept, as " + kept.u8string () +
+                ".  Updates leave it alone: remove it yourself once you have what you need from it.";
     }
 #endif
 

@@ -25,6 +25,17 @@ bool Draw (HDC hdc, const RECT & r, const WCHAR * pText, int iLength, COLORREF c
 
 }  // namespace dwtext
 
+#else  // !_WIN32
+
+// The port has no DirectWrite: everything is drawn the GDI way, through the wx shim, so
+// these always say "GDI has to do it" and the callers keep their GDI arms.
+namespace dwtext {
+
+inline bool Measure (HDC, const WCHAR *, int, int &, int = 1, bool = false) { return false; }
+inline bool Draw (HDC, const RECT &, const WCHAR *, int, COLORREF, int = 1, bool = false) { return false; }
+
+}  // namespace dwtext
+
 #endif  // _WIN32
 
 #endif  // MUSHCLIENT_DWRITE_TEXT_H

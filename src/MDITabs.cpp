@@ -64,7 +64,11 @@ afx_msg LRESULT CMDITabs::OnSizeParent(WPARAM, LPARAM lParam)
     {  
     AFX_SIZEPARENTPARAMS* pParams = reinterpret_cast<AFX_SIZEPARENTPARAMS*>(lParam);
     
+#ifdef _WIN32
     const int iDpi = Dpi_ForWindow (m_hWnd);
+#else
+    const int iDpi = 96;    // the port's toolkit scales for the display itself
+#endif
     const int height = ::MulDiv (26 + (m_bImages ? 1 : 0), iDpi, 96);
     const int offset = ::MulDiv (2, iDpi, 96);
     

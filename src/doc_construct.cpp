@@ -8,6 +8,7 @@
 
 #include "doc.h"
 #include "protocols.h"
+#include "a11y.h"        // CA11yState, complete, so that ~CMUSHclientDoc's delete runs its destructor
 #include "platform/mc_dispatch.h"
 #include "genprint.h"
 #include "dialogs/QuickConnectDlg.h"

@@ -106,7 +106,9 @@ public:
 	public:
 	virtual void OnInitialUpdate();
 	virtual BOOL PreTranslateMessage(MSG* pMsg);
+#ifdef _WIN32
 	virtual HRESULT get_accName(VARIANT varChild, BSTR* pszName);
+#endif
 	protected:
 	virtual void OnDraw(CDC* pDC);      // overridden to draw this view
 	virtual BOOL PreCreateWindow(CREATESTRUCT& cs);

@@ -110,6 +110,11 @@ bool A11y_ShadowPlugin (const char * sXml, std::string & strReplacement);
 extern const char * const kA11yMushReaderID;
 extern const char * const kA11yLuaAudioID;
 
+// What require "luacom" loads where there is no COM (lua_scripting.cpp, off Windows).
+// Declared here so that its definition in a11y_shims.cpp has external linkage: a
+// namespace-scope const is otherwise internal to its file in C++.
+extern const char * const kA11yLuacomShim;
+
 // ---------------------------------------------------------------- tests
 
 void A11y_ResetForTest ();

@@ -34,7 +34,7 @@ struct Queue
   bool                    closing = false;
   };
 
-Queue & queue ()
+Queue & TheQueue ()
   {
   static Queue * q = new Queue;
   return *q;
@@ -102,7 +102,7 @@ void Wake ()
 // False if the client is closing, when nothing is queued.
 bool Enqueue (Request * request)
   {
-  Queue & q = queue ();
+  Queue & q = TheQueue ();
     {
     std::lock_guard<std::mutex> guard (q.lock);
     if (q.closing)
@@ -118,7 +118,7 @@ bool Enqueue (Request * request)
 
 void MC_UIThreadInit ()
   {
-  Queue & q = queue ();
+  Queue & q = TheQueue ();
   std::lock_guard<std::mutex> guard (q.lock);
   if (g_inited && !q.closing)
     return;
@@ -152,7 +152,7 @@ MCUIResult MC_RunOnUIThread (const std::function<void ()> & call)
   // moves.  Anything else restarts it, so a run of short callbacks, each of which
   // finds the UI thread in a script at the instant it is sampled, never adds up.
   typedef std::chrono::steady_clock clock;
-  Queue & q = queue ();
+  Queue & q = TheQueue ();
   std::unique_lock<std::mutex> guard (q.lock);
   unsigned seen = g_progress;
   clock::time_point parkedSince = clock::now ();
@@ -201,7 +201,7 @@ void MC_UIThreadService ()
   if (!g_inited || !MC_UIThreadIsCurrent ())
     return;
 
-  Queue & q = queue ();
+  Queue & q = TheQueue ();
   std::unique_lock<std::mutex> guard (q.lock);
 #ifdef _WIN32
   g_messagePosted = false;
@@ -259,7 +259,7 @@ void MC_UIThreadAddWake (void (*wake) ())
 
 void MC_UIThreadShutdown ()
   {
-  Queue & q = queue ();
+  Queue & q = TheQueue ();
   std::lock_guard<std::mutex> guard (q.lock);
   q.closing = true;
   for (Request * request : q.requests)

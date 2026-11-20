@@ -480,6 +480,23 @@ TEST(PalTransport, PosixAdapterConformanceSelftest)
 // ssl.h/err.h/x509.h and whose PosixTransport::startTls fails immediately —
 // compiles it out.  (Registration is by static init, so defining these after
 // MC_TEST_MAIN() is fine — same TU as main().)
+//
+// A listening socket on 127.0.0.1, on a port of its own (sa says which).  Outside the
+// OpenSSL block below: the plain-text tests after it use it too.
+static int make_loopback_listener(sockaddr_in& sa)
+{
+    int srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    sa = sockaddr_in{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa.sin_port = 0;
+    ::bind(srv, (sockaddr*)&sa, sizeof sa);
+    socklen_t len = sizeof sa;
+    ::getsockname(srv, (sockaddr*)&sa, &len);
+    ::listen(srv, 1);
+    return srv;
+}
+
 #include <openssl/ssl.h>            // real header → defines OPENSSL_VERSION_TEXT
 #if defined(OPENSSL_VERSION_TEXT)
 #include <openssl/x509.h>
@@ -538,20 +555,6 @@ static SSL_CTX* make_tls_server_ctx(EVP_PKEY*& pkey, X509*& x)
     SSL_CTX_use_certificate(ctx, x);
     SSL_CTX_use_PrivateKey(ctx, pkey);
     return ctx;
-}
-
-static int make_loopback_listener(sockaddr_in& sa)
-{
-    int srv = ::socket(AF_INET, SOCK_STREAM, 0);
-    sa = sockaddr_in{};
-    sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    sa.sin_port = 0;
-    ::bind(srv, (sockaddr*)&sa, sizeof sa);
-    socklen_t len = sizeof sa;
-    ::getsockname(srv, (sockaddr*)&sa, &len);
-    ::listen(srv, 1);
-    return srv;
 }
 
 // TLS server: handshake, greet "TLSHELLO", then DECRYPT one client packet and

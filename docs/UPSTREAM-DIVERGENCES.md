@@ -1477,7 +1477,13 @@ should not be able to tell, except as listed here. That layer holds to PCRE 8's 
   U+0342. `(?xx)` means something now. `\8(a)(b)(c)(d)(e)(f)(g)(h)` is a forward reference.
   None of these was worth a rewrite; none appears in anything the comparison has seen.
 - The newline and `\R` bits of the match-time options of `re:match` and so on are ignored,
-  as PCRE2 has no such thing. Set at `rex.new`, they work as ever.
+  as PCRE2 has no such thing. Set at `rex.new`, they work as ever. So is "no start
+  optimisation" (0x04000000) at match time; set at `rex.new`, it works.
+- A recursion, `(?R)` or `(?1)`, is no longer atomic: PCRE2 can backtrack into it, as Perl
+  does, so a pattern like `^(.|(.)(?1)\2)$` can match strings PCRE 8 refused.
+- A match run from inside a callout (a Lua callback that matches, or runs triggers) is
+  interpreted rather than JIT-compiled, since the JIT's one stack per thread is the paused
+  match's. The result is the same.
 - A very deep match is better. PCRE 8's interpreter recursed on the machine stack, and one long
   line against `^(?:a|b)*c$` could crash the client; the guard against that returned
   "Recursion Limit" for lines the JIT's stack could not hold either. PCRE2 keeps its frames on

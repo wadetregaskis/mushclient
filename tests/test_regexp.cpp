@@ -725,6 +725,29 @@ TEST(RegexpCompat, TheRewrite) {
 
 // The complaint is about what is actually wrong, at the right place, whatever the
 // rewrite did on the way.
+// Three things PCRE 8 did that PCRE2 alone wouldn't: refuse newline bits that name
+// no convention, accept "no start optimisation" when matching, and refuse a length
+// that came to it negative (a string of 2 GB or more, cast to int).
+TEST(RegexpCompat, OptionsAndLengthsAsPcre8HadThem) {
+    const char* error = NULL;
+    int offset = -1;
+    EXPECT_EQ(nullptr, mc_pcre_compile("a", PCRE_NEWLINE_LF | PCRE_NEWLINE_ANY, NULL, 0, &error, &offset));
+    ASSERT_NE(nullptr, error);
+    EXPECT_EQ(std::string("inconsistent NEWLINE options"), std::string(error));
+    EXPECT_EQ(nullptr, mc_pcre_compile("a", PCRE_NEWLINE_ANYCRLF_MASK, NULL, 0, &error, &offset));
+    pcre2_code* ok = mc_pcre_compile("a", PCRE_NEWLINE_ANYCRLF, NULL, 0, &error, &offset);
+    ASSERT_NE(nullptr, ok);
+    pcre2_code_free(ok);
+
+    pcre2_code* code = mc_pcre_compile("b", 0, NULL, 1, &error, &offset);
+    ASSERT_NE(nullptr, code);
+    pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, NULL);
+    EXPECT_EQ(1, mc_pcre_match(code, &md, "abc", 3, 0, PCRE_NO_START_OPTIMIZE, NULL, NULL));
+    EXPECT_EQ(PCRE_ERROR_BADLENGTH, mc_pcre_match(code, &md, "abc", -1, 0, 0, NULL, NULL));
+    pcre2_match_data_free(md);
+    pcre2_code_free(code);
+}
+
 TEST(RegexpCompat, AFailedCompileReportsThePatternAsWritten) {
     const char* error = NULL;
     int offset = -1;

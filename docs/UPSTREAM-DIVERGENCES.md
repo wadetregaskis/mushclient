@@ -1642,3 +1642,28 @@ everything else stays GDI. Non-UTF-8 worlds are unchanged.
 live tail in a strip below (Global Preferences > General > "Show new output when scrolled back", on by
 default; drag the bar to resize it). The view no longer unfreezes itself when the top of the buffer
 goes while this is on. The scroll position and everything else a plugin can read mean what they did.
+
+## 38 — Triggers skip a pattern whose required text isn't in the line
+
+**Where:** `mc_pcre.c` (finding the literal), `regexp.*`, `evaluate.cpp`;
+`docs/PERFORMANCE-2026-11.md` has the whole account, and `tools/trigger_bench` the proof.
+
+**Upstream:** every enabled trigger's pattern runs on every line.
+
+**Now:** when a pattern compiles, text that every match must contain is found, conservatively:
+a literal, or a set of up to 16 of which one must appear.  A line without it doesn't run the
+pattern.  What a plugin can see:
+
+- Match attempts (`GetTriggerInfo` 38) count every attempt, as before.
+- Time taken (`GetTriggerInfo` 37 and the totals) still times every run of a pattern, but only
+  one in sixteen of the attempts the prefilter turns away is timed, counting sixteen times: an
+  estimate, right on average, of a cost about the size of a clock read.
+- A pattern that would have hit its match limit on a line without its literal now just doesn't
+  match that line, where before it raised an error and was disabled.
+
+**Why:** the owner asked for plugins to run faster.  With Quow's plugins, plain lines are 8.5
+times faster and Discworld-like output 3 times.
+
+**Verification:** `tools/trigger_bench`: 11,068 patterns (every one in the tree, Quow's runtime
+triggers, each in UTF-8 mode too) against 33,428 lines, 637 million checks, no skipped attempt
+that would have matched.

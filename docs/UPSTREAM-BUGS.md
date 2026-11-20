@@ -3616,4 +3616,5 @@ on a group's rows after the grouping.
 
 **Fix:** each walk records whether it found a hard return, and starts at the head if not.
 `PROMPT_GROUPING_MASK` also ignores `LOG_LINE` and `BOOKMARK`, marks on a row rather than kinds
-of line. `TriggerR5.TheFirstLineInTheBufferWrappedIsWhole` fails without either half.
+of line. `TriggerR5.TheFirstLineInTheBufferWrappedIsWhole` pins it; it was seen to fail with
+the walk fixed and the mask not.

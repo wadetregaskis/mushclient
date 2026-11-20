@@ -165,6 +165,21 @@ TEST(Rex, ACalloutMayRunTheSamePattern) {
                      "return s .. ' ' .. e .. ' ' .. inner_s .. ' ' .. inner_e"));
 }
 
+// Another pattern, matched from the callout, must not disturb the match paused in
+// it.  Both are JIT-compiled, and every JIT match starts at the top of the thread's
+// one JIT stack: the inner one's frames would land on the outer one's.  The outer
+// pattern has to backtrack through those frames after the callout to show it.
+TEST(Rex, ACalloutMayRunAnotherPattern) {
+    Rex x;
+    EXPECT_EQ(std::string("1 9 b"),
+              x.eval("local outer = rex.new('^(?:(a+)(?C1)|(a+)b)+$') "
+                     "local inner = rex.new('(?:x|y|(z))+w') "
+                     "local s, e, t = outer:match('aaaaaaaab', 1, 0, function () "
+                     "  inner:match(('xyz'):rep(40) .. 'q') "
+                     "  return 0 end) "
+                     "return s .. ' ' .. e .. ' ' .. string.sub('aaaaaaaab', e, e)"));
+}
+
 TEST(Rex, ACalloutMayRaiseAnError) {
     Rex x;
     EXPECT_NE(std::string::npos,

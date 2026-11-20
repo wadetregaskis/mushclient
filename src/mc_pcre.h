@@ -65,6 +65,7 @@ extern "C" {
 #define PCRE_NEWLINE_CRLF       0x00300000  /* compile */
 #define PCRE_NEWLINE_ANY        0x00400000  /* compile */
 #define PCRE_NEWLINE_ANYCRLF    0x00500000  /* compile */
+#define PCRE_NEWLINE_ANYCRLF_MASK 0x00700000  /* the three bits the conventions are made of */
 #define PCRE_BSR_ANYCRLF        0x00800000  /* compile */
 #define PCRE_BSR_UNICODE        0x01000000  /* compile */
 #define PCRE_JAVASCRIPT_COMPAT  0x02000000  /* compile */
@@ -104,6 +105,7 @@ extern "C" {
 #define PCRE_ERROR_JIT_STACKLIMIT  (-27)
 #define PCRE_ERROR_BADMODE         (-28)
 #define PCRE_ERROR_JIT_BADOPTION   (-31)
+#define PCRE_ERROR_BADLENGTH       (-32)
 
 /* Compile `pattern`, with PCRE 8's options, and the JIT too if `jit` is non-zero
    (a failure there just leaves the pattern interpreted).  NULL on failure, with

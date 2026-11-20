@@ -64,7 +64,8 @@ static uint32_t match_options (int o)
   if (o & PCRE_NOTEMPTY)          r |= PCRE2_NOTEMPTY;
   if (o & PCRE_NOTEMPTY_ATSTART)  r |= PCRE2_NOTEMPTY_ATSTART;
   if (o & PCRE_NO_UTF8_CHECK)     r |= PCRE2_NO_UTF_CHECK;
-  if (o & PCRE_NO_START_OPTIMIZE) r |= PCRE2_NO_START_OPTIMIZE;
+  /* PCRE_NO_START_OPTIMIZE: PCRE2 takes it only when compiling, and refuses it here.
+     PCRE 8 accepted it, so it still does, and goes without (UPSTREAM-DIVERGENCES 32). */
   if (o & PCRE_PARTIAL_SOFT)      r |= PCRE2_PARTIAL_SOFT;
   if (o & PCRE_PARTIAL_HARD)      r |= PCRE2_PARTIAL_HARD;
   return r;
@@ -585,6 +586,13 @@ pcre2_code * mc_pcre_compile (const char * pattern, int options,
   if (options & ~MC_COMPILE_OPTIONS)
     {
     *error = "unknown option bit(s) set";
+    return NULL;
+    }
+
+  /* PCRE 8 refused the newline bits that name no convention: LF|ANY and all three */
+  if ((options & PCRE_NEWLINE_ANYCRLF_MASK) > PCRE_NEWLINE_ANYCRLF)
+    {
+    *error = "inconsistent NEWLINE options";
     return NULL;
     }
 
@@ -1257,6 +1265,29 @@ int mc_pcre_is_jit_only (const pcre2_code * code)
   return jit > 0 && (all_options & PCRE2_UTF) == 0;
   }
 
+/* How many callouts this thread is inside.  Every JIT match starts at the top of
+   the thread's one JIT stack, so a match run from a callout (a Lua callback that
+   matches, or runs triggers) would write over the frames of the match it is
+   paused in.  Inside a callout, matching is interpreted, which keeps its frames
+   with its own match data. */
+static MC_THREAD int in_callout = 0;
+
+typedef struct
+  {
+  int (* callout) (pcre2_callout_block *, void *);
+  void * data;
+  } callout_t;
+
+static int counted_callout (pcre2_callout_block * block, void * data)
+  {
+  const callout_t * c = (const callout_t *) data;
+  int rc;
+  in_callout++;
+  rc = c->callout (block, c->data);
+  in_callout--;
+  return rc;
+  }
+
 int mc_pcre_match_jit (const pcre2_code * code, pcre2_match_data ** md,
                        const char * subject, int length, int start_offset, int options)
   {
@@ -1264,7 +1295,7 @@ int mc_pcre_match_jit (const pcre2_code * code, pcre2_match_data ** md,
   int rc;
 
   /* pcre2_jit_match checks nothing, and doesn't know the options it can't do */
-  if (*md != NULL && start_offset >= 0 && start_offset <= length &&
+  if (*md != NULL && in_callout == 0 && start_offset >= 0 && start_offset <= length &&
       (options & ~(PCRE_NOTBOL | PCRE_NOTEOL | PCRE_NOTEMPTY | PCRE_NOTEMPTY_ATSTART)) == 0)
     {
     set_callout (context, NULL, NULL);
@@ -1285,6 +1316,7 @@ int mc_pcre_match (const pcre2_code * code, pcre2_match_data ** md,
                    int (* callout) (pcre2_callout_block *, void *), void * callout_data)
   {
   pcre2_match_context * context = mc_pcre_match_context ();
+  callout_t counted;
   uint32_t o;
   int rc;
 
@@ -1294,6 +1326,8 @@ int mc_pcre_match (const pcre2_code * code, pcre2_match_data ** md,
     return PCRE_ERROR_NOMEMORY;
   if (options & ~MC_MATCH_OPTIONS)
     return PCRE_ERROR_BADOPTION;
+  if (length < 0)
+    return PCRE_ERROR_BADLENGTH;      /* as PCRE 8: a string of 2 GB or more, cast to int */
 
   /* An interpreted match's frames stay with the match data.  Don't let one long
      line pin megabytes per pattern, for good. */
@@ -1308,7 +1342,14 @@ int mc_pcre_match (const pcre2_code * code, pcre2_match_data ** md,
     }
 
   o = match_options (options);
-  set_callout (context, callout, callout_data);
+  if (in_callout > 0)
+    o |= PCRE2_NO_JIT;
+  counted.callout = callout;
+  counted.data = callout_data;
+  if (callout != NULL)
+    set_callout (context, counted_callout, &counted);
+  else
+    set_callout (context, NULL, NULL);
 
   rc = pcre2_match (code, (PCRE2_SPTR) subject, (PCRE2_SIZE) length, (PCRE2_SIZE) start_offset,
                     o, *md, context);

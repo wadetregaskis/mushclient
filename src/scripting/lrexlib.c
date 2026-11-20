@@ -13,6 +13,7 @@
 //   re:match
 //   re:gmatch
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -637,6 +638,8 @@ static int Lpcre_run (lua_State *L, lrex_pcre *ud, const char *text, size_t len,
   int res;
   if (info)
     info->failed = 0;
+  if (len > (size_t) INT_MAX)
+    return PCRE_ERROR_BADLENGTH;   /* offsets are ints, as in PCRE 8 */
   if (ud->running)
     {
     pcre2_match_data **box = (pcre2_match_data **) lua_newuserdata(L, sizeof *box);

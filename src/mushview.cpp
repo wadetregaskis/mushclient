@@ -5215,22 +5215,26 @@ int line,
     POSITION prevpos = NULL;
     CLine * pLine;
 
+     bool bFoundEnd = false;
      pLine = pDoc->m_LineList.GetPrev (pos);    // must go back at least one line
      while (pos)
        {
        prevpos = pos;   // remember line which did have a hard return
        pLine = pDoc->m_LineList.GetPrev (pos);
        if (pLine->hard_return)
+         {
+         bFoundEnd = true;
          break;
+         }
        m_selstart_line--;
        }
 
-     // if prevpos is non-null it is now the position of the last line with a hard return
-     // so, get the next one, that is the one which starts *our* sequence
+     // if we stopped at the end of the previous line, ours starts at the one after
+     // it; if we ran off the start of the buffer (or never left it), it starts there
 
-     if (prevpos)
+     if (bFoundEnd)
         pDoc->m_LineList.GetNext (prevpos);
-     else       // must be the only line in the buffer
+     else
        {
         prevpos = pDoc->m_LineList.GetHeadPosition ();
         m_selstart_line = 0;

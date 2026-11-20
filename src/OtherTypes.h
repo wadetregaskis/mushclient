@@ -333,7 +333,12 @@ const int NOTE_OR_COMMAND = 0x03; // for testing if line is an output line or no
 // value to decide which wrapped segments form one logical line for trigger
 // matching, and there it MUST be masked out.  See PROMPT_GROUPING_MASK below
 // and the comment at ProcessPreviousLine.cpp's grouping loop.
-const int PROMPT_GROUPING_MASK = ~PROMPT;
+//
+// LOG_LINE and BOOKMARK are marks on a row, not kinds of line, and must not split a
+// group either: LOG_LINE is stamped on a group's rows after this grouping, so the
+// world's very first row -- the line the document is made with, which text then
+// goes into -- arrives without it while the rows wrapped after it have it.
+const int PROMPT_GROUPING_MASK = ~(PROMPT | LOG_LINE | BOOKMARK);
 
 class CLine : public CObject
   {

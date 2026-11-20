@@ -132,6 +132,7 @@ patches upstream, not as a claim that this tree fixed it.
 | 115 | `world.UdpListen` listeners: a datagram over 999 bytes is dropped silently; a port above 32,767 is stored and listed negative; a handler that re-listens on its own port frees the strings `CallPlugin` is still using; and the listener outlives its plugin | this commit | UDPsocket.cpp `OnReceive`; methods_udp.cpp `UdpListen`, `UdpSend`; plugins.cpp `CPlugin::~CPlugin` |
 | 116 | A cancelled host-name lookup's result buffer is freed (or reused) straight after `WSACancelAsyncRequest`, which under Wine is a stub: the worker thread then writes the `hostent` into freed memory | this commit | doc.cpp `LookupHostName` / `OnConnectionDisconnect` (here `pal/win_transport.cpp`) |
 | 117 | A zChat stamp collision broadcasts the new stamp as decimal text instead of the 4-byte form, and to MudMaster peers as well (the filter tested this socket's type, not the peer's) | this commit | chatsock.cpp `CChatSocket::Process_Stamp` |
+| 118 | The world's first line, if it wraps, reaches triggers without its first row: the walk back to the start of a line steps past the head of the buffer even when it ran off it, and before that stops at the head's missing LOG_LINE mark. The same walk in Shift+double-click, Find's highlight and backwards Find misplaces the first line too | this commit | ProcessPreviousLine.cpp, mushview.cpp, sendvw.cpp, OtherTypes.h `PROMPT_GROUPING_MASK` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -3586,3 +3587,20 @@ binary bytes, so a zChat peer read nonsense; and it filtered with
 so MudMaster peers were sent zChat stamp messages too.
 
 **Fix:** `MakeStamp`, and the peer's own connection type.
+
+## 118 — The world's first line, wrapped, loses its first row
+
+`ProcessPreviousLine.cpp` (assembling a line for triggers), `mushview.cpp` (Shift+double-click
+selects a paragraph), `sendvw.cpp` (`DoFind`'s highlight, and `GetNextLine` searching backwards).
+
+Each walks back from the end of a line to find where it starts: back to the previous row with a
+hard return, then one forward. When nothing before it has a hard return, the walk runs off the
+start of the buffer, but `prevpos` is then the head, not NULL, so it still stepped one forward
+and lost the head. That happens for the world's very first line, whose first row is the line the
+document is created with. Before getting that far, the trigger walk also stopped at that row,
+because it compared whole `flags` values and the first row lacks `LOG_LINE`, which is stamped
+on a group's rows after the grouping.
+
+**Fix:** each walk records whether it found a hard return, and starts at the head if not.
+`PROMPT_GROUPING_MASK` also ignores `LOG_LINE` and `BOOKMARK`, marks on a row rather than kinds
+of line. `TriggerR5.TheFirstLineInTheBufferWrappedIsWhole` fails without either half.

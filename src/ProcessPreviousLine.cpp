@@ -228,6 +228,7 @@ assemble the full text of the original line.
   flags = m_pCurrentLine->flags;
 
   // we haven't yet recorded a hard return on *this* line so this is safe
+  bool bFoundEnd = false;
   for (pos = m_LineList.GetTailPosition (); pos; )
    {
    prevpos = pos;   // remember line which did have a hard return
@@ -238,15 +239,20 @@ assemble the full text of the original line.
    // would see the tail fragment of a wrapped prompt instead of the whole line.
    if (pLine->hard_return ||
        (pLine->flags & PROMPT_GROUPING_MASK) != (flags & PROMPT_GROUPING_MASK))
+     {
+     bFoundEnd = true;
      break;
+     }
    }
 
-  // if prevpos is non-null it is now the position of the last line with a hard return
-  // so, get the next one, that is the one which starts *our* sequence
+  // if we stopped at the end of the previous line, ours starts at the one after it;
+  // if we ran off the start of the buffer, it starts there.  (Upstream stepped on
+  // after the first line either way, so the world's first line, if it wrapped,
+  // reached triggers without its first row.)
 
-  if (prevpos)
+  if (bFoundEnd)
     m_LineList.GetNext (prevpos);
-  else       // must be the only line in the buffer
+  else
     prevpos = m_LineList.GetHeadPosition ();
 
   // if no prevpos, we must be at the start of the buffer (ie. no previous line 

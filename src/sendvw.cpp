@@ -1454,24 +1454,27 @@ if (found)
   m_topview->m_selstart_col =  pDoc->m_DisplayFindInfo.m_iStartColumn;
   m_topview->m_selend_col = pDoc->m_DisplayFindInfo.m_iEndColumn;
 
+  bool bFoundEnd = false;
   pLine = pDoc->m_LineList.GetPrev (pos);
   while (pos)
    {
    prevpos = pos;   // remember line which did have a hard return
    pLine = pDoc->m_LineList.GetPrev (pos);
    if (pLine->hard_return)
+     {
+     bFoundEnd = true;
      break;
+     }
    m_topview->m_selstart_line--;
    m_topview->m_selend_line--;
    }
 
- // if prevpos is non-null it is now the position of the last line with a hard return
- // so, get the next one, that is the one which starts *our* sequence
+ // if we stopped at the end of the previous line, ours starts at the one after it;
+ // if we ran off the start of the buffer (or never left it), it starts there
 
-
-   if (prevpos)
+   if (bFoundEnd)
       pDoc->m_LineList.GetNext (prevpos);
-   else       // must be the only line in the buffer
+   else
       prevpos = pDoc->m_LineList.GetHeadPosition ();
 
   pos = prevpos;
@@ -1548,21 +1551,25 @@ POSITION prevpos = NULL;
   // if doing backwards, we must go back a whole *line* (ie. the one after a hard return)
   if (!FindInfo.m_bForwards)
     {
+    bool bFoundEnd = false;
     pLine = pDoc->m_LineList.GetPrev (FindInfo.m_pFindPosition);
     while (FindInfo.m_pFindPosition)
      {
      prevpos = FindInfo.m_pFindPosition;   // remember line which did have a hard return
      pLine = pDoc->m_LineList.GetPrev (FindInfo.m_pFindPosition);
      if (pLine->hard_return)
+       {
+       bFoundEnd = true;
        break;
+       }
      }
 
-   // if prevpos is non-null it is now the position of the last line with a hard return
-   // so, get the next one, that is the one which starts *our* sequence
+   // if we stopped at the end of the previous line, ours starts at the one after it;
+   // if we ran off the start of the buffer (or never left it), it starts there
 
-     if (prevpos)
+     if (bFoundEnd)
         pDoc->m_LineList.GetNext (prevpos);
-     else       // must be the only line in the buffer
+     else
         prevpos = pDoc->m_LineList.GetHeadPosition ();
 
 // sequence is now at the start of the batch of lines

@@ -1147,6 +1147,30 @@ TEST(TriggerR5, MatchOnSecondWrappedLine)
     EXPECT_EQ(1L, t->nMatched);
 }
 
+// The very first line in the buffer, wrapped: nothing before it ends a line, so
+// the walk back runs off the start, and the line starts at the head.  Upstream
+// stepped on past the head regardless, and the trigger saw it without its first row.
+// (Before that, the grouping also stopped at the head's missing LOG_LINE.)
+TEST(TriggerR5, TheFirstLineInTheBufferWrappedIsWhole)
+{
+    // As a real world starts: the constructor's line is the current line, and the
+    // first text goes into it (make_doc would put a fresh line outside the list).
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_iFlags        = COLOUR_ANSI;
+    doc.m_iForeColour   = WHITE;
+    doc.m_iBackColour   = BLACK;
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 10;
+    ASSERT_EQ(1, (int) doc.m_LineList.GetCount());
+    ASSERT_TRUE(doc.m_LineList.GetHead() == doc.m_pCurrentLine);
+    // That first line is made before logging is decided, so it lacks the LOG_LINE
+    // mark the rows wrapped after it carry: that mustn't split the group either.
+    CTrigger* whole = add_trigger(doc, "AAAAAAAAAABBBBBBBBBBcc");
+    feed_line(doc, "AAAAAAAAAABBBBBBBBBBcc");
+    EXPECT_EQ(1L, whole->nMatched);
+}
+
 // ── the PROMPT flag must not split a wrapped line ────────────────────────────
 //
 // ProcessPreviousLine decides which soft-wrapped segments form one logical

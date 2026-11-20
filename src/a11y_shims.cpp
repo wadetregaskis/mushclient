@@ -349,7 +349,7 @@ function _luaaudio_slide_step (key)
   s.set (s.from + (s.to - s.from) * s.step / 5, s.h)
   if s.step >= 5 then
     _G._luaaudio_slides [key] = nil
-    if s.after then s.after (s.h) end
+    if s.after then s.after (s.h, s.from) end
     return
   end
   DoAfterSpecial (s.each, "_luaaudio_slide_step (" .. key .. ")", sendto.script)
@@ -363,8 +363,15 @@ function slidepan (pan, handle, ms)
   slide (handle, ms, function (h) local s = sounds [h]; return s and s.pan or master_pan end, setpan, pan)
 end
 
+-- Fading out everything fades the master volume, which goes back to where it was once
+-- they have stopped: otherwise every sound after it would be silent.
 function fadeout (handle, ms)
-  slide (handle, ms, getvolume, setvol, 0, stop)
+  slide (handle, ms, getvolume, setvol, 0, function (h, from)
+    stop (h)
+    if h == 0 then
+      master_volume = from
+    end
+  end)
 end
 
 function init ()

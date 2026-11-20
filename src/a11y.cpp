@@ -702,21 +702,32 @@ void A11y_SendToSpeech (CMUSHclientDoc & doc, const char * sText)
 
 // ---------------------------------------------------------------- the commands
 
-bool A11y_Command (CMUSHclientDoc & doc, const char * sCommand)
+std::string A11y_CommandWord (CMUSHclientDoc & doc, const char * sCommand)
   {
-  // Only for someone using speech: to anyone else these are words to send to the MUD.  An
-  // alias for one of them has already had its turn (EvaluateCommand), and won.
+  // Only for someone using speech: to anyone else these are words to send to the MUD.
   if (!KeysLive (doc))
-    return false;
+    return std::string ();
 
   const std::string command = Trim (sCommand);
   const std::string lower = Lower (command);
   const std::string verb = lower.substr (0, lower.find (' '));
   if (verb != "tts" && verb != "tts_note" && verb != "tts_interrupt" && verb != "tts_stop" &&
       verb != "subst" && verb != "mushreader")
-    return false;
+    return std::string ();
   if (verb == "tts" && command.size () != 3)
+    return std::string ();
+  return verb;
+  }
+
+bool A11y_Command (CMUSHclientDoc & doc, const char * sCommand)
+  {
+  // An alias for one of these words has already had its turn (EvaluateCommand), and won.
+  const std::string verb = A11y_CommandWord (doc, sCommand);
+  if (verb.empty ())
     return false;
+
+  const std::string command = Trim (sCommand);
+  const std::string lower = Lower (command);
 
   CA11yState & state = State (doc);
   a11y::SpeechRouter & router = state.router;

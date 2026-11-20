@@ -76,6 +76,10 @@ void A11y_CommandEntered (CMUSHclientDoc & doc);
 
 // A command about to be evaluated: tts, subst and the rest.  True if it was one.
 bool A11y_Command (CMUSHclientDoc & doc, const char * sCommand);
+// The word of A11y_Command's that sCommand starts with ("tts_note", say), in lower case, or
+// "" if none, or if they are not live for this world.  So that EvaluateCommand can run them
+// ahead of the aliases, unless an alias is for that word.
+std::string A11y_CommandWord (CMUSHclientDoc & doc, const char * sCommand);
 
 // A key pressed in the command box or the text pane.  True if it was ours.
 bool A11y_Key (CMUSHclientDoc & doc, A11yKey key, int ch, bool bCtrl, bool bAlt, bool bShift);

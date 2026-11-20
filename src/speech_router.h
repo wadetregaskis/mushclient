@@ -71,6 +71,11 @@ struct FloodPolicy
   int    leadMs = 4000;            // ... how far ahead of itself it may be given work
   int    minGapMs = 120;           // after speaking, before believing "not busy"
   int    busyGraceMs = 5000;       // past the estimate, before no longer believing "busy"
+  // What is urgent (Assertive) is not part of a flood, but it can be a backlog of its own,
+  // from a busy category of priority 2.
+  size_t maxUrgent = 20;           // urgent lines waiting before the oldest go; 0 is never
+  int    urgentRecentMs = 2000;    // Enter and an interrupt keep urgent lines this new ...
+  size_t urgentKept = 3;           // ... and at most this many of them, the newest
   };
 
 // ---------------------------------------------------------------- history and review
@@ -150,8 +155,11 @@ class SpeechRouter
     void prompt (const std::string & text);
 
     // Something a script or trigger asked to have said.  If its priority is Assertive it is
-    // never dropped by the flood policy, by Enter or by another say's interrupt: only stop,
-    // skipToLatest, muting, and having no backend at all lose it.
+    // dropped by the flood policy only past policy ().maxUrgent of them, the oldest first,
+    // and by Enter or another say's interrupt only if it is older than urgentRecentMs or
+    // more than urgentKept are newer.  stop, skipToLatest, muting, and having no backend at
+    // all lose it.  With bInterrupt, what was waiting goes (as Enter) and this is said
+    // first, ahead of what urgent was kept.
     void say (const std::string & text, const std::string & category,
               pal::SpeechPriority priority, bool bInterrupt);
 
@@ -161,7 +169,8 @@ class SpeechRouter
     // Delivers what it can.  Call often, with a clock that does not go backwards.
     void tick (int64_t nowMs);
 
-    // The player pressed Enter: what is waiting is no longer news, unless it is Assertive.
+    // The player pressed Enter: what is waiting is no longer news, unless it is Assertive and
+    // only just arrived (see say).
     void commandEntered ();
     // Silence, and nothing waiting.
     void stop ();
@@ -202,11 +211,13 @@ class SpeechRouter
       {
       std::string text;
       pal::SpeechPriority priority;
+      int64_t queuedAt = 0;      // the last tick's time, when it was queued
+      bool bFirst = false;       // an interrupt's: said before anything else
       };
 
     void remember (const std::string & text, const std::string & category);
-    void enqueue (const std::string & text, pal::SpeechPriority priority);
-    void dropWaitingButUrgent ();
+    void enqueue (const std::string & text, pal::SpeechPriority priority, bool bFirst = false);
+    void dropWaitingButRecentUrgent ();
     void applyFloodPolicy ();
     bool backendReady (int64_t nowMs);
     void deliver (const std::string & text, pal::SpeechPriority priority, bool bFlush, int64_t nowMs);

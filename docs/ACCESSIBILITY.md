@@ -54,7 +54,8 @@ accelerator stays theirs.
 | O | Between the command box and the text pane. F6 does this too, wherever there is a pane, unless the world has given F6 a macro or an accelerator. |
 
 Pressing Enter in the command box silences speech, drops what is waiting and ends reviewing, since
-it is no longer news (`speech_interrupt_on_enter`).  What is urgent (priority 2) is still said.
+it is no longer news (`speech_interrupt_on_enter`).  What is urgent (priority 2) and came in within the
+last two seconds is still said, up to the newest three of it.
 
 A plugin can put any of these on other keys: `world.SpeechReview (action)`, where action is one of
 `previous_line next_line first_line last_line current_line previous_word next_word current_word
@@ -80,9 +81,12 @@ and when reading starts that is as much of the scrollback as it, and review, tak
 
 Lines that arrive together are said together. If more than `speech_flood_lines` (40) are waiting,
 the middle goes, and you hear "N lines skipped" and the newest five. What has a category with
-priority 2, as triggers, aliases and timers sending to speech do by default, is never dropped: not
-by a flood, by Enter, or by a script interrupting.  Stopping speech (`StopSpeech`, `tts_stop`, K,
-muting) does drop it, and so does there being nothing at all to speak with.
+priority 2, as triggers, aliases and timers sending to speech do by default, is not part of a
+flood, but it has a limit of its own: past 20 of it waiting, the oldest goes too. Enter, and a script
+interrupting, keep the newest three of it that came in within the last two seconds, so that an alert
+typed over is still heard and a busy category's backlog is not; what the script interrupted with is
+said first. Stopping speech (`StopSpeech`, `tts_stop`, K, muting) drops all of it, and so does there
+being nothing at all to speak with.
 
 ## For a script
 
@@ -141,8 +145,10 @@ only one of its own one-shot sounds if all ten are busy, and stopping or changin
 ended touches nothing.
 
 The commands `tts`, `tts_note`, `tts_interrupt`, `tts_stop` and `subst` work while output is being
-read or that plugin is loaded. To anyone else they are words to send to the MUD, and an alias of
-the world's or a plugin's for one of them runs instead. `subst` keeps
+read or that plugin is loaded. To anyone else they are words to send to the MUD. They come before
+the aliases, so that an alias for every command (`*`, `^(.*)$`) doesn't send them to the MUD, but an
+enabled alias of the world's or a plugin's for one of them in particular, one whose match text starts
+with the word (ignoring case and a leading `^`), runs instead. `subst` keeps
 MushReader's `substitutions.mush`: a whole line that matches is said differently, or if replaced with
 `!skip` not at all.
 

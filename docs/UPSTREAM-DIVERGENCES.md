@@ -1652,8 +1652,9 @@ plugin or a world file can see:
 - While output is being read (a reader, *Speak output: Always*, or `speech_read_all`) or the
   MushReader shim is loaded, the words `tts`, `tts_note`, `tts_interrupt`, `tts_stop` and
   `subst` are commands, Alt+Shift keys review output, Ctrl+Shift+F12 mutes, and Enter silences
-  speech.  A world's or plugin's alias for one of those words, or accelerator on one of those
-  keys, wins.  F6 goes to the text pane wherever there is one, unless the world gave F6 a macro
+  speech.  They come before aliases, so an alias for every command doesn't take them; an
+  enabled alias of a world's or plugin's for one of those words (its match text starts with
+  it), or an accelerator on one of those keys, wins.  F6 goes to the text pane wherever there is one, unless the world gave F6 a macro
   or an accelerator.
 - LuaAudio's volume is linear, 0 to 100, and becomes PlaySound's dB as 20·log10; its handles are
   its own sounds, not buffer numbers.

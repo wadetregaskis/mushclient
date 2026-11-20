@@ -315,13 +315,77 @@ TEST (SpeechRouter, EnterAndInterruptKeepWhatIsUrgent)
   r.say ("now", "script", SpeechPriority::Normal, true);
   r.tick (100000);
   ASSERT_EQ (2u, s.said.size ());
-  EXPECT_STREQ ("low health\nnow", s.said [1].c_str ());
+  EXPECT_STREQ ("now\nlow health", s.said [1].c_str ());    // the interrupt's own goes first
 
   // whereas stopping is stopping
   r.say ("urgent", "trigger", SpeechPriority::Assertive, false);
   r.stop ();
   r.tick (200000);
   EXPECT_EQ (2u, s.said.size ());
+}
+
+// A busy category of priority 2 can build a backlog that nothing short of stopping would
+// clear.  Enter keeps only the few newest that came in just now, and an interrupt the same.
+TEST (SpeechRouter, EnterKeepsOnlyAFewUrgentLinesThatJustArrived)
+{
+  SpeechRouter r;
+  FakeSpeech s;
+  s.caps |= pal::kSpeechKnowsBusy;
+  s.busy = true;
+  r.setBackend (&s);
+  r.tick (1000);
+  r.say ("an old alert", "trigger", SpeechPriority::Assertive, false);
+  r.tick (4000);          // busy: nothing said, and that alert is three seconds old
+  for (int i = 1; i <= 5; i++)
+    r.say ("alert " + std::to_string (i), "trigger", SpeechPriority::Assertive, false);
+  r.line ("output", "output");
+  r.commandEntered ();
+  EXPECT_EQ (3u, r.pendingCount ());
+  s.busy = false;
+  r.tick (4500);
+  ASSERT_EQ (1u, s.said.size ());
+  EXPECT_STREQ ("alert 3\nalert 4\nalert 5", s.said [0].c_str ());
+  EXPECT_EQ ((uint64_t) 4, r.linesSkipped ());
+
+  // An interrupt likewise, and its own is said ahead of them.
+  s.busy = true;
+  r.tick (5000);
+  for (int i = 6; i <= 10; i++)
+    r.say ("alert " + std::to_string (i), "trigger", SpeechPriority::Assertive, false);
+  r.say ("now", "script", SpeechPriority::Normal, true);
+  s.busy = false;
+  r.tick (20000);
+  ASSERT_EQ (2u, s.said.size ());
+  EXPECT_STREQ ("now\nalert 8\nalert 9\nalert 10", s.said [1].c_str ());
+}
+
+// ... and a flood of them, past a generous limit, loses the oldest.
+TEST (SpeechRouter, UrgentLinesHaveALimitOfTheirOwn)
+{
+  SpeechRouter r;
+  FakeSpeech s;
+  s.caps |= pal::kSpeechKnowsBusy;
+  s.busy = true;
+  r.setBackend (&s);
+  r.policy ().maxUrgent = 20;
+  for (int i = 1; i <= 30; i++)
+    r.say ("alert " + std::to_string (i), "trigger", SpeechPriority::Assertive, false);
+  r.tick (1000);
+  EXPECT_EQ (20u, r.pendingCount ());
+  s.busy = false;
+  r.tick (2000);
+  ASSERT_EQ (1u, s.said.size ());
+  EXPECT_EQ (0u, s.said [0].find ("10 lines skipped.\nalert 11\n"));
+  EXPECT_TRUE (s.said [0].find ("alert 30") != std::string::npos);
+  EXPECT_EQ ((uint64_t) 10, r.linesSkipped ());
+
+  // 0 is no limit, as maxPending's is.
+  r.policy ().maxUrgent = 0;
+  s.busy = true;
+  for (int i = 1; i <= 30; i++)
+    r.say ("again " + std::to_string (i), "trigger", SpeechPriority::Assertive, false);
+  r.tick (2050);          // too soon after the last to be ready
+  EXPECT_EQ (30u, r.pendingCount ());
 }
 
 TEST (SpeechRouter, SkipToLatestLeavesTheNewest)
@@ -1184,6 +1248,54 @@ TEST (SpeechDoc, AnAliasForTheWordIsTheWorlds)
   EXPECT_STREQ ("my own tts\r\n", pTransport->sent.c_str ());
 }
 
+// An alias that takes every command (to log it, or to rewrite it) is not for tts_note in
+// particular: the client's own commands still work, a soundpack's Execute of them included.
+TEST (SpeechDoc, ACatchAllAliasDoesNotTakeTheCommands)
+{
+  SpeechWorld w;
+  w.doc.m_enable_aliases = TRUE;
+  w.doc.m_display_my_input = FALSE;
+  w.doc.m_iConnectPhase = eConnectConnectedToMud;
+  w.doc.m_pTransport = new RecordingTransport ();    // the document's to delete
+  RecordingTransport * pTransport = static_cast<RecordingTransport *> (w.doc.m_pTransport);
+  bool bOmit = false;
+
+  EXPECT_EQ ((long) eOK, w.doc.AddAlias ("everything", "*", "%1", eEnabled, ""));
+  EXPECT_EQ ((long) eOK, w.doc.AddAlias ("regexp", "^(.*)$", "%1", eEnabled | eAliasRegularExpression, ""));
+  w.doc.EvaluateCommand ("tts_note hello there", true, bOmit, false);
+  w.tick ();
+  EXPECT_TRUE (w.said ().find ("hello there") != std::string::npos);
+  w.doc.EvaluateCommand ("tts", true, bOmit, false);
+  EXPECT_EQ (1, (int) w.doc.m_bSpeechMute);
+  w.doc.EvaluateCommand ("TTS", true, bOmit, false);
+  EXPECT_EQ (0, (int) w.doc.m_bSpeechMute);
+  EXPECT_TRUE (pTransport->sent.empty ());
+
+  // Anything else still goes through them.
+  w.doc.EvaluateCommand ("north", true, bOmit, false);
+  EXPECT_STREQ ("north\r\n", pTransport->sent.c_str ());
+
+  // An alias for the word, a regular expression with its ^ and in another case too, wins.
+  // (Over the client's command, that is: among aliases, the usual order, so without these.)
+  EXPECT_EQ ((long) eOK, w.doc.DeleteAlias ("everything"));
+  EXPECT_EQ ((long) eOK, w.doc.DeleteAlias ("regexp"));
+  EXPECT_EQ ((long) eOK, w.doc.AddAlias ("mine", "^TTS_NOTE (.*)$", "said %1", eEnabled | eAliasRegularExpression | eIgnoreAliasCase, ""));
+  w.doc.EvaluateCommand ("tts_note hi", true, bOmit, false);
+  EXPECT_STREQ ("north\r\nsaid hi\r\n", pTransport->sent.c_str ());
+  // ... but not for tts, which it only starts like
+  w.doc.EvaluateCommand ("tts", true, bOmit, false);
+  EXPECT_EQ (1, (int) w.doc.m_bSpeechMute);
+  EXPECT_STREQ ("north\r\nsaid hi\r\n", pTransport->sent.c_str ());
+  w.doc.EvaluateCommand ("tts", true, bOmit, false);
+  EXPECT_EQ (0, (int) w.doc.m_bSpeechMute);
+  // and a disabled one is nobody's
+  EXPECT_EQ ((long) eOK, w.doc.EnableAlias ("mine", FALSE));
+  w.doc.EvaluateCommand ("tts_note bye", true, bOmit, false);
+  w.tick ();
+  EXPECT_TRUE (w.said ().find ("bye") != std::string::npos);
+  EXPECT_STREQ ("north\r\nsaid hi\r\n", pTransport->sent.c_str ());
+}
+
 // ---------------------------------------------------------------- smaller things
 
 // A soundpack sets its categories each time it loads: saying the same again is not a change.
@@ -1320,6 +1432,29 @@ TEST (SpeechShim, LuaAudioVolumeIsLinearAndBecomesDecibels)
                       "assert (math.abs (buffers [10].vol + 12.041) < 0.001, buffers [10].vol)\n"
                       "setvol (0, 0)\n"
                       "assert (buffers [10].vol == -100)"));
+}
+
+// Fading everything out stops it, and what plays next is as loud as before the fade.
+TEST (SpeechShim, LuaAudioFadingEverythingOutLeavesTheVolumeAsItWas)
+{
+  LuaAudioScript s;
+  ASSERT_TRUE (s.ok);
+  EXPECT_TRUE (s.Run ("pending = {}\n"
+                      "function DoAfterSpecial (t, code) pending [#pending + 1] = code end\n"
+                      "function run () while #pending > 0 do (loadstring or load) (table.remove (pending, 1)) () end end\n"
+                      "setvol (50, 0)\n"
+                      "play ('loop.wav', true, 0, 100)\n"
+                      "fadeout (0, 500)\n"
+                      "run ()\n"
+                      "assert (next (buffers) == nil, 'still playing')\n"
+                      "assert (getvolume (0) == 50, getvolume (0))\n"
+                      "play ('b.wav', false, 0, 100)\n"
+                      "assert (math.abs (buffers [10].vol + 6.0206) < 0.001, buffers [10].vol)\n"
+                      // One sound's fade leaves the master alone, as it always did.
+                      "local h = play ('c.wav', true, 0, 100)\n"
+                      "fadeout (h, 500)\n"
+                      "run ()\n"
+                      "assert (getvolume (0) == 50)"));
 }
 
 // A handle is a sound of ours: it does not steal a buffer someone else is using, and stopping

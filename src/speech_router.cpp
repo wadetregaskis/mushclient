@@ -586,11 +586,16 @@ void SpeechRouter::remember (const std::string & text, const std::string & categ
     m_history.pop_front ();
   }
 
-void SpeechRouter::enqueue (const std::string & text, pal::SpeechPriority priority)
+void SpeechRouter::enqueue (const std::string & text, pal::SpeechPriority priority, bool bFirst)
   {
   Pending p;
   p.text = text;
   p.priority = priority;
+  p.queuedAt = m_now;
+  p.bFirst = bFirst;
+  if (bFirst)
+    for (Pending & other : m_pending)
+      other.bFirst = false;      // the newest interrupt is the one that goes first
   m_pending.push_back (std::move (p));
   if (m_hold)
     m_heldNew++;
@@ -666,11 +671,11 @@ void SpeechRouter::say (const std::string & text, const std::string & category,
 
   if (bInterrupt)
     {
-    dropWaitingButUrgent ();
+    dropWaitingButRecentUrgent ();
     m_stopRequested = true;
     }
   if (!IsBlank (text))
-    enqueue (text, priority);
+    enqueue (text, priority, bInterrupt);
   }
 
 void SpeechRouter::sayNow (const std::string & text)
@@ -682,14 +687,15 @@ void SpeechRouter::sayNow (const std::string & text)
     deliver (text, pal::SpeechPriority::Assertive, true, m_now);
   }
 
-// What is waiting goes, except what is urgent: an alert that came in just before the player
-// pressed Enter, or interrupted, is still news.  Only stopping speech loses it.
-void SpeechRouter::dropWaitingButUrgent ()
+// What is waiting goes, except what is urgent and new: an alert that came in just before the
+// player pressed Enter, or a script interrupted, is still news.  One from a while ago is not,
+// and nor is the backlog a busy urgent category can build: only a few of the newest stay.
+void SpeechRouter::dropWaitingButRecentUrgent ()
   {
   std::deque<Pending> kept;
-  for (Pending & p : m_pending)
-    if (p.priority == pal::SpeechPriority::Assertive)
-      kept.push_back (std::move (p));
+  for (auto it = m_pending.rbegin (); it != m_pending.rend () && kept.size () < m_policy.urgentKept; ++it)
+    if (it->priority == pal::SpeechPriority::Assertive && m_now - it->queuedAt <= m_policy.urgentRecentMs)
+      kept.push_front (std::move (*it));
   m_totalSkipped += m_pending.size () - kept.size ();
   m_pending.swap (kept);
   m_skipped = 0;
@@ -697,7 +703,7 @@ void SpeechRouter::dropWaitingButUrgent ()
 
 void SpeechRouter::commandEntered ()
   {
-  dropWaitingButUrgent ();
+  dropWaitingButRecentUrgent ();
   m_heldNew = 0;
   m_promptSpoken.clear ();
   m_review.goLive ();
@@ -758,34 +764,45 @@ void SpeechRouter::setHold (bool bHold)
     }
   }
 
-// The newest lines and anything urgent survive; what is in the middle does not.
+// The newest lines and anything urgent survive; what is in the middle does not.  Urgent
+// lines have a limit of their own, a generous one, past which the oldest of them go too.
 void SpeechRouter::applyFloodPolicy ()
   {
+  // The oldest `drop` of those that are urgent (or not), never an interrupt's own.
+  auto dropOldest = [this] (const bool bUrgent, size_t drop)
+    {
+    std::deque<Pending> kept;
+    for (Pending & p : m_pending)
+      {
+      if (drop && !p.bFirst && (p.priority == pal::SpeechPriority::Assertive) == bUrgent)
+        {
+        drop--;
+        m_skipped++;
+        m_totalSkipped++;
+        continue;
+        }
+      kept.push_back (std::move (p));
+      }
+    m_pending.swap (kept);
+    };
+
+  size_t urgent = 0;
+  for (const Pending & p : m_pending)
+    if (p.priority == pal::SpeechPriority::Assertive && !p.bFirst)
+      urgent++;
+  if (m_policy.maxUrgent && urgent > m_policy.maxUrgent)
+    dropOldest (true, urgent - m_policy.maxUrgent);
+
   if (m_policy.maxPending == 0)
     return;
 
   size_t droppable = 0;
   for (const Pending & p : m_pending)
-    if (p.priority != pal::SpeechPriority::Assertive)
+    if (p.priority != pal::SpeechPriority::Assertive && !p.bFirst)
       droppable++;
   if (droppable <= m_policy.maxPending)
     return;
-
-  size_t drop = droppable - std::min (m_policy.keepLatest, droppable);
-  m_skipped += drop;
-  m_totalSkipped += drop;
-
-  std::deque<Pending> kept;
-  for (Pending & p : m_pending)
-    {
-    if (drop && p.priority != pal::SpeechPriority::Assertive)
-      {
-      drop--;
-      continue;
-      }
-    kept.push_back (std::move (p));
-    }
-  m_pending.swap (kept);
+  dropOldest (false, droppable - std::min (m_policy.keepLatest, droppable));
   }
 
 bool SpeechRouter::backendReady (int64_t nowMs)
@@ -861,7 +878,23 @@ void SpeechRouter::tick (int64_t nowMs)
     priority = pal::SpeechPriority::Normal;
     }
 
-  // Urgent first.  While held nothing else goes at all.
+  // What a script interrupted with goes before anything, even what urgent was kept
+  // through the interrupt.  While held it is as urgent as its priority says.
+  for (auto it = m_pending.begin (); it != m_pending.end (); ++it)
+    if (it->bFirst)
+      {
+      if (!bHeld || it->priority == pal::SpeechPriority::Assertive)
+        {
+        batch = batch.empty () ? it->text : it->text + "\n" + batch;
+        if (it->priority == pal::SpeechPriority::Assertive ||
+            (it->priority == pal::SpeechPriority::Normal && priority == pal::SpeechPriority::Polite))
+          priority = it->priority;
+        m_pending.erase (it);
+        }
+      break;
+      }
+
+  // Urgent next.  While held nothing else goes at all.
   for (auto it = m_pending.begin (); it != m_pending.end (); )
     {
     if (it->priority == pal::SpeechPriority::Assertive)

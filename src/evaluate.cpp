@@ -72,6 +72,38 @@ class CSuppressInputLogging
     CSuppressInputLogging & operator= (const CSuppressInputLogging &);
   };
 
+// An enabled alias, the world's or an enabled plugin's, whose match text starts with this
+// word (ignoring case, and a regular expression's leading ^) and not a longer one: "tts_note
+// *" is for tts_note, "*" and "^(.*)$" are for everything and so for nothing in particular.
+static bool AnAliasIsForTheWord (CMUSHclientDoc & doc, const char * sWord)
+  {
+  const size_t iLength = strlen (sWord);
+  auto isFor = [&] (CAliasMap & map)
+    {
+    CString strName;
+    CAlias * pAlias;
+    for (POSITION pos = map.GetStartPosition (); pos; )
+      {
+      map.GetNextAssoc (pos, strName, pAlias);
+      if (!pAlias->bEnabled)
+        continue;
+      const char * p = pAlias->name;
+      if (*p == '^')
+        p++;
+      if (_strnicmp (p, sWord, iLength) == 0 &&
+          !(isalnum ((unsigned char) p [iLength]) || p [iLength] == '_'))
+        return true;
+      }
+    return false;
+    };
+  if (isFor (doc.m_AliasMap))
+    return true;
+  for (CPlugin * pPlugin : doc.m_PluginList)
+    if (pPlugin->m_bEnabled && isFor (pPlugin->m_AliasMap))
+      return true;
+  return false;
+  }
+
 
 BOOL CMUSHclientDoc::EvaluateCommand (const CString & full_input, 
                                             const bool bCountThem,
@@ -131,6 +163,17 @@ const CSuppressInputLogging suppressInputLogging (*this, bOmitFromLog);
 
 // --------------------------- ALIASES ------------------------------
 
+  // tts, subst and so on, for someone using speech: ahead of the aliases, or a catch-all
+  // alias ("*", "^(.*)$") would send them to the MUD, a soundpack's Execute ("tts_note ...")
+  // included.  An enabled alias that is for the word itself is the world's or the plugin's
+  // way of having it, and is left to run.
+  if (!bTest)
+    {
+    const std::string strWord = A11y_CommandWord (*this, input);
+    if (!strWord.empty () && !(m_enable_aliases && AnAliasIsForTheWord (*this, strWord.c_str ())) &&
+        A11y_Command (*this, input))
+      return true;
+    }
 
   bool bEchoAlias = m_display_my_input;
   OneShotItemMap mapOneShotItems;
@@ -202,8 +245,7 @@ const CSuppressInputLogging suppressInputLogging (*this, bOmitFromLog);
 
   if (AliasList.IsEmpty ())
     {
-    // tts, subst and so on, for someone using speech: after the aliases, so that a world's
-    // or a plugin's own alias for one of those words is the one that runs
+    // tts, subst and so on, when an alias for the word didn't match this time after all
     if (!bTest && A11y_Command (*this, input))
       return true;
 

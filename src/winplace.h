@@ -21,6 +21,17 @@ struct CWindowPlacement : public WINDOWPLACEMENT {
                 CWnd* pWnd,
                 const bool bDesktop);
 
+   // The dpi rcNormalPosition was saved at; 0 for a placement saved in 96-dpi pixels
+   // (by 5.x, or a 6.00 before it was kept).  Not part of WINDOWPLACEMENT, so
+   // SetWindowPlacement (this) never sees it.
+   int m_iSavedDpi;
+
+#ifdef _WIN32
+   // How Restore scales a saved rectangle for where the window is going (winplace.cpp).
+   static void ScaleSaved (RECT & rc, const int iSavedDpi, const int iNowDpi,
+                           const int iSystemDpi, const bool bInsideFrame);
+#endif
+
    // Save/restore from archive
    friend CArchive& operator<<(CArchive& ar, const CWindowPlacement& wp);
    friend CArchive& operator>>(CArchive& ar, CWindowPlacement& wp);

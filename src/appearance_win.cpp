@@ -1345,8 +1345,17 @@ void TrackCaptionButton (HWND hwnd, int iIndex)
 
   bool bInside = true;
   MSG msg;
-  while (::GetCapture () == hwnd && ::GetMessage (&msg, NULL, 0, 0) > 0)
+  bool bQuit = false;
+  while (::GetCapture () == hwnd)
     {
+    const BOOL iGot = ::GetMessage (&msg, NULL, 0, 0);
+    if (iGot <= 0)
+      {
+      // WM_QUIT (or an error) ends the loop; the quit goes back on the queue for the
+      // real message loop, which would otherwise never see it and never exit
+      bQuit = iGot == 0;
+      break;
+      }
     if (msg.message == WM_LBUTTONUP)
       break;
     if (msg.message == WM_MOUSEMOVE)
@@ -1371,6 +1380,12 @@ void TrackCaptionButton (HWND hwnd, int iIndex)
 
   iCaptionPressed = 0;
   PaintMdiChildFrame (hwnd);
+
+  if (bQuit)
+    {
+    ::PostQuitMessage ((int) msg.wParam);
+    return;
+    }
 
   if (bInside)
     {

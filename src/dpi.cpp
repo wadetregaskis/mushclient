@@ -10,12 +10,14 @@ namespace {
 typedef UINT (WINAPI * GetDpiForWindowFn) (HWND);
 typedef UINT (WINAPI * GetDpiForSystemFn) ();
 typedef int  (WINAPI * GetSystemMetricsForDpiFn) (int, UINT);
+typedef HRESULT (WINAPI * GetDpiForMonitorFn) (HMONITOR, int, UINT *, UINT *);
 
 struct DpiApis
   {
   GetDpiForWindowFn         pGetDpiForWindow;
   GetDpiForSystemFn         pGetDpiForSystem;
   GetSystemMetricsForDpiFn  pGetSystemMetricsForDpi;
+  GetDpiForMonitorFn        pGetDpiForMonitor;
   mutable int               iOverride;
 
   DpiApis ()
@@ -24,6 +26,8 @@ struct DpiApis
     pGetDpiForWindow = hUser ? (GetDpiForWindowFn) ::GetProcAddress (hUser, "GetDpiForWindow") : NULL;
     pGetDpiForSystem = hUser ? (GetDpiForSystemFn) ::GetProcAddress (hUser, "GetDpiForSystem") : NULL;
     pGetSystemMetricsForDpi = hUser ? (GetSystemMetricsForDpiFn) ::GetProcAddress (hUser, "GetSystemMetricsForDpi") : NULL;
+    HMODULE hShcore = ::LoadLibraryA ("shcore.dll");   // Windows 8.1 on; kept for the process
+    pGetDpiForMonitor = hShcore ? (GetDpiForMonitorFn) ::GetProcAddress (hShcore, "GetDpiForMonitor") : NULL;
 
     iOverride = 0;
     char sValue [16];
@@ -73,9 +77,38 @@ int Dpi_ForWindow (HWND hwnd)
   return Dpi_ForSystem ();
   }
 
+int Dpi_ActualForWindow (HWND hwnd)
+  {
+  const DpiApis & apis = Apis ();
+  if (hwnd && apis.pGetDpiForWindow)
+    {
+    const UINT iDpi = apis.pGetDpiForWindow (hwnd);
+    if (iDpi)
+      return (int) iDpi;
+    }
+  HDC hdc = ::GetDC (NULL);
+  const int iDpi = hdc ? ::GetDeviceCaps (hdc, LOGPIXELSY) : 96;
+  if (hdc)
+    ::ReleaseDC (NULL, hdc);
+  return iDpi;
+  }
+
+int Dpi_ActualForRect (const RECT & rect)
+  {
+  const DpiApis & apis = Apis ();
+  UINT x = 0, y = 0;
+  if (apis.pGetDpiForMonitor &&
+      apis.pGetDpiForMonitor (::MonitorFromRect (&rect, MONITOR_DEFAULTTONEAREST), 0 /* MDT_EFFECTIVE_DPI */, &x, &y) == S_OK &&
+      y)
+    return (int) y;
+  return Dpi_ActualForWindow (NULL);
+  }
+
 void Dpi_SetOverride (const int iDpi)
   {
-  Apis ().iOverride = iDpi;
+  // 0 (or less) is "ask the system again"; anything else within what the environment
+  // variable accepts, so that world.Debug ("dpi 1") can't make every size zero
+  Apis ().iOverride = iDpi <= 0 ? 0 : iDpi < 48 ? 48 : iDpi > 960 ? 960 : iDpi;
   }
 
 bool Dpi_Overridden ()

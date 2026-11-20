@@ -1347,7 +1347,10 @@ void CMUSHclientDoc::SetDpi (const int iDpi)
 
   CChildFrame * pFrame = GetChildFrame ();
   if (pFrame)
+    {
+    pFrame->m_wndSplitter.ScaleBars (iDpi);   // the bar between output and command
     pFrame->FixUpSplitterBar ();
+    }
 
   UpdateAllViews (NULL);
   }

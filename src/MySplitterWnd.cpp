@@ -23,6 +23,9 @@ static char THIS_FILE[] = __FILE__;
 CMySplitterWnd::CMySplitterWnd()
 {
   m_pDoc = NULL;
+#ifdef _WIN32
+  m_iBarsDpi = 0;
+#endif
 }
 
 CMySplitterWnd::~CMySplitterWnd()
@@ -40,12 +43,22 @@ END_MESSAGE_MAP()
 #ifdef _WIN32
 void CMySplitterWnd::ScaleBars (const int iDpi)
 {
-  if (iDpi == 96)
+  // from MFC's own sizes each time, so that moving between monitors doesn't drift
+  if (!m_iBarsDpi)
+    {
+    m_iBaseBars [0] = m_cxSplitter;
+    m_iBaseBars [1] = m_cySplitter;
+    m_iBaseBars [2] = m_cxSplitterGap;
+    m_iBaseBars [3] = m_cySplitterGap;
+    m_iBarsDpi = 96;
+    }
+  if (iDpi == m_iBarsDpi || iDpi <= 0)
     return;
-  m_cxSplitter = ::MulDiv (m_cxSplitter, iDpi, 96);
-  m_cySplitter = ::MulDiv (m_cySplitter, iDpi, 96);
-  m_cxSplitterGap = ::MulDiv (m_cxSplitterGap, iDpi, 96);
-  m_cySplitterGap = ::MulDiv (m_cySplitterGap, iDpi, 96);
+  m_cxSplitter = ::MulDiv (m_iBaseBars [0], iDpi, 96);
+  m_cySplitter = ::MulDiv (m_iBaseBars [1], iDpi, 96);
+  m_cxSplitterGap = ::MulDiv (m_iBaseBars [2], iDpi, 96);
+  m_cySplitterGap = ::MulDiv (m_iBaseBars [3], iDpi, 96);
+  m_iBarsDpi = iDpi;
 }
 
 // The base class's bars and borders come from the light palette MFC cached at startup.

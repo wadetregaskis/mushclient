@@ -28,7 +28,14 @@ int Dpi_ForWindow (HWND hwnd);
 // The dpi of the primary monitor, as of when the process started.
 int Dpi_ForSystem ();
 
-// Sets it, for world.Debug ("dpi 144").  0 goes back to asking the system.
+// Where a window really is and how big, which the override above doesn't change: the
+// dpi Windows has the window at, and the dpi of the monitor nearest a rectangle in
+// screen coordinates.  For saving and restoring window positions (winplace.cpp).
+int Dpi_ActualForWindow (HWND hwnd);
+int Dpi_ActualForRect (const RECT & rect);
+
+// Sets it, for world.Debug ("dpi 144").  0 goes back to asking the system; anything
+// else is held to 48 .. 960, as MUSHCLIENT_TEST_DPI is.
 void Dpi_SetOverride (const int iDpi);
 
 // Is that override in force?

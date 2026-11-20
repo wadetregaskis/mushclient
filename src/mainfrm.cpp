@@ -436,6 +436,11 @@ void CMainFrame::DpiChanged ()
     for (POSITION docPos = App.m_pWorldDocTemplate->GetFirstDocPosition (); docPos != NULL; )
       ((CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc (docPos))->SetDpi (iDpi);
 
+  // and the notepads' (CTextView::SetTheFont asks the window for its dpi)
+  if (App.m_pNormalDocTemplate)
+    for (POSITION docPos = App.m_pNormalDocTemplate->GetFirstDocPosition (); docPos != NULL; )
+      ((CTextDocument *) App.m_pNormalDocTemplate->GetNextDoc (docPos))->SetTheFont ();
+
   RecalcLayout ();
   RedrawWindow (NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }

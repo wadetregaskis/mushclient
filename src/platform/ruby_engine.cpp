@@ -30,11 +30,12 @@
 #include "scripting/errors.h"
 #include "platform/mc_dispatch.h"
 #include "platform/mc_ui_thread.h"
-#include "platform/mc_ui_thread.h"
+#include "platform/mc_world_call.h"
 #include "platform/mc_variant_args.h"
 
 #include <functional>
-#include <set>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -52,7 +53,7 @@
 #endif
 
 #include <ruby.h>
-#include <ruby/encoding.h>  // rb_utf8_encoding: a non-ASCII callback name (intern_name)
+#include <ruby/encoding.h>  // rb_utf8_encoding: a non-ASCII callback name (find_handler)
 #include <ruby/thread.h>    // rb_thread_call_without_gvl
 
 #ifndef VT_ERROR
@@ -124,17 +125,23 @@ VALUE variant_to_ruby (const VARIANT& v)
   }
 
 // ── Ruby VALUE -> VARIANT ─────────────────────────────────────────────────────
-void ruby_to_variant (VALUE r, VARIANT& out)
+// A script's own #to_s can raise, and this runs with C++ objects live above it
+// (world_method_missing's argument buffer), which a raise would longjmp past.  So
+// it is called under rb_protect, and a raise comes back as the exception, in *exc,
+// for the caller to raise once those are gone.
+VALUE do_obj_as_string (VALUE r) { return rb_obj_as_string (r); }
+
+bool ruby_to_variant (VALUE r, VARIANT& out, VALUE* exc)
   {
   VariantInit (&out);
   switch (TYPE (r))
     {
-    case T_NIL:    out.vt = VT_EMPTY; return;
+    case T_NIL:    out.vt = VT_EMPTY; return true;
     // -1 is VARIANT_TRUE; see the boolean note in platform/mc_dispatch.cpp.
-    case T_TRUE:   out.vt = VT_BOOL; out.boolVal = -1; return;
-    case T_FALSE:  out.vt = VT_BOOL; out.boolVal = 0; return;
-    case T_FIXNUM: out.vt = VT_I4; out.lVal = (long) NUM2LONG (r); return;
-    case T_FLOAT:  out.vt = VT_R8; out.dblVal = NUM2DBL (r); return;
+    case T_TRUE:   out.vt = VT_BOOL; out.boolVal = -1; return true;
+    case T_FALSE:  out.vt = VT_BOOL; out.boolVal = 0; return true;
+    case T_FIXNUM: out.vt = VT_I4; out.lVal = (long) NUM2LONG (r); return true;
+    case T_FLOAT:  out.vt = VT_R8; out.dblVal = NUM2DBL (r); return true;
     case T_BIGNUM:
       {
       // A Bignum that still fits lVal must cross as VT_I4, not VT_R8.  CRuby's
@@ -149,9 +156,9 @@ void ruby_to_variant (VALUE r, VARIANT& out)
       const int sign = rb_integer_pack (r, &mag, 1, sizeof mag, 0,
                                         INTEGER_PACK_NATIVE_BYTE_ORDER);
       if (sign == 1 && mag <= (unsigned long long) LONG_MAX)
-        { out.vt = VT_I4; out.lVal = (long) mag; return; }
+        { out.vt = VT_I4; out.lVal = (long) mag; return true; }
       if (sign == -1 && mag <= (unsigned long long) LONG_MAX + 1ULL)
-        { out.vt = VT_I4; out.lVal = (long) (- (long long) (mag - 1) - 1); return; }
+        { out.vt = VT_I4; out.lVal = (long) (- (long long) (mag - 1) - 1); return true; }
 #if LONG_MAX < LLONG_MAX
       // A 32-bit long (Windows; a Fixnum there stops at 2^30): what fits 64
       // bits but not lVal crosses as its exact digits, below, rather than as
@@ -160,12 +167,19 @@ void ruby_to_variant (VALUE r, VARIANT& out)
           (sign == -1 && mag <= (unsigned long long) LLONG_MAX + 1ULL))
         break;
 #endif
-      out.vt = VT_R8; out.dblVal = NUM2DBL (r); return;   // genuinely out of range
+      out.vt = VT_R8; out.dblVal = NUM2DBL (r); return true;   // genuinely out of range
       }
     default: break;
     }
   // strings and everything else -> string (the dispatch coerces as needed)
-  VALUE s = rb_obj_as_string (r);
+  int state = 0;
+  VALUE s = rb_protect (do_obj_as_string, r, &state);
+  if (state)
+    {
+    *exc = rb_errinfo ();
+    rb_set_errinfo (Qnil);
+    return false;
+    }
   out.vt = VT_BSTR;
   // RSTRING_PTR, not StringValueCStr: the latter RAISES ArgumentError on a
   // String holding an embedded NUL, and this runs inside world_method_missing
@@ -175,63 +189,141 @@ void ruby_to_variant (VALUE r, VARIANT& out)
   // the first NUL, so this matches the other four engines (perl/js/tcl/py all
   // feed a raw char* straight through) and the non-NUL case is unchanged.
   out.bstrVal = MC_BstrFromBytes (RSTRING_PTR (s));
+  return true;
   }
 
 // ── A world call from a Ruby Thread ──────────────────────────────────────────
 // Its GVL is let go while the UI thread runs it (platform/mc_ui_thread.h).  What it
-// runs under is the engine's plugin, as in py_engine.cpp; g_openEngines is how a
+// runs under is the engine's plugin, as in py_engine.cpp; open_engines is how a
 // call that was waiting learns that its engine has gone, since a Ruby thread can
 // outlive it, and only the UI thread reads or writes that.
-std::set<const void*> g_openEngines;
+//
+// By GENERATION, not by address: a closed engine's address is free for the next one,
+// so a thread outliving its plugin would otherwise pass for the plugin that replaced
+// it, and run as that.  Each engine gets a number nothing else ever has, which its
+// world proxies carry (@gen) beside its address.
+//
+// Never destroyed, as the dispatch tables are not: a Ruby thread can still be on its
+// way in as the process runs its static destructors.
+std::map<const void*, unsigned long long>& open_engines ()
+  {
+  static auto* m = new std::map<const void*, unsigned long long>;
+  return *m;
+  }
+unsigned long long g_lastEngineGeneration = 0;
+
+bool engine_open (const void* engine, const unsigned long long generation)
+  {
+  const auto it = open_engines ().find (engine);
+  return it != open_engines ().end () && it->second == generation;
+  }
+
+// A thread's call, owned jointly by the thread waiting for it and the UI thread
+// running it (MC_RunOnUIThreadAbandonable), since the thread can give up on it while
+// it runs.  No Ruby in it: off the UI thread, nobody holds the GVL for it.
+struct RubyThreadCall
+  {
+  MCWorldCall        call;
+  const void*        engine;
+  unsigned long long generation;
+  bool               closed = false;
+
+  RubyThreadCall (MCWorldCallKind kind, CMUSHclientDoc* doc, const char* name,
+                  VARIANT* args, size_t nargs, bool wantOutargs,
+                  const void* e, unsigned long long g)
+    : call (kind, doc, name, args, nargs, 0, wantOutargs), engine (e), generation (g) {}
+  };
 
 struct UICall
   {
-  const std::function<void ()>* call;
+  std::function<void ()> call;
   MCUIResult result;
   };
 
 void* run_on_ui_thread_without_gvl (void* p)
   {
   UICall* c = (UICall*) p;
-  c->result = MC_RunOnUIThread (*c->call);
+  c->result = MC_RunOnUIThreadAbandonable (std::move (c->call));
   return nullptr;
   }
 
-// Run `call` against the world.  False, with why in errmsg, if it could not.  No
-// Ruby in `call`: off the UI thread, nobody holds the GVL for it.
-template <class Call>
-bool on_world_thread (CMUSHclientDoc* doc, const void* engine, const std::string& name,
-                      char* errmsg, size_t errsize, Call&& call)
+// The thread's call gave up on a blocked main thread: say so in the output window,
+// when the main thread is free, because an uncaught exception in a thread goes to a
+// stderr nobody can see.
+void note_blocked (CMUSHclientDoc* doc, const void* engine, const unsigned long long generation,
+                   const std::string& message)
   {
+  MC_PostToUIThread ([doc, engine, generation, message]
+    {
+    if (!MC_DispatchDocTakesThreadCalls (doc) || (engine && !engine_open (engine, generation)))
+      return;
+    MCThreadCallScope scope (doc, engine);
+    CPlugin* plugin = doc->m_CurrentPlugin;
+    doc->ColourNote ("white", "red",
+                     ("Ruby thread in " +
+                      (plugin ? "plugin " + std::string ((LPCTSTR) plugin->m_strName)
+                              : std::string ("the world's script")) +
+                      ": " + message).c_str ());
+    });
+  }
+
+// Make one world call (MC_WorldCallRun), from whichever thread this is.  False, with
+// why in errmsg, if it could not be made; otherwise rc, ok, result and outargs are the
+// call's, and the caller clears the last two.  The caller clears `args` either way.
+bool world_call (CMUSHclientDoc* doc, const void* engine, const unsigned long long generation,
+                 MCWorldCallKind kind, const std::string& name,
+                 VARIANT* args, size_t nargs, bool wantOutargs,
+                 VARIANT& result, std::vector<VARIANT>& outargs, int& rc, bool& ok,
+                 char* errmsg, size_t errsize)
+  {
+  VariantInit (&result);
   if (MC_UIThreadIsCurrent ())
     {
     MCUIScriptScope worldCall (false);
-    call (false);
+    MC_WorldCallRun (kind, doc, name.c_str (), nargs ? args : nullptr, (int) nargs, 0, false,
+                     result, wantOutargs ? &outargs : nullptr, rc, ok);
     return true;
     }
 
-  bool closed = false;
-  const std::function<void ()> onUIThread = [&]
+  const auto c = std::make_shared<RubyThreadCall> (kind, doc, name.c_str (), args, nargs,
+                                                   wantOutargs, engine, generation);
+  UICall u;
+  u.result = MC_UI_RAN;
+  u.call = [c]
     {
-    if (!MC_DispatchDocIsLive (doc) ||
-        (engine && (g_openEngines.find (engine) == g_openEngines.end () ||
-                    !MC_DispatchEngineInUse (doc, engine))))
-      { closed = true; return; }
-    MCThreadCallScope scope (doc, engine);
-    call (scope.PluginWasRunning ());
+    CMUSHclientDoc* const d = c->call.doc;
+    if (!MC_DispatchDocTakesThreadCalls (d) ||
+        (c->engine && (!engine_open (c->engine, c->generation) ||
+                       !MC_DispatchEngineInUse (d, c->engine))))
+      { c->closed = true; return; }
+    MCThreadCallScope scope (d, c->engine);
+    c->call.Run (scope.PluginWasRunning ());
     };
-  UICall c = { &onUIThread, MC_UI_RAN };
-  rb_thread_call_without_gvl (run_on_ui_thread_without_gvl, &c, nullptr, nullptr);
+  rb_thread_call_without_gvl (run_on_ui_thread_without_gvl, &u, nullptr, nullptr);
 
-  if (c.result == MC_UI_RAN && !closed)
+  if (u.result == MC_UI_RAN && !c->closed)
+    {
+    c->call.TakeResults (result, outargs);
+    rc = c->call.rc;
+    ok = c->call.ok;
     return true;
-  const char* why = closed                       ? "failed: its world or script has been closed"
-                  : c.result == MC_UI_BLOCKED    ? "could not run, because the main thread is blocked: "
-                                                   "a callback that waits for a thread stops that "
-                                                   "thread's world calls from running"
-                  : c.result == MC_UI_CLOSING    ? "the client is closing"
-                                                 : "failed";
-  snprintf (errmsg, errsize, "world.%s %s", name.c_str (), why);
+    }
+  const std::string seconds = std::to_string (kUIThreadParkedLimitMs / 1000);
+  const std::string why =
+      c->closed && u.result == MC_UI_RAN ? "failed: its world or script has been closed"
+    : u.result == MC_UI_BLOCKED   ? "could not run, because the main thread has been blocked for "
+                                    + seconds + " seconds: a callback"
+                                    " that waits for a thread stops that thread's world calls from running"
+    : u.result == MC_UI_ABANDONED ? "did not finish, because the main thread, running it, has been"
+                                    " blocked for " + seconds + " seconds."
+                                    "  It may still finish, and what it returns is lost.  A callback"
+                                    " the call runs was waiting for this thread -- most likely for a"
+                                    " lock it holds: release locks before calling the world"
+    : u.result == MC_UI_CLOSING   ? "the client is closing"
+                                  : "failed";
+  snprintf (errmsg, errsize, "world.%s %s", name.c_str (), why.c_str ());
+  if (u.result == MC_UI_BLOCKED || u.result == MC_UI_ABANDONED)
+    note_blocked (doc, engine, generation, errmsg);
   return false;
   }
 
@@ -242,6 +334,8 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   CMUSHclientDoc* doc = (CMUSHclientDoc*) (intptr_t) NUM2LL (rb_iv_get (self, "@doc"));
   const VALUE engineValue = rb_iv_get (self, "@engine");    // nil: what GetWorld returned
   const void* engine = NIL_P (engineValue) ? nullptr : (const void*) (intptr_t) NUM2LL (engineValue);
+  const VALUE genValue = rb_iv_get (self, "@gen");
+  const unsigned long long generation = NIL_P (genValue) ? 0 : NUM2ULL (genValue);
 
   // rb_raise longjmps to the enclosing rb_protect and does NOT unwind C++
   // frames, so nothing with a destructor may be live when one fires.  Every such
@@ -250,21 +344,25 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   // Three raises used to fire with `name`, `vargs` and `outargs` alive -- and
   // outargs' VARIANTs had not even been cleared, so a failed [out] getter leaked
   // whatever strings or arrays the method had already allocated.
-  char  errmsg[320] = "";
+  char  errmsg[640] = "";
   VALUE errclass    = Qnil;
   VALUE ret         = Qnil;
+  VALUE raised      = Qnil;     // an argument's #to_s raised this: raised again below
 
   // argc: method_missing has arity -1 and a script may call it directly, in
-  // which case argv[0] is out of bounds and SYM2ID would read garbage.  Checked
+  // which case argv[0] is out of bounds and SYM2ID would read garbage -- as it
+  // would on anything but a Symbol, which a direct call can also pass.  Checked
   // before anything is constructed, so raising here is safe.
   if (argc < 1)
     rb_raise (rb_eArgError, "world: no method name given");
+  if (!RB_TYPE_P (argv[0], T_SYMBOL))
+    rb_raise (rb_eTypeError, "world: the method name must be a Symbol");
 
   // The proxy holds a bare CMUSHclientDoc*; there is no COM here, so nothing
   // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
   // keeps what world.GetWorld returned and uses it after that world is closed
   // would dereference freed memory.
-  // (Off the UI thread that question can only be asked on it: on_world_thread.)
+  // (Off the UI thread that question can only be asked on it: world_call.)
   if (MC_UIThreadIsCurrent () && !MC_DispatchDocIsLive (doc))
     {
     rb_raise (rb_eRuntimeError, "world: that world has been closed");
@@ -282,14 +380,22 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       {
       if (MC_DispatchHasProperty (name.c_str ()) && nargs >= 1)
         {
-        VARIANT v; ruby_to_variant (a[0], v);
-        const bool ran = on_world_thread (doc, engine, name, errmsg, sizeof errmsg, [&] (bool)
-          { MC_DispatchSetProperty (doc, name.c_str (), v); });
+        VARIANT v;
+        if (ruby_to_variant (a[0], v, &raised))
+          {
+          VARIANT none;
+          std::vector<VARIANT> noOutargs;
+          int unusedRc = MC_DISP_OK;
+          bool unusedOk = false;
+          const bool ran = world_call (doc, engine, generation, MC_CALL_SET, name, &v, 1, false,
+                                       none, noOutargs, unusedRc, unusedOk, errmsg, sizeof errmsg);
+          MC_VariantClear (none);
+          if (ran)
+            ret = nargs ? a[0] : Qnil;
+          else
+            errclass = rb_eRuntimeError;
+          }
         MC_VariantClear (v);
-        if (ran)
-          ret = nargs ? a[0] : Qnil;
-        else
-          errclass = rb_eRuntimeError;
         }
       else
         {
@@ -300,20 +406,21 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
     else if (MC_DispatchHas (name.c_str ()))      // a method
       {
       MCVariantArgs vargs ((size_t) nargs);
-      for (int i = 0; i < nargs; i++) ruby_to_variant (a[i], vargs[i]);
+      bool marshalled = true;
+      for (int i = 0; i < nargs && marshalled; i++)
+        marshalled = ruby_to_variant (a[i], vargs[i], &raised);
       VARIANT result; VariantInit (&result);
       std::vector<VARIANT> outargs;
-      int rc = MC_DISP_OK;
-      const bool ran = on_world_thread (doc, engine, name, errmsg, sizeof errmsg, [&] (const bool pluginRunning)
-        {
-        if (pluginRunning && MC_DispatchDeletesPlugin (name.c_str ()))
-          { result.vt = VT_I4; result.lVal = eBadParameter; return; }
-        rc = MC_DispatchInvoke (doc, name.c_str (),
-                                nargs ? vargs.data () : nullptr, nargs, result, &outargs);
-        });
+      int  rc = MC_DISP_OK;
+      bool unusedOk = false;
+      const bool ran = marshalled &&
+        world_call (doc, engine, generation, MC_CALL_INVOKE, name, vargs.data (), (size_t) nargs,
+                    true, result, outargs, rc, unusedOk, errmsg, sizeof errmsg);
       for (auto& x : vargs) MC_VariantClear (x);
 
-      if (!ran)
+      if (!marshalled)
+        ;                                         // `raised` is raised below
+      else if (!ran)
         {
         MC_VariantClear (result);
         for (auto& o : outargs) MC_VariantClear (o);
@@ -323,11 +430,9 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
         {
         MC_VariantClear (result);
         for (auto& o : outargs) MC_VariantClear (o);   // was leaked on this path
-        const std::string why = (rc == MC_DISP_UNKNOWN)
-                                ? std::string ("unknown method")
-                                : MC_DispatchBadArgsMessage (name.c_str (), nargs);
+        const std::string why = MC_DispatchErrorMessage (name.c_str (), nargs, rc);
         snprintf (errmsg, sizeof errmsg, "world.%s : %s", name.c_str (), why.c_str ());
-        errclass = rb_eArgError;
+        errclass = rc == MC_DISP_EXCEPTION ? rb_eRuntimeError : rb_eArgError;
         }
       else if (outargs.empty ())
         ret = variant_to_ruby (result);
@@ -337,22 +442,25 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
         rb_ary_push (ret, variant_to_ruby (result));
         for (auto& o : outargs) { rb_ary_push (ret, variant_to_ruby (o)); MC_VariantClear (o); }
         }
-      if (ran && rc == MC_DISP_OK) MC_VariantClear (result);
+      if (marshalled && ran && rc == MC_DISP_OK) MC_VariantClear (result);
       }
     else if (MC_DispatchHasProperty (name.c_str ()))   // a property read
       {
       VARIANT v; VariantInit (&v);
       bool found = false;
-      if (!on_world_thread (doc, engine, name, errmsg, sizeof errmsg, [&] (bool)
-            { found = MC_DispatchGetProperty (doc, name.c_str (), v); }))
+      int  unusedRc = MC_DISP_OK;
+      std::vector<VARIANT> noOutargs;
+      if (!world_call (doc, engine, generation, MC_CALL_GET, name, nullptr, 0, false,
+                       v, noOutargs, unusedRc, found, errmsg, sizeof errmsg))
         errclass = rb_eRuntimeError;
       else if (found)
-        { ret = variant_to_ruby (v); MC_VariantClear (v); }
+        ret = variant_to_ruby (v);
       else
         {
         snprintf (errmsg, sizeof errmsg, "world.%s : property is not readable", name.c_str ());
         errclass = rb_eNoMethodError;
         }
+      MC_VariantClear (v);
       }
     else
       {
@@ -361,6 +469,8 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       }
     }   // every destructor has run by here
 
+  if (!NIL_P (raised))
+    rb_exc_raise (raised);
   if (!NIL_P (errclass))
     rb_raise (errclass, "%s", errmsg);
   return ret;
@@ -531,22 +641,44 @@ VALUE do_singleton_defined (VALUE p)
 // A callback's name as a Ruby ID, or false.  rb_intern takes the name as
 // US-ASCII and RAISES on a byte above 127 -- a trigger in a Latin-1 world
 // whose script is "déplacer" -- and nothing up the C stack would catch it
-// (rb_bug, then abort).  So a name like that is interned under rb_protect,
-// as UTF-8 (which a Ruby script can define); one that is not valid UTF-8
-// names nothing a script could have defined.
-struct InternCtx { const char* name; ID mid; };
+// (rb_bug, then abort).  So a name like that is interned under rb_protect.
+//
+// In which encoding is the question, since a non-ASCII Symbol is a different
+// Symbol in each.  ParseRuby hands the script over as the bytes it is
+// (ASCII-8BIT), so its `def déplacer` defines a BINARY symbol -- whatever those
+// bytes are, UTF-8 or Latin-1 -- and the name a trigger gives is the same bytes:
+// that is the first candidate.  A script that declares its encoding with a magic
+// comment (# encoding: utf-8) defines a UTF-8 symbol instead: the second, when the
+// name is valid UTF-8.  (Looking up UTF-8 alone, as this used to, found neither:
+// a plain `def déplacer` never resolved.)
+struct InternCtx { const char* name; bool utf8; ID mid; };
 
-VALUE do_intern_utf8 (VALUE p)
+VALUE do_intern (VALUE p)
   {
   InternCtx* c = (InternCtx*) p;
-  VALUE s = rb_enc_str_new (c->name, (long) strlen (c->name), rb_utf8_encoding ());
-  if (rb_enc_str_coderange (s) == ENC_CODERANGE_BROKEN)
+  VALUE s = rb_enc_str_new (c->name, (long) strlen (c->name),
+                            c->utf8 ? rb_utf8_encoding () : rb_ascii8bit_encoding ());
+  if (c->utf8 && rb_enc_str_coderange (s) == ENC_CODERANGE_BROKEN)
     return Qfalse;
   c->mid = rb_intern_str (s);
   return Qtrue;
   }
 
-bool intern_name (const char* name, ID & mid)
+bool intern_as (const char* name, const bool utf8, ID & mid)
+  {
+  InternCtx c { name, utf8, 0 };
+  int state = 0;
+  VALUE r = rb_protect (do_intern, (VALUE) &c, &state);
+  if (state) { rb_set_errinfo (Qnil); return false; }
+  if (!RTEST (r)) return false;
+  mid = c.mid;
+  return true;
+  }
+
+bool script_defined (VALUE obj, ID mid);
+
+// The handler the script defined under `name`, if it did.
+bool find_handler (VALUE obj, const char* name, ID & mid)
   {
   if (!name)
     return false;
@@ -557,15 +689,10 @@ bool intern_name (const char* name, ID & mid)
   if (ascii)
     {
     mid = rb_intern (name);
-    return true;
+    return script_defined (obj, mid);
     }
-  InternCtx c { name, 0 };
-  int state = 0;
-  VALUE r = rb_protect (do_intern_utf8, (VALUE) &c, &state);
-  if (state) { rb_set_errinfo (Qnil); return false; }
-  if (!RTEST (r)) return false;
-  mid = c.mid;
-  return true;
+  return (intern_as (name, false, mid) && script_defined (obj, mid)) ||
+         (intern_as (name, true,  mid) && script_defined (obj, mid));
   }
 
 bool script_defined (VALUE obj, ID mid)
@@ -605,7 +732,9 @@ void CScriptEngine::OpenRuby ()
   e->obj   = rb_obj_alloc (rb_cObject);     // the per-engine isolation object
   e->world = make_world (m_pDoc);
   rb_iv_set (e->world, "@engine", LL2NUM ((long long) (intptr_t) this));
-  g_openEngines.insert (this);
+  const unsigned long long generation = ++g_lastEngineGeneration;
+  rb_iv_set (e->world, "@gen", ULL2NUM (generation));
+  open_engines () [this] = generation;
   // Singleton method `world` on the object returns its world, so the script can
   // simply say world.Note("hi") while its def's stay isolated to this object.
   rb_ivar_set (e->obj, rb_intern ("@__world"), e->world);
@@ -617,7 +746,7 @@ void CScriptEngine::OpenRuby ()
 void CScriptEngine::CloseRuby ()
   {
   if (!m_rubyEngine) return;
-  g_openEngines.erase (this);
+  open_engines ().erase (this);
   rb_gc_unregister_address (&m_rubyEngine->obj);
   rb_gc_unregister_address (&m_rubyEngine->world);
   delete m_rubyEngine;          // the VM itself persists (Ruby cannot re-init)
@@ -641,7 +770,7 @@ DISPID CScriptEngine::GetRubyDispid (const CString & strName)
   {
   if (!m_rubyEngine || strName.IsEmpty ()) return DISPID_UNKNOWN;
   ID mid;
-  return intern_name ((LPCTSTR) strName, mid) && script_defined (m_rubyEngine->obj, mid)
+  return find_handler (m_rubyEngine->obj, (LPCTSTR) strName, mid)
            ? 1 : DISPID_UNKNOWN;
   }
 
@@ -659,7 +788,7 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   if (!m_rubyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
   ID mid;
-  if (!intern_name (szProcedure, mid) || !script_defined (m_rubyEngine->obj, mid))
+  if (!find_handler (m_rubyEngine->obj, szProcedure, mid))
     { dispid = DISPID_UNKNOWN; return true; }
 
   // Root the args in a Ruby Array held by a C-stack local — MRI's conservative
@@ -757,7 +886,7 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   if (!m_rubyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
   ID mid;
-  if (!intern_name (szProcedure, mid) || !script_defined (m_rubyEngine->obj, mid))
+  if (!find_handler (m_rubyEngine->obj, szProcedure, mid))
     { dispid = DISPID_UNKNOWN; return true; }
 
   // Length-explicit: rb_str_new_cstr stops at the first NUL, and this overload

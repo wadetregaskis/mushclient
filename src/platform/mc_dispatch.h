@@ -61,6 +61,8 @@ enum {
   MC_DISP_OK        =  0,   // call succeeded; `result` holds the return value
   MC_DISP_UNKNOWN   = -1,   // no method of that name in the dispatch map
   MC_DISP_BADARGS   = -2,   // argument marshalling failed
+  MC_DISP_EXCEPTION = -3,   // the method threw a C++ exception, caught here so that it
+                            // does not unwind through an interpreter's C frames
 };
 
 // Flags for MC_DispatchInvoke's `flags` parameter.
@@ -129,6 +131,11 @@ int MC_DispatchRequiredArgs(const char* name);
 // The caller prefixes it with its own "world.Foo: " in its native style.
 std::string MC_DispatchBadArgsMessage(const char* name, int nargs);
 
+// The wording for any failing MC_DISP_* code other than MC_DISP_OK: the bad-arguments
+// text above for MC_DISP_BADARGS, "unknown method" for MC_DISP_UNKNOWN, and for
+// MC_DISP_EXCEPTION what the exception said, if anything.
+std::string MC_DispatchErrorMessage(const char* name, int nargs, int rc);
+
 // True if `name` is a known automation method.
 bool MC_DispatchHas(const char* name);
 
@@ -146,8 +153,19 @@ bool MC_DispatchHas(const char* name);
 // before the framework registers it (the engines' own world is exactly that).
 bool MC_DispatchDocIsLive(CMUSHclientDoc* doc);
 
-// Called by CMUSHclientDoc's constructor / destructor.
+// Is `doc` open and not closing: may a script's THREAD's call run against it?  A
+// world's destructor closes its plugins well into its teardown, and their
+// OnPluginClose and OnPluginSaveState may call the world (to save state, as plugins
+// do), so the document stays live for the UI thread until the plugins are gone.  A
+// thread's call is a different matter: the UI thread could run it from inside one of
+// those callbacks, against a half-dismantled document, as some plugin that is not the
+// one closing.  So from the destructor's first line it is refused.
+bool MC_DispatchDocTakesThreadCalls(CMUSHclientDoc* doc);
+
+// Called by CMUSHclientDoc's constructor / destructor: Register when it is made,
+// BeginClose at the top of its destructor, Unregister once its plugins are closed.
 void MC_DispatchDocRegister   (CMUSHclientDoc* doc);
+void MC_DispatchDocBeginClose (CMUSHclientDoc* doc);
 void MC_DispatchDocUnregister (CMUSHclientDoc* doc);
 
 // ── Properties (DISP_PROPERTY_NOTIFY / DISP_PROPERTY_EX) ────────────────────

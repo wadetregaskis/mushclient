@@ -298,8 +298,7 @@ JSValueRef Method_call(JSContextRef ctx, JSObjectRef function, JSObjectRef /*thi
   if (rc != MC_DISP_OK)
     {
     if (exception) *exception = make_js_error(ctx, "world." + m->name + ": " +
-                                  (rc == MC_DISP_UNKNOWN ? std::string("unknown method")
-                                   : MC_DispatchBadArgsMessage(m->name.c_str(), (int) argc)));
+                                  MC_DispatchErrorMessage(m->name.c_str(), (int) argc, rc));
     MC_VariantClear(result);
     return JSValueMakeUndefined(ctx);
     }

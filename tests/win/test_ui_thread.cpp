@@ -9,6 +9,7 @@
 #ifdef MC_DISPATCH_AVAILABLE
 
 #include <atomic>
+#include <memory>
 #include <chrono>
 #include <stdexcept>
 #include <thread>
@@ -229,6 +230,82 @@ TEST(UIThread, ClosingWakesAWaiterAndTurnsAwayTheNext)
     EXPECT_FALSE(ran.load());
 
     MC_UIThreadInit();     // for the tests after this one
+}
+
+// A call the UI thread has STARTED, which then sits in a script that does not move --
+// the callback a world call runs, waiting for a lock the calling thread holds.  The
+// waiter gives up (MC_UI_ABANDONED), lets go of what it held, and the call finishes
+// into the state it owns, which the UI thread then destroys.
+namespace {
+struct Shared
+  {
+  std::atomic<bool> release { false };
+  std::atomic<bool> finished { false };
+  std::atomic<bool> * destroyed;
+  explicit Shared (std::atomic<bool> * d) : destroyed (d) {}
+  ~Shared () { *destroyed = true; }
+  };
+}
+
+TEST(UIThread, AnAbandonableCallStuckInAScriptIsGivenUp)
+{
+    Fixture f;
+    std::atomic<bool> done { false }, destroyed { false };
+    std::atomic<int> result { -1 };
+    auto s = std::make_shared<Shared> (&destroyed);
+    std::thread t ([&, s]
+      {
+      result = MC_RunOnUIThreadAbandonable([s]
+        {
+        MCUIScriptScope inScript (true);        // the callback, waiting for the "lock"
+        const auto end = std::chrono::steady_clock::now () + std::chrono::seconds (5);
+        while (!s->release && std::chrono::steady_clock::now () < end)
+          Sleep (5);
+        s->finished = true;
+        });
+      s->release = true;                        // the thread lets go of its lock
+      done = true;
+      });
+    s.reset();                                  // the thread and the call own it now
+    pump_until(done);
+    t.join();
+    pump_for(50);
+    EXPECT_EQ((int) MC_UI_ABANDONED, result.load());
+    EXPECT_TRUE(destroyed.load());              // finished, and destroyed by the UI thread
+}
+
+TEST(UIThread, APlainCallStuckInAScriptIsStillWaitedFor)
+{
+    Fixture f;
+    std::atomic<bool> done { false };
+    std::atomic<int> result { -1 };
+    std::thread t ([&]
+      {
+      result = MC_RunOnUIThread([]
+        {
+        MCUIScriptScope inScript (true);
+        Sleep (600);
+        });
+      done = true;
+      });
+    pump_until(done);
+    t.join();
+    EXPECT_EQ((int) MC_UI_RAN, result.load());
+}
+
+TEST(UIThread, AnAbandonableCallBusyOutsideAScriptIsWaitedFor)
+{
+    Fixture f;
+    std::atomic<bool> done { false };
+    std::atomic<int> result { -1 };
+    std::thread t ([&]
+      {
+      result = MC_RunOnUIThreadAbandonable([] { Sleep (600); });   // a heavy world method
+      done = true;
+      });
+    pump_until(done);
+    t.join();
+    EXPECT_EQ((int) MC_UI_RAN, result.load());
 }
 
 TEST(UIThread, TheLimitIsFiveSeconds)

@@ -19,7 +19,7 @@
 // executing: plugins "worked while typing and stopped when idle".
 //
 // A world call from such a thread runs on the UI thread, with this thread's GIL
-// let go while it waits (on_world_thread below, platform/mc_ui_thread.h).
+// let go while it waits (world_call below, platform/mc_ui_thread.h).
 //
 // Built only when CMake finds Python3 (MUSHCLIENT_PYTHON_SCRIPTING) in the full
 // (mushapp) build; scriptengine.cpp provides link stubs otherwise.
@@ -46,8 +46,10 @@
 #include "platform/mc_dispatch.h"
 #include "platform/mc_ui_thread.h"
 #include "platform/mc_variant_args.h"
+#include "platform/mc_world_call.h"
 
 #include <atomic>
+#include <memory>
 #include <functional>
 #include <string>
 #include <vector>
@@ -149,20 +151,30 @@ std::string main_thread_position()
 
 // The thread's call gave up on a blocked main thread: raise that, and leave a note
 // for when the main thread is free, because an uncaught exception in a thread goes
-// to a stderr nobody can see.
-void raise_blocked(WorldObject* w, const char* name)
+// to a stderr nobody can see.  `started`: the main thread had begun the call, and
+// blocked inside it (MC_UI_ABANDONED) -- in a callback the call ran, waiting for
+// something this thread has, typically a lock it took before calling the world.
+void raise_blocked(WorldObject* w, const char* name, const bool started = false)
   {
   const std::string where = main_thread_position();
-  const std::string message = std::string("world.") + name +
-    " could not run, because the main thread has been blocked for "
-    + std::to_string(kUIThreadParkedLimitMs / 1000) + " seconds at " + where +
-    ".  A callback that waits for a thread stops that thread's world calls from running:"
-    " have the callback return instead.";
+  const std::string seconds = std::to_string(kUIThreadParkedLimitMs / 1000);
+  const std::string message = started
+    ? std::string("world.") + name +
+      " did not finish, because the main thread, running it, has been blocked for "
+      + seconds + " seconds at " + where +
+      ".  It may still finish, and what it returns is lost.  A callback the call runs"
+      " was waiting for this thread -- most likely for a lock it holds: release locks"
+      " before calling the world."
+    : std::string("world.") + name +
+      " could not run, because the main thread has been blocked for "
+      + seconds + " seconds at " + where +
+      ".  A callback that waits for a thread stops that thread's world calls from running:"
+      " have the callback return instead.";
 
   Py_INCREF(w);
   MC_PostToUIThread([w, message]
     {
-    if (!w->closed && MC_DispatchDocIsLive(w->doc))
+    if (!w->closed && MC_DispatchDocTakesThreadCalls(w->doc))
       {
       MCThreadCallScope scope(w->doc, w->engine);
       CPlugin* plugin = w->doc->m_CurrentPlugin;
@@ -179,13 +191,41 @@ void raise_blocked(WorldObject* w, const char* name)
   PyErr_SetString(PyExc_RuntimeError, message.c_str());
   }
 
-// Run `call` against w's world.  False with a Python exception set if it could not.
-// `call` must not touch a Python object: off the UI thread nobody holds the GIL for
-// it.  It is told whether a plugin's callback is underneath it, so that it can
-// mind MC_DispatchDeletesPlugin.
-template <class Call>
-bool on_world_thread(WorldObject* w, const char* name, Call&& call)
+// A thread's world call, owned jointly by the thread waiting for it and the UI
+// thread running it (MC_RunOnUIThreadAbandonable): the thread can give up on it
+// while it runs, so nothing of it may live on the thread's stack.  It holds a
+// reference to the proxy, which the UI thread reads, and lets go of it under the GIL
+// wherever it happens to be destroyed.
+struct ThreadCall
   {
+  MCWorldCall  call;
+  WorldObject* w;
+  bool         scriptClosed = false;
+  bool         worldClosed  = false;
+
+  ThreadCall(WorldObject* world, MCWorldCallKind kind, const char* name,
+             VARIANT* args, size_t nargs, unsigned flags, bool wantOutargs)
+    : call(kind, world->doc, name, args, nargs, flags, wantOutargs), w(world)
+    { Py_INCREF(w); }
+  ~ThreadCall()
+    {
+    PyGILState_STATE gil = PyGILState_Ensure();
+    Py_DECREF(w);
+    PyGILState_Release(gil);
+    }
+  ThreadCall(const ThreadCall&) = delete;
+  ThreadCall& operator=(const ThreadCall&) = delete;
+  };
+
+// Make one world call (MC_WorldCallRun) for w, from whichever thread this is.  False
+// with a Python exception set if it could not be made; otherwise `rc`, `ok`, `result`
+// and `outargs` are the call's, and the caller clears the last two.  The caller clears
+// `args` either way.  The GIL is held, and let go while a thread waits.
+bool world_call(WorldObject* w, MCWorldCallKind kind, const char* name,
+                VARIANT* args, size_t nargs, unsigned flags, bool wantOutargs,
+                VARIANT& result, std::vector<VARIANT>& outargs, int& rc, bool& ok)
+  {
+  VariantInit(&result);
   if (MC_UIThreadIsCurrent())
     {
     // The proxy holds a bare CMUSHclientDoc* -- there is no COM here, so nothing
@@ -196,39 +236,47 @@ bool on_world_thread(WorldObject* w, const char* name, Call&& call)
       { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
         return false; }
     MCUIScriptScope worldCall(false);
-    call(false);
+    MC_WorldCallRun(kind, w->doc, name, nargs ? args : nullptr, (int) nargs, flags, false,
+                    result, wantOutargs ? &outargs : nullptr, rc, ok);
     return true;
     }
 
-  bool scriptClosed = false, worldClosed = false;
-  const std::function<void ()> onUIThread = [&]
-    {
-    worldClosed = !MC_DispatchDocIsLive(w->doc);
-    if (worldClosed)
-      return;
-    scriptClosed = w->closed || (w->engine && !MC_DispatchEngineInUse(w->doc, w->engine));
-    if (scriptClosed)
-      return;
-    MCThreadCallScope scope(w->doc, w->engine);
-    call(scope.PluginWasRunning());
-    };
-
+  const auto c = std::make_shared<ThreadCall>(w, kind, name, args, nargs, flags, wantOutargs);
   MCUIResult ran;
   Py_BEGIN_ALLOW_THREADS
-  ran = MC_RunOnUIThread(onUIThread);
+  ran = MC_RunOnUIThreadAbandonable([c]
+    {
+    WorldObject* const cw = c->w;
+    c->worldClosed = !MC_DispatchDocTakesThreadCalls(cw->doc);
+    if (c->worldClosed)
+      return;
+    c->scriptClosed = cw->closed || (cw->engine && !MC_DispatchEngineInUse(cw->doc, cw->engine));
+    if (c->scriptClosed)
+      return;
+    MCThreadCallScope scope(cw->doc, cw->engine);
+    c->call.Run(scope.PluginWasRunning());
+    });
   Py_END_ALLOW_THREADS
 
   switch (ran)
     {
     case MC_UI_RAN:
-      if (!scriptClosed && !worldClosed)
+      if (!c->scriptClosed && !c->worldClosed)
+        {
+        c->call.TakeResults(result, outargs);
+        rc = c->call.rc;
+        ok = c->call.ok;
         return true;
-      PyErr_SetString(PyExc_RuntimeError, worldClosed
+        }
+      PyErr_SetString(PyExc_RuntimeError, c->worldClosed
                       ? "that world has been closed"
                       : "the script that started this thread has been closed");
       return false;
     case MC_UI_BLOCKED:
       raise_blocked(w, name);
+      return false;
+    case MC_UI_ABANDONED:
+      raise_blocked(w, name, true);
       return false;
     case MC_UI_CLOSING:
       PyErr_Format(PyExc_RuntimeError, "world.%s: the client is closing", name);
@@ -395,17 +443,13 @@ PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
   VARIANT result; VariantInit(&result);
   std::vector<VARIANT> outargs;
   int rc = MC_DISP_OK;
-  const bool ran = on_world_thread(m->world, m->name, [&] (const bool pluginRunning)
-    {
-    if (pluginRunning && MC_DispatchDeletesPlugin(m->name))
-      { result.vt = VT_I4; result.lVal = eBadParameter; return; }
-    rc = MC_DispatchInvoke(m->world->doc, m->name,
-                           n ? vargs.data() : nullptr, (int) n, result, &outargs);
-    });
+  bool unused = false;
+  const bool ran = world_call(m->world, MC_CALL_INVOKE, m->name, vargs.data(), (size_t) n, 0,
+                              true, result, outargs, rc, unused);
 
   for (auto& a : vargs) MC_VariantClear(a);
 
-  if (!ran)     // nothing ran, or a world method threw, so nothing here needs keeping
+  if (!ran)     // nothing ran, so nothing here needs keeping
     { MC_VariantClear(result);
       for (auto& o : outargs) MC_VariantClear(o);
       return nullptr; }
@@ -414,7 +458,7 @@ PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
     { PyErr_Format(PyExc_AttributeError, "world has no method '%s'", m->name); return nullptr; }
   if (rc != MC_DISP_OK)
     { PyErr_Format(PyExc_RuntimeError, "world.%s: %s", m->name,
-                   MC_DispatchBadArgsMessage(m->name, (int) n).c_str());
+                   MC_DispatchErrorMessage(m->name, (int) n, rc).c_str());
       MC_VariantClear(result); return nullptr; }
 
   PyObject* res = variant_to_py(result);
@@ -452,9 +496,10 @@ PyObject* Method_str(PyObject* self)
   // something the plugin author wrote, so strict argument checking must not
   // fire on it (see mc_dispatch.h).
   int rc = MC_DISP_OK;
-  if (!on_world_thread(m->world, m->name, [&] (bool)
-        { rc = MC_DispatchInvoke(m->world->doc, m->name, nullptr, 0, result, nullptr,
-                                 MC_DISP_F_INTROSPECT); }))
+  bool unused = false;
+  std::vector<VARIANT> noOutargs;
+  if (!world_call(m->world, MC_CALL_INVOKE, m->name, nullptr, 0, MC_DISP_F_INTROSPECT,
+                  false, result, noOutargs, rc, unused))
     return nullptr;
   if (rc == MC_DISP_OK)
     {
@@ -487,8 +532,9 @@ PyObject* World_getattro(PyObject* self, PyObject* nameobj)
       // saw it: world.Trace on a proxy to a closed world read freed memory.
       VARIANT v; VariantInit(&v);
       bool found = false;
-      if (!on_world_thread(w, name, [&] (bool)
-            { found = MC_DispatchGetProperty(w->doc, name, v); }))
+      int unused = MC_DISP_OK;
+      std::vector<VARIANT> noOutargs;
+      if (!world_call(w, MC_CALL_GET, name, nullptr, 0, 0, false, v, noOutargs, unused, found))
         return nullptr;
       if (found)
         { PyObject* r = variant_to_py(v); MC_VariantClear(v); return r; }
@@ -507,9 +553,12 @@ int World_setattro(PyObject* self, PyObject* nameobj, PyObject* value)
     VARIANT v;
     py_to_variant(value, v);
     bool ok = false;
-    const bool ran = on_world_thread(w, name, [&] (bool)
-      { ok = MC_DispatchSetProperty(w->doc, name, v); });
+    int unused = MC_DISP_OK;
+    VARIANT none; VariantInit(&none);
+    std::vector<VARIANT> noOutargs;
+    const bool ran = world_call(w, MC_CALL_SET, name, &v, 1, 0, false, none, noOutargs, unused, ok);
     MC_VariantClear(v);
+    MC_VariantClear(none);
     if (!ran) return -1;
     if (ok) return 0;
     }

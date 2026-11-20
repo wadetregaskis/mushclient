@@ -193,7 +193,7 @@ XS(mc_perl_invoke)
           // buffer-from-a-temporary pattern that has bitten this port before.
           const std::string why = (rc == MC_DISP_UNKNOWN)
                                   ? std::string ("unknown method")
-                                  : MC_DispatchBadArgsMessage (name, nargs);
+                                  : MC_DispatchErrorMessage (name, nargs, rc);
           snprintf (errmsg, sizeof errmsg, "world->%s: %s", name, why.c_str ()); }
       else
         {

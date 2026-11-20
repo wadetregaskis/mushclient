@@ -6,6 +6,8 @@
 #include "doc.h"
 #include "platform/mc_dispatch.h"
 #include "platform/mc_ui_thread.h"
+#include "scripting/errors.h"      // eBadParameter -- MC_WorldCallRun
+#include "platform/mc_world_call.h"
 
 #ifdef MC_DISPATCH_AVAILABLE
 
@@ -13,6 +15,7 @@
 #include <unordered_set>
 #include <set>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <utility>
@@ -450,10 +453,13 @@ template<>       constexpr bool is_out_param<VARIANT*> = true;
 using Thunk = std::function<bool(CMUSHclientDoc*, const VARIANT*, int,
                                  VARIANT&, std::vector<VARIANT>*)>;
 struct Entry { Thunk fn; int inArity; bool hasDefaults = false; };
+// Never destroyed, like every table here: a script's thread can still be looking a
+// name up (World_getattro, method_missing) while the process runs its static
+// destructors, and a map destroyed under it would crash the exit.
 std::unordered_map<std::string, Entry>& table()
   {
-  static std::unordered_map<std::string, Entry> t;
-  return t;
+  static auto* t = new std::unordered_map<std::string, Entry>;
+  return *t;
   }
 
 
@@ -478,8 +484,8 @@ struct PropEntry
   };
 std::unordered_map<std::string, PropEntry>& prop_table()
   {
-  static std::unordered_map<std::string, PropEntry> t;
-  return t;
+  static auto* t = new std::unordered_map<std::string, PropEntry>;    // never destroyed: see table()
+  return *t;
   }
 
 // Member-backed property; `notify` (may be null) is the on-change handler.
@@ -660,6 +666,71 @@ static int required_args (const std::string& key, const int arity)
   return required;
   }
 
+// ── A C++ exception out of a world method ──────────────────────────────────
+// Every engine calls in here from inside its interpreter: Python's and Ruby's C
+// frames, Tcl's, QuickJS's.  None of them is built to be unwound through -- the
+// interpreter's own cleanup is skipped and its state left inconsistent -- so an
+// exception (CMemoryException*, std::bad_alloc, an MFC CFileException* a method did
+// not catch) stops here and becomes MC_DISP_EXCEPTION, which each engine raises as
+// an ordinary script error.  What it said is kept for MC_DispatchErrorMessage; the
+// lock is because a thread's call reads it after the UI thread wrote it.
+static std::mutex & last_exception_lock ()
+  {
+  static auto* m = new std::mutex;      // never destroyed: see table()
+  return *m;
+  }
+static std::string & last_exception ()
+  {
+  static auto* s = new std::string;
+  return *s;
+  }
+
+template <class F>
+static bool guarded (F && f)            // false if it threw
+  {
+  std::string what;
+  try
+    {
+    f ();
+    return true;
+    }
+  catch (CException * e)
+    {
+    char text [256] = "";
+    if (!e->GetErrorMessage (text, sizeof text))
+      text [0] = '\0';
+    what = text;
+    e->Delete ();
+    }
+  catch (const std::exception & e)
+    {
+    what = e.what ();
+    }
+  catch (...)
+    {
+    }
+  std::lock_guard<std::mutex> guard (last_exception_lock ());
+  last_exception () = what;
+  return false;
+  }
+
+std::string MC_DispatchErrorMessage (const char* name, int nargs, int rc)
+  {
+  if (rc == MC_DISP_UNKNOWN)
+    return "unknown method";
+  if (rc == MC_DISP_EXCEPTION)
+    {
+    std::string what;
+      {
+      std::lock_guard<std::mutex> guard (last_exception_lock ());
+      what = last_exception ();
+      }
+    return what.empty () ? std::string ("the method failed with an internal error")
+                         : "the method failed: " + what;
+    }
+  return MC_DispatchBadArgsMessage (name, nargs);
+  }
+
 int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
                       const VARIANT* args, int nargs,
                       VARIANT& result, std::vector<VARIANT>* outargs,
@@ -674,7 +745,7 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
     int rc = MC_DISP_BADARGS;
     MC_RunOnUIThread([&]
       {
-      if (MC_DispatchDocIsLive(doc))
+      if (MC_DispatchDocTakesThreadCalls(doc))
         rc = MC_DispatchInvoke(doc, name, args, nargs, result, outargs, flags);
       });
     return rc;
@@ -764,8 +835,8 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
 #ifdef _WIN32
             if (d.str)
               {
-              static std::unordered_map<std::string, BSTR> s_defaults;
-              BSTR & b = s_defaults [d.str];
+              static auto* s_defaults = new std::unordered_map<std::string, BSTR>;  // never destroyed
+              BSTR & b = (*s_defaults) [d.str];
               if (!b) b = MC_BstrFromBytes (d.str);
               v.vt = VT_BSTR; v.bstrVal = b;
               }
@@ -801,7 +872,18 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
       nSupplied < required_args (key, it->second.inArity))
     return MC_DISP_BADARGS;
 
-  if (!it->second.fn(doc, args, nargs, result, outargs))
+  bool ok = false;
+  if (!guarded ([&] { ok = it->second.fn(doc, args, nargs, result, outargs); }))
+    {
+    MC_VariantClear(result);            // whatever the method had got as far as
+    if (outargs)
+      {
+      for (VARIANT& o : *outargs) MC_VariantClear(o);
+      outargs->clear();
+      }
+    return MC_DISP_EXCEPTION;
+    }
+  if (!ok)
     return MC_DISP_BADARGS;
   return MC_DISP_OK;
   }
@@ -836,11 +918,20 @@ std::string MC_DispatchBadArgsMessage(const char* name, int nargs)
 // reject the engine's own world.  A freed pointer can also be reused by a later
 // allocation, so "known dead" would give false positives -- the set has to be
 // membership, maintained at both ends.
+//
+// closing_docs is the subset whose destructor has begun (MC_DispatchDocBeginClose):
+// still live for the UI thread, so that their plugins' OnPluginClose and
+// OnPluginSaveState can call the world, but no longer taking a thread's call.
 namespace {
 std::set<CMUSHclientDoc*>& live_docs()
   {
-  static std::set<CMUSHclientDoc*> s;
-  return s;
+  static auto* s = new std::set<CMUSHclientDoc*>;    // never destroyed: see table()
+  return *s;
+  }
+std::set<CMUSHclientDoc*>& closing_docs()
+  {
+  static auto* s = new std::set<CMUSHclientDoc*>;
+  return *s;
   }
 }
 
@@ -851,12 +942,24 @@ void MC_DispatchDocRegister (CMUSHclientDoc* doc)
   build_table ();     // here, so that a script's thread only ever reads the tables
   }
 
-void MC_DispatchDocUnregister (CMUSHclientDoc* doc) { if (doc) live_docs().erase  (doc); }
+void MC_DispatchDocBeginClose (CMUSHclientDoc* doc) { if (doc) closing_docs().insert (doc); }
+
+void MC_DispatchDocUnregister (CMUSHclientDoc* doc)
+  {
+  if (!doc) return;
+  live_docs().erase (doc);
+  closing_docs().erase (doc);
+  }
 
 // UI thread only: the set changes as documents come and go.
 bool MC_DispatchDocIsLive(CMUSHclientDoc* doc)
   {
   return doc && live_docs().find (doc) != live_docs().end ();
+  }
+
+bool MC_DispatchDocTakesThreadCalls(CMUSHclientDoc* doc)
+  {
+  return MC_DispatchDocIsLive (doc) && closing_docs().find (doc) == closing_docs().end ();
   }
 
 // A plugin still loading is the current one and not on the list yet.
@@ -900,6 +1003,32 @@ bool MC_DispatchDeletesPlugin (const char* name)
   return key == "unloadplugin" || key == "reloadplugin";
   }
 
+void MC_WorldCallRun (MCWorldCallKind kind, CMUSHclientDoc* doc, const char* name,
+                      const VARIANT* args, int nargs, unsigned flags, bool pluginRunning,
+                      VARIANT& result, std::vector<VARIANT>* outargs, int& rc, bool& ok)
+  {
+  switch (kind)
+    {
+    case MC_CALL_INVOKE:
+      if (pluginRunning && MC_DispatchDeletesPlugin (name))
+        {
+        VariantInit (&result);
+        result.vt = VT_I4;
+        result.lVal = eBadParameter;
+        rc = MC_DISP_OK;
+        return;
+        }
+      rc = MC_DispatchInvoke (doc, name, args, nargs, result, outargs, flags);
+      return;
+    case MC_CALL_GET:
+      ok = MC_DispatchGetProperty (doc, name, result);
+      return;
+    case MC_CALL_SET:
+      ok = nargs >= 1 && MC_DispatchSetProperty (doc, name, args [0]);
+      return;
+    }
+  }
+
 bool MC_DispatchHas(const char* name)
   {
   build_table();
@@ -919,14 +1048,15 @@ bool MC_DispatchGetProperty(CMUSHclientDoc* doc, const char* name, VARIANT& resu
     VariantInit(&result);
     bool ok = false;
     MC_RunOnUIThread([&]
-      { if (MC_DispatchDocIsLive(doc)) ok = MC_DispatchGetProperty(doc, name, result); });
+      { if (MC_DispatchDocTakesThreadCalls(doc)) ok = MC_DispatchGetProperty(doc, name, result); });
     return ok;
     }
   build_table();
   VariantInit(&result);
   auto it = prop_table().find(lc(name));
   if (it == prop_table().end() || !it->second.get) return false;
-  it->second.get(doc, result);
+  if (!guarded ([&] { it->second.get(doc, result); }))     // see MC_DispatchInvoke
+    { MC_VariantClear(result); return false; }
   return true;
   }
 
@@ -936,14 +1066,13 @@ bool MC_DispatchSetProperty(CMUSHclientDoc* doc, const char* name, const VARIANT
     {
     bool ok = false;
     MC_RunOnUIThread([&]
-      { if (MC_DispatchDocIsLive(doc)) ok = MC_DispatchSetProperty(doc, name, value); });
+      { if (MC_DispatchDocTakesThreadCalls(doc)) ok = MC_DispatchSetProperty(doc, name, value); });
     return ok;
     }
   build_table();
   auto it = prop_table().find(lc(name));
   if (it == prop_table().end() || !it->second.set) return false;
-  it->second.set(doc, value);
-  return true;
+  return guarded ([&] { it->second.set(doc, value); });   // see MC_DispatchInvoke
   }
 
 void MC_VariantClear(VARIANT& v) { var_clear(v); }

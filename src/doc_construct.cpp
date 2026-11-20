@@ -646,9 +646,14 @@ void closepane (pair<string, CPaneView *> item)
 CMUSHclientDoc::~CMUSHclientDoc()
 {
 #ifdef MC_DISPATCH_AVAILABLE
-  // FIRST: any world proxy a script still holds must see this document as gone
-  // before anything below frees what it points at.
-  MC_DispatchDocUnregister (this);
+  // FIRST: no thread a script started may run a world call against this document
+  // from here on -- the UI thread could otherwise serve one from inside a plugin's
+  // OnPluginClose below, against a document half taken apart.  It stays live for the
+  // UI thread until the plugins are closed, so that their OnPluginClose and
+  // OnPluginSaveState can still call the world, as a Lua plugin's always could:
+  // a Python, JavaScript or Ruby plugin saving its state with world.SetVariable was
+  // refused, and lost it, on every close.  See MC_DispatchDocUnregister below.
+  MC_DispatchDocBeginClose (this);
 #endif
 int i;
 
@@ -730,6 +735,13 @@ int i;
         pit != m_PluginList.end ();
         pit =  m_PluginList.erase (pit))    // erase from list and get next one
     delete *pit;  // delete *this* one
+
+#ifdef MC_DISPATCH_AVAILABLE
+  // The plugins' last callbacks have run.  Any world proxy a script still holds --
+  // the world's own script, a thread, another world's GetWorld -- must see this
+  // document as gone before anything below frees what it points at.
+  MC_DispatchDocUnregister (this);
+#endif
 
   CloseLog ();    // this writes out the log file postamble as well
 

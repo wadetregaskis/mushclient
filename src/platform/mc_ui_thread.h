@@ -29,6 +29,12 @@
 // thread, and the waiter just keeps waiting.  A callback that calls time.sleep(10)
 // looks exactly like a blocked one, and so a thread calling the world meanwhile gets
 // the exception; that cannot be told apart from here.
+//
+// The other way round is a call the UI thread has started, which then runs a script
+// callback that waits for the thread -- for a lock the thread holds, say.  The same
+// test, on the same clock, lets the waiter give that up too (MC_RunOnUIThreadAbandonable,
+// MC_UI_ABANDONED), and the same caveat applies: a callback inside the call that
+// computes for longer than the limit, without a world call, looks stuck.
 
 #pragma once
 #include "platform/mc_dispatch.h"
@@ -43,6 +49,8 @@ enum MCUIResult
   MC_UI_BLOCKED,    // the UI thread is parked in a script: the call did NOT run
   MC_UI_CLOSING,    // the client is closing down: the call did NOT run
   MC_UI_THREW,      // the call ran, and a C++ exception escaped from it
+  MC_UI_ABANDONED,  // the call STARTED, then the UI thread stuck in a script inside it
+                    // for the limit: it may still finish, but nobody hears how
   };
 
 // How long a waiter tolerates the UI thread parked in a script.
@@ -56,7 +64,17 @@ void MC_UIThreadInit ();
 bool MC_UIThreadIsCurrent ();
 
 // Run `call` on the UI thread and wait for it.  On the UI thread it just runs it.
+// Once the UI thread has started it, this waits for it however long it takes.
 MCUIResult MC_RunOnUIThread (const std::function<void ()> & call);
+
+// The same, except that it can also give up on a call the UI thread has STARTED:
+// when inside it the UI thread gets stuck in a script, unmoving, for the limit.  That
+// is a thread holding a lock while it calls the world, and the call running a
+// callback (world.Send's OnPluginSend) that waits for the same lock: neither can move,
+// and the client froze.  MC_UI_ABANDONED, then, and the thread's exception lets go of
+// its lock.  So `call` must own everything it touches -- capture by value -- because
+// it may run on, and is destroyed by the UI thread, after this has returned.
+MCUIResult MC_RunOnUIThreadAbandonable (std::function<void ()> call);
 
 // Have the UI thread run `call` when it can, without waiting for it.
 void MC_PostToUIThread (std::function<void ()> call);

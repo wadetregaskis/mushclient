@@ -6,8 +6,15 @@
 #   Linux    x86-64 and AArch64, on 24.04 and 26.04.  Not 22.04: its wxWidgets is 3.0,
 #            and the port needs 3.2.
 #
+# Runner labels: every one used here (ubuntu-24.04, ubuntu-24.04-arm, ubuntu-26.04,
+# ubuntu-26.04-arm, macos-15, macos-26, windows-2022, windows-2025, windows-11-arm) was
+# in GitHub's list of hosted runners, none marked preview, as of 2026-11-20.
+#
 # The first run of each job builds its dependencies from source, and takes a couple
-# of hours on macOS; they are cached after that, keyed on the scripts that fetch them.
+# of hours on macOS.  Each dependency is cached on its own, as soon as its step has
+# succeeded, so that a later step failing (the build, a test) doesn't throw the work
+# away; and only when its step succeeded, so that a half-built one is never kept as
+# if it were whole.  The keys are the scripts that build them, and the settings below.
 
 name: CI
 
@@ -22,6 +29,12 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # OpenSSL's version, pinned, rather than looked up through GitHub's API on every run
+  # (unauthenticated, and rate-limited per runner address).  The 3.5 LTS release the
+  # packages ship; raise it here for a security release.
+  OPENSSL_VERSION: "3.5.9"
 
 jobs:
   # ── The quick checks: seconds, and they need no build ────────────────────────
@@ -79,18 +92,29 @@ jobs:
             "C:\Program Files\NASM" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
 
-      - name: Cache the from-source dependencies
+      - name: Restore the from-source dependencies
+        id: deps-cache
         if: matrix.arch != ''
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             packaging/windows/deps/${{ matrix.platform }}
             packaging/windows/deps/common
-          key: windows-${{ matrix.platform }}-deps-${{ hashFiles('packaging/windows/fetch-deps.ps1') }}
+          key: windows-${{ matrix.runner }}-${{ matrix.platform }}-deps-openssl${{ env.OPENSSL_VERSION }}-${{ hashFiles('packaging/windows/fetch-deps.ps1') }}
 
       - name: Dependencies
+        id: deps
         if: matrix.arch != ''
-        run: packaging\windows\fetch-deps.ps1 -Arch ${{ matrix.arch }} -StageTo WinDebug-${{ matrix.platform }}
+        run: packaging\windows\fetch-deps.ps1 -Arch ${{ matrix.arch }} -OpenSslVersion $env:OPENSSL_VERSION -StageTo WinDebug-${{ matrix.platform }}
+
+      - name: Save the from-source dependencies
+        if: always() && steps.deps.outcome == 'success' && steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            packaging/windows/deps/${{ matrix.platform }}
+            packaging/windows/deps/common
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
 
       - name: Tests
         run: tests\win\run_tests.ps1 -Platform ${{ matrix.platform }}
@@ -114,6 +138,9 @@ jobs:
           if-no-files-found: ignore
 
   # ── macOS ────────────────────────────────────────────────────────────────────
+  # Each dependency: restore it, build it if the cache had nothing, and save it the
+  # moment it is built.  build-app.sh then runs each fetch script again, which finds
+  # it current and does nothing (or rebuilds it, if a restored one is stale).
   macos:
     name: macOS (${{ matrix.runner }})
     needs: checks
@@ -125,23 +152,106 @@ jobs:
           - { runner: macos-26 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 300
+    env:
+      # What the package runs on; the fetch scripts and build-app.sh build for these,
+      # and they are part of every cache key.
+      MACOS_MIN: "11.0"
+      MACOS_ARCHS: "arm64 x86_64"
     steps:
       - uses: actions/checkout@v4
 
       - name: Rosetta 2 (builds Ruby's Intel half natively, and runs the Intel tests)
         run: /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
 
-      - name: Cache the from-source dependencies
-        uses: actions/cache@v4
+      # OpenSSL first: Ruby links it.
+      - name: Restore OpenSSL
+        id: openssl-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: packaging/openssl/install
+          key: ${{ matrix.runner }}-openssl-${{ env.OPENSSL_VERSION }}-${{ env.MACOS_MIN }}-${{ hashFiles('packaging/fetch-openssl.sh') }}
+      - name: OpenSSL
+        id: openssl
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        run: packaging/fetch-openssl.sh
+      - name: Save OpenSSL
+        if: always() && steps.openssl.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: packaging/openssl/install
+          key: ${{ steps.openssl-cache.outputs.cache-primary-key }}
+
+      - name: Restore wxWidgets
+        id: wx-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: packaging/wx/install
+          key: ${{ matrix.runner }}-wx-${{ env.MACOS_MIN }}-${{ hashFiles('packaging/fetch-wx.sh') }}
+      - name: wxWidgets
+        id: wx
+        if: steps.wx-cache.outputs.cache-hit != 'true'
+        run: packaging/fetch-wx.sh
+      - name: Save wxWidgets
+        if: always() && steps.wx.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: packaging/wx/install
+          key: ${{ steps.wx-cache.outputs.cache-primary-key }}
+
+      - name: Restore Tcl
+        id: tcl-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: packaging/tcl/install
+          key: ${{ matrix.runner }}-tcl-${{ env.MACOS_MIN }}-${{ hashFiles('packaging/fetch-tcl.sh') }}
+      - name: Tcl
+        id: tcl
+        if: steps.tcl-cache.outputs.cache-hit != 'true'
+        run: packaging/fetch-tcl.sh
+      - name: Save Tcl
+        if: always() && steps.tcl.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: packaging/tcl/install
+          key: ${{ steps.tcl-cache.outputs.cache-primary-key }}
+
+      - name: Restore Python
+        id: python-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: packaging/python/Python.framework
+          key: ${{ matrix.runner }}-python-${{ hashFiles('packaging/fetch-python.sh') }}
+      - name: Python (python.org's framework)
+        id: python
+        if: steps.python-cache.outputs.cache-hit != 'true'
+        run: packaging/fetch-python.sh
+      - name: Save Python
+        if: always() && steps.python.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: packaging/python/Python.framework
+          key: ${{ steps.python-cache.outputs.cache-primary-key }}
+
+      - name: Restore Ruby
+        id: ruby-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
-            packaging/openssl/install
-            packaging/wx/install
-            packaging/tcl/install
             packaging/ruby/install
             packaging/ruby/deps
-            packaging/python/Python.framework
-          key: ${{ matrix.runner }}-deps-${{ hashFiles('packaging/fetch-*.sh') }}
+          key: ${{ matrix.runner }}-ruby-openssl${{ env.OPENSSL_VERSION }}-${{ env.MACOS_MIN }}-${{ hashFiles('packaging/fetch-ruby.sh', 'packaging/fetch-openssl.sh') }}
+      - name: Ruby (linked against the OpenSSL above)
+        id: ruby
+        if: steps.ruby-cache.outputs.cache-hit != 'true'
+        run: packaging/fetch-ruby.sh
+      - name: Save Ruby
+        if: always() && steps.ruby.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            packaging/ruby/install
+            packaging/ruby/deps
+          key: ${{ steps.ruby-cache.outputs.cache-primary-key }}
 
       - name: Build tools (llvm-rc)
         run: brew install llvm
@@ -190,21 +300,62 @@ jobs:
             llvm clang \
             xvfb xauth
 
-      - name: Cache the from-source runtimes
-        uses: actions/cache@v4
+      # The from-source runtimes, each cached as soon as it is built (see macOS).
+      # Ruby links the system OpenSSL, so it is keyed on the runner (its image).
+      - name: Restore Tcl
+        id: tcl-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: packaging/tcl/install
+          key: ${{ matrix.runner }}-tcl-${{ hashFiles('packaging/fetch-tcl.sh') }}
+      - name: Tcl
+        id: tcl
+        if: steps.tcl-cache.outputs.cache-hit != 'true'
+        run: packaging/fetch-tcl.sh
+      - name: Save Tcl
+        if: always() && steps.tcl.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: packaging/tcl/install
+          key: ${{ steps.tcl-cache.outputs.cache-primary-key }}
+
+      - name: Restore Ruby
+        id: ruby-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
-            packaging/tcl/install
             packaging/ruby/install
             packaging/ruby/deps
-            packaging/python/install
-          key: ${{ matrix.runner }}-runtimes-${{ hashFiles('packaging/fetch-tcl.sh', 'packaging/fetch-ruby.sh', 'packaging/fetch-python.sh') }}
+          key: ${{ matrix.runner }}-ruby-${{ hashFiles('packaging/fetch-ruby.sh') }}
+      - name: Ruby
+        id: ruby
+        if: steps.ruby-cache.outputs.cache-hit != 'true'
+        run: packaging/fetch-ruby.sh
+      - name: Save Ruby
+        if: always() && steps.ruby.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            packaging/ruby/install
+            packaging/ruby/deps
+          key: ${{ steps.ruby-cache.outputs.cache-primary-key }}
 
-      - name: Tcl, Ruby and Python runtimes
-        run: |
-          [ -f packaging/tcl/install/lib/libtcl8.6.a ] || packaging/fetch-tcl.sh
-          [ -d packaging/ruby/install/lib ] || packaging/fetch-ruby.sh
-          [ -d packaging/python/install/lib ] || packaging/fetch-python.sh
+      - name: Restore Python
+        id: python-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: packaging/python/install
+          key: ${{ matrix.runner }}-python-${{ hashFiles('packaging/fetch-python.sh') }}
+      - name: Python (python-build-standalone)
+        id: python
+        if: steps.python-cache.outputs.cache-hit != 'true'
+        run: packaging/fetch-python.sh
+      - name: Save Python
+        if: always() && steps.python.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: packaging/python/install
+          key: ${{ steps.python-cache.outputs.cache-primary-key }}
 
       - name: Build
         run: |

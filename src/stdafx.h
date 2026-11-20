@@ -272,7 +272,14 @@ class CMUSHclientDoc;
 // The define below gets the current app and casts it to the correct type
 // (on macOS, App and Frame are extern globals provided by the platform layer)
 #ifdef _WIN32
-#define App (*((CMUSHclientApp*)AfxGetApp()))
+// The one CMUSHclientApp (MUSHclient.cpp), named directly.  It used to be
+// (*((CMUSHclientApp*)AfxGetApp())), which is the same object -- MFC is linked
+// statically, so there is one module state and its app is theApp -- but finds it
+// through MFC's thread-local module state, a critical section each time; and App
+// is read on the trigger path, several times per trigger per line.
+class CMUSHclientApp;
+extern CMUSHclientApp theApp;
+#define App theApp
 
 // The define below gets the current frame and casts it to the correct type
 

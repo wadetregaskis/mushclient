@@ -41,6 +41,7 @@
 #include "flags.h"                 // eEnabled -- the nil-default battery seeds triggers
 #include "platform/mc_dispatch.h"   // MC_VariantDateToUnix
 #include "platform/mc_ui_thread.h"  // the thread-call batteries
+#include "pal/itransport.h"         // the Tcl SendPkt battery's transport
 #include "childfrm.h"
 #include "mushview.h"
 #include "resource.h"
@@ -52,6 +53,7 @@
 #define usleep(us) Sleep ((DWORD) ((us) / 1000))
 #else
 #include <unistd.h>         // usleep -- an idle window with NO Python running
+#include <sys/stat.h>       // mkdir -- the world-close battery's state folder
 #endif
 #include <chrono>
 #include <functional>
@@ -2453,6 +2455,24 @@ void battery_ruby_thread_calls(const Dialect& d)
       "  end\n"
       "  t.join\n"
       "  world.SetVariable('rp', $rp)\n"
+      "end\n"
+      "def rdeadlock(*a)\n"
+      "  $m = Mutex.new\n"
+      "  $rdl = nil\n"
+      "  $rt = Thread.new do\n"
+      "    $m.synchronize do\n"
+      "      begin\n"
+      "        world.CallPlugin('dddddddddddddddddddddddd', 'cb', 'x')\n"
+      "        $rdl = 'ran'\n"
+      "      rescue RuntimeError => e\n"
+      "        $rdl = e.message\n"
+      "      end\n"
+      "    end\n"
+      "  end\n"
+      "end\n"
+      "def rdlreport(*a)\n"
+      "  $rt.join\n"
+      "  world.SetVariable('rdl', $rdl.to_s)\n"
       "end\n";
     Engine e(d.language, kSource);
     if (!e.ok) { skip(L, "a thread's world call", "engine failed to open"); return; }
@@ -2473,8 +2493,31 @@ void battery_ruby_thread_calls(const Dialect& d)
     check(e.var("rt") == "ran", L, "...and then it does, without a GVL deadlock");
 
     e.callRich("rpark", &err);
-    check(!err && e.var("rp").find("main thread is blocked") != std::string::npos, L,
+    check(!err && e.var("rp").find("main thread has been blocked") != std::string::npos, L,
           "a callback joining a thread that calls the world gets its join back");
+
+    // A thread holding a Mutex while it calls the world, and the callback the call
+    // runs wanting that Mutex: the client froze, each side waiting for the other.
+    static const char kLockerScript[] =
+      "def cb(s)\n"
+      "  $m.synchronize { world.SetVariable('rcbran', 'yes') }\n"
+      "end\n";
+    CPlugin* locker = add_plugin(doc, "RLocker", "dddddddddddddddddddddddd", "Ruby", kLockerScript);
+    e.callRich("rdeadlock", &err);
+    pump(10000, [&]
+      {
+      e.callRich("rslice", &err);
+      return plugin_var(doc, locker, "rcbran") == "yes";
+      });
+    check(plugin_var(doc, locker, "rcbran") == "yes", L,
+          "a thread holding a lock its call's callback wants does not freeze the client");
+    e.callRich("rdlreport", &err);
+    check(e.var("rdl").find("did not finish") != std::string::npos, L,
+          "...the thread's call raising, saying it did not finish");
+    pump(100);
+    check(e.saw("Ruby thread in the world's script"), L, "...and the output window says so");
+    doc->m_PluginList.remove(locker);
+    delete locker;
 
     static const char kPluginScript[] =
       "$rt = Thread.new { world.SetVariable('owner', world.GetPluginID) }\n";
@@ -2489,6 +2532,388 @@ void battery_ruby_thread_calls(const Dialect& d)
 
     doc->m_ScriptEngine = nullptr;      // ~Engine deletes it
     MC_UIThreadSetParkedLimit(limit);
+}
+
+// 6a-quinquies. A thread holding a lock while it calls the world, when the callback
+//     that call runs (here, through CallPlugin) waits for the same lock.  The UI
+//     thread had taken the call, so the parked limit did not apply, and both sides
+//     waited for ever: the client froze.  Now the thread gives up once the UI thread
+//     has sat in that callback, unmoving, for the limit -- and a world call that is
+//     merely slow (a Lua function busy for longer than the limit) is still waited for.
+void battery_py_deadlock(const Dialect& d)
+{
+    const char* L = d.display;
+    static const char kSource[] =
+      "import threading, sys\n"
+      "box = {}\n"
+      "def startdeadlock(*a):\n"
+      "    sys._mc_lock = threading.Lock()\n"
+      "    def work():\n"
+      "        with sys._mc_lock:\n"
+      "            try:\n"
+      "                world.CallPlugin('ffffffffffffffffffffffff', 'cb', 'x')\n"
+      "                box['dl'] = 'ran'\n"
+      "            except RuntimeError as e:\n"
+      "                box['dl'] = str(e)\n"
+      "    box['t'] = threading.Thread(target=work)\n"
+      "    box['t'].start()\n"
+      "def startslow(*a):\n"
+      "    def work():\n"
+      "        try:\n"
+      "            box['slow'] = str(world.CallPlugin('abababababababababababab', 'slow', ''))\n"
+      "        except RuntimeError as e:\n"
+      "            box['slow'] = str(e)\n"
+      "    box['t'] = threading.Thread(target=work)\n"
+      "    box['t'].start()\n"
+      "def report(*a):\n"
+      "    box['t'].join()\n"
+      "    world.SetVariable('dl', box.get('dl', '?'))\n"
+      "    world.SetVariable('slow', box.get('slow', '?'))\n";
+    Engine e(d.language, kSource);
+    if (!e.ok) { skip(L, "a thread's call into a callback that wants its lock", "engine failed to open"); return; }
+    CMUSHclientDoc* doc = e.doc;
+    doc->m_ScriptEngine = e.eng;        // a thread's call needs its engine to belong to something
+    bool err = false;
+    const int limit = MC_UIThreadSetParkedLimit(1000);
+
+    CPlugin* locker = add_plugin(doc, "Locker", "ffffffffffffffffffffffff", "Python",
+      "import sys\n"
+      "def cb(s):\n"
+      "    with sys._mc_lock:\n"
+      "        world.SetVariable('cbran', 'yes')\n");
+    e.callRich("startdeadlock", &err);
+    pump(10000, [&] { return plugin_var(doc, locker, "cbran") == "yes"; });
+    check(plugin_var(doc, locker, "cbran") == "yes", L,
+          "a thread holding a lock its call's callback wants does not freeze the client");
+    e.callRich("report", &err);
+    const std::string dl = e.var("dl");
+    check(dl.find("did not finish") != std::string::npos &&
+          dl.find("main thread") != std::string::npos, L,
+          "...the thread's call raising, saying it did not finish and why");
+    check(dl.find("in cb") != std::string::npos, L, "...naming the callback that was waiting");
+    pump(100);
+    check(e.saw("Python thread in the world's script") && e.saw("did not finish"), L,
+          "...and the output window says so");
+
+    CPlugin* slow = add_plugin(doc, "Slow", "abababababababababababab", "Lua",
+      "function slow(s)\n"
+      "  local t = os.clock()\n"
+      "  while os.clock() - t < 2.5 do end\n"
+      "  world.SetVariable('slowran', 'yes')\n"
+      "end\n");
+    e.callRich("startslow", &err);
+    pump(10000, [&] { return plugin_var(doc, slow, "slowran") == "yes"; });
+    e.callRich("report", &err);
+    check(e.var("slow") == "0", L,
+          "a thread's world call that is slow, not stuck in a script, is waited for");
+
+    doc->m_PluginList.remove(locker);
+    delete locker;
+    doc->m_PluginList.remove(slow);
+    delete slow;
+    doc->m_ScriptEngine = nullptr;      // ~Engine deletes it
+    MC_UIThreadSetParkedLimit(limit);
+}
+
+// 6a-sexies. A plugin's last words.  A world's destructor closes its plugins, whose
+//     OnPluginClose and OnPluginSaveState run then -- and typically call the world, to
+//     save state.  The document had already been taken off the live list, so every
+//     such call in Python, JavaScript and Ruby was refused, and a plugin that saved
+//     its state with world.SetVariable in OnPluginSaveState lost it on every close.
+//     Driven for real: the plugin's state file is what is checked.
+struct CloseScript { const char* key; const char* script; };
+const CloseScript kCloseScripts[] = {
+  { "lua",
+    "function OnPluginClose() world.SetVariable('closed', 'yes') end\n"
+    "function OnPluginSaveState() world.SetVariable('saved', world.GetPluginID()) end\n" },
+  { "python",
+    "def OnPluginClose():\n    world.SetVariable('closed', 'yes')\n"
+    "def OnPluginSaveState():\n    world.SetVariable('saved', world.GetPluginID())\n" },
+  { "perl",
+    "sub OnPluginClose { $world->SetVariable('closed', 'yes'); }\n"
+    "sub OnPluginSaveState { $world->SetVariable('saved', $world->GetPluginID()); }\n" },
+  { "js",
+    "function OnPluginClose() { world.SetVariable('closed', 'yes'); }\n"
+    "function OnPluginSaveState() { world.SetVariable('saved', world.GetPluginID()); }\n" },
+  { "tcl",
+    "proc OnPluginClose {args} { world SetVariable closed yes }\n"
+    "proc OnPluginSaveState {args} { world SetVariable saved [world GetPluginID] }\n" },
+  { "ruby",
+    "def OnPluginClose(*a); world.SetVariable('closed', 'yes'); end\n"
+    "def OnPluginSaveState(*a); world.SetVariable('saved', world.GetPluginID); end\n" },
+};
+
+std::string state_folder()
+{
+#ifdef _WIN32
+    char tmp[MAX_PATH] = "";
+    GetTempPathA(sizeof tmp, tmp);
+    std::string dir = std::string(tmp) + "mc_selftest_state\\";
+    CreateDirectoryA(dir.c_str(), NULL);
+#else
+    std::string dir = "/tmp/mc_selftest_state/";
+    mkdir(dir.c_str(), 0755);
+#endif
+    return dir;
+}
+
+std::string read_file(const std::string& path)
+{
+    std::string text;
+    if (FILE* f = fopen(path.c_str(), "rb")) {
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
+        fclose(f);
+    }
+    return text;
+}
+
+CMUSHclientDoc* closing_world(const char* worldID)
+{
+    CMUSHclientDoc* doc = new SelftestDoc();
+    doc->m_bScriptErrorsToOutputWindow = TRUE;
+    doc->SetUpOutputWindow();
+    doc->m_strWorldID = worldID;
+    return doc;
+}
+
+void battery_world_close(const Dialect& d)
+{
+    const char* L = d.display;
+    const char* script = nullptr;
+    for (const CloseScript& c : kCloseScripts)
+        if (strcmp(c.key, d.key) == 0) script = c.script;
+    if (!script) { skip(L, "a plugin's OnPluginSaveState can call the world as it closes", "no script"); return; }
+
+    const CString savedFolder = App.m_strDefaultStateFilesDirectory;
+    const std::string folder = state_folder();
+    App.m_strDefaultStateFilesDirectory = folder.c_str();
+    static const char kWorld[]  = "eeeeeeeeeeeeeeeeeeeeeeee";
+    static const char kPlugin[] = "dddddddddddddddddddddddd";
+    const std::string file = folder + kWorld + "-" + kPlugin + "-state.xml";
+    remove(file.c_str());
+
+    CMUSHclientDoc* doc = closing_world(kWorld);
+    CPlugin* p = add_plugin(doc, "Closer", kPlugin, d.language, script);
+    if (!p->m_ScriptEngine || !p->m_ScriptEngine->UsesEmbeddedCallback()) {
+        delete doc;
+        App.m_strDefaultStateFilesDirectory = savedFolder;
+        skip(L, "a plugin's OnPluginSaveState can call the world as it closes", "engine failed to open");
+        return;
+    }
+    p->m_bSaveState = TRUE;
+    p->m_PluginCallbacks[ON_PLUGIN_CLOSE]._dispid = p->GetPluginDispid(ON_PLUGIN_CLOSE.c_str());
+    p->m_PluginCallbacks[ON_PLUGIN_SAVE_STATE]._dispid = p->GetPluginDispid(ON_PLUGIN_SAVE_STATE.c_str());
+    delete doc;                          // the world closes, and the plugin with it
+
+    const std::string state = read_file(file);
+    check(state.find("<variable name=\"closed\">yes</variable>") != std::string::npos, L,
+          "a plugin's OnPluginClose can call the world as the world closes");
+    check(state.find(std::string("<variable name=\"saved\">") + kPlugin + "</variable>") != std::string::npos, L,
+          "...and its OnPluginSaveState can, as that plugin, and the state it saves is kept");
+    remove(file.c_str());
+
+    // A THREAD's call is still refused from the destructor's first line: the UI
+    // thread would otherwise serve it in the middle of that teardown, here from
+    // inside OnPluginClose's own world calls.
+    if (strcmp(d.key, "python") == 0) {
+        static const char kThreadClose[] =
+          "import threading, sys, time\n"
+          "sys._mc_closecall = '?'\n"
+          "_go = threading.Event()\n"
+          "def _late():\n"
+          "    _go.wait()\n"
+          "    try:\n"
+          "        world.Note('must not appear')\n"
+          "        sys._mc_closecall = 'ran'\n"
+          "    except RuntimeError as e:\n"
+          "        sys._mc_closecall = str(e)\n"
+          "threading.Thread(target=_late, daemon=True).start()\n"
+          "def OnPluginClose():\n"
+          "    _go.set()\n"
+          "    end = time.monotonic() + 5\n"
+          "    while sys._mc_closecall == '?' and time.monotonic() < end:\n"
+          "        world.GetInfo(1)\n"
+          "        time.sleep(0.01)\n";
+        doc = closing_world(kWorld);
+        p = add_plugin(doc, "ThreadCloser", kPlugin, d.language, kThreadClose);
+        doc->m_ScriptEngine = nullptr;
+        p->m_PluginCallbacks[ON_PLUGIN_CLOSE]._dispid = p->GetPluginDispid(ON_PLUGIN_CLOSE.c_str());
+        delete doc;
+        Engine probe(d.language,
+          "import sys\n"
+          "def rd(s):\n"
+          "    return str(getattr(sys, '_mc_closecall', 'missing'))\n");
+        check(probe.callRtn("rd", "") == "that world has been closed", L,
+              "...but a thread's call during the close is refused, not run in the teardown");
+    }
+    App.m_strDefaultStateFilesDirectory = savedFolder;
+}
+
+// 6a-septies. Tcl's own `exit` ended the whole client.
+//     And Tcl text: a Tcl string is Unicode in modified UTF-8, which used to cross
+//     as the world's bytes -- so "\0" was C0 80, "\xff" (how Tcl writes a byte) C3 BF,
+//     `world SendPkt "\xff\xfb\x01"` sent nonsense in every world, and a non-UTF-8
+//     world's text was re-encoded as UTF-8 by any string operation that rebuilt it.
+struct SelftestTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(const pal::NetAddress&, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "selftest"; }
+};
+
+void battery_tcl_text(const Dialect& d)
+{
+    const char* L = d.display;
+    static const char kSource[] =
+      "proc tryexit {s} { if {[catch {exit 3} m]} { return \"caught: $m\" }; return survived }\n"
+      "proc rebuilt {s} { return [string range $s 0 end] }\n"
+      "proc setbytes {s} { world SetVariable b \"\\xff\\xfb\\x01\" }\n"
+      "proc setnul {s} { world SetVariable nul \"a\\0b\" }\n"
+      "proc euro {s} { world SetVariable euro \"\\u20ac\" }\n"
+      "proc pkt {s} { return [world SendPkt \"\\xff\\xfb\\x01\"] }\n"
+      "proc pktnul {s} { return [world SendPkt \"\\xff\\xfa\\x1f\\x00\\x50\\x00\\x18\\xff\\xf0\"] }\n"
+      "proc pkttext {s} { return [world SendPkt \"caf\\u00e9\\u20ac\"] }\n";
+
+    for (int utf8 = 0; utf8 <= 1; utf8++) {
+        Engine e(d.language, kSource);
+        if (!e.ok) { skip(L, "Tcl text crosses as the world's bytes", "engine failed to open"); return; }
+        e.doc->m_bUTF_8 = utf8 ? TRUE : FALSE;
+        SelftestTransport* t = new SelftestTransport;    // the doc's destructor deletes it
+        e.doc->m_pTransport = t;
+        e.doc->m_iConnectPhase = eConnectConnectedToMud;
+        const std::string world = utf8 ? " (UTF-8 world)" : " (non-UTF-8 world)";
+
+        if (!utf8) {
+            const CString r = e.callRtn("tryexit", "");
+            check(r.Find("caught: exit is not allowed") == 0, L,
+                  "Tcl's exit raises an error instead of closing the client");
+        }
+
+        check(e.callRtn("pkt", "") == "0" && t->sent == "\xFF\xFB\x01", L,
+              ("world SendPkt \"\\xff\\xfb\\x01\" sends those three bytes" + world).c_str());
+        t->sent.clear();
+        e.callRtn("pktnul", "");
+        check(t->sent == std::string("\xFF\xFA\x1F\x00\x50\x00\x18\xFF\xF0", 9), L,
+              ("...and a packet with NULs in it, whole" + world).c_str());
+        t->sent.clear();
+        e.callRtn("pkttext", "");
+        check(t->sent == (utf8 ? "caf\xC3\xA9\xE2\x82\xAC" : "caf\xE9\x80"), L,
+              ("...and one with a character no byte means, as the world's text" + world).c_str());
+
+        e.callRtn("setnul", "");
+        check(e.var("nul") == "a", L,
+              ("a NUL ends a string a method takes, as in every engine, not C0 80" + world).c_str());
+        e.callRtn("euro", "");
+        check(e.var("euro") == (utf8 ? "\xE2\x82\xAC" : "\x80"), L,
+              ("a character outside Latin-1 is the world's text for it" + world).c_str());
+        e.callRtn("setbytes", "");
+        check(e.var("b") == (utf8 ? "\xC3\xBF\xC3\xBB\x01" : "\xFF\xFB\x01"), L,
+              ("text is the world's own encoding of the characters" + world).c_str());
+
+        if (utf8) {
+            check(e.callRtn("rebuilt", "a\xC3\xA9z") == "a\xC3\xA9z", L,
+                  "UTF-8 text survives a string operation unchanged (UTF-8 world)");
+            const CString emoji("\xF0\x9F\x98\x80");
+            check(e.callRtn("rebuilt", emoji) == emoji, L,
+                  "...and so does a character beyond U+FFFF (UTF-8 world)");
+        } else {
+            check(e.callRtn("rebuilt", "a\xE9z") == "a\xE9z", L,
+                  "a byte survives a string operation unchanged (non-UTF-8 world)");
+            check(e.callRtn("rebuilt", "a\xC3\xA9z") == "a\xC3\xA9z", L,
+                  "...and so do bytes that happen to look like UTF-8 (non-UTF-8 world)");
+        }
+    }
+}
+
+// 6a-octies. JavaScript's promise jobs.  One queue serves every context, drained at
+//     the end of the outermost entry: a job ran as whichever plugin THAT was for, a
+//     job that threw was freed without a word, and a job of an unloaded plugin ran on.
+//     QuickJS only: JavaScriptCore (the port) runs its own microtasks.
+void battery_js_promises(const Dialect& d)
+{
+    const char* L = d.display;
+#ifndef _WIN32
+    skip(L, "promise jobs run as their own plugin", "JavaScriptCore runs its microtasks itself");
+    return;
+#else
+    static const char kA[] = "111111111111111111111111";
+    static const char kB[] = "222222222222222222222222";
+    Engine e(d.language, "function noop(s) { }\n");
+    if (!e.ok) { skip(L, "promise jobs run as their own plugin", "engine failed to open"); return; }
+    CMUSHclientDoc* doc = e.doc;
+    CPlugin* a = add_plugin(doc, "PromiseA", kA, d.language,
+      "function go(s) { Promise.resolve().then(function () { world.SetVariable('pj', world.GetPluginID()); }); }\n"
+      "function boomjob(s) { Promise.resolve().then(function () { throw new Error('jobboom'); }); }\n"
+      "function handled(s) { Promise.reject(new Error('quietly')).catch(function () { }); }\n"
+      "function queuelate(s) { Promise.resolve().then(function () { world.SetVariable('late', 'ran'); }); }\n"
+      "function deep(s) { Promise.resolve().then(function () {\n"
+      "  world.CallPlugin('222222222222222222222222', 'recurse', ''); }); }\n");
+    CPlugin* b = add_plugin(doc, "PromiseB", kB, d.language,
+      "function callA(s) { world.CallPlugin('111111111111111111111111', s, ''); }\n"
+      "function unloadA(s) {\n"
+      "  world.CallPlugin('111111111111111111111111', 'queuelate', '');\n"
+      "  world.SetVariable('unloaded', String(world.UnloadPlugin('111111111111111111111111'))); }\n"
+      "function recurse(s) { function r(n) { return r(n + 1) + 1; }\n"
+      "  try { r(0); } catch (e) { world.SetVariable('rec', e.name); } }\n");
+
+    doc->CallPlugin(kB, "callA", "go");
+    check(plugin_var(doc, a, "pj") == kA && plugin_var(doc, b, "pj").empty(), L,
+          "a promise job runs as the plugin that queued it, not the one whose entry drains it");
+
+    doc->CallPlugin(kB, "callA", "boomjob");
+    check(e.saw("jobboom") && e.saw("Uncaught (in promise)"), L,
+          "an error in a promise job is reported, not dropped");
+    doc->CallPlugin(kB, "callA", "handled");
+    check(!e.saw("quietly"), L, "...but a rejection that is handled is not");
+
+    doc->CallPlugin(kB, "callA", "deep");
+    check(plugin_var(doc, b, "rec").find("Error") != std::string::npos, L,
+          "a runaway recursion a promise job leads to is an error the script catches");
+
+    doc->CallPlugin(kB, "unloadA", "");
+    check(plugin_var(doc, b, "unloaded") == std::to_string(eOK) && doc->GetPlugin(kA) == nullptr, L,
+          "a plugin can be unloaded with a promise job of its own still queued");
+    check(plugin_var(doc, b, "late").empty() && e.var("late").empty(), L,
+          "...and that job, run later, does not reach the world");
+
+    doc->m_PluginList.remove(b);
+    delete b;
+#endif
+}
+
+// 6a-novies. Ruby: a callback whose name is not ASCII, and an argument whose #to_s raises.
+void battery_ruby_names(const Dialect& d)
+{
+    const char* L = d.display;
+    Engine e(d.language,
+      "def d\xC3\xA9placer(s); 'moved'; end\n"
+      "class Bad; def to_s; raise 'no string'; end; end\n"
+      "def badarg(s)\n"
+      "  begin\n"
+      "    world.Note(Bad.new)\n"
+      "    'silent'\n"
+      "  rescue => e\n"
+      "    e.message\n"
+      "  end\n"
+      "end\n");
+    if (!e.ok) { skip(L, "a non-ASCII callback name resolves", "engine failed to open"); return; }
+    check(e.callRtn("d\xC3\xA9placer", "x") == "moved", L,
+          "a callback whose name is not ASCII is found and called");
+    check(e.callRtn("badarg", "") == "no string", L,
+          "an argument whose to_s raises raises that, in the script");
+
+    Engine latin(d.language, "def d\xE9placer(s); 'latin'; end\n");
+    if (!latin.ok)
+        skip(L, "a Latin-1 callback name resolves", "Ruby will not parse that name");
+    else
+        check(latin.callRtn("d\xE9placer", "x") == "latin", L,
+              "a callback named in a Latin-1 script is found too");
 }
 
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
@@ -2571,9 +2996,17 @@ bool run_language(const Dialect& d)
         battery_py_overflow (e, d);
         battery_py_threads  (e, d);
         battery_py_thread_calls(d);
+        battery_py_deadlock(d);
     }
-    if (strcmp(d.key, "ruby") == 0)
+    if (strcmp(d.key, "ruby") == 0) {
         battery_ruby_thread_calls(d);
+        battery_ruby_names(d);
+    }
+    if (strcmp(d.key, "tcl") == 0)
+        battery_tcl_text(d);
+    if (strcmp(d.key, "js") == 0)
+        battery_js_promises(d);
+    battery_world_close(d);
     battery_trace     (d);
     battery_error_routing(d);
     battery_stale_proxy  (d);

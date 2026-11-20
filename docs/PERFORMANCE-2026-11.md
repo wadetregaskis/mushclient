@@ -162,7 +162,7 @@ none of those matched, and the literal search agreed with a plain search every t
 - All ARM64 unit tests (2,176 passed, MFC assertions 187 from 12 suites, as before
   plus the new ones) and the engines selftest (513 passed, 19 skipped).
 - Every benchmark run reports how many triggers fired: identical in A and B.
-- Miniwindows: after the same 400 lines in a build with and one without the GDI
+- Miniwindows: after the same 435 lines in a build with and one without the GDI
   change, each of Quow's 14 miniwindows was written out with `WindowWrite` and
   compared byte for byte. All identical except the comms window, whose timestamps
   differ between any two runs of the same build too.

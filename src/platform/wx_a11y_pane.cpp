@@ -1,7 +1,7 @@
 // wx_a11y_pane.cpp -- the text pane on macOS and Linux: a read-only wxTextCtrl, which is an
 // NSTextView or a GtkTextView, so VoiceOver and Orca read it as they read any other.  It is a
 // strip under the output window, and exists only while output is being read or the player
-// asked for it.  UNCOMPILED where it was written.  docs/ACCESSIBILITY.md describes it.
+// asked for it.  UNCOMPILED where it was written, and so is the batching in accessibleFlush.  docs/ACCESSIBILITY.md describes it.
 
 #include "wx_world_child.h"
 #include "wx_a11y.h"
@@ -55,6 +55,8 @@ void CWorldChildFrame::accessiblePaneShow (bool show)
       m_a11yPane->Destroy ();
       m_a11yPane = nullptr;
       m_a11yPaneLines = 0;
+      m_a11yPanePending.clear ();
+      m_a11yPanePendingLines = 0;
       Layout ();
       }
     return;
@@ -103,9 +105,21 @@ void CWorldChildFrame::accessiblePaneShow (bool show)
     }
   }
 
+// Lines wait for the tick: AppendText moves the caret, and putting it back is something a
+// reader can notice, so that happens once a tick rather than once a line.
 void CWorldChildFrame::accessibleLine (const char * utf8)
   {
   if (!m_a11yPane)
+    return;
+  if (!m_a11yPanePending.empty ())
+    m_a11yPanePending += "\n";
+  m_a11yPanePending += wxString::FromUTF8 (utf8);
+  m_a11yPanePendingLines++;
+  }
+
+void CWorldChildFrame::accessibleFlush ()
+  {
+  if (!m_a11yPane || m_a11yPanePending.empty ())
     return;
 
   // Whatever the player is reading stays where it is.
@@ -113,8 +127,10 @@ void CWorldChildFrame::accessibleLine (const char * utf8)
   m_a11yPane->GetSelection (&from, &to);
   const long caret = m_a11yPane->GetInsertionPoint ();
 
-  m_a11yPane->AppendText ((m_a11yPane->IsEmpty () ? wxString () : wxString ("\n")) + wxString::FromUTF8 (utf8));
-  m_a11yPaneLines++;
+  m_a11yPane->AppendText ((m_a11yPane->IsEmpty () ? wxString () : wxString ("\n")) + m_a11yPanePending);
+  m_a11yPaneLines += m_a11yPanePendingLines;
+  m_a11yPanePending.clear ();
+  m_a11yPanePendingLines = 0;
 
   long removed = 0;
   if (m_a11yPaneLines > kTrimPaneAt)
@@ -135,6 +151,8 @@ void CWorldChildFrame::accessibleReset (const char * utf8Text)
   {
   if (!m_a11yPane)
     return;
+  m_a11yPanePending.clear ();
+  m_a11yPanePendingLines = 0;
   wxString text = wxString::FromUTF8 (utf8Text);
   if (text.EndsWith ("\n"))
     text.RemoveLast ();
@@ -157,6 +175,7 @@ void CWorldChildFrame::accessibleFocusPane (bool pane)
     }
   if (!m_a11yPane)
     return;
+  accessibleFlush ();
   // On arriving, at the newest line.
   m_a11yPane->SetInsertionPoint (m_a11yPane->XYToPosition (0, wxMax (0, m_a11yPane->GetNumberOfLines () - 1)));
   m_a11yPane->SetFocus ();

@@ -82,13 +82,14 @@ class AvSpeech : public pal::ISpeech
     void setRate (int rate) override { m_rate = rate; }
     void setVolume (int volume) override { m_volume = volume; }
 
+    // speechVoices hands back autoreleased objects, and this is not ARC: kept, it is retained.
     void setVoice (const char * sName) override
       {
-      m_voice = nil;
+      SetKept (nil);
       NSString * wanted = ToNS (sName);
       for (AVSpeechSynthesisVoice * voice in [AVSpeechSynthesisVoice speechVoices])
         if ([voice.name isEqualToString:wanted])
-          m_voice = voice;
+          SetKept (voice);
       }
 
     std::vector<std::string> voices () override
@@ -100,6 +101,15 @@ class AvSpeech : public pal::ISpeech
       }
 
   private:
+    void SetKept (AVSpeechSynthesisVoice * voice)
+      {
+#if !__has_feature(objc_arc)
+      [voice retain];
+      [m_voice release];
+#endif
+      m_voice = voice;
+      }
+
     AVSpeechSynthesizer * m_synth;
     AVSpeechSynthesisVoice * m_voice = nil;
     int m_rate = 0;
@@ -119,6 +129,15 @@ class MacSpeechPlatform : public pal::ISpeechPlatform
       if (!m_av)
         m_av = new AvSpeech;
       return m_av;
+      }
+
+    // A class method: no synthesizer is made to ask.
+    std::vector<std::string> ownVoiceNames () override
+      {
+      std::vector<std::string> names;
+      for (AVSpeechSynthesisVoice * voice in [AVSpeechSynthesisVoice speechVoices])
+        names.push_back ([voice.name UTF8String]);
+      return names;
       }
 
   private:

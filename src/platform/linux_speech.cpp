@@ -20,6 +20,9 @@
 
 #include <dirent.h>
 #include <dlfcn.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -32,26 +35,56 @@ typedef unsigned (*AtkVersion) (void);
 typedef void (*SignalEmitByName) (void *, const char *, ...);
 typedef void (*AtkSetName) (void *, const char *);
 
+// Is this process, if any, the player's own Orca?
+bool IsOrca (const std::string & pid)
+  {
+  std::ifstream comm ("/proc/" + pid + "/comm");
+  std::string name;
+  return std::getline (comm, name) && name == "orca";
+  }
+
+// Asked every two seconds.  Orca found is remembered by its pid, which is one small file to
+// look at; Orca not found is looked for again only every ten seconds, and only among this
+// user's own processes, so that someone else's Orca on the machine does not count.
 bool OrcaRunning ()
   {
+  static std::string s_pid;
+  static std::chrono::steady_clock::time_point s_lastScan;
+  static bool s_bScanned = false;
+
+  if (!s_pid.empty ())
+    {
+    if (IsOrca (s_pid))
+      return true;
+    s_pid.clear ();
+    }
+
+  const auto now = std::chrono::steady_clock::now ();
+  if (s_bScanned && now - s_lastScan < std::chrono::seconds (10))
+    return false;
+  s_bScanned = true;
+  s_lastScan = now;
+
   DIR * dir = opendir ("/proc");
   if (!dir)
     return false;
-  bool bFound = false;
+  const uid_t uid = getuid ();
   while (dirent * entry = readdir (dir))
     {
     if (entry->d_name [0] < '0' || entry->d_name [0] > '9')
       continue;
-    std::ifstream comm (std::string ("/proc/") + entry->d_name + "/comm");
-    std::string name;
-    if (std::getline (comm, name) && name == "orca")
+    struct stat st;
+    const std::string path = std::string ("/proc/") + entry->d_name;
+    if (stat (path.c_str (), &st) != 0 || st.st_uid != uid)
+      continue;
+    if (IsOrca (entry->d_name))
       {
-      bFound = true;
+      s_pid = entry->d_name;
       break;
       }
     }
   closedir (dir);
-  return bFound;
+  return !s_pid.empty ();
   }
 
 void * TopLevelAccessible ()
@@ -96,7 +129,12 @@ class AtkSpeech : public pal::ISpeech
     void stop () override {}    // a notification cannot be called back
   };
 
-// From libspeechd.h: SPD_MODE_THREADED is 1, SPD_TEXT 3 and SPD_MESSAGE 4 for priority.
+// From libspeechd.h: SPD_MODE_THREADED is 1; SPDPriority is SPD_IMPORTANT 1, SPD_MESSAGE 2,
+// SPD_TEXT 3, SPD_NOTIFICATION 4 and SPD_PROGRESS 5.  A notification is dropped whenever anything
+// else is speaking, so it is never what an alert goes as: that is a message, which goes ahead of
+// text and is not cut off by it.
+const int kSpdMessage = 2;
+const int kSpdText = 3;
 typedef void * (*SpdOpen) (const char *, const char *, const char *, int);
 typedef int (*SpdSay) (void *, int, const char *);
 typedef int (*SpdCancel) (void *);
@@ -132,7 +170,7 @@ class SpeechDispatcher : public pal::ISpeech
       {
       if (bFlush)
         m_cancel (m_conn);
-      return m_say (m_conn, priority == pal::SpeechPriority::Assertive ? 4 : 3, utf8) >= 0;
+      return m_say (m_conn, priority == pal::SpeechPriority::Assertive ? kSpdMessage : kSpdText, utf8) >= 0;
       }
 
     void stop () override { m_cancel (m_conn); }
@@ -162,6 +200,10 @@ class LinuxSpeechPlatform : public pal::ISpeechPlatform
       {
       return m_spd.Load () ? &m_spd : nullptr;
       }
+
+    // speech-dispatcher's voices are not listed here (voices () is the default), so the
+    // preferences need not open a connection to learn that.
+    std::vector<std::string> ownVoiceNames () override { return std::vector<std::string> (); }
 
   private:
     AtkSpeech m_atk;

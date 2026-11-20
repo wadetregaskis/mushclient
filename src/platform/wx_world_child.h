@@ -341,6 +341,7 @@ public:
     // the accessible text pane: wx_a11y_pane.cpp
     void        accessiblePaneShow(bool show) override;
     void        accessibleLine(const char* utf8) override;
+    void        accessibleFlush() override;
     void        accessibleReset(const char* utf8Text) override;
     bool        accessiblePaneFocused() const override;
     void        accessibleFocusPane(bool pane) override;
@@ -640,6 +641,8 @@ private:
     wxTextCtrl*          m_infobar        = nullptr; // world.Info* styled status strip (hidden until ShowInfoBar)
     wxTextCtrl*          m_a11yPane       = nullptr; // the accessible text pane: wx_a11y_pane.cpp
     int                  m_a11yPaneLines  = 0;
+    wxString             m_a11yPanePending;          // lines waiting for the tick's flush
+    int                  m_a11yPanePendingLines = 0;
     wxStatusBar*         m_statusBar      = nullptr; // per-world status bar (macOS: parent MDI status bar is hidden by the child)
     wxTextAttr           m_infobarStyle;             // current style applied to appended Info text
     CMUSHclientDoc*      m_doc            = nullptr; // non-owning reference to the world doc

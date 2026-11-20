@@ -18,6 +18,7 @@
 #include "scripting/scripting.h"
 #include "plugin_vetoes.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -2448,8 +2449,10 @@ TEST(WizardTest, RemovingSelectedItemsSortsOncePerCategory)
     // that names neither the macro nor the header.  This one line is why the
     // whole suite sat excluded as "preprocesses oddly under MSVC"
     // (docs/WINDOWS-VALIDATION.md §10r).
-    const double smallRun = run(400);
-    const double big      = run(2400);        // 6x the items
+    // The fastest of three: one sample of a few milliseconds is at the mercy of
+    // whatever else the machine does, and failed a full run once that way.
+    const double smallRun = (std::min)({run(400), run(400), run(400)});      // (): windows.h's min
+    const double big      = (std::min)({run(2400), run(2400), run(2400)});   // 6x the items
 
     // one sort each: ~6x the work.  One per surviving entry: ~36x, and the
     // ratio keeps climbing with the size.  Twice as loose as the measured

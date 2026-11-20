@@ -770,6 +770,8 @@ TEST(RegexpPrefilter, TheLiteralIsALongestRunEveryMatchHas) {
         { "[]abc]xy",                                    0, "xy" },   // ] first in a class
         { "[^]a]xy",                                     0, "xy" },
         { "[[:alpha:]]xy",                               0, "xy" },
+        { "[\\c]abc]",                                   0, "" },     // \c] is one character: the class goes on
+        { "[[:]|:]]x",                                   0, "" },     // not POSIX: the class ends, then |
         { "a\\.b\\(c",                                   0, "a.b(c" },
         { "\\x41xyz",                                    0, "xyz" },  // (\x41BC would lose BC: safe)
         { "\\x{41}BC",                                   0, "BC" },
@@ -840,6 +842,20 @@ TEST(RegexpPrefilter, AnAlternationGivesASetOfLiterals) {
     for (auto& c : cases)
         EXPECT_EQ(std::string(c.pattern) + " -> " + c.literals,
                   std::string(c.pattern) + " -> " + RequiredLiterals(c.pattern));
+}
+
+// Where a class ends is PCRE's call, and two that end where a quick reading wouldn't
+// expect still match what they should.
+TEST(RegexpPrefilter, AClassEndsWherePcreSays) {
+    Regexp cEscape("[\\c]abc]");
+    EXPECT_EQ(1, regexec(cEscape.get(), "a"));
+    Regexp notPosix("[[:]|:]]x");
+    EXPECT_EQ(1, regexec(notPosix.get(), ":"));
+    EXPECT_EQ(1, regexec(notPosix.get(), "["));
+    EXPECT_EQ(0, regexec(notPosix.get(), "x"));
+    Regexp firstBracket("[[:a]b:]]xy");      // the class is [[:a], then b:]]xy is text
+    EXPECT_EQ(1, regexec(firstBracket.get(), "ab:]]xy"));
+    EXPECT_EQ(0, regexec(firstBracket.get(), "a:]]xy"));
 }
 
 // A pattern prefiltered on a set: no match unless one of them is there.

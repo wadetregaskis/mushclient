@@ -232,6 +232,25 @@ static int meaningless_in_class (char c)
   return meaningless_letter (c) || (c != '\0' && strchr ("ABCGKRXZz", c) != NULL);
   }
 
+/* At "[:", "[." or "[=" in a class: where the POSIX item ends (past its "]"), or
+   NULL if it isn't one, in which case the "[" is an ordinary member.  PCRE's own
+   rule (check_posix_syntax, the same in PCRE 8 and PCRE2): a "]", or another "["
+   with the same terminator, before the closing ":]" means it isn't. */
+static const char * posix_item_end (const char * p)
+  {
+  const char terminator = p [1];
+  for (p += 2; p [0] != '\0' && p [1] != '\0'; p++)
+    {
+    if (p [0] == '\\' && (p [1] == ']' || p [1] == '\\'))
+      p++;
+    else if ((p [0] == '[' && p [1] == terminator) || p [0] == ']')
+      return NULL;
+    else if (p [0] == terminator && p [1] == ']')
+      return p + 2;
+    }
+  return NULL;
+  }
+
 /* A set in a class: a shorthand, or a POSIX name.  Returns where it ends, or
    NULL if p is not at one. */
 static const char * class_set_end (const char * p)
@@ -248,10 +267,7 @@ static const char * class_set_end (const char * p)
     return p [2] != '\0' ? p + 3 : NULL;
     }
   if (p [0] == '[' && p [1] == ':')
-    {
-    const char * close = strstr (p + 2, ":]");
-    return close != NULL ? close + 2 : NULL;
-    }
+    return posix_item_end (p);
   return NULL;
   }
 
@@ -863,23 +879,17 @@ static void lit_class (lit_scan_t * s)
       }
     if (*p == '\\')
       {
-      if (p [1] == '\0' || p [1] == 'Q' || p [1] == 'E')
+      if (p [1] == '\0' || p [1] == 'Q' || p [1] == 'E' || (p [1] == 'c' && p [2] == '\0'))
         {
         s->bad = 1;
         return;
         }
-      p += 2;
+      p += p [1] == 'c' ? 3 : 2;   /* \c takes the next character, even a ] */
       }
     else if (p [0] == '[' && (p [1] == ':' || p [1] == '.' || p [1] == '='))
       {
-      const char end [3] = { p [1], ']', '\0' };
-      const char * close = strstr (p + 2, end);
-      if (close == NULL)
-        {
-        s->bad = 1;
-        return;
-        }
-      p = close + 2;
+      const char * end = posix_item_end (p);
+      p = end != NULL ? end : p + 1;
       }
     else
       p++;

@@ -2567,8 +2567,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == 32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/) {
             if (CMUSHclientDoc* doc = activeDoc()) {
                 if (doc->m_bEnableScripts || !doc->m_strScriptFilename.IsEmpty()) {
-                    doc->DisableScripting();
-                    doc->CreateScriptEngine();
+                    // not under the script's own frames (a modal loop it raised
+                    // runs this menu): once they return -- RunDeferredChanges
+                    if (!doc->DeferScriptRestart()) {
+                        doc->DisableScripting();
+                        doc->CreateScriptEngine();
+                    }
                     if (s_statusBar)
                         s_statusBar->SetStatusText(wxT("Script reloaded."));
                 } else {

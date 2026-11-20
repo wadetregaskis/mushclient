@@ -127,11 +127,15 @@ VALUE variant_to_ruby (const VARIANT& v)
 // ── Ruby VALUE -> VARIANT ─────────────────────────────────────────────────────
 // A script's own #to_s can raise, and this runs with C++ objects live above it
 // (world_method_missing's argument buffer), which a raise would longjmp past.  So
-// it is called under rb_protect, and a raise comes back as the exception, in *exc,
-// for the caller to raise once those are gone.
+// it is called under rb_protect, and the jump comes back as rb_protect's state, in
+// *jump, for the caller to resume with rb_jump_tag once those are gone.  Not only a
+// raise: a #to_s can also `throw` to a `catch` further out, or `break`, and then
+// rb_errinfo() is no exception, so re-raising it with rb_exc_raise would hand Ruby
+// something that is not one.  rb_jump_tag resumes whichever jump it was, with the
+// errinfo it left -- which is why this does not clear it.
 VALUE do_obj_as_string (VALUE r) { return rb_obj_as_string (r); }
 
-bool ruby_to_variant (VALUE r, VARIANT& out, VALUE* exc)
+bool ruby_to_variant (VALUE r, VARIANT& out, int* jump)
   {
   VariantInit (&out);
   switch (TYPE (r))
@@ -176,8 +180,7 @@ bool ruby_to_variant (VALUE r, VARIANT& out, VALUE* exc)
   VALUE s = rb_protect (do_obj_as_string, r, &state);
   if (state)
     {
-    *exc = rb_errinfo ();
-    rb_set_errinfo (Qnil);
+    *jump = state;            // rb_errinfo () stays as the jump left it
     return false;
     }
   out.vt = VT_BSTR;
@@ -280,7 +283,7 @@ bool world_call (CMUSHclientDoc* doc, const void* engine, const unsigned long lo
   if (MC_UIThreadIsCurrent ())
     {
     MCUIScriptScope worldCall (false);
-    MC_WorldCallRun (kind, doc, name.c_str (), nargs ? args : nullptr, (int) nargs, 0, false,
+    MC_WorldCallRun (kind, doc, name.c_str (), nargs ? args : nullptr, (int) nargs, 0,
                      result, wantOutargs ? &outargs : nullptr, rc, ok);
     return true;
     }
@@ -297,7 +300,7 @@ bool world_call (CMUSHclientDoc* doc, const void* engine, const unsigned long lo
                        !MC_DispatchEngineInUse (d, c->engine))))
       { c->closed = true; return; }
     MCThreadCallScope scope (d, c->engine);
-    c->call.Run (scope.PluginWasRunning ());
+    c->call.Run ();
     };
   rb_thread_call_without_gvl (run_on_ui_thread_without_gvl, &u, nullptr, nullptr);
 
@@ -314,11 +317,14 @@ bool world_call (CMUSHclientDoc* doc, const void* engine, const unsigned long lo
     : u.result == MC_UI_BLOCKED   ? "could not run, because the main thread has been blocked for "
                                     + seconds + " seconds: a callback"
                                     " that waits for a thread stops that thread's world calls from running"
-    : u.result == MC_UI_ABANDONED ? "did not finish, because the main thread, running it, has been"
-                                    " blocked for " + seconds + " seconds."
-                                    "  It may still finish, and what it returns is lost.  A callback"
-                                    " the call runs was waiting for this thread -- most likely for a"
-                                    " lock it holds: release locks before calling the world"
+    : u.result == MC_UI_ABANDONED ? "did not finish within " + seconds + " seconds: the main thread,"
+                                    " running it, has been in a script callback for that long."
+                                    "  The call is NOT cancelled: it may still complete, and do all"
+                                    " it does, but what it returns is lost -- so do not simply call"
+                                    " it again.  Either the callback is waiting for this thread (most"
+                                    " likely for a lock it holds: release locks before calling the"
+                                    " world), or it is just slow (sleeping, blocking I/O, a long"
+                                    " computation)"
     : u.result == MC_UI_CLOSING   ? "the client is closing"
                                   : "failed";
   snprintf (errmsg, errsize, "world.%s %s", name.c_str (), why.c_str ());
@@ -347,7 +353,7 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   char  errmsg[640] = "";
   VALUE errclass    = Qnil;
   VALUE ret         = Qnil;
-  VALUE raised      = Qnil;     // an argument's #to_s raised this: raised again below
+  int   jump        = 0;       // an argument's #to_s jumped out (raised, threw): resumed below
 
   // argc: method_missing has arity -1 and a script may call it directly, in
   // which case argv[0] is out of bounds and SYM2ID would read garbage -- as it
@@ -381,7 +387,7 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       if (MC_DispatchHasProperty (name.c_str ()) && nargs >= 1)
         {
         VARIANT v;
-        if (ruby_to_variant (a[0], v, &raised))
+        if (ruby_to_variant (a[0], v, &jump))
           {
           VARIANT none;
           std::vector<VARIANT> noOutargs;
@@ -408,7 +414,7 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       MCVariantArgs vargs ((size_t) nargs);
       bool marshalled = true;
       for (int i = 0; i < nargs && marshalled; i++)
-        marshalled = ruby_to_variant (a[i], vargs[i], &raised);
+        marshalled = ruby_to_variant (a[i], vargs[i], &jump);
       VARIANT result; VariantInit (&result);
       std::vector<VARIANT> outargs;
       int  rc = MC_DISP_OK;
@@ -419,7 +425,7 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       for (auto& x : vargs) MC_VariantClear (x);
 
       if (!marshalled)
-        ;                                         // `raised` is raised below
+        ;                                         // `jump` is resumed below
       else if (!ran)
         {
         MC_VariantClear (result);
@@ -469,8 +475,8 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
       }
     }   // every destructor has run by here
 
-  if (!NIL_P (raised))
-    rb_exc_raise (raised);
+  if (jump)
+    rb_jump_tag (jump);
   if (!NIL_P (errclass))
     rb_raise (errclass, "%s", errmsg);
   return ret;

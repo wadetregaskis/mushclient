@@ -2579,6 +2579,39 @@ public:
 
   void InternalLoadPlugin (const CString & strName);
 
+  // Unloading or reloading a plugin, or restarting the world's script, frees a script
+  // engine -- which must not happen while a frame of that engine is on the stack: A
+  // calls CallPlugin into B and B reloads A; A's callback calls world.Execute and the
+  // command reloads A; a BroadcastPlugin receiver unloads its sender; the Plugins
+  // dialog, opened from a script, removes it.  Upstream freed the interpreter under
+  // its own frames.  Here the change is DEFERRED instead: recorded, and made by
+  // RunDeferredChanges, which CheckTimers calls once no script of this world is
+  // running.  (A plugin unloading itself, the current plugin, is still refused with
+  // eBadParameter, as upstream refuses it.)  docs/UPSTREAM-DIVERGENCES.md, 40.
+  struct DeferredPluginChange
+    {
+    CString strID;        // by ID: the plugin object may be gone by then
+    bool    bReload;      // else unload
+    };
+  std::vector<DeferredPluginChange> m_DeferredPluginChanges;
+  bool m_bDeferredScriptRestart = false;   // the world's script: reload it then
+  // The plugins whose callback a script thread's world call came in the middle of
+  // (MCThreadCallScope, platform/mc_dispatch.h): on the stack too, script or none.
+  std::vector<const CPlugin *> m_InterruptedPlugins;
+
+  // Is a frame of this plugin's script on the stack (CScriptEngine::IsRunning), or
+  // is it in m_InterruptedPlugins?
+  bool PluginOnStack (const CPlugin * pPlugin) const;
+  // ...or of any script of this world's, its own or a plugin's?
+  bool AnyScriptOnStack () const;
+  // Unload (bReload false) or reload the plugin at the next safe point.
+  void DeferPluginChange (const CPlugin * pPlugin, const bool bReload);
+  // The world's script is running: its reload (DisableScripting, then
+  // CreateScriptEngine if scripting is enabled) is deferred, and this is true.
+  bool DeferScriptRestart ();
+  // The safe point: make the deferred changes whose scripts have returned.
+  void RunDeferredChanges ();
+
   // set up trigger array after adding a trigger or two
   void SortTriggers (void);
   // set up alias array after adding an alias or two

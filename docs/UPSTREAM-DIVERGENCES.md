@@ -1769,3 +1769,66 @@ box keeps "you can't scroll past a broken world" and loses the wall of boxes.
 
 **Verification:** `XmlHardening.ALoadWithManyWarningsShowsOneBox` (fifteen
 unused tags: one box naming ten, "and 5 more", all fifteen noted).
+
+## 40 — A plugin whose script is on the stack is unloaded or reloaded once it returns
+
+**Where:** `scripting/methods/methods_plugins.cpp`, `UnloadPlugin`, `ReloadPlugin` and
+`CMUSHclientDoc::DeferPluginChange` / `RunDeferredChanges` (called from `CheckTimers`,
+`timers.cpp`); `dialogs/plugins/PluginsDlg.cpp` (Remove, Reinstall); the world's script
+reload in `doc.cpp` (`OnGameReloadScriptFile`), `scripting/scripting.cpp`
+(`OnScriptFileChanged`), `dialogs/world_prefs/configuration.cpp` (`SavePrefsP17`) and the
+port's menu handler in `platform/wx_mfc_impl.cpp`.
+
+**Upstream:** `UnloadPlugin` and `ReloadPlugin` refuse only the current plugin
+(`eBadParameter`). Any other plugin is deleted at once, script engine and all -- even
+when a frame of its script is on the stack underneath: plugin A calls `CallPlugin` into a
+manager B and B reloads A; A's callback runs `world.Execute("/ReloadPlugin(...)")`
+(`Execute` clears the current plugin); a `BroadcastPlugin` receiver unloads the plugin
+that sent it. The interpreter is then freed under its own frames -- undefined behaviour,
+which in Lua often seemed to work. The Plugins dialog's Remove and Reinstall, and a
+reload of the world's script file, never checked anything.
+
+**Now:** the plugin's own unload of itself, from its own callback, is refused with
+`eBadParameter`, as upstream. Otherwise, if a frame of the target's script is on the stack
+(or a script's thread's world call came in the middle of its callback), the change is
+recorded and the call returns `eOK`, as upstream would have: the callback carries on to
+its end, and the unload or reload is made at the next tick of the world's timer when no
+script of that world is running and no plugin is current -- normally a fraction of a
+second later. A reload that then fails says so in the output window ("Plugin ... could not
+be reloaded"). The same goes for the Plugins dialog (which notes that the plugin "will be
+removed when that returns") and for reloading the world's own script while it runs.
+Changes asked for while the deferred ones are being made wait for the next tick.
+
+**Why:** found in the 2026-11 review of the scripting-engine fixes. An interim fix refused
+these calls outright, which made manager plugins that reload others through `CallPlugin`
+stop working without a word. Deferring keeps what upstream's callers relied on -- the call
+succeeds and the plugin is reloaded -- without freeing a running interpreter. Decided
+without the owner (he asked for the review's findings to be fixed while he was away).
+
+**Verification:** `PluginCallback.UnloadOfAPluginUnderItsOwnCallbackIsDeferred`,
+`ManagerReloadingItsCallerThroughCallPluginIsDeferred`,
+`PluginReloadingItselfThroughExecuteIsDeferred`,
+`BroadcastReceiverUnloadingItsSenderIsDeferred`, `WorldScriptReloadWhileItRunsIsDeferred`;
+`PluginsDlgR6.RemoveAndReinstallWaitForTheScriptToReturn`; the engines selftest's deferred
+unload and reload in every language, and a thread's unload of the plugin it interrupted.
+
+## 41 — A script thread's world call can give up waiting, and the call may still complete
+
+**Where:** `platform/mc_ui_thread.*` (`MC_RunOnUIThreadAbandonable`), `platform/py_engine.cpp`
+(`raise_blocked`), `platform/ruby_engine.cpp` (`world_call`).
+
+**Upstream:** no embedded Python or Ruby, so no threads of theirs calling the world.
+
+**Now:** a world call from a Python or Ruby thread runs on the main thread, and the thread
+waits for it. If, inside the call, the main thread sits in a Python or Ruby callback for 5
+seconds without returning -- waiting for a lock the thread holds, but equally sleeping,
+blocked on I/O or computing -- the thread stops waiting and gets an exception: "world.X
+did not finish within 5 seconds ... The call is NOT cancelled: it may still complete, and
+do all it does, but what it returns is lost -- so do not simply call it again." The same
+text goes to the output window. A script that retries on that error repeats the call's
+effects (a `Send` is sent twice). A call that could not even start ("could not run") did
+not run.
+
+**Why:** a thread holding a lock while it calls the world, when the callback the call runs
+wants the same lock, froze the client for ever. Nothing in a callback can be told apart
+from a stuck one from outside, so a slow callback looks the same.

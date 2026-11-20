@@ -25,12 +25,11 @@ enum MCWorldCallKind
   MC_CALL_SET,          // a property's new value (args[0])
   };
 
-// UI thread.  Make the call: MC_DispatchInvoke for a method -- refused with
-// eBadParameter, as MC_DispatchDeletesPlugin says, if `pluginRunning` -- or
+// UI thread.  Make the call: MC_DispatchInvoke for a method, or
 // MC_DispatchGet/SetProperty.  `rc` is the method's MC_DISP_* code, `ok` the
 // property call's answer.
 void MC_WorldCallRun (MCWorldCallKind kind, CMUSHclientDoc* doc, const char* name,
-                      const VARIANT* args, int nargs, unsigned flags, bool pluginRunning,
+                      const VARIANT* args, int nargs, unsigned flags,
                       VARIANT& result, std::vector<VARIANT>* outargs, int& rc, bool& ok);
 
 struct MCWorldCall
@@ -67,10 +66,10 @@ struct MCWorldCall
     for (VARIANT& o : outargs) MC_VariantClear (o);
     }
 
-  void Run (bool pluginRunning)
+  void Run ()
     {
     MC_WorldCallRun (kind, doc, name.c_str (), args.empty () ? nullptr : args.data (),
-                     (int) args.size (), flags, pluginRunning,
+                     (int) args.size (), flags,
                      result, wantOutargs ? &outargs : nullptr, rc, ok);
     }
 

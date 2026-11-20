@@ -34,6 +34,7 @@
     (defined(_WIN32) && defined(MUSHCLIENT_EMBEDDED_ENGINES))
 #define MC_DISPATCH_AVAILABLE 1
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -136,6 +137,12 @@ std::string MC_DispatchBadArgsMessage(const char* name, int nargs);
 // MC_DISP_EXCEPTION what the exception said, if anything.
 std::string MC_DispatchErrorMessage(const char* name, int nargs, int rc);
 
+// Run `f` as MC_DispatchInvoke runs a method: a C++ exception out of it is caught,
+// kept for MC_DispatchErrorMessage, and becomes MC_DISP_EXCEPTION; else MC_DISP_OK.
+// For an engine that calls the document itself (Tcl's SendPkt, which has to pass
+// the packet's length), so that nothing unwinds through its interpreter either.
+int MC_DispatchGuarded(const std::function<void ()>& f);
+
 // True if `name` is a known automation method.
 bool MC_DispatchHas(const char* name);
 
@@ -190,14 +197,16 @@ bool MC_DispatchSetProperty(CMUSHclientDoc* doc, const char* name, const VARIANT
 // for the length of the call this makes it the plugin whose engine the thread
 // belongs to (none, for the world's own script: `engine` is matched against the
 // plugins, so a stale one can only find nothing).
+//
+// The plugin that was current -- whose callback the call came in the middle of --
+// counts as on the stack for as long (CMUSHclientDoc::m_InterruptedPlugins), so that
+// the call cannot free it under its own frames: unloading or reloading it is
+// deferred, as from any script on the stack (CMUSHclientDoc::DeferPluginChange).
 class MCThreadCallScope
   {
   public:
   MCThreadCallScope (CMUSHclientDoc* doc, const void* engine);
   ~MCThreadCallScope ();
-
-  // Was a plugin's callback running, underneath this call?
-  bool PluginWasRunning () const { return m_previousPlugin != nullptr; }
 
   private:
   CMUSHclientDoc* m_doc;
@@ -212,12 +221,6 @@ class MCThreadCallScope
 // a message box (CPlugin::SaveState) whose message loop runs a thread's waiting call:
 // no plugin would be found for it, and it would run as the world.  UI thread only.
 bool MC_DispatchEngineInUse (CMUSHclientDoc* doc, const void* engine);
-
-// Does this world method delete a plugin?  UnloadPlugin refuses to delete "ourselves"
-// by comparing m_CurrentPlugin, which only protects the running plugin while it is the
-// current one -- and under an MCThreadCallScope it is not.  So while PluginWasRunning,
-// a thread's call to one of these gets eBadParameter instead of being made.
-bool MC_DispatchDeletesPlugin (const char* name);
 
 // Deep-free a VARIANT produced by MC_DispatchInvoke (frees an owned BSTR or
 // SAFEARRAY).  The stock VariantClear in mfc_ui.h only frees arrays, so the

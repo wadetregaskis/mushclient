@@ -37,6 +37,7 @@
 
 #include <quickjs.h>
 #include <string>
+#include <list>
 #include <vector>
 #include <cmath>
 
@@ -670,9 +671,17 @@ void run_jobs ()
 
     if (rejections ().empty ())
       break;
-    // Reporting can run JavaScript (a reason's toString), which can queue more.
+    // Reporting can run JavaScript (a reason's toString), which can queue more --
+    // and can unload a plugin whose rejection is further down this list, which
+    // CloseJS would not find there (it looks in rejections ()), freeing the context
+    // this then reads.  So every engine with a rejection here counts as running
+    // until the reports are done, and unloading one is deferred (DeferPluginChange).
     std::vector<Rejection> unhandled;
     unhandled.swap (rejections ());
+    std::list<CScriptEngine::Running> reporting;
+    for (Rejection& r : unhandled)
+      if (CJSEngine* e = open_engine (r.ctx))
+        reporting.emplace_back (e->owner);
     for (Rejection& r : unhandled)
       {
       if (CJSEngine* e = open_engine (r.ctx))

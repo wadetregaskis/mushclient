@@ -455,13 +455,24 @@ TEST(PluginCallback, PluginCannotUnloadItself)
                  (const char*)plugin_var(p, "rc"));
 }
 
+// The world's own variable (no plugin current).
+static CString world_var(CMUSHclientDoc& doc, const char* name)
+{
+    CVariable* v = nullptr;
+    if (!doc.m_VariableMap.Lookup(name, v) || !v)
+        return CString("<unset>");
+    return v->strContents;
+}
+
 // methods_plugins.cpp UnloadPlugin: "cannot delete ourselves" compared only
 // m_CurrentPlugin, so a plugin whose callback was running underneath but was not
 // the current one could be deleted under its own frames.  Here A calls into B,
-// and B unloads A: A's Lua state would be closed while A's function is still on
-// the stack.  Now refused (CScriptEngine::IsRunning), and allowed again once A's
-// callback has returned.
-TEST(PluginCallback, PluginCannotBeUnloadedUnderItsOwnCallback)
+// and B unloads A: upstream closed A's Lua state while A's function was still on
+// the stack (and returned eOK).  For a while it was refused with eBadParameter,
+// which silently stopped manager plugins; now it is DEFERRED: eOK, A finishes its
+// callback, and the unload is made at the next safe point (RunDeferredChanges,
+// from CheckTimers).  docs/UPSTREAM-DIVERGENCES.md, 40.
+TEST(PluginCallback, UnloadOfAPluginUnderItsOwnCallbackIsDeferred)
 {
     CMUSHclientDoc doc; make_doc(doc);
     std::string bodyA = std::string(
@@ -478,15 +489,169 @@ TEST(PluginCallback, PluginCannotBeUnloadedUnderItsOwnCallback)
 
     EXPECT_EQ((long)eOK, doc.CallPlugin(IDA, "CallB", ""));
     CPlugin* a = doc.GetPlugin(IDA);
-    ASSERT_NE(nullptr, a);                            // still installed
-    EXPECT_STREQ((const char*)CFormat("%d", (int)eBadParameter),
-                 (const char*)plugin_var(doc.GetPlugin(IDB), "rc"));
-    EXPECT_STREQ("alive", (const char*)plugin_var(a, "after"));
+    ASSERT_NE(nullptr, a);                            // not yet
+    EXPECT_STREQ("0", (const char*)plugin_var(doc.GetPlugin(IDB), "rc"));   // eOK, as upstream
+    EXPECT_STREQ("alive", (const char*)plugin_var(a, "after"));            // A ran on
+    ASSERT_EQ(1u, doc.m_DeferredPluginChanges.size());
 
-    // ...and with A's callback finished, B may unload it.
-    EXPECT_EQ((long)eOK, doc.CallPlugin(IDB, "UnloadA", ""));
-    EXPECT_STREQ("0", (const char*)plugin_var(doc.GetPlugin(IDB), "rc"));
+    // Not while a script of the world is running, nor a plugin is current.
+    {
+        CScriptEngine::Running running(doc.GetPlugin(IDB)->m_ScriptEngine);
+        doc.RunDeferredChanges();
+    }
+    EXPECT_TRUE(doc.GetPlugin(IDA) != NULL);
+    doc.m_CurrentPlugin = doc.GetPlugin(IDB);
+    doc.RunDeferredChanges();
+    doc.m_CurrentPlugin = NULL;
+    EXPECT_TRUE(doc.GetPlugin(IDA) != NULL);
+
+    // The world's timer tick is the safe point.
+    doc.CheckTimers();
     EXPECT_TRUE(doc.GetPlugin(IDA) == NULL);
+    EXPECT_TRUE(doc.m_DeferredPluginChanges.empty());
+
+    // A plugin not on the stack is unloaded at once, as ever.
+    ASSERT_TRUE(load_plugin(doc, write_plugin("unA2", IDA, "UnderA", bodyA.c_str())));
+    EXPECT_EQ((long)eOK, doc.CallPlugin(IDB, "UnloadA", ""));
+    EXPECT_TRUE(doc.GetPlugin(IDA) == NULL);
+    EXPECT_TRUE(doc.m_DeferredPluginChanges.empty());
+}
+
+// A manager plugin: T asks M, through CallPlugin, to reload T.  Upstream deleted T
+// (its Lua state included) while T's CallPlugin was still on its stack, and
+// returned eOK; the reload then ran T's script again.  Now: eOK, T's callback
+// finishes, and T is reloaded at the safe point -- a new instance, from its file.
+TEST(PluginCallback, ManagerReloadingItsCallerThroughCallPluginIsDeferred)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    std::string bodyT = std::string(
+        "world.SetVariable('loaded', 'yes')\n"
+        "function AskReload()\n"
+        "  world.CallPlugin('") + IDB + "', 'Reload', world.GetPluginID())\n"
+        "  world.SetVariable('after', 'alive')\n"
+        "end\n";
+    std::string bodyM =
+        "function Reload(id)\n"
+        "  world.SetVariable('rc', tostring(world.ReloadPlugin(id)))\n"
+        "end\n";
+    const std::string pathT = write_plugin("mgrT", IDA, "Managed", bodyT.c_str());
+    ASSERT_TRUE(load_plugin(doc, pathT));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("mgrM", IDB, "Manager", bodyM.c_str())));
+
+    EXPECT_EQ((long)eOK, doc.CallPlugin(IDA, "AskReload", ""));
+    EXPECT_STREQ("0", (const char*)plugin_var(doc.GetPlugin(IDB), "rc"));
+    EXPECT_STREQ("alive", (const char*)plugin_var(doc.GetPlugin(IDA), "after"));
+
+    doc.RunDeferredChanges();
+    CPlugin* t = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, t);                                       // reloaded...
+    EXPECT_STREQ("yes", (const char*)plugin_var(t, "loaded"));
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(t, "after")); // ...as a new instance
+    EXPECT_TRUE(doc.m_DeferredPluginChanges.empty());
+    unlink(pathT.c_str());
+}
+
+// A plugin reloading itself through the world's script: world.Execute clears
+// m_CurrentPlugin, so upstream's "cannot reload ourselves" test passed, and it
+// deleted the plugin under its own callback (eOK).  Deferred now, eOK.
+TEST(PluginCallback, PluginReloadingItselfThroughExecuteIsDeferred)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    CScriptEngine* world = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!world->CreateScriptEngine());
+    doc.m_ScriptEngine    = world;
+    doc.m_bEnableScripts  = true;
+    doc.m_strScriptPrefix = "/";
+
+    std::string bodyA = std::string(
+        "world.SetVariable('loaded', 'yes')\n"
+        "function ReloadSelf()\n"
+        "  world.Execute(\"/world.SetVariable('rc', tostring(world.ReloadPlugin('") + IDA + "')))\")\n"
+        "  world.SetVariable('after', 'alive')\n"
+        "end\n";
+    const std::string path = write_plugin("rlexec", IDA, "ReloadExec", bodyA.c_str());
+    ASSERT_TRUE(load_plugin(doc, path));
+
+    EXPECT_EQ((long)eOK, doc.CallPlugin(IDA, "ReloadSelf", ""));
+    EXPECT_STREQ("0", (const char*)world_var(doc, "rc"));     // the world's variable
+    EXPECT_STREQ("alive", (const char*)plugin_var(doc.GetPlugin(IDA), "after"));
+    ASSERT_EQ(1u, doc.m_DeferredPluginChanges.size());
+
+    doc.RunDeferredChanges();
+    CPlugin* a = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, a);
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(a, "after"));     // a new instance
+    unlink(path.c_str());
+}
+
+// A BroadcastPlugin receiver unloading the plugin that sent the broadcast: the
+// sender's callback is underneath.  Deferred, eOK.
+TEST(PluginCallback, BroadcastReceiverUnloadingItsSenderIsDeferred)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("bcS", IDA, "Sender",
+        "function Send()\n"
+        "  world.BroadcastPlugin(1, 'go')\n"
+        "  world.SetVariable('after', 'alive')\n"
+        "end\n")));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("bcR", IDB, "Receiver",
+        "function OnPluginBroadcast(msg, id, name, text)\n"
+        "  world.SetVariable('rc', tostring(world.UnloadPlugin(id)))\n"
+        "end\n")));
+
+    EXPECT_EQ((long)eOK, doc.CallPlugin(IDA, "Send", ""));
+    EXPECT_STREQ("0", (const char*)plugin_var(doc.GetPlugin(IDB), "rc"));
+    ASSERT_NE(nullptr, doc.GetPlugin(IDA));
+    EXPECT_STREQ("alive", (const char*)plugin_var(doc.GetPlugin(IDA), "after"));
+
+    doc.RunDeferredChanges();
+    EXPECT_TRUE(doc.GetPlugin(IDA) == NULL);
+}
+
+// The world's script reloaded (Game > Reload Script File, a changed script file,
+// World Properties) while it is running -- from a modal loop it raised, say --
+// would delete its engine under it.  Deferred too, to the same safe point.
+TEST(PluginCallback, WorldScriptReloadWhileItRunsIsDeferred)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_worldscript_%d.lua", (int)getpid());
+    FILE* f = fopen(path, "wb");
+    ASSERT_TRUE(f != NULL);
+    fputs("x = 1\n", f);
+    fclose(f);
+    doc.m_strLanguage       = "Lua";
+    doc.m_strScriptFilename = path;
+    doc.m_bEnableScripts    = true;
+    doc.m_strScriptPrefix   = "/";
+    ASSERT_FALSE(doc.CreateScriptEngine());
+    ASSERT_NE(nullptr, doc.m_ScriptEngine);
+    doc.Execute("/x = 41");
+
+    struct Access : CMUSHclientDoc { using CMUSHclientDoc::OnGameReloadScriptFile; };
+    CScriptEngine* before = doc.m_ScriptEngine;
+    {
+        CScriptEngine::Running running(before);         // as if it were running
+        (doc.*(&Access::OnGameReloadScriptFile))();
+        EXPECT_EQ(before, doc.m_ScriptEngine);           // not freed under it
+        EXPECT_TRUE(doc.m_bDeferredScriptRestart);
+        doc.RunDeferredChanges();                         // not while it runs
+        EXPECT_TRUE(doc.m_bDeferredScriptRestart);
+    }
+    doc.RunDeferredChanges();
+    EXPECT_FALSE(doc.m_bDeferredScriptRestart);
+    ASSERT_NE(nullptr, doc.m_ScriptEngine);
+    doc.Execute("/world.SetVariable('x', tostring(x))");
+    EXPECT_STREQ("1", (const char*)world_var(doc, "x"));   // the script ran afresh
+
+    // ...and when it is not running, at once, as before.
+    doc.Execute("/x = 41");
+    (doc.*(&Access::OnGameReloadScriptFile))();
+    EXPECT_FALSE(doc.m_bDeferredScriptRestart);
+    doc.Execute("/world.SetVariable('x', tostring(x))");
+    EXPECT_STREQ("1", (const char*)world_var(doc, "x"));
+    doc.DisableScripting();
+    unlink(path);
 }
 
 // methods_plugins.cpp UnloadPlugin: "if not found, try to find by name" —

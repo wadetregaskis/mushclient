@@ -160,11 +160,13 @@ void raise_blocked(WorldObject* w, const char* name, const bool started = false)
   const std::string seconds = std::to_string(kUIThreadParkedLimitMs / 1000);
   const std::string message = started
     ? std::string("world.") + name +
-      " did not finish, because the main thread, running it, has been blocked for "
-      + seconds + " seconds at " + where +
-      ".  It may still finish, and what it returns is lost.  A callback the call runs"
-      " was waiting for this thread -- most likely for a lock it holds: release locks"
-      " before calling the world."
+      " did not finish within " + seconds + " seconds: the main thread, running it,"
+      " has been in a script callback for that long, at " + where +
+      ".  The call is NOT cancelled: it may still complete, and do all it does, but"
+      " what it returns is lost -- so do not simply call it again.  Either the callback"
+      " is waiting for this thread (most likely for a lock it holds: release locks"
+      " before calling the world), or it is just slow (sleeping, blocking I/O, a long"
+      " computation)."
     : std::string("world.") + name +
       " could not run, because the main thread has been blocked for "
       + seconds + " seconds at " + where +
@@ -236,7 +238,7 @@ bool world_call(WorldObject* w, MCWorldCallKind kind, const char* name,
       { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
         return false; }
     MCUIScriptScope worldCall(false);
-    MC_WorldCallRun(kind, w->doc, name, nargs ? args : nullptr, (int) nargs, flags, false,
+    MC_WorldCallRun(kind, w->doc, name, nargs ? args : nullptr, (int) nargs, flags,
                     result, wantOutargs ? &outargs : nullptr, rc, ok);
     return true;
     }
@@ -254,7 +256,7 @@ bool world_call(WorldObject* w, MCWorldCallKind kind, const char* name,
     if (c->scriptClosed)
       return;
     MCThreadCallScope scope(cw->doc, cw->engine);
-    c->call.Run(scope.PluginWasRunning());
+    c->call.Run();
     });
   Py_END_ALLOW_THREADS
 

@@ -420,8 +420,12 @@ void CMUSHclientDoc::OnScriptFileChanged(const bool bForce)
     if (bForce || m_nReloadOption == eReloadAlways ||
       ::UMessageBox (strText, MB_YESNO | MB_ICONQUESTION) == IDYES)
       {
-      DisableScripting ();
-      CreateScriptEngine ();
+      // not under the script's own frames: once they return (RunDeferredChanges)
+      if (!DeferScriptRestart ())
+        {
+        DisableScripting ();
+        CreateScriptEngine ();
+        }
       } // end of approving modification or wanting it anyway
 #ifndef _WIN32
     else

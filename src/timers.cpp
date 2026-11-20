@@ -372,6 +372,10 @@ void CMUSHclientDoc::CheckTimers ()
       }
 #endif
 
+  // a plugin unload or reload, or a script reload, put off while its script was
+  // running (methods_plugins.cpp): made now, if no script of ours is
+  RunDeferredChanges ();
+
   if (m_bEnableTimers)
     {
 

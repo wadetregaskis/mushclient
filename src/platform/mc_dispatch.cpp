@@ -6,7 +6,6 @@
 #include "doc.h"
 #include "platform/mc_dispatch.h"
 #include "platform/mc_ui_thread.h"
-#include "scripting/errors.h"      // eBadParameter -- MC_WorldCallRun
 #include "platform/mc_world_call.h"
 
 #ifdef MC_DISPATCH_AVAILABLE
@@ -731,6 +730,11 @@ std::string MC_DispatchErrorMessage (const char* name, int nargs, int rc)
   return MC_DispatchBadArgsMessage (name, nargs);
   }
 
+int MC_DispatchGuarded (const std::function<void ()>& f)
+  {
+  return guarded (f) ? MC_DISP_OK : MC_DISP_EXCEPTION;
+  }
+
 int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
                       const VARIANT* args, int nargs,
                       VARIANT& result, std::vector<VARIANT>* outargs,
@@ -985,39 +989,37 @@ MCThreadCallScope::MCThreadCallScope (CMUSHclientDoc* doc, const void* engine)
     m_previousPlugin (doc->m_CurrentPlugin),
     m_previousSource (doc->m_iCurrentActionSource)
   {
+  if (m_previousPlugin)
+    doc->m_InterruptedPlugins.push_back (m_previousPlugin);
   doc->m_CurrentPlugin = plugin_with_engine (doc, engine);
   doc->m_iCurrentActionSource = eUnknownActionSource;
   }
 
 MCThreadCallScope::~MCThreadCallScope ()
   {
-  if (!MC_DispatchDocIsLive (m_doc))    // the call closed the world
+  if (!MC_DispatchDocIsLive (m_doc))    // the call closed the world, engines and all
     return;
+  if (m_previousPlugin)
+    {
+    std::vector<const CPlugin *> & v = m_doc->m_InterruptedPlugins;
+    for (size_t i = v.size (); i-- > 0; )
+      if (v [i] == m_previousPlugin)
+        {
+        v.erase (v.begin () + (std::ptrdiff_t) i);
+        break;
+        }
+    }
   m_doc->m_CurrentPlugin = m_previousPlugin;
   m_doc->m_iCurrentActionSource = m_previousSource;
   }
 
-bool MC_DispatchDeletesPlugin (const char* name)
-  {
-  const std::string key = lc (name);
-  return key == "unloadplugin" || key == "reloadplugin";
-  }
-
 void MC_WorldCallRun (MCWorldCallKind kind, CMUSHclientDoc* doc, const char* name,
-                      const VARIANT* args, int nargs, unsigned flags, bool pluginRunning,
+                      const VARIANT* args, int nargs, unsigned flags,
                       VARIANT& result, std::vector<VARIANT>* outargs, int& rc, bool& ok)
   {
   switch (kind)
     {
     case MC_CALL_INVOKE:
-      if (pluginRunning && MC_DispatchDeletesPlugin (name))
-        {
-        VariantInit (&result);
-        result.vt = VT_I4;
-        result.lVal = eBadParameter;
-        rc = MC_DISP_OK;
-        return;
-        }
       rc = MC_DispatchInvoke (doc, name, args, nargs, result, outargs, flags);
       return;
     case MC_CALL_GET:

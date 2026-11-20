@@ -423,6 +423,15 @@ int nItem,
       {
       CString strPluginID = p->m_strID;
       CString strPluginName = p->m_strName;
+      // The dialog can be up under the plugin's own script (DoCommand from a
+      // message box's loop, say): not freed under its frames, but once they return.
+      if (m_pDoc->PluginOnStack (p))
+        {
+        m_pDoc->DeferPluginChange (p, false);
+        m_pDoc->Note (TFormat ("Plugin %s (%s) is running a script: it will be removed when that returns",
+                            (LPCTSTR) strPluginName, (LPCTSTR) strPluginID));
+        continue;
+        }
       m_pDoc->m_PluginList.erase (pit);  // remove from list
       delete p;   // delete the plugin
       bChanged = true;
@@ -505,6 +514,14 @@ for (int nItem = -1;
       CString strName       = p->m_strSource;
       CString strPluginID   = p->m_strID;
       CString strPluginName = p->m_strName;
+
+      if (m_pDoc->PluginOnStack (p))     // see OnDeletePlugin
+        {
+        m_pDoc->DeferPluginChange (p, true);
+        m_pDoc->Note (TFormat ("Plugin %s (%s) is running a script: it will be reinstalled when that returns",
+                            (LPCTSTR) strPluginName, (LPCTSTR) strPluginID));
+        continue;
+        }
 
       m_pDoc->m_PluginList.erase (pit);  // remove from list
       delete p;   // delete the plugin

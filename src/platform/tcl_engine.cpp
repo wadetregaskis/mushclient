@@ -135,7 +135,8 @@ Tcl_Obj* variant_to_tcl (CMUSHclientDoc* doc, Tcl_Interp* interp, const VARIANT&
 //
 //   * "\0" reached the world as C0 80, and "\xff" -- U+00FF, how Tcl writes a byte
 //     -- as C3 BF, so `world SendPkt "\xff\xfb\x01"` (IAC WILL ECHO) sent five bytes
-//     of nonsense, in every world;
+//     of nonsense, in every world (a UTF-8 world still takes that string as text:
+//     see SendPkt below);
 //   * a non-UTF-8 world's text came in as raw bytes that Tcl read as Latin-1, so
 //     the first string operation that rebuilt it (string range, string map, regsub)
 //     turned its E9 into C3 A9 on the way back out.
@@ -149,10 +150,15 @@ Tcl_Obj* variant_to_tcl (CMUSHclientDoc* doc, Tcl_Interp* interp, const VARIANT&
 //     script wrote that no byte means is the Windows-1252 byte for it if there is
 //     one (the world's text is taken as 1252 elsewhere), and its UTF-8 otherwise,
 //     as before.
-//   SendPkt, in any world -- a packet is bytes, and Tcl's own way of writing bytes
-//     is characters U+0000..U+00FF (\xNN, `binary format`, `encoding convertto`), so
-//     a packet made only of those is sent as those bytes.  One with any character
-//     beyond goes as text, as above.
+//   SendPkt -- straight to the socket with its length, so that a NUL is a 00 byte
+//     (a telnet packet is full of them), and otherwise as the world's text, above:
+//     in a UTF-8 world, UTF-8 (so "café" is C3 A9, and text the world sent comes
+//     back as the bytes it was); in any other world, U+0000..U+00FF one byte each,
+//     so `world SendPkt "\xff\xfb\x01"` there is IAC WILL ECHO.  A UTF-8 world's
+//     way to send bytes that are not UTF-8 is a Tcl byte array -- `binary format`,
+//     `encoding convertto` -- passed as it is: one is sent exactly, in any world.
+//     (A packet of U+0000..U+00FF used to go as bytes in every world, which sent
+//     "café" as Latin-1 E9 in a UTF-8 world, and "café€" as UTF-8.)
 
 // The next character of Tcl's modified UTF-8, as Tcl reads it: a byte that does
 // not start a well-formed sequence is the Latin-1 character it would be.
@@ -231,41 +237,30 @@ Tcl_Obj* tcl_from_bytes (CMUSHclientDoc* doc, const char* text, size_t n)
 Tcl_Obj* tcl_from_bytes (CMUSHclientDoc* doc, const std::string& s)
   { return tcl_from_bytes (doc, s.data (), s.size ()); }
 
-// A Tcl string as the world's bytes; `packet` for SendPkt (see above).
-std::string tcl_to_bytes (CMUSHclientDoc* doc, Tcl_Obj* o, const bool packet = false)
+// A Tcl string as the world's bytes (see above).
+std::string tcl_to_bytes (CMUSHclientDoc* doc, Tcl_Obj* o)
   {
   int len = 0;
   const unsigned char* p = o ? (const unsigned char*) Tcl_GetStringFromObj (o, &len) : nullptr;
   const size_t n = p ? (size_t) len : 0;
 
-  // Decode once: Tcl's characters, surrogate pairs joined.
-  std::vector<unsigned int> chars;
-  chars.reserve (n);
-  bool allBytes = true;
-  for (size_t i = 0; i < n; )
-    {
-    unsigned int cp = next_char (p, n, i);
-    if (cp >= 0xD800 && cp <= 0xDBFF && i < n)
-      {
-      size_t j = i;
-      const unsigned int lo = next_char (p, n, j);
-      if (lo >= 0xDC00 && lo <= 0xDFFF)
-        {
-        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-        i = j;
-        }
-      }
-    if (cp > 0xFF)
-      allBytes = false;
-    chars.push_back (cp);
-    }
-
   std::string out;
   out.reserve (n);
-  if ((packet && allBytes) || !utf8_world (doc))
+  if (!utf8_world (doc))
     {
-    for (unsigned int cp : chars)
+    for (size_t i = 0; i < n; )
       {
+      unsigned int cp = next_char (p, n, i);
+      if (cp >= 0xD800 && cp <= 0xDBFF && i < n)      // a surrogate pair, joined
+        {
+        size_t j = i;
+        const unsigned int lo = next_char (p, n, j);
+        if (lo >= 0xDC00 && lo <= 0xDFFF)
+          {
+          cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+          i = j;
+          }
+        }
       if (cp <= 0xFF)
         out += (char) cp;
       else if (const unsigned char b = cp1252_byte (cp))
@@ -304,11 +299,28 @@ std::string tcl_to_bytes (CMUSHclientDoc* doc, Tcl_Obj* o, const bool packet = f
 // method's real parameter type (mc_dispatch.cpp: atol/atof for numeric params),
 // which suits Tcl's everything-is-a-string value model.  (A NUL ends the string
 // there, as it does for every engine: a world method takes a C string.)
-void tcl_to_variant (CMUSHclientDoc* doc, Tcl_Obj* o, VARIANT& out, const bool packet = false)
+void tcl_to_variant (CMUSHclientDoc* doc, Tcl_Obj* o, VARIANT& out)
   {
   VariantInit (&out);
   out.vt = VT_BSTR;
-  out.bstrVal = MC_BstrFromBytes (tcl_to_bytes (doc, o, packet).c_str ());
+  out.bstrVal = MC_BstrFromBytes (tcl_to_bytes (doc, o).c_str ());
+  }
+
+// A byte array that has never been a string (`binary format`, `encoding convertto`,
+// passed as it is): SendPkt sends its bytes exactly, in any world -- a UTF-8
+// world's way to send what is not UTF-8.  Once it has been used as a string it is
+// text like any other.
+static bool pure_byte_array (Tcl_Obj* o)
+  {
+  static const Tcl_ObjType* const byteArray = Tcl_GetObjType ("bytearray");
+  return o && byteArray && o->typePtr == byteArray && o->bytes == nullptr;
+  }
+
+static std::string byte_array_bytes (Tcl_Obj* o)
+  {
+  int n = 0;
+  const unsigned char* b = Tcl_GetByteArrayFromObj (o, &n);
+  return std::string ((const char*) b, (size_t) (n > 0 ? n : 0));
   }
 
 // ── the `world` command: world <Method|Property> [args...] ───────────────────
@@ -324,26 +336,39 @@ int World_cmd (ClientData cd, Tcl_Interp* interp, int objc, Tcl_Obj* const objv[
   if (MC_DispatchHas (name.c_str ()))           // a method
     {
     MCVariantArgs vargs ((size_t) nextra);
-    // SendPkt's argument is a packet, not text: see tcl_to_bytes.
     std::string lower (name);
     for (char& ch : lower) ch = (char) tolower ((unsigned char) ch);   // names are case-blind
-    const bool packet = lower == "sendpkt";
-    if (packet && nextra >= 1)
+    if (lower == "sendpkt" && nextra >= 1)
       {
       // Straight to the socket, as CMUSHclientDoc::SendPkt does it, but with its
       // length: a method's string parameter ends at the first NUL, and a telnet
-      // packet (NAWS's IAC SB 31 0 80 0 24 IAC SE) is full of them.
-      const std::string bytes = tcl_to_bytes (doc, objv[2], true);
+      // packet (NAWS's IAC SB 31 0 80 0 24 IAC SE) is full of them.  What the
+      // dispatch would do otherwise, this does too: no argument goes on to it below
+      // (and its strict check), more than one is ignored, as it ignores them, and a
+      // C++ exception is caught as it catches one, rather than unwinding through
+      // Tcl's C frames.
+      const std::string bytes = pure_byte_array (objv[2])
+                                  ? byte_array_bytes (objv[2])
+                                  : tcl_to_bytes (doc, objv[2]);
       long code = eWorldClosed;
-      if (doc->m_iConnectPhase == eConnectConnectedToMud)
+      const int rc = MC_DispatchGuarded ([&]
         {
-        doc->SendPacket (bytes.data (), (int) bytes.size ());
-        code = eOK;
+        if (doc->m_iConnectPhase == eConnectConnectedToMud)
+          {
+          doc->SendPacket (bytes.data (), (int) bytes.size ());
+          code = eOK;
+          }
+        });
+      if (rc != MC_DISP_OK)
+        {
+        Tcl_SetObjResult (interp, Tcl_NewStringObj (
+          ("world " + name + ": " + MC_DispatchErrorMessage (name.c_str (), nextra, rc)).c_str (), -1));
+        return TCL_ERROR;
         }
       Tcl_SetObjResult (interp, Tcl_NewLongObj (code));
       return TCL_OK;
       }
-    for (int i = 0; i < nextra; i++) tcl_to_variant (doc, objv[2 + i], vargs[i], packet);
+    for (int i = 0; i < nextra; i++) tcl_to_variant (doc, objv[2 + i], vargs[i]);
 
     VARIANT result; VariantInit (&result);
     std::vector<VARIANT> outargs;

@@ -93,12 +93,13 @@ class CScriptEngine : public CObject
 
   // How many of this engine's calls are on the stack now: Parse, Execute, ExecuteLua
   // and the like count themselves in (Running), as does Lua's CallPlugin, which calls
-  // a plugin's function directly.  UnloadPlugin and ReloadPlugin refuse a plugin
-  // whose engine is running, since deleting it would free the interpreter under its
-  // own frames.  Their old test -- "is it m_CurrentPlugin?" -- missed every case
-  // where it is not: a callback that calls world.Execute (which clears
-  // m_CurrentPlugin) or CallPlugin into a plugin that unloads its caller, or a
-  // script's thread's call.
+  // a plugin's function directly.  UnloadPlugin and ReloadPlugin DEFER the change
+  // for a plugin whose engine is running (CMUSHclientDoc::DeferPluginChange), since
+  // deleting it would free the interpreter under its own frames; so do the Plugins
+  // dialog and a reload of the world's script.  Their old test -- "is it
+  // m_CurrentPlugin?" -- missed every case where it is not: a callback that calls
+  // world.Execute (which clears m_CurrentPlugin) or CallPlugin into a plugin that
+  // unloads its caller, or a script's thread's call.
   int m_iRunning;
   struct Running
     {

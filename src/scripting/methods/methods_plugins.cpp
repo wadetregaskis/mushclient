@@ -232,9 +232,15 @@ CPlugin * pPlugin = GetPlugin (PluginID);
     return eNoSuchPlugin;
 
   // cannot reload  ourselves
-  if (pPlugin == m_CurrentPlugin ||
-      (pPlugin->m_ScriptEngine && pPlugin->m_ScriptEngine->IsRunning ()))  // nor under its own frames
+  if (pPlugin == m_CurrentPlugin)
     return eBadParameter;
+
+  // nor free its script under its own frames: later, then (see DeferPluginChange)
+  if (PluginOnStack (pPlugin))
+    {
+    DeferPluginChange (pPlugin, true);
+    return eOK;
+    }
 
   PluginListIterator pit = find (m_PluginList.begin (), 
                                  m_PluginList.end (), 
@@ -276,6 +282,89 @@ CPlugin * pPlugin = GetPlugin (PluginID);
 
 	return eOK;
 }  // end of CMUSHclientDoc::ReloadPlugin
+
+// ── Deferred unloads and reloads (doc.h, DeferPluginChange) ──────────────────
+
+bool CMUSHclientDoc::PluginOnStack (const CPlugin * pPlugin) const
+  {
+  if (!pPlugin)
+    return false;
+  if (pPlugin->m_ScriptEngine && pPlugin->m_ScriptEngine->IsRunning ())
+    return true;
+  return find (m_InterruptedPlugins.begin (), m_InterruptedPlugins.end (), pPlugin)
+           != m_InterruptedPlugins.end ();
+  }
+
+bool CMUSHclientDoc::AnyScriptOnStack () const
+  {
+  if (m_ScriptEngine && m_ScriptEngine->IsRunning ())
+    return true;
+  if (!m_InterruptedPlugins.empty ())
+    return true;
+  for (const CPlugin * p : m_PluginList)
+    if (PluginOnStack (p))
+      return true;
+  return false;
+  }
+
+void CMUSHclientDoc::DeferPluginChange (const CPlugin * pPlugin, const bool bReload)
+  {
+  for (const DeferredPluginChange & c : m_DeferredPluginChanges)
+    if (c.bReload == bReload && c.strID.CompareNoCase (pPlugin->m_strID) == 0)
+      return;     // asked for already
+  DeferredPluginChange change;
+  change.strID   = pPlugin->m_strID;
+  change.bReload = bReload;
+  m_DeferredPluginChanges.push_back (change);
+  }
+
+bool CMUSHclientDoc::DeferScriptRestart ()
+  {
+  if (!m_ScriptEngine || !m_ScriptEngine->IsRunning ())
+    return false;
+  m_bDeferredScriptRestart = true;
+  return true;
+  }
+
+// From CheckTimers, which runs from the message loop's timer: the changes are made
+// only when no script of this world is on the stack, nor any plugin current (a
+// modal loop -- a message box a script raised -- also delivers the timer).  Not
+// at the moment the last frame returns: the C++ that called the script would then
+// go on using the plugin it had just lost.
+void CMUSHclientDoc::RunDeferredChanges ()
+  {
+  if (m_DeferredPluginChanges.empty () && !m_bDeferredScriptRestart)
+    return;
+  if (m_CurrentPlugin || AnyScriptOnStack ())
+    return;       // not yet
+
+  if (m_bDeferredScriptRestart)
+    {
+    m_bDeferredScriptRestart = false;
+    DisableScripting ();
+    if (m_bEnableScripts)
+      CreateScriptEngine ();
+    }
+
+  // Only what was asked for before this pass: a plugin whose OnPluginInstall asks
+  // to be reloaded again waits for the next one, rather than looping here.
+  std::vector<DeferredPluginChange> changes;
+  changes.swap (m_DeferredPluginChanges);
+  for (size_t i = 0; i < changes.size (); i++)
+    {
+    const DeferredPluginChange & c = changes [i];
+    const long rc = c.bReload ? ReloadPlugin (c.strID) : UnloadPlugin (c.strID);
+    if (rc == ePluginFileNotFound || rc == eProblemsLoadingPlugin)
+      ColourNote ("white", "red",
+                  rc == ePluginFileNotFound
+                    ? TFormat ("Plugin %s could not be reloaded: its file was not found",
+                               (LPCTSTR) c.strID)
+                    : TFormat ("Plugin %s could not be reloaded: it did not load",
+                               (LPCTSTR) c.strID));
+    // eNoSuchPlugin: gone already, which is what an unload wanted.  eBadParameter
+    // cannot happen here (nothing is current), nor another deferral (nothing runs).
+    }
+  }
 
 // helper routine to find a particular plugin
 
@@ -642,9 +731,15 @@ CPlugin * pPlugin = GetPlugin (PluginID);
     return eNoSuchPlugin;
 
   // cannot delete  ourselves
-  if (pPlugin == m_CurrentPlugin ||
-      (pPlugin->m_ScriptEngine && pPlugin->m_ScriptEngine->IsRunning ()))  // nor under its own frames
+  if (pPlugin == m_CurrentPlugin)
     return eBadParameter;
+
+  // nor free its script under its own frames: later, then (see DeferPluginChange)
+  if (PluginOnStack (pPlugin))
+    {
+    DeferPluginChange (pPlugin, false);
+    return eOK;
+    }
 
   PluginListIterator pit = find (m_PluginList.begin (), 
                                  m_PluginList.end (), 

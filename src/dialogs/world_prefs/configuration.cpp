@@ -1719,9 +1719,12 @@ void CMUSHclientDoc:: SavePrefsP17 (CPrefsP17 &page17)
   // a) The language has changed; or
   // b) The script file name has changed
 
+  // (Not under the script's own frames, should the dialog be up under them: the
+  // restart then waits for them to return, with the new settings -- RunDeferredChanges.)
   if (m_strScriptFilename != page17.m_strScriptFilename ||
       m_strLanguage != page17.m_strLanguage)
-    DisableScripting ();
+    if (!DeferScriptRestart ())
+      DisableScripting ();
 
  	m_strLanguage          = page17.m_strLanguage;            
 	m_bEnableScripts       = page17.m_bEnableScripts;     
@@ -1751,7 +1754,8 @@ void CMUSHclientDoc:: SavePrefsP17 (CPrefsP17 &page17)
   // disable scripting if necessary
 
   if (!m_bEnableScripts)
-    DisableScripting ();
+    if (!DeferScriptRestart ())
+      DisableScripting ();
 
   // initialise (new) scripting engine if necessary
   

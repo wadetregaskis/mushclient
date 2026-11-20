@@ -2543,8 +2543,11 @@ pCmdUI->SetCheck (m_iConnectPhase != eConnectNotConnected);
 }
 
 
-void CMUSHclientDoc::OnGameReloadScriptFile() 
+void CMUSHclientDoc::OnGameReloadScriptFile()
 {
+  // not under the script's own frames: once they return (RunDeferredChanges)
+  if (DeferScriptRestart ())
+    return;
   DisableScripting ();
   CreateScriptEngine ();	
 }

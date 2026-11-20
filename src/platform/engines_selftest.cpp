@@ -59,6 +59,7 @@
 #include <functional>
 #include <list>
 #include <map>
+#include <stdexcept>        // runtime_error -- the Tcl SendPkt battery's throwing transport
 #include <string>
 
 namespace {
@@ -2365,9 +2366,20 @@ void battery_py_thread_calls(const Dialect& d)
     doc->m_CurrentPlugin = other;
     pump(5000, [&] { return !e.var("unloaded").empty(); });
     doc->m_CurrentPlugin = nullptr;
-    check(e.var("unloaded") == std::to_string(eBadParameter) &&
-          doc->GetPlugin("bbbbbbbbbbbbbbbbbbbbbbbb") == other, L,
-          "a thread cannot unload a plugin while a plugin's callback is running");
+    // (It was refused, eBadParameter; now it is put off until the callback is done.)
+    check(e.var("unloaded") == std::to_string(eOK) &&
+          doc->GetPlugin("bbbbbbbbbbbbbbbbbbbbbbbb") == other &&
+          doc->m_InterruptedPlugins.empty(), L,
+          "a thread's unload of the plugin whose callback it interrupted is deferred, not made");
+    doc->m_CurrentPlugin = other;
+    doc->RunDeferredChanges();
+    check(doc->GetPlugin("bbbbbbbbbbbbbbbbbbbbbbbb") == other, L,
+          "...not even while that plugin is current");
+    doc->m_CurrentPlugin = nullptr;
+    doc->RunDeferredChanges();
+    check(doc->GetPlugin("bbbbbbbbbbbbbbbbbbbbbbbb") == nullptr && doc->m_DeferredPluginChanges.empty(), L,
+          "...but made once nothing is running");
+    other = add_plugin(doc, "Other", "bbbbbbbbbbbbbbbbbbbbbbbb", "Python", nullptr);
     e.seed("unloaded", "");
     e.callRich("startunload", &err);
     pump(5000, [&] { return !e.var("unloaded").empty(); });
@@ -2512,8 +2524,9 @@ void battery_ruby_thread_calls(const Dialect& d)
     check(plugin_var(doc, locker, "rcbran") == "yes", L,
           "a thread holding a lock its call's callback wants does not freeze the client");
     e.callRich("rdlreport", &err);
-    check(e.var("rdl").find("did not finish") != std::string::npos, L,
-          "...the thread's call raising, saying it did not finish");
+    check(e.var("rdl").find("did not finish") != std::string::npos &&
+          e.var("rdl").find("may still complete") != std::string::npos, L,
+          "...the thread's call raising, saying it did not finish, and may still complete");
     pump(100);
     check(e.saw("Ruby thread in the world's script"), L, "...and the output window says so");
     doc->m_PluginList.remove(locker);
@@ -2588,7 +2601,8 @@ void battery_py_deadlock(const Dialect& d)
     e.callRich("report", &err);
     const std::string dl = e.var("dl");
     check(dl.find("did not finish") != std::string::npos &&
-          dl.find("main thread") != std::string::npos, L,
+          dl.find("main thread") != std::string::npos &&
+          dl.find("may still complete") != std::string::npos && dl.find("do not simply call it again") != std::string::npos, L,
           "...the thread's call raising, saying it did not finish and why");
     check(dl.find("in cb") != std::string::npos, L, "...naming the callback that was waiting");
     pump(100);
@@ -2621,6 +2635,63 @@ void battery_py_deadlock(const Dialect& d)
 //     such call in Python, JavaScript and Ruby was refused, and a plugin that saved
 //     its state with world.SetVariable in OnPluginSaveState lost it on every close.
 //     Driven for real: the plugin's state file is what is checked.
+// 6a-quinquies-bis. A plugin unloaded or reloaded while its own callback is under
+//     the call: A calls CallPlugin into B, and B unloads or reloads A.  Upstream freed
+//     A's interpreter under its frames; for a while it was refused (eBadParameter),
+//     which silently stopped manager plugins.  Now it is deferred: eOK, A's callback
+//     runs on, and the change is made at the next safe point (RunDeferredChanges).
+struct DeferScript { const char* key; const char* script; };
+const DeferScript kDeferScripts[] = {
+  { "lua",
+    "function ask(s) world.CallPlugin('dddddddddddddddddddddddd', s, '') world.SetVariable('after', 'alive') end\n" },
+  { "python",
+    "def ask(s):\n    world.CallPlugin('dddddddddddddddddddddddd', s, '')\n    world.SetVariable('after', 'alive')\n" },
+  { "perl",
+    "sub ask { $world->CallPlugin('dddddddddddddddddddddddd', $_[0], ''); $world->SetVariable('after', 'alive'); }\n" },
+  { "js",
+    "function ask(s) { world.CallPlugin('dddddddddddddddddddddddd', s, ''); world.SetVariable('after', 'alive'); }\n" },
+  { "tcl",
+    "proc ask {s} { world CallPlugin dddddddddddddddddddddddd $s {}; world SetVariable after alive }\n" },
+  { "ruby",
+    "def ask(s); world.CallPlugin('dddddddddddddddddddddddd', s, ''); world.SetVariable('after', 'alive'); end\n" },
+};
+
+void battery_deferred_unload(const Dialect& d)
+{
+    const char* L = d.display;
+    const char* script = nullptr;
+    for (const DeferScript& c : kDeferScripts)
+        if (strcmp(c.key, d.key) == 0) script = c.script;
+    if (!script) { skip(L, "unloading a plugin under its own callback is deferred", "no script"); return; }
+    static const char kA[] = "eeeeeeeeeeeeeeeeeeeeeeee";
+    static const char kB[] = "dddddddddddddddddddddddd";
+    Engine e(d.language, d.source);
+    if (!e.ok) { skip(L, "unloading a plugin under its own callback is deferred", "engine failed to open"); return; }
+    CMUSHclientDoc* doc = e.doc;
+    add_plugin(doc, "DeferB", kB, "Lua",
+      "function unloadA() world.SetVariable('rc', tostring(world.UnloadPlugin('eeeeeeeeeeeeeeeeeeeeeeee'))) end\n"
+      "function reloadA() world.SetVariable('rc', tostring(world.ReloadPlugin('eeeeeeeeeeeeeeeeeeeeeeee'))) end\n");
+    CPlugin* b = doc->GetPlugin(kB);
+
+    for (int reload = 0; reload <= 1; reload++) {
+        const std::string what = reload ? " (ReloadPlugin)" : " (UnloadPlugin)";
+        CPlugin* a = add_plugin(doc, "DeferA", kA, d.language, script);
+        doc->CallPlugin(kA, "ask", reload ? "reloadA" : "unloadA");
+        check(plugin_var(doc, b, "rc") == std::to_string(eOK) && doc->GetPlugin(kA) == a, L,
+              ("B unloading A under A's callback gets eOK, and A is not freed under it" + what).c_str());
+        check(plugin_var(doc, a, "after") == "alive", L,
+              ("...A's callback runs on to its end" + what).c_str());
+        doc->RunDeferredChanges();
+        // A has no file, so the reload is the unload and a note that it failed.
+        check(doc->GetPlugin(kA) == nullptr && doc->m_DeferredPluginChanges.empty(), L,
+              ("...and the change is made once it has returned" + what).c_str());
+        if (reload)
+            check(e.saw("could not be reloaded"), L, "...a reload that then fails says so");
+    }
+    doc->m_PluginList.remove(b);
+    delete b;
+}
+
 struct CloseScript { const char* key; const char* script; };
 const CloseScript kCloseScripts[] = {
   { "lua",
@@ -2758,10 +2829,12 @@ void battery_world_close(const Dialect& d)
 //     world's text was re-encoded as UTF-8 by any string operation that rebuilt it.
 struct SelftestTransport : pal::ITransport {
     std::string sent;
+    bool boom = false;      // send throws, as a transport's could
     void resolve(const char*, pal::ResolveToken) override {}
     void cancelResolve() override {}
     void connect(const pal::NetAddress&, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void send(const char* data, size_t n) override
+      { if (boom) throw std::runtime_error("transport boom"); sent.append(data, n); }
     void startTls(const pal::TlsParams&) override {}
     void close() override {}
     std::string lastErrorString() const override { return "selftest"; }
@@ -2778,7 +2851,15 @@ void battery_tcl_text(const Dialect& d)
       "proc euro {s} { world SetVariable euro \"\\u20ac\" }\n"
       "proc pkt {s} { return [world SendPkt \"\\xff\\xfb\\x01\"] }\n"
       "proc pktnul {s} { return [world SendPkt \"\\xff\\xfa\\x1f\\x00\\x50\\x00\\x18\\xff\\xf0\"] }\n"
-      "proc pkttext {s} { return [world SendPkt \"caf\\u00e9\\u20ac\"] }\n";
+      "proc pkttext {s} { return [world SendPkt \"caf\\u00e9\\u20ac\"] }\n"
+      "proc pktcafe {s} { return [world SendPkt \"caf\\u00e9\"] }\n"
+      "proc pktecho {s} { return [world SendPkt $s] }\n"
+      "proc pktnulstr {s} { return [world SendPkt \"a\\0b\"] }\n"
+      "proc pktbin {s} { return [world SendPkt [binary format c* {-1 -5 1}]] }\n"
+      "proc pktbinnul {s} { return [world SendPkt [binary format c* {-1 -6 31 0 80 0 24 -1 -16}]] }\n"
+      "proc pktconv {s} { return [world SendPkt [encoding convertto utf-8 \"caf\\u00e9\"]] }\n"
+      "proc pktextra {s} { return [world SendPkt x y z] }\n"
+      "proc pktboom {s} { if {[catch {world SendPkt x} m]} { return \"caught: $m\" }; return \"ret: $m\" }\n";
 
     for (int utf8 = 0; utf8 <= 1; utf8++) {
         Engine e(d.language, kSource);
@@ -2795,16 +2876,66 @@ void battery_tcl_text(const Dialect& d)
                   "Tcl's exit raises an error instead of closing the client");
         }
 
-        check(e.callRtn("pkt", "") == "0" && t->sent == "\xFF\xFB\x01", L,
-              ("world SendPkt \"\\xff\\xfb\\x01\" sends those three bytes" + world).c_str());
-        t->sent.clear();
-        e.callRtn("pktnul", "");
-        check(t->sent == std::string("\xFF\xFA\x1F\x00\x50\x00\x18\xFF\xF0", 9), L,
-              ("...and a packet with NULs in it, whole" + world).c_str());
+        // SendPkt sends the world's text: in a UTF-8 world UTF-8, as it always did
+        // (for a while a packet of U+0000..U+00FF went as Latin-1 bytes in every
+        // world, so "café" went out as E9 there); in any other world, one byte a
+        // character.  A byte array is sent as its bytes in either.
+        const std::string nulPkt("\xFF\xFA\x1F\x00\x50\x00\x18\xFF\xF0", 9);
+        if (utf8) {
+            check(e.callRtn("pktcafe", "") == "0" && t->sent == "caf\xC3\xA9", L,
+                  "world SendPkt \"caf\\u00e9\" sends UTF-8 (UTF-8 world)");
+            t->sent.clear();
+            e.callRtn("pktecho", "caf\xC3\xA9 \xE2\x82\xAC");
+            check(t->sent == "caf\xC3\xA9 \xE2\x82\xAC", L,
+                  "...so text the world sent goes back as the bytes it was (UTF-8 world)");
+            t->sent.clear();
+            e.callRtn("pkt", "");
+            check(t->sent == "\xC3\xBF\xC3\xBB\x01", L,
+                  "...and \"\\xff\\xfb\\x01\" is text there, as it always was (UTF-8 world)");
+            t->sent.clear();
+            e.callRtn("pktnulstr", "");
+            check(t->sent == std::string("a\0b", 3), L,
+                  "...but a NUL in it is a 00 byte, not C0 80 (UTF-8 world)");
+        } else {
+            check(e.callRtn("pkt", "") == "0" && t->sent == "\xFF\xFB\x01", L,
+                  "world SendPkt \"\\xff\\xfb\\x01\" sends those three bytes (non-UTF-8 world)");
+            t->sent.clear();
+            e.callRtn("pktnul", "");
+            check(t->sent == nulPkt, L, "...and a packet with NULs in it, whole (non-UTF-8 world)");
+            t->sent.clear();
+            e.callRtn("pktcafe", "");
+            check(t->sent == "caf\xE9", L,
+                  "...and \"caf\\u00e9\" as the world's byte E9 (non-UTF-8 world)");
+            t->sent.clear();
+            e.callRtn("pktecho", "caf\xE9");
+            check(t->sent == "caf\xE9", L,
+                  "...so text the world sent goes back as the bytes it was (non-UTF-8 world)");
+        }
         t->sent.clear();
         e.callRtn("pkttext", "");
         check(t->sent == (utf8 ? "caf\xC3\xA9\xE2\x82\xAC" : "caf\xE9\x80"), L,
               ("...and one with a character no byte means, as the world's text" + world).c_str());
+        t->sent.clear();
+        e.callRtn("pktbin", "");
+        check(t->sent == "\xFF\xFB\x01", L,
+              ("world SendPkt [binary format ...] sends the byte array's bytes exactly" + world).c_str());
+        t->sent.clear();
+        e.callRtn("pktbinnul", "");
+        check(t->sent == nulPkt, L, ("...NULs and all" + world).c_str());
+        t->sent.clear();
+        e.callRtn("pktconv", "");
+        check(t->sent == "caf\xC3\xA9", L,
+              ("...and what encoding convertto made, not encoded twice" + world).c_str());
+        t->sent.clear();
+        check(e.callRtn("pktextra", "") == "0" && t->sent == "x", L,
+              ("SendPkt ignores extra arguments, as the dispatch does for every method" + world).c_str());
+        t->sent.clear();
+        t->boom = true;
+        const CString boom = e.callRtn("pktboom", "");
+        t->boom = false;
+        check(boom.Find("caught: world SendPkt: the method failed") == 0 && boom.Find("transport boom") > 0, L,
+              ("a C++ exception out of SendPkt is a Tcl error, as the dispatch makes it" + world).c_str());
+        t->sent.clear();
 
         e.callRtn("setnul", "");
         check(e.var("nul") == "a", L,
@@ -2901,12 +3032,32 @@ void battery_ruby_names(const Dialect& d)
       "  rescue => e\n"
       "    e.message\n"
       "  end\n"
+      "end\n"
+      // Not only a raise: a throw to a catch further out jumps through the call too,
+      // and its errinfo is no exception (re-raising it as one crashed, or worse).
+      "class Thrower; def to_s; throw :out, 'thrown'; end; end\n"
+      "def throwarg(s)\n"
+      "  catch(:out) { world.Note(Thrower.new); 'silent' }\n"
+      "end\n"
+      "def throwset(s)\n"
+      "  catch(:out) { world.Trace = Thrower.new; 'silent' }\n"
+      "end\n"
+      "def afterthrow(s)\n"
+      "  catch(:out) { world.Note(Thrower.new) }\n"
+      "  world.SetVariable('after', 'ok')\n"
+      "  world.GetVariable('after')\n"
       "end\n");
     if (!e.ok) { skip(L, "a non-ASCII callback name resolves", "engine failed to open"); return; }
     check(e.callRtn("d\xC3\xA9placer", "x") == "moved", L,
           "a callback whose name is not ASCII is found and called");
     check(e.callRtn("badarg", "") == "no string", L,
           "an argument whose to_s raises raises that, in the script");
+    check(e.callRtn("throwarg", "") == "thrown", L,
+          "an argument whose to_s throws to a catch outside the call lands in that catch");
+    check(e.callRtn("throwset", "") == "thrown", L,
+          "...and so does one a property is set to");
+    check(e.callRtn("afterthrow", "") == "ok", L,
+          "...and the world can be called again afterwards");
 
     Engine latin(d.language, "def d\xE9placer(s); 'latin'; end\n");
     if (!latin.ok)
@@ -3007,6 +3158,7 @@ bool run_language(const Dialect& d)
     if (strcmp(d.key, "js") == 0)
         battery_js_promises(d);
     battery_world_close(d);
+    battery_deferred_unload(d);
     battery_trace     (d);
     battery_error_routing(d);
     battery_stale_proxy  (d);

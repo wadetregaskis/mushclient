@@ -24,6 +24,7 @@
 #include "doc.h"
 #include "OtherTypes.h"
 #include "scripting/errors.h"   // eOK / eCouldNotOpenFile
+#include "scripting/scripting.h"   // CScriptEngine::Running -- the Plugins dialog deferral test
 
 #include "mushview.h"       // CMUSHView: the click-column tests below
 #include "dialogs/plugins/PluginsDlg.h"  // CPluginsDlg -- the stale-CPlugin* row
@@ -760,6 +761,54 @@ TEST(PluginsDlgR6, ShowInfoIsDisabledOnceThePluginHasLeftTheList)
 
     dlg.m_ctlPluginList.Detach();   // never let MFC's map outlive the window
     delete erased;                  // m_PluginList no longer owns it
+}
+
+// The Plugins dialog's Remove and Reinstall delete the plugin, script engine and
+// all, with no check that a frame of that script is on the stack -- and the dialog
+// can be up under it (world.DoCommand("PluginsList") from a message box's modal
+// loop), so the engine's own count would then write to it freed.  Now the change is
+// deferred, as UnloadPlugin's is (CMUSHclientDoc::DeferPluginChange).
+TEST(PluginsDlgR6, RemoveAndReinstallWaitForTheScriptToReturn)
+{
+    ListCtrlFixture ctl;
+    ASSERT_TRUE(ctl.ok());
+
+    CMUSHclientDoc doc;
+    CPlugin* p = make_plugin(doc, "Busy", "cccccccccccccccccccccccc", "A plugin whose script runs.");
+    p->m_bSaveState   = false;
+    p->m_ScriptEngine = new CScriptEngine(&doc, "Lua");   // CPlugin's destructor deletes it
+    doc.m_PluginList.push_back(p);
+
+    struct Access : CPluginsDlg
+      { using CPluginsDlg::OnDeletePlugin; using CPluginsDlg::OnReload; };
+    CPluginsDlg dlg;
+    dlg.m_pDoc = &doc;
+    dlg.m_ctlPluginList.Attach(ctl.list);
+    dlg.m_ctlPluginList.InsertColumn(eColumnName, "Name", LVCFMT_LEFT, 130);
+    dlg.LoadList();
+    ASSERT_EQ(1, dlg.m_ctlPluginList.GetItemCount());
+
+    {
+        CScriptEngine::Running running(p->m_ScriptEngine);   // as if under its script
+        dlg.m_ctlPluginList.SetItemState(0, LVIS_SELECTED, LVIS_SELECTED);
+        (dlg.*(&Access::OnReload))();
+        dlg.m_ctlPluginList.SetItemState(0, LVIS_SELECTED, LVIS_SELECTED);
+        (dlg.*(&Access::OnDeletePlugin))();
+        EXPECT_TRUE(doc.GetPlugin("cccccccccccccccccccccccc") == p);   // still there
+        ASSERT_EQ(2u, doc.m_DeferredPluginChanges.size());
+        EXPECT_TRUE(doc.m_DeferredPluginChanges[0].bReload);
+        EXPECT_FALSE(doc.m_DeferredPluginChanges[1].bReload);
+        doc.RunDeferredChanges();                                       // not yet
+        EXPECT_TRUE(doc.GetPlugin("cccccccccccccccccccccccc") == p);
+    }
+
+    // Once it has returned: the reload (its file is gone, which says so), then the
+    // removal of whatever is left -- nothing, so that is quietly done.
+    doc.RunDeferredChanges();
+    EXPECT_TRUE(doc.GetPlugin("cccccccccccccccccccccccc") == NULL);
+    EXPECT_TRUE(doc.m_DeferredPluginChanges.empty());
+
+    dlg.m_ctlPluginList.Detach();
 }
 
 // ═══ 44f0737's two hoisted helpers, which Windows could not reach ══════════

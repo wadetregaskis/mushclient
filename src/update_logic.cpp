@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <system_error>
 
@@ -672,32 +673,30 @@ bool VerifySignature (const std::string & message, const std::string & signature
   return bGood;
   }
 
-bool HashFile (const std::string & path, std::string * hexOut, std::string * error)
+namespace {
+
+// Pieces, from `next` until it gives 0, then the hash in hex.  False if `next` fails.
+bool Sha256 (const std::function<bool (const unsigned char ** data, size_t * size)> & next, std::string * hexOut)
   {
-  FILE * f = fopen (path.c_str (), "rb");
-  if (!f)
-    {
-    *error = "could not read " + path;
-    return false;
-    }
   std::unique_ptr<EVP_MD_CTX, decltype (&EVP_MD_CTX_free)> ctx (EVP_MD_CTX_new (), EVP_MD_CTX_free);
   bool bOK = ctx && EVP_DigestInit_ex (ctx.get (), EVP_sha256 (), nullptr) == 1;
-  std::vector<unsigned char> buffer (1024 * 1024);
-  size_t got;
-  while (bOK && (got = fread (buffer.data (), 1, buffer.size (), f)) > 0)
-    bOK = EVP_DigestUpdate (ctx.get (), buffer.data (), got) == 1;
-  if (ferror (f))
-    bOK = false;
-  fclose (f);
+  const unsigned char * data = nullptr;
+  size_t size = 0;
+  while (bOK)
+    {
+    if (!next (&data, &size))
+      bOK = false;
+    else if (size == 0)
+      break;
+    else
+      bOK = EVP_DigestUpdate (ctx.get (), data, size) == 1;
+    }
   unsigned char digest [EVP_MAX_MD_SIZE];
   unsigned int length = 0;
   if (bOK)
     bOK = EVP_DigestFinal_ex (ctx.get (), digest, &length) == 1;
   if (!bOK)
-    {
-    *error = "could not read " + path;
     return false;
-    }
   static const char kDigits [] = "0123456789abcdef";
   hexOut->clear ();
   for (unsigned int i = 0; i < length; i++)
@@ -706,6 +705,49 @@ bool HashFile (const std::string & path, std::string * hexOut, std::string * err
     *hexOut += kDigits [digest [i] & 15];
     }
   return true;
+  }
+
+} // anonymous namespace
+
+bool HashOpenFile (FILE * f, std::string * hexOut, std::string * error)
+  {
+  std::vector<unsigned char> buffer (1024 * 1024);
+  const bool bOK = Sha256 ([&] (const unsigned char ** data, size_t * size)
+    {
+    *data = buffer.data ();
+    *size = fread (buffer.data (), 1, buffer.size (), f);
+    return *size > 0 || !ferror (f);
+    }, hexOut);
+  if (!bOK)
+    *error = "could not read the file";
+  return bOK;
+  }
+
+bool HashBytes (const void * data, const size_t size, std::string * hexOut)
+  {
+  bool bGiven = false;
+  return Sha256 ([&] (const unsigned char ** piece, size_t * pieceSize)
+    {
+    *piece = (const unsigned char *) data;
+    *pieceSize = bGiven ? 0 : size;
+    bGiven = true;
+    return true;
+    }, hexOut);
+  }
+
+bool HashFile (const std::string & path, std::string * hexOut, std::string * error)
+  {
+  FILE * f = fopen (path.c_str (), "rb");
+  if (!f)
+    {
+    *error = "could not read " + path;
+    return false;
+    }
+  const bool bOK = HashOpenFile (f, hexOut, error);
+  fclose (f);
+  if (!bOK)
+    *error = "could not read " + path;
+  return bOK;
   }
 
 #else // no crypto in this build
@@ -724,6 +766,17 @@ bool VerifySignature (const std::string &, const std::string &, const std::strin
 bool HashFile (const std::string &, std::string *, std::string * error)
   {
   *error = "this build has no way to check a file";
+  return false;
+  }
+
+bool HashOpenFile (FILE *, std::string *, std::string * error)
+  {
+  *error = "this build has no way to check a file";
+  return false;
+  }
+
+bool HashBytes (const void *, size_t, std::string *)
+  {
   return false;
   }
 
@@ -861,13 +914,23 @@ bool ReadFileBytes (const std::string & path, std::vector<unsigned char> & out)
 
 } // anonymous namespace
 
-bool ExtractZip (const std::string & zipPath, const std::string & destDir, std::string * error)
+bool ExtractZip (const std::string & zipPath, const std::string & destDir, std::string * error,
+                 const std::string & expectedSha256)
   {
   std::vector<unsigned char> zip;
   if (!ReadFileBytes (zipPath, zip))
     {
     *error = "could not read " + zipPath;
     return false;
+    }
+  if (!expectedSha256.empty ())
+    {
+    std::string actual;
+    if (!HashBytes (zip.data (), zip.size (), &actual) || actual != expectedSha256)
+      {
+      *error = "the update changed after it was checked";
+      return false;
+      }
     }
 
   // The end-of-central-directory record, from the end, past any comment.
@@ -1222,6 +1285,83 @@ void CleanUpAfterSwap (const std::string & installDir)
     }
   if (bAllGone)
     fs::remove (note, ec);
+  }
+
+// ---------------- replacing a whole folder ----------------
+
+bool LooksLikeOurFolder (const std::string & folder, const Platform platform)
+  {
+  const fs::path root = fs::u8path (folder);
+  std::error_code ec;
+  if (root.empty () || !fs::is_directory (root, ec))
+    return false;
+  switch (platform)
+    {
+    case Platform::MacOS:
+      return root.extension () == ".app" && fs::is_regular_file (root / "Contents" / "Info.plist", ec) &&
+             fs::is_directory (root / "Contents" / "MacOS", ec);
+    case Platform::Linux:
+      // As packaging/.build-linux.sh lays out the tarball.
+      return fs::is_regular_file (root / "MUSHclient", ec) && fs::is_regular_file (root / "mushclient.sh", ec) &&
+             fs::is_regular_file (root / "mushclient_dialogs.rc", ec);
+    case Platform::Windows:
+      break;
+    }
+  return false;
+  }
+
+bool CarryOverUserFiles (const std::string & oldFolder, const std::string & newFolder, std::string * error)
+  {
+  const fs::path from = fs::u8path (oldFolder);
+  const fs::path to = fs::u8path (newFolder);
+  std::error_code ec;
+
+  // What to move, first: moving things while walking the tree would upset the walk.  A
+  // folder the new copy doesn't have at all goes across whole.  Symbolic links are moved
+  // as they are, not followed.
+  std::vector<fs::path> moves;
+  for (fs::recursive_directory_iterator it (from, ec), end; !ec && it != end; it.increment (ec))
+    {
+    const fs::path relative = it->path ().lexically_relative (from);
+    std::error_code statError;
+    const bool bFolder = fs::is_directory (it->symlink_status (statError));
+    const bool bInNew = fs::exists (fs::symlink_status (to / relative, statError));
+    if (bFolder)
+      {
+      if (!bInNew)
+        {
+        moves.push_back (relative);
+        it.disable_recursion_pending ();
+        }
+      continue;
+      }
+    if (!bInNew || IsUserDataPath (relative.generic_u8string ()))
+      moves.push_back (relative);
+    }
+  if (ec)
+    {
+    *error = "could not read " + oldFolder;
+    return false;
+    }
+
+  bool bAll = true;
+  for (const fs::path & relative : moves)
+    {
+    const fs::path source = from / relative;
+    const fs::path target = to / relative;
+    std::error_code moveError;
+    if (fs::exists (fs::symlink_status (target, moveError)))
+      fs::remove_all (target, moveError);      // the package's copy of one of theirs
+    fs::create_directories (target.parent_path (), moveError);
+    moveError.clear ();
+    fs::rename (source, target, moveError);
+    if (moveError && bAll)
+      {
+      bAll = false;
+      *error = "could not keep " + relative.generic_u8string () + ": " + moveError.message ();
+      }
+    }
+  return bAll;
   }
 
 } // namespace update

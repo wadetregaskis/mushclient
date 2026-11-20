@@ -20,8 +20,8 @@ class CUpdateDlg : public CDialog
 
   private:
   void SetStatus (const std::string & text);
-  void DownloadFinished (const bool bOK, const std::string & pathOrError);
-  void InstallDownloaded (const std::string & path);
+  void DownloadFinished (const bool bOK, const std::string & pathOrError, const std::string & sha256);
+  void InstallDownloaded (const std::string & path, const std::string & sha256);
   void Finish (int result);
   void Busy (const bool bBusy);
 
@@ -41,15 +41,26 @@ void Start (HWND hFrame);      // from OnCreate, when App doesn't know about it 
 void Tick ();
 const UINT WM_UPDATE_POST = WM_APP + 0x70;
 
-// Help > Check for Updates, and a click on the badge.
+// Help > Check for Updates, and a click on the badge.  There is only ever one dialog:
+// asked for another while it's up, it comes to the front instead.
 void CheckFromMenu ();
 void OpenDialog ();
+bool IsDialogOpen ();
 
 // What this copy is.
 update::ThisCopy DescribeThisCopy ();
 
 // After an update has swapped a portable copy's files: start it again on the way out.
 void RunAtExitIfWanted ();
+
+// What that starts: this process's exe, in full.
+std::wstring ProgramToRestart ();
+
+// Starts a downloaded installer, if it is still what was signed: it is held open so that
+// nothing can change it, hashed, and started while held.  parameters and pProcess (the
+// started process, for the caller to close) are for tests, and may be null.
+bool LaunchVerified (const std::string & path, const std::string & sha256, const wchar_t * parameters,
+                     std::string * error, HANDLE * pProcess = nullptr);
 
 // At startup: the leavings of the last update.
 void CleanUpAtStartup ();

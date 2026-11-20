@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <thread>
 
@@ -23,6 +24,10 @@ namespace {
 const int kCheckTimeoutSeconds = 20;
 const int kFirstCheckAfterSeconds = 30;
 const int kCheckEverySeconds = 24 * 60 * 60;
+const int kRetryAfterFailureSeconds = 60 * 60;
+
+// When the release list doesn't give a size.  The packages are tens of megabytes.
+const uint64_t kMaxUnsizedDownload = 1024ull * 1024 * 1024;
 
 std::string UserAgent ()
   {
@@ -108,6 +113,12 @@ InstallPlan PlanInstall (const Release & release, const ThisCopy & copy, const s
     plan.why = "This copy was installed by your system's package manager, so that is what should update it.";
     return plan;
     }
+  if (copy.foreignFolder)
+    {
+    plan.why = "This copy isn't in a folder of its own, as its package unpacks to, so MUSHclient won't "
+               "replace that folder itself.";
+    return plan;
+    }
   const std::string name = AssetNameFor (copy, release.version);
   if (name.empty ())
     {
@@ -140,10 +151,51 @@ InstallPlan PlanInstall (const Release & release, const ThisCopy & copy, const s
   return plan;
   }
 
+Offer ChooseOffer (const std::vector<Release> & newer, const ThisCopy & copy, const std::string & publicKeyHex)
+  {
+  Offer offer;
+  if (newer.empty ())
+    return offer;
+  for (size_t i = 0; i < newer.size (); i++)
+    {
+    const InstallPlan plan = PlanInstall (newer [i], copy, publicKeyHex);
+    if (!plan.canInstall)
+      continue;
+    offer.release = newer [i];
+    offer.plan = plan;
+    if (i > 0)
+      offer.note = newer [0].version + " has nothing this copy can install, so this is " + newer [i].version +
+                   ", the latest that has.";
+    return offer;
+    }
+  // None of them: the newest, and why not.
+  offer.release = newer [0];
+  offer.plan = PlanInstall (newer [0], copy, publicKeyHex);
+  return offer;
+  }
+
+std::string ReleasePageFor (const Release & release)
+  {
+  static const std::string kGitHub = "https://github.com/";
+  const std::string & url = release.pageUrl;
+  bool bGood = url.size () > kGitHub.size () && url.compare (0, kGitHub.size (), kGitHub) == 0;
+  for (const unsigned char c : url)
+    if (c <= ' ' || c >= 0x7F || strchr ("\"<>\\^`{|}", c))
+      bGood = false;
+  return bGood ? url : std::string (kReleasesPageUrl);
+  }
+
+uint64_t DownloadLimit (const Asset & asset)
+  {
+  if (!asset.size)
+    return kMaxUnsizedDownload;
+  return asset.size + asset.size / 100 + 64 * 1024;
+  }
+
 bool RunDownload (const Fetcher & fetcher, const Downloader & downloader,
                   const Release & release, const ThisCopy & copy, const std::string & publicKeyHex,
                   const std::string & folder, const Progress & progress,
-                  std::string * pathOut, std::string * error)
+                  std::string * pathOut, std::string * error, std::string * sha256Out)
   {
   const InstallPlan plan = PlanInstall (release, copy, publicKeyHex);
   if (!plan.canInstall)
@@ -185,8 +237,24 @@ bool RunDownload (const Fetcher & fetcher, const Downloader & downloader,
   part += ".part";
   const std::string partPath = part.u8string ();
 
-  if (!downloader (pPackage->url, partPath, progress, error))
+  // No more than the release list says, give or take: a server that sends more is
+  // filling the disk, not sending the package.
+  const uint64_t limit = DownloadLimit (*pPackage);
+  bool bTooBig = false;
+  const Progress limited = [&] (uint64_t got, uint64_t total)
     {
+    if (got > limit || total > limit)
+      {
+      bTooBig = true;
+      return false;
+      }
+    return !progress || progress (got, total);
+    };
+
+  if (!downloader (pPackage->url, partPath, limited, error))
+    {
+    if (bTooBig)
+      *error = name + " is larger than the release says it is";
     fs::remove (part, ec);
     return false;
     }
@@ -206,6 +274,8 @@ bool RunDownload (const Fetcher & fetcher, const Downloader & downloader,
     return false;
     }
   *pathOut = final_.u8string ();
+  if (sha256Out)
+    *sha256Out = expected;
   return true;
   }
 
@@ -224,8 +294,10 @@ void Controller::Configure (Poster poster, const std::string & installedVersion)
   m_fetcher = DefaultFetcher ();
   m_downloader = DefaultDownloader ();
   m_nextCheck = 0;
+  m_lastTick = 0;
   m_newer.clear ();
   m_bDismissed = false;
+  m_bUserWaiting = false;
   }
 
 void Controller::SetNetwork (Fetcher fetcher, Downloader downloader)
@@ -256,6 +328,7 @@ void Controller::Tick (const time_t now, const bool bEnabled)
   {
   if (!m_poster)
     return;
+  m_lastTick = now;
   if (m_nextCheck == 0)
     m_nextCheck = now + kFirstCheckAfterSeconds;
   if (!bEnabled || now < m_nextCheck || m_bChecking)
@@ -266,18 +339,27 @@ void Controller::Tick (const time_t now, const bool bEnabled)
 
 void Controller::CheckNow (const bool bUserAsked)
   {
-  if (m_bChecking || !m_poster)
+  if (!m_poster)
     return;
+  if (m_bChecking)
+    {
+    // The one under way answers them.
+    if (bUserAsked)
+      m_bUserWaiting = true;
+    return;
+    }
   m_bChecking = true;
+  m_bUserWaiting = bUserAsked;
 
   const Fetcher fetcher = m_fetcher;
   const std::string installed = m_installed;
   const Poster poster = m_poster;
-  Spawn ([this, fetcher, installed, poster, bUserAsked] ()
+  Spawn ([this, fetcher, installed, poster] ()
     {
     std::shared_ptr<CheckResult> result = std::make_shared<CheckResult> (RunCheck (fetcher, installed));
-    poster ([this, result, bUserAsked] ()
+    const bool bPosted = poster ([this, result] ()
       {
+      const bool bUserAsked = m_bUserWaiting.exchange (false);
       m_bChecking = false;
       if (result->ok)
         {
@@ -286,9 +368,17 @@ void Controller::CheckNow (const bool bUserAsked)
         m_newer = result->newer;
         m_bDismissed = false;
         }
+      else if (m_lastTick && m_nextCheck > m_lastTick + kRetryAfterFailureSeconds)
+        m_nextCheck = m_lastTick + kRetryAfterFailureSeconds;     // not a day without knowing
       if (m_onChecked)
         m_onChecked (bUserAsked, *result);
       });
+    if (!bPosted)
+      {
+      // Nothing will run on the UI thread to say it's over, so this does.
+      m_bUserWaiting = false;
+      m_bChecking = false;
+      }
     });
   }
 
@@ -300,11 +390,21 @@ std::string Controller::BadgeText () const
   }
 
 void Controller::StartDownload (const Release & release, const ThisCopy & copy, const std::string & publicKeyHex,
-                                const std::string & folder, Progress progress,
-                                std::function<void (bool, const std::string &)> done)
+                                const std::string & folder, Progress progress, DownloadDone done)
   {
-  if (m_bDownloading.exchange (true) || !m_poster)
+  // Whoever asked is always told something, or they wait for ever.
+  if (!m_poster)
+    {
+    if (done)
+      done (false, "updates haven't been set up", std::string ());
     return;
+    }
+  if (m_bDownloading.exchange (true))
+    {
+    if (done)
+      done (false, "another download of it is already under way", std::string ());
+    return;
+    }
   m_bCancel = false;
 
   const Fetcher fetcher = m_fetcher;
@@ -318,14 +418,17 @@ void Controller::StartDownload (const Release & release, const ThisCopy & copy, 
         return false;
       return !progress || progress (got, total);
       };
-    std::string path, error;
-    const bool bOK = RunDownload (fetcher, downloader, release, copy, publicKeyHex, folder, checked, &path, &error);
-    poster ([this, done, bOK, path, error] ()
+    std::string path, error, sha256;
+    const bool bOK = RunDownload (fetcher, downloader, release, copy, publicKeyHex, folder, checked,
+                                  &path, &error, &sha256);
+    const bool bPosted = poster ([this, done, bOK, path, error, sha256] ()
       {
       m_bDownloading = false;
       if (done)
-        done (bOK, bOK ? path : error);
+        done (bOK, bOK ? path : error, bOK ? sha256 : std::string ());
       });
+    if (!bPosted)
+      m_bDownloading = false;
     });
   }
 

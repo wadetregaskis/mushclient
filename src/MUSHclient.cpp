@@ -52,6 +52,9 @@
 #ifndef _WIN32
 #include <sys/utsname.h>
 #endif
+#if defined(_WIN32) || defined(OPENSSL_FOUND)
+#include <openssl/crypto.h>
+#endif
 extern "C" 
   {
   #include "scripting/number.h"
@@ -264,6 +267,14 @@ BOOL CMUSHclientApp::InitInstance()
 {
 
   m_whenClientStarted = CTime::GetCurrentTime();
+
+#if defined(_WIN32) || defined(OPENSSL_FOUND)
+  // OpenSSL's own clean-up at exit would free what a worker still inside it is using:
+  // an update check, a sound download, which are detached and may be mid-fetch when the
+  // client quits.  The process is ending anyway, so its memory goes with it.  This has
+  // to come before anything else uses OpenSSL, which is why it's here.
+  OPENSSL_init_crypto (OPENSSL_INIT_NO_ATEXIT, NULL);
+#endif
 
 #ifdef _WIN32
   // Install the native GDI pal::ISurface adapter so CMiniWindow draws through

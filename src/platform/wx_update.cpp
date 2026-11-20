@@ -75,6 +75,15 @@ update::ThisCopy DescribeThisCopy ()
   const std::string where = root.u8string ();
   copy.systemManaged = root.empty () || where.compare (0, 5, "/usr/") == 0 || where.compare (0, 5, "/opt/") == 0 ||
                        access (root.parent_path ().u8string ().c_str (), W_OK) != 0;
+
+  // The whole folder is replaced, and the old one removed: so it has to be one of ours,
+  // as the package unpacked it, and not wherever the program was copied to (~/bin).
+  const char * home = getenv ("HOME");
+  std::error_code ec;
+  const bool bHome = home && *home && fs::equivalent (root, fs::u8path (home), ec);
+  copy.foreignFolder = !copy.systemManaged &&
+                       (bHome || root == root.root_path () ||
+                        !update::LooksLikeOurFolder (where, copy.platform));
   return copy;
   }
 
@@ -97,10 +106,31 @@ std::string Quoted (const std::string & text)
   return out + "'";
   }
 
-// On a worker.  True if the new copy is in place, and will start when this one ends.
-bool ReplaceThisCopy (const std::string & package, std::string * error)
+// On a worker.  True if the new copy is in place, and will start when this one ends;
+// *notice, if not empty, is something they should be told even so.
+bool ReplaceThisCopy (const std::string & package, const std::string & sha256, std::string * error,
+                      std::string * notice)
   {
   const fs::path root = InstallRoot ();
+#ifdef __APPLE__
+  const update::Platform platform = update::Platform::MacOS;
+#else
+  const update::Platform platform = update::Platform::Linux;
+#endif
+  if (!update::LooksLikeOurFolder (root.u8string (), platform))
+    {
+    *error = "the folder this copy is in doesn't look like one of MUSHclient's own";
+    return false;
+    }
+
+  // Once more, just before it's unpacked: the file has sat in a folder since it was checked.
+  std::string actual;
+  if (!update::HashFile (package, &actual, error) || actual != sha256)
+    {
+    *error = "the update changed after it was checked";
+    return false;
+    }
+
   const fs::path stage = fs::u8path (UpdatesFolder ()) / "staging";
   std::error_code ec;
   fs::remove_all (stage, ec);
@@ -128,15 +158,24 @@ bool ReplaceThisCopy (const std::string & package, std::string * error)
       }
     else if (it->is_directory (ec))
       unpacked = it->path ();
-  if (unpacked.empty ())
+  if (unpacked.empty () || !update::LooksLikeOurFolder (unpacked.u8string (), platform))
     {
     *error = "the update doesn't look as it should";
     return false;
     }
 
+  // What the last update left, if its script didn't get to it.  Only if it's ours.
   fs::path old = root;
   old += ".mcold";
-  fs::remove_all (old, ec);
+  if (fs::exists (fs::symlink_status (old, ec)))
+    {
+    if (!update::LooksLikeOurFolder (old.u8string (), platform))
+      {
+      *error = "there is already something called " + old.u8string () + ", in the way";
+      return false;
+      }
+    fs::remove_all (old, ec);
+    }
   fs::rename (root, old, ec);
   if (ec)
     {
@@ -154,17 +193,32 @@ bool ReplaceThisCopy (const std::string & package, std::string * error)
   fs::remove_all (stage, ec);
   fs::remove (fs::u8path (package), ec);
 
+  // Whatever they added to the tarball's folder comes too, as on Windows.  (Not into a
+  // .app, where anything added would break its signature.)  If any of it couldn't be
+  // moved, the old folder stays, with it.
+  bool bRemoveOld = true;
+#ifndef __APPLE__
+  std::string why;
+  if (!update::CarryOverUserFiles (old.u8string (), root.u8string (), &why))
+    {
+    bRemoveOld = false;
+    *notice = "Some of what was in the old folder couldn't be moved to the new one (" + why +
+              "), so the old one has been kept, as " + old.u8string () + ".";
+    }
+#endif
+
   // When this process has gone, clear up and start the new one.
   const fs::path script = fs::u8path (UpdatesFolder ()) / "finish-update.sh";
     {
     std::ofstream out (script);
     out << "#!/bin/sh\n"
-        << "while kill -0 " << (long) getpid () << " 2>/dev/null; do sleep 1; done\n"
-        << "rm -rf " << Quoted (old.u8string ()) << "\n"
+        << "while kill -0 " << (long) getpid () << " 2>/dev/null; do sleep 1; done\n";
+    if (bRemoveOld)
+      out << "rm -rf " << Quoted (old.u8string ()) << "\n";
 #ifdef __APPLE__
-        << "open " << Quoted (root.u8string ()) << "\n";
+    out << "open " << Quoted (root.u8string ()) << "\n";
 #else
-        << "exec " << Quoted ((root / "mushclient.sh").u8string ()) << "\n";
+    out << "exec " << Quoted ((root / "mushclient.sh").u8string ()) << "\n";
 #endif
     }
   const std::string finish = "nohup /bin/sh " + Quoted (script.u8string ()) + " >/dev/null 2>&1 &";
@@ -185,14 +239,14 @@ class CUpdateDialog : public wxDialog
         m_pAlive (std::make_shared<bool> (true))
     {
     update::Controller & controller = update::Controller::Get ();
-    if (!controller.Newer ().empty ())
-      m_latest = controller.Newer () [0];
-    m_plan = update::PlanInstall (m_latest, DescribeThisCopy (), update::kUpdatePublicKey);
+    const update::Offer offer = update::ChooseOffer (controller.Newer (), DescribeThisCopy (), update::kUpdatePublicKey);
+    m_latest = offer.release;
+    m_plan = offer.plan;
 
     wxBoxSizer * sizer = new wxBoxSizer (wxVERTICAL);
     sizer->Add (new wxStaticText (this, wxID_ANY, wxString::FromUTF8 (
                     ("You have version " + controller.InstalledVersion () + ".  The latest is " +
-                     m_latest.version + ".").c_str ())), 0, wxALL, 10);
+                     controller.LatestVersion () + ".").c_str ())), 0, wxALL, 10);
     sizer->Add (new wxStaticText (this, wxID_ANY, wxT ("What's new:")), 0, wxLEFT | wxRIGHT, 10);
     sizer->Add (new wxTextCtrl (this, wxID_ANY,
                                 wxString::FromUTF8 (update::ConcatenateNotes (controller.Newer ()).c_str ()),
@@ -219,6 +273,8 @@ class CUpdateDialog : public wxDialog
 
     if (!m_plan.canInstall)
       SetStatus (m_plan.why + "  The release page has it.");
+    else if (!offer.note.empty ())
+      SetStatus (offer.note);
 
     m_install->Bind (wxEVT_BUTTON, &CUpdateDialog::OnInstall, this);
     m_later->Bind (wxEVT_BUTTON, &CUpdateDialog::OnLater, this);
@@ -282,8 +338,7 @@ class CUpdateDialog : public wxDialog
     {
     if (!m_plan.canInstall)
       {
-      wxLaunchDefaultBrowser (wxString::FromUTF8 (
-          (m_latest.pageUrl.empty () ? std::string (update::kReleasesPageUrl) : m_latest.pageUrl).c_str ()));
+      wxLaunchDefaultBrowser (wxString::FromUTF8 (update::ReleasePageFor (m_latest).c_str ()));
       Finish (wxID_OK);
       return;
       }
@@ -306,14 +361,14 @@ class CUpdateDialog : public wxDialog
             }
           return true;
           },
-        [this, alive] (bool bOK, const std::string & pathOrError)
+        [this, alive] (bool bOK, const std::string & pathOrError, const std::string & sha256)
           {
           if (*alive)
-            DownloadFinished (bOK, pathOrError);
+            DownloadFinished (bOK, pathOrError, sha256);
           });
     }
 
-  void DownloadFinished (const bool bOK, const std::string & pathOrError)
+  void DownloadFinished (const bool bOK, const std::string & pathOrError, const std::string & sha256)
     {
     Busy (false);
     m_later->Enable (true);
@@ -333,19 +388,19 @@ class CUpdateDialog : public wxDialog
     SetStatus ("Installing...");
     const std::string package = pathOrError;
     std::shared_ptr<bool> alive = m_pAlive;
-    std::thread ([this, alive, package]
+    std::thread ([this, alive, package, sha256]
       {
-      std::string error;
-      const bool bDone = ReplaceThisCopy (package, &error);
-      wxTheApp->CallAfter ([this, alive, bDone, error]
+      std::string error, notice;
+      const bool bDone = ReplaceThisCopy (package, sha256, &error, &notice);
+      wxTheApp->CallAfter ([this, alive, bDone, error, notice]
         {
         if (*alive)
-          InstallFinished (bDone, error);
+          InstallFinished (bDone, error, notice);
         });
       }).detach ();
     }
 
-  void InstallFinished (const bool bDone, const std::string & error)
+  void InstallFinished (const bool bDone, const std::string & error, const std::string & notice)
     {
     Busy (false);
     m_later->Enable (true);
@@ -355,7 +410,8 @@ class CUpdateDialog : public wxDialog
       return;
       }
     wxMessageBox (wxString::FromUTF8 (("MUSHclient " + m_latest.version +
-                                       " is ready, and will start when this one has closed.").c_str ()),
+                                       " is ready, and will start when this one has closed." +
+                                       (notice.empty () ? std::string () : "\n\n" + notice)).c_str ()),
                   wxT ("MUSHclient"), wxOK | wxICON_INFORMATION, this);
     Finish (wxID_OK);
     // The ordinary way, questions included.
@@ -384,10 +440,19 @@ class CUpdateTimer : public wxTimer
     }
   };
 
+// The one that's up, if one is: there is only ever one.
+CUpdateDialog * g_pOpenDialog = nullptr;
+
 void Checked (const bool bUserAsked, const update::CheckResult & result)
   {
   if (!bUserAsked)
     return;    // the status bar says it, if there's anything to say
+
+  if (g_pOpenDialog)
+    {
+    g_pOpenDialog->Raise ();     // it says what there is to say
+    return;
+    }
 
   if (!result.ok)
     wxMessageBox (wxString::FromUTF8 (("Could not check for a new version of MUSHclient: " + result.error).c_str ()),
@@ -407,8 +472,10 @@ void WxUpdate_Start ()
   update::Controller & controller = update::Controller::Get ();
   controller.Configure ([] (std::function<void ()> work)
     {
-    if (wxTheApp)
-      wxTheApp->CallAfter ([work] { work (); });
+    if (!wxTheApp)
+      return false;
+    wxTheApp->CallAfter ([work] { work (); });
+    return true;
     }, VERSION_STRING);
   controller.SetOnChecked (Checked);
 
@@ -423,8 +490,15 @@ void WxUpdate_CheckNow ()
 
 void WxUpdate_OpenDialog (wxWindow * parent)
   {
+  if (g_pOpenDialog)
+    {
+    g_pOpenDialog->Raise ();
+    return;
+    }
   CUpdateDialog dialog (parent);
+  g_pOpenDialog = &dialog;
   dialog.ShowModal ();
+  g_pOpenDialog = nullptr;
   }
 
 std::string WxUpdate_BadgeText ()

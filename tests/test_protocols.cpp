@@ -1562,6 +1562,11 @@ TEST (ProtoMsp, PublicAddresses)
   EXPECT_FALSE (v6 ({ 0,0,0,0,0,0,0,0,0,0,0xFF,0xFF,192,168,0,1 }));
   EXPECT_TRUE  (v6 ({ 0,0,0,0,0,0,0,0,0,0,0xFF,0xFF,8,8,8,8 }));
   EXPECT_FALSE (v6 ({ 0,0x64,0xFF,0x9B,0,0,0,0,0,0,0,0,10,0,0,1 }));
+  EXPECT_TRUE  (v6 ({ 0,0x64,0xFF,0x9B,0,0,0,0,0,0,0,0,8,8,8,8 }));
+  // 64:ff9b:1::/48 is NAT64 for a network's own use: where it goes is the network's
+  // business, whatever address is in it.
+  EXPECT_FALSE (v6 ({ 0,0x64,0xFF,0x9B,0,1,0,0,0,0,0,0,8,8,8,8 }));
+  EXPECT_FALSE (v6 ({ 0,0x64,0xFF,0x9B,0,1,0xAB,0xCD }));
   EXPECT_FALSE (v6 ({ 0x20,0x02,127,0,0,1 }));
   EXPECT_FALSE (pal::IsPublicAddress ((const unsigned char *) "abc", 3));
 }

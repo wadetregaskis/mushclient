@@ -10,6 +10,8 @@
 #include <openssl/bio.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
+#include <openssl/pem.h>
+#include <openssl/x509v3.h>
 
 #ifdef _WIN32
 #include <wincrypt.h>
@@ -23,15 +25,18 @@
 #include <netinet/in.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <cerrno>
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <memory>
+#include <mutex>
 
 namespace pal {
 
@@ -40,8 +45,35 @@ namespace {
 const int    kMaxRedirects    = 3;
 const size_t kMaxResponseSize = 32 * 1024 * 1024;
 
+// The tests' hooks: see HttpsTestTrust.
+std::mutex        g_testLock;
+std::string       g_testTrustPem;
+std::atomic<bool> g_testAllowLoopback { false };
+
+void AddTestTrustAnchor (SSL_CTX * ctx)
+  {
+  std::string pem;
+    {
+    std::lock_guard<std::mutex> lock (g_testLock);
+    pem = g_testTrustPem;
+    }
+  if (pem.empty ())
+    return;
+  BIO * bio = BIO_new_mem_buf (pem.data (), (int) pem.size ());
+  if (!bio)
+    return;
+  if (X509 * x509 = PEM_read_bio_X509 (bio, NULL, NULL, NULL))
+    {
+    X509_STORE_add_cert (SSL_CTX_get_cert_store (ctx), x509);
+    X509_free (x509);
+    }
+  BIO_free (bio);
+  ERR_clear_error ();
+  }
+
 void AddTrustAnchors (SSL_CTX * ctx)
   {
+  AddTestTrustAnchor (ctx);
 #ifdef _WIN32
   // As WinTransport::startTls does.
   HCERTSTORE hStore = CertOpenSystemStore (0, "ROOT");
@@ -90,6 +122,91 @@ std::string HeaderValue (const std::string & headers, const std::string & name)
     end--;
   return headers.substr (start, end - start);
   }
+
+// A Content-Length: digits only, and no more than fit.
+bool ParseLength (const std::string & text, uint64_t * out)
+  {
+  if (text.empty () || text.size () > 19)
+    return false;
+  uint64_t value = 0;
+  for (const char c : text)
+    {
+    if (c < '0' || c > '9')
+      return false;
+    value = value * 10 + (uint64_t) (c - '0');
+    }
+  *out = value;
+  return true;
+  }
+
+// An address rather than a name: verified against the certificate's IP addresses, and
+// not sent as SNI, which is for names.
+bool IsIpLiteral (const std::string & host)
+  {
+  // OpenSSL's own reading of one, as X509_VERIFY_PARAM_set1_ip_asc will read it.
+  ASN1_OCTET_STRING * address = a2i_IPADDRESS (host.c_str ());
+  ERR_clear_error ();
+  if (!address)
+    return false;
+  ASN1_OCTET_STRING_free (address);
+  return true;
+  }
+
+// What the certificate has to match, for a name or an address.
+void SetExpectedPeer (SSL * ssl, const std::string & host)
+  {
+  if (IsIpLiteral (host))
+    X509_VERIFY_PARAM_set1_ip_asc (SSL_get0_param (ssl), host.c_str ());
+  else
+    {
+    SSL_set_tlsext_host_name (ssl, host.c_str ());
+    SSL_set1_host (ssl, host.c_str ());
+    }
+  }
+
+// The host as a URL or a Host header has it: an IPv6 address in brackets.
+std::string HostForUrl (const std::string & host)
+  {
+  return host.find (':') != std::string::npos ? "[" + host + "]" : host;
+  }
+
+// Is all of a response here, though the connection is still open?  Some servers keep it
+// open despite "Connection: close", and waiting for them to close it would time out.
+// Told everything so far, headers included, after each read.
+class Framing
+  {
+  public:
+    bool Complete (const std::string & raw)
+      {
+      if (m_contentStart == std::string::npos)
+        {
+        const size_t from = m_searched > 3 ? m_searched - 3 : 0;
+        m_searched = raw.size ();
+        const size_t end = raw.find ("\r\n\r\n", from);
+        if (end == std::string::npos)
+          return false;
+        m_contentStart = end + 4;
+        m_headers = raw.substr (0, end);
+        m_bChunked = Lower (HeaderValue (m_headers, "Transfer-Encoding")).find ("chunked") != std::string::npos;
+        m_bLength = !m_bChunked && ParseLength (HeaderValue (m_headers, "Content-Length"), &m_length);
+        }
+      if (m_bChunked)
+        {
+        // The last chunk, with no trailers.  (With trailers, the close says when it ends.)
+        return raw.size () >= m_contentStart + 5 && raw.compare (raw.size () - 5, 5, "0\r\n\r\n") == 0 &&
+               HttpsGetDecodeBody (m_headers, raw.substr (m_contentStart), nullptr);
+        }
+      return m_bLength && (uint64_t) (raw.size () - m_contentStart) >= m_length;
+      }
+
+  private:
+    size_t      m_searched = 0;
+    size_t      m_contentStart = std::string::npos;
+    std::string m_headers;
+    bool        m_bChunked = false;
+    bool        m_bLength = false;
+    uint64_t    m_length = 0;
+  };
 
 struct Url
   {
@@ -152,6 +269,8 @@ bool ParseUrl (const std::string & url, Url * out, std::string * error)
     *error = "the URL has no usable host name";
     return false;
     }
+  if (out->port.empty ())
+    out->port = "443";
   return true;
   }
 
@@ -183,6 +302,11 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
                 time_t deadline, int * status, std::string * headers,
                 std::string * body, std::string * error, const Sink * sink = nullptr)
   {
+  // Nothing from an earlier hop (a redirect's own content) is this one's.
+  *status = 0;
+  headers->clear ();
+  body->clear ();
+
   std::unique_ptr<BIO, decltype (&BIO_free_all)> bio (BIO_new_ssl_connect (ctx), BIO_free_all);
   if (!bio)
     {
@@ -197,15 +321,9 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
     *error = SslError ("could not start a TLS connection");
     return false;
     }
-  const bool numeric = url.host.find (':') != std::string::npos;     // an IPv6 address
-  if (numeric)
-    X509_VERIFY_PARAM_set1_ip_asc (SSL_get0_param (ssl), url.host.c_str ());
-  else
-    {
-    SSL_set_tlsext_host_name (ssl, url.host.c_str ());
-    SSL_set1_host (ssl, url.host.c_str ());
-    }
-  BIO_set_conn_hostname (bio.get (), url.host.c_str ());
+  SetExpectedPeer (ssl, url.host);
+  // An IPv6 address has to be in brackets here, or its colons are taken for a port.
+  BIO_set_conn_hostname (bio.get (), HostForUrl (url.host).c_str ());
   BIO_set_conn_port (bio.get (), url.port.c_str ());
   BIO_set_nbio (bio.get (), 1);
 
@@ -233,7 +351,7 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
 
   const std::string request =
       "GET " + url.path + " HTTP/1.1\r\n"
-      "Host: " + (numeric ? "[" + url.host + "]" : url.host) + "\r\n"
+      "Host: " + HostForUrl (url.host) + (url.port == "443" ? "" : ":" + url.port) + "\r\n"
       "User-Agent: " + userAgent + "\r\n"
       "Accept: */*\r\n"
       "Connection: close\r\n\r\n";
@@ -261,6 +379,7 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
   bool streaming = false;     // a download's 200, going to the file rather than to raw
   uint64_t streamed = 0;
   uint64_t expected = 0;
+  Framing framing;
   for (;;)
     {
     const int n = BIO_read (bio.get (), buffer, sizeof buffer);
@@ -294,7 +413,12 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
             {
             *status = code;
             *headers = first;
-            expected = strtoull (HeaderValue (first, "Content-Length").c_str (), NULL, 10);
+            const std::string length = HeaderValue (first, "Content-Length");
+            if (!length.empty () && !ParseLength (length, &expected))
+              {
+              *error = "the server's response could not be understood";
+              return false;
+              }
             streaming = true;
             toWrite = raw.data () + end + 4;
             writeSize = raw.size () - end - 4;
@@ -304,6 +428,8 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
 
       if (streaming)
         {
+        if (expected && writeSize > expected - streamed)
+          writeSize = (size_t) (expected - streamed);     // nothing past what it said it would send
         if (writeSize && fwrite (toWrite, 1, writeSize, sink->file) != writeSize)
           {
           *error = "could not write the downloaded file (is the disk full?)";
@@ -317,6 +443,8 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
           *error = "cancelled";
           return false;
           }
+        if (expected && streamed >= expected)
+          break;
         continue;
         }
 
@@ -325,6 +453,8 @@ bool FetchOnce (SSL_CTX * ctx, const Url & url, const std::string & userAgent,
         *error = "the response is too large";
         return false;
         }
+      if (framing.Complete (raw))
+        break;
       continue;
       }
     if (n == 0 && !BIO_should_retry (bio.get ()))
@@ -407,6 +537,46 @@ bool WaitSocket (const SafeSocket s, const bool bWrite, const time_t deadline)
   return select ((int) s + 1, bWrite ? NULL : &set, bWrite ? &set : NULL, NULL, &timeout) > 0;
   }
 
+// Did connect () start, rather than fail at once?
+bool ConnectStarted ()
+  {
+#ifdef _WIN32
+  return WSAGetLastError () == WSAEWOULDBLOCK;
+#else
+  return errno == EINPROGRESS || errno == EINTR;
+#endif
+  }
+
+// Wait for a non-blocking connect to finish.  True if it connected.  Windows says a
+// connection failed in the exception set, not the write set, so both are watched: or a
+// refusal would wait out the whole deadline.
+bool WaitConnected (const SafeSocket s, const time_t deadline)
+  {
+  const time_t now = time (NULL);
+  if (now >= deadline)
+    return false;
+  fd_set writable, failed;
+  FD_ZERO (&writable);
+  FD_ZERO (&failed);
+  FD_SET (s, &writable);
+  FD_SET (s, &failed);
+  timeval timeout;
+  timeout.tv_sec = (long) (deadline - now);
+  timeout.tv_usec = 0;
+  if (select ((int) s + 1, NULL, &writable, &failed, &timeout) <= 0 || FD_ISSET (s, &failed))
+    return false;
+  int socketError = 0;
+  socklen_t size = sizeof socketError;
+  return getsockopt (s, SOL_SOCKET, SO_ERROR, (char *) &socketError, &size) == 0 && socketError == 0;
+  }
+
+// Only for the tests' own server: see SafeGetTestAllowLoopback.
+bool IsLoopbackAddress (const unsigned char * a, const size_t length)
+  {
+  static const unsigned char kLoopback6 [16] = { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1 };
+  return (length == 4 && a [0] == 127) || (length == 16 && memcmp (a, kLoopback6, 16) == 0);
+  }
+
 // What is left after the URL has been judged.
 struct SafeUrl
   {
@@ -459,35 +629,50 @@ SafeSocket ConnectToPublicAddress (const Url & url, const time_t deadline, std::
     }
 
   // All of them.  A name with one public address and one private one is a name to distrust.
+  const bool bAllowLoopback = g_testAllowLoopback;
+  int count = 0;
   for (const addrinfo * a = answers; a; a = a->ai_next)
     {
     bool bPublic = false;
+    const unsigned char * bytes = nullptr;
+    size_t length = 0;
     if (a->ai_family == AF_INET)
-      bPublic = IsPublicAddress ((const unsigned char *) &((const sockaddr_in *) a->ai_addr)->sin_addr, 4);
+      {
+      bytes = (const unsigned char *) &((const sockaddr_in *) a->ai_addr)->sin_addr;
+      length = 4;
+      }
     else if (a->ai_family == AF_INET6)
-      bPublic = IsPublicAddress ((const unsigned char *) &((const sockaddr_in6 *) a->ai_addr)->sin6_addr, 16);
+      {
+      bytes = (const unsigned char *) &((const sockaddr_in6 *) a->ai_addr)->sin6_addr;
+      length = 16;
+      }
+    if (bytes)
+      bPublic = IsPublicAddress (bytes, length) || (bAllowLoopback && IsLoopbackAddress (bytes, length));
     if (!bPublic)
       {
       freeaddrinfo (answers);
       *error = url.host + " has an address on a private network, which is not allowed";
       return kNoSocket;
       }
+    count++;
     }
 
+  // Each address gets its share of the time, so that one that never answers (IPv6 with
+  // no route, say) leaves time for the next.
   SafeSocket connected = kNoSocket;
-  for (const addrinfo * a = answers; a && connected == kNoSocket; a = a->ai_next)
+  for (const addrinfo * a = answers; a && connected == kNoSocket; a = a->ai_next, count--)
     {
     const SafeSocket s = socket (a->ai_family, a->ai_socktype, a->ai_protocol);
     if (s == kNoSocket)
       continue;
-    SetNonBlocking (s, true);
-    const int result = connect (s, a->ai_addr, (int) a->ai_addrlen);
-    bool bOK = result == 0;
-    if (!bOK && WaitSocket (s, true, deadline))
+    const time_t now = time (NULL);
+    const time_t share = deadline > now ? (deadline - now) / (count > 0 ? count : 1) : 0;
+    const time_t attemptDeadline = (std::min) (deadline, now + (std::max) (share, (time_t) 1));
+    bool bOK = SetNonBlocking (s, true);
+    if (bOK)
       {
-      int socketError = 0;
-      socklen_t size = sizeof socketError;
-      bOK = getsockopt (s, SOL_SOCKET, SO_ERROR, (char *) &socketError, &size) == 0 && socketError == 0;
+      const int result = connect (s, a->ai_addr, (int) a->ai_addrlen);
+      bOK = result == 0 || (ConnectStarted () && WaitConnected (s, attemptDeadline));
       }
     if (bOK)
       connected = s;
@@ -567,7 +752,12 @@ class SafeConnection
       return true;
       }
 
-    // >0 bytes, 0 at the end, <0 if it went wrong or took too long
+    // What Read says, when it isn't a number of bytes.
+    static const int kEnded = 0;           // a clean end: TLS's close_notify, or plain TCP's close
+    static const int kTimedOut = -1;
+    static const int kCut = -2;            // it stopped without saying so: only framing can tell
+                                           // whether what came is all of it
+
     int Read (char * buffer, const int size)
       {
       for (;;)
@@ -580,17 +770,20 @@ class SafeConnection
             return n;
           const int reason = SSL_get_error (m_ssl, n);
           if (reason == SSL_ERROR_ZERO_RETURN)
-            return 0;
-          if ((reason == SSL_ERROR_WANT_READ && WaitSocket (m_socket, false, m_deadline)) ||
-              (reason == SSL_ERROR_WANT_WRITE && WaitSocket (m_socket, true, m_deadline)))
-            continue;
-          // A connection closed with no close_notify: the framing will judge what we got.
-          return 0;
+            return kEnded;
+          if (reason == SSL_ERROR_WANT_READ || reason == SSL_ERROR_WANT_WRITE)
+            {
+            if (WaitSocket (m_socket, reason == SSL_ERROR_WANT_WRITE, m_deadline))
+              continue;
+            return kTimedOut;
+            }
+          ERR_clear_error ();
+          return kCut;
           }
         if (!WaitSocket (m_socket, false, m_deadline))
-          return -1;
+          return kTimedOut;
         const int n = (int) recv (m_socket, buffer, size, 0);
-        return n < 0 ? -1 : n;
+        return n < 0 ? kCut : n;
         }
       }
 
@@ -622,14 +815,7 @@ bool SafeFetchOnce (SSL_CTX * ctx, const SafeUrl & target, const SafeGetOptions 
       }
     SSL_set_fd (ssl, (int) s);
     SSL_set_connect_state (ssl);
-    const bool numeric = url.host.find (':') != std::string::npos;
-    if (numeric)
-      X509_VERIFY_PARAM_set1_ip_asc (SSL_get0_param (ssl), url.host.c_str ());
-    else
-      {
-      SSL_set_tlsext_host_name (ssl, url.host.c_str ());
-      SSL_set1_host (ssl, url.host.c_str ());
-      }
+    SetExpectedPeer (ssl, url.host);
     }
 
   SafeConnection connection (s, ssl, deadline);
@@ -637,10 +823,10 @@ bool SafeFetchOnce (SSL_CTX * ctx, const SafeUrl & target, const SafeGetOptions 
   if (!connection.Handshake (error, url.host))
     return false;
 
-  const bool numeric = url.host.find (':') != std::string::npos;
+  const std::string defaultPort = target.bHttps ? "443" : "80";
   const std::string request =
       "GET " + url.path + " HTTP/1.1\r\n"
-      "Host: " + (numeric ? "[" + url.host + "]" : url.host) + "\r\n"
+      "Host: " + HostForUrl (url.host) + (url.port == defaultPort ? "" : ":" + url.port) + "\r\n"
       "User-Agent: " + options.userAgent + "\r\n"
       "Accept: */*\r\n"
       "Connection: close\r\n\r\n";
@@ -651,27 +837,36 @@ bool SafeFetchOnce (SSL_CTX * ctx, const SafeUrl & target, const SafeGetOptions 
     return false;
     }
 
+  // Read to the end, or until the framing says it's all here.  A timeout is never the
+  // end: a sound cut short would be kept for good.
   std::string raw;
   char buffer [16384];
-  bool bEnded = false;
+  bool bClean = false;
+  Framing framing;
   const size_t kHeaderAllowance = 64 * 1024;
-  while (!bEnded)
+  for (;;)
     {
     const int n = connection.Read (buffer, sizeof buffer);
-    if (n < 0)
+    if (n == SafeConnection::kTimedOut)
       {
       *error = "timed out waiting for the response";
       return false;
       }
-    if (n == 0)
-      bEnded = true;
-    else
-      raw.append (buffer, (size_t) n);
+    if (n == SafeConnection::kEnded)
+      {
+      bClean = true;
+      break;
+      }
+    if (n == SafeConnection::kCut)
+      break;
+    raw.append (buffer, (size_t) n);
     if (raw.size () > options.maxBytes + kHeaderAllowance)
       {
       *error = "the file is too large";
       return false;
       }
+    if (framing.Complete (raw))
+      break;
     }
 
   const size_t headersEnd = raw.find ("\r\n\r\n");
@@ -684,7 +879,10 @@ bool SafeFetchOnce (SSL_CTX * ctx, const SafeUrl & target, const SafeGetOptions 
   *status = space == std::string::npos ? 0 : atoi (raw.c_str () + space + 1);
   *headers = raw.substr (0, headersEnd);
 
-  if (!HttpsGetDecodeBody (*headers, raw.substr (headersEnd + 4), body))
+  // Without a clean end, only a length or a last chunk says it is all here.
+  const bool bFramed = !HeaderValue (*headers, "Content-Length").empty () ||
+                       Lower (HeaderValue (*headers, "Transfer-Encoding")).find ("chunked") != std::string::npos;
+  if (!HttpsGetDecodeBody (*headers, raw.substr (headersEnd + 4), body) || (!bClean && !bFramed))
     {
     *error = "the response was cut short";
     return false;
@@ -718,6 +916,10 @@ bool IsPublicAddress (const unsigned char * a, const size_t length)
     if (a [0] == 0x20 && a [1] == 0x01 && a [2] == 0x0D && a [3] == 0xB8)     // 2001:db8::/32
       return false;
     if (a [0] == 0x20 && a [1] == 0x01 && a [2] == 0 && a [3] == 0)           // 2001::/32, Teredo
+      return false;
+    // 64:ff9b:1::/48, NAT64 for a local network's own use (RFC 8215): where it leads
+    // is up to that network, so whatever IPv4 address it carries can't be judged.
+    if (a [0] == 0 && a [1] == 0x64 && a [2] == 0xFF && a [3] == 0x9B && a [4] == 0 && a [5] == 1)
       return false;
 
     // IPv4 inside IPv6, each of which reaches what its IPv4 address does.
@@ -807,11 +1009,18 @@ bool SafeGet (const std::string & url, const SafeGetOptions & options,
       return false;
       }
 
-    SafeUrl next = current;
-    if (location [0] == '/')
-      next.url.path = location;
-    else if (!ParseSafeUrl (location, options.bAllowHttp, &next, error))
+    // A path on this server, or a whole URL; nothing relative to the current path, and
+    // either way checked as a URL is, so that it can't write its own request headers.
+    SafeUrl next;
+    const std::string absolute = location [0] == '/'
+        ? std::string (current.bHttps ? "https://" : "http://") + HostForUrl (current.url.host) +
+          ":" + current.url.port + location
+        : location;
+    if (!ParseSafeUrl (absolute, options.bAllowHttp, &next, error))
+      {
+      *error = "it redirected somewhere it can't go: " + *error;
       return false;
+      }
 
     if (Lower (next.url.host) != Lower (first.url.host))
       {
@@ -823,18 +1032,36 @@ bool SafeGet (const std::string & url, const SafeGetOptions & options,
       *error = "it redirected from https to http";
       return false;
       }
+    // The same port, or http's to https's: not some other service on the same machine.
+    const bool bUpgrade = !current.bHttps && next.bHttps && current.url.port == "80" && next.url.port == "443";
+    if (next.url.port != current.url.port && !bUpgrade)
+      {
+      *error = "it redirected to another port, " + next.url.port;
+      return false;
+      }
     current = next;
     }
   }
 
 bool HttpsGetDecodeBody (const std::string & headers, const std::string & raw, std::string * body)
   {
+  std::string unwanted;
+  if (!body)
+    body = &unwanted;
+
   if (Lower (HeaderValue (headers, "Transfer-Encoding")).find ("chunked") == std::string::npos)
     {
-    const std::string length = HeaderValue (headers, "Content-Length");
-    if (!length.empty () && raw.size () < (size_t) strtoull (length.c_str (), NULL, 10))
+    const std::string text = HeaderValue (headers, "Content-Length");
+    if (text.empty ())
+      {
+      *body = raw;
+      return true;
+      }
+    // Compared as 64 bits: a size_t of 32 would make 4 GB and a bit into a bit.
+    uint64_t length = 0;
+    if (!ParseLength (text, &length) || (uint64_t) raw.size () < length)
       return false;
-    *body = raw;
+    body->assign (raw, 0, (size_t) length);
     return true;
     }
 
@@ -845,17 +1072,46 @@ bool HttpsGetDecodeBody (const std::string & headers, const std::string & raw, s
     const size_t lineEnd = raw.find ("\r\n", at);
     if (lineEnd == std::string::npos)
       return false;
-    const size_t size = (size_t) strtoull (raw.c_str () + at, NULL, 16);
+
+    // Hex digits, then perhaps spaces and an extension.  Anything else, or nothing, is
+    // not a size; strtoull would have made it 0, the last chunk.
+    uint64_t size = 0;
+    size_t digits = 0;
+    size_t i = at;
+    for (; i < lineEnd && isxdigit ((unsigned char) raw [i]); i++, digits++)
+      {
+      if (digits >= 15)
+        return false;      // more than any body here could be
+      const char c = raw [i];
+      size = size * 16 + (uint64_t) (c <= '9' ? c - '0' : (tolower ((unsigned char) c) - 'a' + 10));
+      }
+    while (i < lineEnd && (raw [i] == ' ' || raw [i] == '\t'))
+      i++;
+    if (digits == 0 || (i < lineEnd && raw [i] != ';'))
+      return false;
+
     at = lineEnd + 2;
     if (size == 0)
       return true;
-    if (size > raw.size () - at)
+    if (size > (uint64_t) (raw.size () - at))
       return false;
-    body->append (raw, at, size);
-    at += size + 2;      // and its CRLF
-    if (at > raw.size ())
+    body->append (raw, at, (size_t) size);
+    at += (size_t) size;
+    if (raw.compare (at, 2, "\r\n") != 0)
       return false;
+    at += 2;
     }
+  }
+
+void HttpsTestTrust (const std::string & pem)
+  {
+  std::lock_guard<std::mutex> lock (g_testLock);
+  g_testTrustPem = pem;
+  }
+
+void SafeGetTestAllowLoopback (const bool bAllow)
+  {
+  g_testAllowLoopback = bAllow;
   }
 
 namespace {
@@ -927,7 +1183,8 @@ bool HttpsDownload (const std::string & url, const int timeoutSeconds, const std
   const Sink sink = { file, timeoutSeconds > 0 ? timeoutSeconds : kHttpsGetDefaultTimeoutSeconds, &progress };
   std::string body;
   bool bOK = FetchFollowingRedirects (url, timeoutSeconds, userAgent, status, &body, error, &sink);
-  // A chunked answer came back whole, rather than going straight to the file.
+  // A chunked answer came back whole, rather than going straight to the file.  (body is
+  // the last hop's alone: a redirect's own content is not part of the file.)
   if (bOK && *status == 200 && !body.empty () && fwrite (body.data (), 1, body.size (), file) != body.size ())
     {
     *error = "could not write the downloaded file (is the disk full?)";
@@ -973,8 +1230,17 @@ bool IsPublicAddress (const unsigned char *, size_t)
 
 bool HttpsGetDecodeBody (const std::string &, const std::string & raw, std::string * body)
   {
-  *body = raw;
+  if (body)
+    *body = raw;
   return true;
+  }
+
+void HttpsTestTrust (const std::string &)
+  {
+  }
+
+void SafeGetTestAllowLoopback (bool)
+  {
   }
 
 } // namespace pal

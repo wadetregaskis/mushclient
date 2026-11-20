@@ -61,8 +61,16 @@ bool HttpsDownload (const std::string & url, int timeoutSeconds,
 
 // For tests: a response's content, given its headers, with any chunked encoding
 // undone.  False if it is incomplete (a chunked body with no last chunk, or fewer
-// bytes than Content-Length).
+// bytes than Content-Length) or malformed (a chunk size that isn't hex).  body may be
+// null, to ask only whether it is whole.
 bool HttpsGetDecodeBody (const std::string & headers, const std::string & raw,
                          std::string * body);
+
+// For tests, which run their own server on the loopback address: a certificate (PEM) to
+// trust as well as the system's, for all three fetches; and whether SafeGet may connect
+// to loopback (127.0.0.0/8 and ::1, and nothing else IsPublicAddress refuses).  Both are
+// off unless a test turns them on, and "" and false turn them off again.
+void HttpsTestTrust (const std::string & pem);
+void SafeGetTestAllowLoopback (bool bAllow);
 
 } // namespace pal

@@ -17,6 +17,11 @@
 # asked for, and the file against its hash.  (src/update_logic.h)
 #
 # --upload TAG attaches both to that release, with the GitHub CLI (gh auth login).
+#
+# Needs OpenSSL 3.0 or later: Ed25519 signs the message itself, not a digest of it, and
+# "pkeyutl -rawin" is how the command line does that, which 1.1.1 hasn't.  The folder can
+# be build-app's output folder as it is: only package files are signed, not the unpacked
+# trees beside them, nor the engine selftest's report.
 set -euo pipefail
 
 OPENSSL="${OPENSSL:-openssl}"
@@ -41,6 +46,8 @@ done
 [ -f "$KEY" ] || die "no key at $KEY (packaging/make-update-key makes one)"
 "$OPENSSL" version | grep -q '^OpenSSL' ||
   die "'$OPENSSL' is not OpenSSL ($("$OPENSSL" version)).  Set OPENSSL to one that is."
+"$OPENSSL" version | grep -Eq '^OpenSSL ([3-9]|[1-9][0-9])\.' ||
+  die "'$OPENSSL' is $("$OPENSSL" version), and signing needs OpenSSL 3.0 or later.  Set OPENSSL to one that is."
 
 if command -v sha256sum >/dev/null 2>&1; then
   SHA256="sha256sum"
@@ -53,14 +60,17 @@ SIGNATURE="$MANIFEST.sig"
 
 (
   cd "$FOLDER"
-  # Everything of this version that isn't a list of hashes, nor unsigned.  Names are
-  # compared exactly by the client, so these are written as they are.
+  # Every package of this version: files only (build-app leaves the unpacked tree, a
+  # folder of the same name, beside each), and not a list of hashes, nor unsigned, nor
+  # build-app's selftest report.  Names are compared exactly by the client, so these are
+  # written as they are.
   shopt -s nullglob
   FILES=()
   for f in MUSHclient-"$VERSION"-* MUSHclient_"$VERSION"_* mushclient-"$VERSION"-* mushclient_"$VERSION"_* \
            mushclient-discworld-"$VERSION"-*; do
+    [ -f "$f" ] || continue
     case "$f" in
-      *SHA256SUMS*|*-UNSIGNED*|*.sig) ;;
+      *SHA256SUMS*|*-UNSIGNED*|*.sig|*-selftest.txt|*.part) ;;
       *) FILES+=("$f");;
     esac
   done

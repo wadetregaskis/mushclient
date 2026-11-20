@@ -8,6 +8,9 @@
 #include "update_service.h"
 #include "world_backups.h"
 #include "pal/https_get.h"
+#ifdef _WIN32
+#include "dialogs/UpdateDlg.h"
+#endif
 
 #if defined(_WIN32) || defined(OPENSSL_FOUND)
 #define HAVE_CRYPTO_FOR_TESTS 1
@@ -19,6 +22,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -577,6 +581,15 @@ TEST (UpdatePlan, WhenItWontInstall)
   plan = PlanInstall (r, copy, key.publicHex);
   EXPECT_FALSE (plan.canInstall);
   EXPECT_TRUE (plan.why.find ("isn't signed") != std::string::npos);
+
+  // A copy of the port that isn't in a folder of its own.
+  ThisCopy loose;
+  loose.platform = Platform::Linux;
+  loose.arch = "x86_64";
+  loose.foreignFolder = true;
+  plan = PlanInstall (r, loose, key.publicHex);
+  EXPECT_FALSE (plan.canInstall);
+  EXPECT_TRUE (plan.why.find ("folder of its own") != std::string::npos);
   }
 
 #endif // HAVE_CRYPTO_FOR_TESTS
@@ -590,13 +603,23 @@ struct FakeUiThread
   {
   std::mutex mutex;
   std::vector<std::function<void ()>> queue;
+  bool bRefuse = false;       // as PostMessage does with a full queue
+
+  void Refuse (const bool b)
+    {
+    std::lock_guard<std::mutex> lock (mutex);
+    bRefuse = b;
+    }
 
   Controller::Poster Poster ()
     {
     return [this] (std::function<void ()> f)
       {
       std::lock_guard<std::mutex> lock (mutex);
+      if (bRefuse)
+        return false;
       queue.push_back (std::move (f));
+      return true;
       };
     }
 
@@ -987,6 +1010,521 @@ TEST (UpdateSwap, AFailureUndoesEverything)
   EXPECT_EQ (std::string ("new z"), ReadText (stage / "z.dll"));
   }
 #endif
+
+// ---------------- limits, hashes and the worker's state ----------------
+
+#ifdef HAVE_CRYPTO_FOR_TESTS
+
+TEST (UpdateDownload, TheCheckedHashComesBackWithThePath)
+  {
+  TestKey key;
+  FakeNetwork net;
+  const Release r = ReleaseWithFiles (net, key, "MUSHclient-6.10-windows-x64.zip", "the package");
+  std::string path, error, sha256;
+  ASSERT_TRUE (RunDownload (net.MakeFetcher (), net.MakeDownloader (), r, WindowsPortable (), key.publicHex,
+                            TempFolder ("dl_hash").u8string (), nullptr, &path, &error, &sha256));
+  EXPECT_EQ (Sha256Of (fs::u8path (path)), sha256);
+  EXPECT_EQ ((size_t) 64, sha256.size ());
+  }
+
+TEST (UpdateDownload, NothingMuchBiggerThanTheReleaseListSays)
+  {
+  TestKey key;
+  FakeNetwork net;
+  const std::string big (300 * 1024, 'x');
+  Release r = ReleaseWithFiles (net, key, "MUSHclient-6.10-windows-x64.zip", big);
+  r.assets [0].size = 100 * 1024;      // the list says a third of what comes
+  const fs::path folder = TempFolder ("dl_toobig");
+  std::string path, error;
+  EXPECT_FALSE (RunDownload (net.MakeFetcher (), net.MakeDownloader (), r, WindowsPortable (), key.publicHex,
+                             folder.u8string (), nullptr, &path, &error));
+  EXPECT_TRUE (error.find ("larger than the release says") != std::string::npos);
+  EXPECT_TRUE (fs::is_empty (folder));
+
+  // A little over is allowed: the hash is what decides.
+  EXPECT_GT (DownloadLimit (r.assets [0]), (uint64_t) 100 * 1024);
+  EXPECT_LT (DownloadLimit (r.assets [0]), (uint64_t) 200 * 1024);
+  r.assets [0].size = big.size ();
+  EXPECT_TRUE (RunDownload (net.MakeFetcher (), net.MakeDownloader (), r, WindowsPortable (), key.publicHex,
+                            folder.u8string (), nullptr, &path, &error));
+
+  // No size in the list: still a limit, a generous one.
+  Asset unsized;
+  EXPECT_GE (DownloadLimit (unsized), (uint64_t) 512 * 1024 * 1024);
+  }
+
+TEST (UpdateZip, TheBytesUnpackedAreTheBytesChecked)
+  {
+  const fs::path folder = TempFolder ("ziphash");
+  WriteText (folder / "a.zip", MakeZip ({ { "one.txt", "1" } }));
+  const std::string good = Sha256Of (folder / "a.zip");
+  std::string error;
+  ASSERT_TRUE (ExtractZip ((folder / "a.zip").u8string (), (folder / "a").u8string (), &error, good));
+  EXPECT_EQ (std::string ("1"), ReadText (folder / "a" / "one.txt"));
+
+  std::string wrong = good;
+  wrong [0] = wrong [0] == '0' ? '1' : '0';
+  EXPECT_FALSE (ExtractZip ((folder / "a.zip").u8string (), (folder / "b").u8string (), &error, wrong));
+  EXPECT_TRUE (error.find ("changed after it was checked") != std::string::npos);
+  EXPECT_FALSE (fs::exists (folder / "b" / "one.txt"));
+
+  // HashBytes and HashFile agree.
+  const std::string bytes = ReadText (folder / "a.zip");
+  std::string fromBytes;
+  ASSERT_TRUE (HashBytes (bytes.data (), bytes.size (), &fromBytes));
+  EXPECT_EQ (good, fromBytes);
+  }
+
+TEST (UpdatePlan, OffersTheNewestThatHasAPackageForThisCopy)
+  {
+  TestKey key;
+  FakeNetwork net;
+  Release older = ReleaseWithFiles (net, key, "MUSHclient-6.10-windows-x64.zip", "the package");
+  Release newest = older;
+  newest.version = "6.20";
+  newest.assets.clear ();        // nothing for anyone yet
+  const std::vector<Release> newer = { newest, older };
+
+  Offer offer = ChooseOffer (newer, WindowsPortable (), key.publicHex);
+  EXPECT_EQ (std::string ("6.10"), offer.release.version);
+  EXPECT_TRUE (offer.plan.canInstall);
+  EXPECT_TRUE (offer.note.find ("6.20") != std::string::npos);
+
+  // When the newest has one, it's the newest, and nothing needs saying.
+  offer = ChooseOffer ({ older }, WindowsPortable (), key.publicHex);
+  EXPECT_EQ (std::string ("6.10"), offer.release.version);
+  EXPECT_TRUE (offer.note.empty ());
+
+  // When none has one, the newest, and why not.
+  ThisCopy arm = WindowsPortable ();
+  arm.arch = "arm64";
+  offer = ChooseOffer (newer, arm, key.publicHex);
+  EXPECT_EQ (std::string ("6.20"), offer.release.version);
+  EXPECT_FALSE (offer.plan.canInstall);
+  EXPECT_FALSE (offer.plan.why.empty ());
+  }
+
+namespace {
+
+// A downloader that waits until told, so that a download is under way for as long as a
+// test needs.
+struct HeldDownloader
+  {
+  std::mutex mutex;
+  bool bGo = false;
+  std::string bytes;
+
+  Downloader Make ()
+    {
+    return [this] (const std::string &, const std::string & path, const Progress & progress, std::string * error)
+      {
+      for (int i = 0; i < 2000; i++)
+        {
+          {
+          std::lock_guard<std::mutex> lock (mutex);
+          if (bGo)
+            break;
+          }
+        if (progress && !progress (0, bytes.size ()))
+          {
+          *error = "cancelled";
+          return false;
+          }
+        std::this_thread::sleep_for (std::chrono::milliseconds (5));
+        }
+      WriteText (fs::u8path (path), bytes);
+      return true;
+      };
+    }
+
+  void Go ()
+    {
+    std::lock_guard<std::mutex> lock (mutex);
+    bGo = true;
+    }
+  };
+
+} // anonymous namespace
+
+TEST (UpdateController, ASecondDownloadIsToldAtOnceAndTheFirstFinishes)
+  {
+  TestKey key;
+  FakeNetwork net;
+  const Release r = ReleaseWithFiles (net, key, "MUSHclient-6.10-windows-x64.zip", "the package");
+  HeldDownloader held;
+  held.bytes = "the package";
+
+  FakeUiThread ui;
+  Controller & c = Controller::Get ();
+  c.Configure (ui.Poster (), "6.00");
+  c.SetNetwork (net.MakeFetcher (), held.Make ());
+
+  int firstTold = 0, secondTold = 0;
+  bool bFirstOK = false, bSecondOK = true;
+  std::string secondWhy, firstHash;
+  const std::string folder = TempFolder ("ctl_twice").u8string ();
+  c.StartDownload (r, WindowsPortable (), key.publicHex, folder, nullptr,
+                   [&] (bool bOK, const std::string &, const std::string & sha256)
+                     { firstTold++; bFirstOK = bOK; firstHash = sha256; });
+  EXPECT_TRUE (c.IsDownloading ());
+
+  // A second dialog's click, say: it hears straight away, rather than never.
+  c.StartDownload (r, WindowsPortable (), key.publicHex, folder, nullptr,
+                   [&] (bool bOK, const std::string & why, const std::string &)
+                     { secondTold++; bSecondOK = bOK; secondWhy = why; });
+  EXPECT_EQ (1, secondTold);
+  EXPECT_FALSE (bSecondOK);
+  EXPECT_TRUE (secondWhy.find ("already under way") != std::string::npos);
+  EXPECT_TRUE (c.IsDownloading ());
+
+  held.Go ();
+  ASSERT_TRUE (ui.Run ([&] { return firstTold > 0; }));
+  EXPECT_EQ (1, firstTold);
+  EXPECT_TRUE (bFirstOK);
+  EXPECT_EQ ((size_t) 64, firstHash.size ());
+  EXPECT_FALSE (c.IsDownloading ());
+  EXPECT_EQ (1, secondTold);
+
+  c.SetNetwork (nullptr, nullptr);
+  }
+
+TEST (UpdateController, ADownloadWhoseResultCannotBePostedDoesNotWedgeIt)
+  {
+  TestKey key;
+  FakeNetwork net;
+  const Release r = ReleaseWithFiles (net, key, "MUSHclient-6.10-windows-x64.zip", "the package");
+
+  FakeUiThread ui;
+  Controller & c = Controller::Get ();
+  c.Configure (ui.Poster (), "6.00");
+  c.SetNetwork (net.MakeFetcher (), net.MakeDownloader ());
+  ui.Refuse (true);
+  int told = 0;
+  c.StartDownload (r, WindowsPortable (), key.publicHex, TempFolder ("ctl_refused").u8string (), nullptr,
+                   [&] (bool, const std::string &, const std::string &) { told++; });
+  ASSERT_TRUE (ui.Run ([&] { return !c.IsDownloading (); }));
+  EXPECT_EQ (0, told);        // it couldn't be, and nothing else ran in its place
+
+  // And the next one works.
+  ui.Refuse (false);
+  c.StartDownload (r, WindowsPortable (), key.publicHex, TempFolder ("ctl_refused2").u8string (), nullptr,
+                   [&] (bool, const std::string &, const std::string &) { told++; });
+  ASSERT_TRUE (ui.Run ([&] { return told > 0; }));
+  EXPECT_FALSE (c.IsDownloading ());
+
+  c.SetNetwork (nullptr, nullptr);
+  }
+
+#endif // HAVE_CRYPTO_FOR_TESTS
+
+namespace {
+
+// A fetcher that waits until told, so that a check is under way for as long as a test
+// needs, and that can be made to fail.
+struct HeldFetcher
+  {
+  std::mutex mutex;
+  bool bGo = true;
+  bool bFail = false;
+  std::atomic<int> fetches { 0 };
+
+  Fetcher Make ()
+    {
+    return [this] (const std::string &, int * status, std::string * body, std::string * error)
+      {
+      fetches++;
+      bool bFailing = false;
+      for (int i = 0; i < 2000; i++)
+        {
+          {
+          std::lock_guard<std::mutex> lock (mutex);
+          bFailing = bFail;
+          if (bGo)
+            break;
+          }
+        std::this_thread::sleep_for (std::chrono::milliseconds (5));
+        }
+      if (bFailing)
+        {
+        *error = "no route to host";
+        return false;
+        }
+      *status = 200;
+      *body = kReleases;
+      return true;
+      };
+    }
+
+  void Set (const bool bGoNow, const bool bFailNow)
+    {
+    std::lock_guard<std::mutex> lock (mutex);
+    bGo = bGoNow;
+    bFail = bFailNow;
+    }
+  };
+
+} // anonymous namespace
+
+TEST (UpdateController, AskingDuringABackgroundCheckIsAnsweredByIt)
+  {
+  FakeUiThread ui;
+  Controller & c = Controller::Get ();
+  c.Configure (ui.Poster (), "6.00");
+  HeldFetcher held;
+  held.Set (false, false);
+  c.SetNetwork (held.Make (), nullptr);
+  int told = 0;
+  bool bUserAsked = false;
+  c.SetOnChecked ([&] (bool b, const CheckResult & result)
+    {
+    told++;
+    bUserAsked = b;
+    EXPECT_TRUE (result.ok);
+    });
+
+  const time_t start = 2000000;
+  c.Tick (start, true);
+  c.Tick (start + 31, true);           // the first background check
+  ASSERT_TRUE (c.IsChecking ());
+  c.CheckNow (true);                   // Help > Check for Updates, meanwhile
+  held.Set (true, false);
+  ASSERT_TRUE (ui.Run ([&] { return !c.IsChecking (); }));
+  EXPECT_EQ (1, (int) held.fetches);   // the one check answered both
+  EXPECT_EQ (1, told);
+  EXPECT_TRUE (bUserAsked);            // and was reported as asked for
+
+  // The next background one is background again.
+  c.Tick (start + 31 + 24 * 3600, true);
+  ASSERT_TRUE (ui.Run ([&] { return !c.IsChecking (); }));
+  EXPECT_EQ (2, told);
+  EXPECT_FALSE (bUserAsked);
+
+  c.SetOnChecked (nullptr);
+  c.SetNetwork (nullptr, nullptr);
+  }
+
+TEST (UpdateController, AFailedCheckIsTriedAgainWithinTheHour)
+  {
+  FakeUiThread ui;
+  Controller & c = Controller::Get ();
+  c.Configure (ui.Poster (), "6.00");
+  HeldFetcher held;
+  held.Set (true, true);
+  c.SetNetwork (held.Make (), nullptr);
+
+  const time_t start = 3000000;
+  c.Tick (start, true);
+  c.Tick (start + 31, true);
+  ASSERT_TRUE (ui.Run ([&] { return !c.IsChecking (); }));
+  EXPECT_EQ (1, (int) held.fetches);
+
+  c.Tick (start + 31 + 1800, true);
+  EXPECT_FALSE (c.IsChecking ());
+  c.Tick (start + 31 + 3600, true);    // an hour on, not a day
+  EXPECT_TRUE (c.IsChecking ());
+  held.Set (true, false);
+  ASSERT_TRUE (ui.Run ([&] { return !c.IsChecking (); }));
+  EXPECT_EQ (2, (int) held.fetches);
+  EXPECT_TRUE (c.HasUpdate ());
+
+  // Having worked, daily again.
+  c.Tick (start + 31 + 2 * 3600 + 1, true);
+  EXPECT_FALSE (c.IsChecking ());
+
+  c.SetNetwork (nullptr, nullptr);
+  }
+
+TEST (UpdateController, ACheckWhoseResultCannotBePostedDoesNotWedgeIt)
+  {
+  FakeUiThread ui;
+  Controller & c = Controller::Get ();
+  c.Configure (ui.Poster (), "6.00");
+  HeldFetcher held;
+  c.SetNetwork (held.Make (), nullptr);
+  int told = 0;
+  bool bUserAsked = false;
+  c.SetOnChecked ([&] (bool b, const CheckResult &) { told++; bUserAsked = b; });
+
+  ui.Refuse (true);
+  c.CheckNow (true);
+  ASSERT_TRUE (ui.Run ([&] { return !c.IsChecking (); }));
+  EXPECT_EQ (0, told);
+
+  ui.Refuse (false);
+  c.CheckNow (true);
+  ASSERT_TRUE (ui.Run ([&] { return told > 0; }));
+  EXPECT_TRUE (bUserAsked);
+  EXPECT_FALSE (c.IsChecking ());
+
+  c.SetOnChecked (nullptr);
+  c.SetNetwork (nullptr, nullptr);
+  }
+
+TEST (UpdateController, ADownloadBeforeItIsSetUpIsToldSo)
+  {
+  Controller & c = Controller::Get ();
+  c.Configure (nullptr, "6.00");
+  int told = 0;
+  c.StartDownload (Release (), ThisCopy (), "", "unused", nullptr,
+                   [&] (bool bOK, const std::string & why, const std::string &)
+                     {
+                     told++;
+                     EXPECT_FALSE (bOK);
+                     EXPECT_FALSE (why.empty ());
+                     });
+  EXPECT_EQ (1, told);
+  EXPECT_FALSE (c.IsDownloading ());
+  }
+
+TEST (UpdatePlan, TheReleasePageIsGitHubsOrTheList)
+  {
+  Release r;
+  r.pageUrl = "https://github.com/wadetregaskis/mushclient/releases/tag/v6.10";
+  EXPECT_EQ (r.pageUrl, ReleasePageFor (r));
+  for (const char * bad : { "", "https://github.com/", "http://github.com/x", "https://github.com.example.net/x",
+                            "file:///c:/windows/system32/calc.exe", "C:\\Windows\\notepad.exe",
+                            "https://github.com/x\" --evil", "https://github.com/x y", "https://github.com/x\r\ny",
+                            "https://github.com/x|calc" })
+    {
+    r.pageUrl = bad;
+    EXPECT_EQ (std::string (kReleasesPageUrl), ReleasePageFor (r));
+    }
+  }
+
+// ---------------- replacing a whole folder (the port's way) ----------------
+
+TEST (UpdateFolder, OnlyOneThatIsRecognisablyOurs)
+  {
+  const fs::path folder = TempFolder ("ours");
+  const fs::path tarball = folder / "mushclient";
+  WriteText (tarball / "MUSHclient", "exe");
+  WriteText (tarball / "mushclient.sh", "#!/bin/sh");
+  WriteText (tarball / "mushclient_dialogs.rc", "rc");
+  EXPECT_TRUE (LooksLikeOurFolder (tarball.u8string (), Platform::Linux));
+
+  // ~/bin, with the program copied into it: never to be replaced, nor removed.
+  WriteText (folder / "bin" / "MUSHclient", "exe");
+  WriteText (folder / "bin" / "some-other-tool", "x");
+  EXPECT_FALSE (LooksLikeOurFolder ((folder / "bin").u8string (), Platform::Linux));
+  EXPECT_FALSE (LooksLikeOurFolder ((folder / "missing").u8string (), Platform::Linux));
+  EXPECT_FALSE (LooksLikeOurFolder ("", Platform::Linux));
+  EXPECT_FALSE (LooksLikeOurFolder ((tarball / "MUSHclient").u8string (), Platform::Linux));
+
+  const fs::path app = folder / "MUSHclient.app";
+  WriteText (app / "Contents" / "Info.plist", "plist");
+  fs::create_directories (app / "Contents" / "MacOS");
+  EXPECT_TRUE (LooksLikeOurFolder (app.u8string (), Platform::MacOS));
+  EXPECT_FALSE (LooksLikeOurFolder (tarball.u8string (), Platform::MacOS));
+  const fs::path notApp = folder / "Applications";
+  WriteText (notApp / "Contents" / "Info.plist", "plist");
+  fs::create_directories (notApp / "Contents" / "MacOS");
+  EXPECT_FALSE (LooksLikeOurFolder (notApp.u8string (), Platform::MacOS));
+
+  EXPECT_FALSE (LooksLikeOurFolder (tarball.u8string (), Platform::Windows));
+  }
+
+TEST (UpdateFolder, WhatTheyAddedComesAcrossAndTheirsWin)
+  {
+  const fs::path folder = TempFolder ("carry");
+  const fs::path old = folder / "mushclient.mcold";
+  const fs::path now = folder / "mushclient";
+  WriteText (old / "MUSHclient", "old exe");
+  WriteText (old / "lua" / "shipped.lua", "old shipped");
+  WriteText (old / "lib" / "libgone.so", "a library the new one doesn't have");
+  WriteText (old / "worlds" / "mine.mcl", "my world");
+  WriteText (old / "worlds" / "example.mcl", "my edit of the example");
+  WriteText (old / "worlds" / "plugins" / "mine.xml", "my plugin");
+  WriteText (old / "myscripts" / "a.lua", "mine");
+  WriteText (old / "notes.txt", "mine too");
+
+  WriteText (now / "MUSHclient", "new exe");
+  WriteText (now / "lua" / "shipped.lua", "new shipped");
+  WriteText (now / "worlds" / "example.mcl", "the example as shipped");
+  WriteText (now / "worlds" / "new-example.mcl", "a new example");
+
+  std::string error;
+  ASSERT_TRUE (CarryOverUserFiles (old.u8string (), now.u8string (), &error));
+
+  // The program's files are the new ones.
+  EXPECT_EQ (std::string ("new exe"), ReadText (now / "MUSHclient"));
+  EXPECT_EQ (std::string ("new shipped"), ReadText (now / "lua" / "shipped.lua"));
+  // Theirs are theirs, the package's new ones are added.
+  EXPECT_EQ (std::string ("my world"), ReadText (now / "worlds" / "mine.mcl"));
+  EXPECT_EQ (std::string ("my edit of the example"), ReadText (now / "worlds" / "example.mcl"));
+  EXPECT_EQ (std::string ("my plugin"), ReadText (now / "worlds" / "plugins" / "mine.xml"));
+  EXPECT_EQ (std::string ("a new example"), ReadText (now / "worlds" / "new-example.mcl"));
+  // What they added anywhere else comes too, as the Windows swap leaves it.
+  EXPECT_EQ (std::string ("mine"), ReadText (now / "myscripts" / "a.lua"));
+  EXPECT_EQ (std::string ("mine too"), ReadText (now / "notes.txt"));
+  EXPECT_TRUE (fs::exists (now / "lib" / "libgone.so"));
+  // Moved, not copied.
+  EXPECT_FALSE (fs::exists (old / "notes.txt"));
+  EXPECT_FALSE (fs::exists (old / "myscripts"));
+  EXPECT_FALSE (fs::exists (old / "worlds" / "mine.mcl"));
+  }
+
+// ---------------- restarting, and starting the installer (Windows) ----------------
+
+#ifdef _WIN32
+
+TEST (UpdateRestart, ItIsTheExeThatStartsNotItsFolder)
+  {
+  // App.m_strMUSHclientFileName is the folder, with a backslash: ShellExecute opened
+  // Explorer on it, rather than starting the new copy.
+  const std::wstring exe = update_ui::ProgramToRestart ();
+  ASSERT_FALSE (exe.empty ());
+  const fs::path path (exe);
+  EXPECT_TRUE (fs::is_regular_file (path));
+  EXPECT_TRUE (_wcsicmp (path.extension ().c_str (), L".exe") == 0);
+  wchar_t own [MAX_PATH] = L"";
+  GetModuleFileNameW (NULL, own, MAX_PATH);
+  std::error_code ec;
+  EXPECT_TRUE (fs::equivalent (path, fs::path (own), ec));
+  }
+
+#ifdef HAVE_CRYPTO_FOR_TESTS
+
+TEST (UpdateInstaller, StartedOnlyIfItIsStillWhatWasChecked)
+  {
+  // cmd.exe stands in for the installer: it can say it ran, with its exit code.
+  const fs::path folder = TempFolder ("installer");
+  wchar_t system [MAX_PATH] = L"";
+  GetSystemDirectoryW (system, MAX_PATH);
+  std::error_code ec;
+  fs::copy_file (fs::path (system) / L"cmd.exe", folder / L"setup.exe", ec);
+  ASSERT_FALSE (ec);
+  const std::string path = (folder / L"setup.exe").u8string ();
+  const std::string sha256 = Sha256Of (folder / L"setup.exe");
+
+  HANDLE process = NULL;
+  std::string error;
+  ASSERT_TRUE (update_ui::LaunchVerified (path, sha256, L"/c exit 7", &error, &process));
+  ASSERT_TRUE (process != NULL);
+  EXPECT_EQ ((DWORD) WAIT_OBJECT_0, WaitForSingleObject (process, 30000));
+  DWORD code = 0;
+  GetExitCodeProcess (process, &code);
+  EXPECT_EQ ((DWORD) 7, code);
+  CloseHandle (process);
+
+  // Changed since: not started.
+  fs::copy_file (folder / L"setup.exe", folder / L"changed.exe", ec);
+  ASSERT_FALSE (ec);
+    {
+    std::ofstream f (folder / L"changed.exe", std::ios::binary | std::ios::app);
+    f << 'x';
+    }
+  process = NULL;
+  EXPECT_FALSE (update_ui::LaunchVerified ((folder / L"changed.exe").u8string (), sha256, L"/c exit 7", &error, &process));
+  EXPECT_TRUE (process == NULL);
+  EXPECT_TRUE (error.find ("changed") != std::string::npos);
+
+  // No hash at all is no go either.
+  EXPECT_FALSE (update_ui::LaunchVerified (path, "", L"/c exit 7", &error, &process));
+  EXPECT_FALSE (update_ui::LaunchVerified ((folder / L"missing.exe").u8string (), sha256, L"/c exit 7", &error, &process));
+  }
+
+#endif // HAVE_CRYPTO_FOR_TESTS
+#endif // _WIN32
 
 // ---------------- world backups ----------------
 

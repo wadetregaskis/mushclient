@@ -23,6 +23,7 @@
 #include "version.h"
 
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -243,7 +244,12 @@ void DownloadWorker (std::shared_ptr <CMspDownloads> downloads, const std::strin
     std::error_code ec;
     fs::create_directories (fs::path (path).parent_path (), ec);
 
-    const std::string temporary = path + ".part";
+    // A name of this attempt's own: one left by a crash, which nothing will remove, would
+    // otherwise stop this sound being saved for good.
+    static std::atomic<unsigned> attempts { 0 };
+    std::random_device random;
+    const std::string temporary = path + "." + std::to_string (random ()) + "-" +
+                                  std::to_string (++attempts) + ".part";
 #ifdef _WIN32
     const int fd = _open (temporary.c_str (), _O_CREAT | _O_EXCL | _O_WRONLY | _O_BINARY, _S_IREAD | _S_IWRITE);
 #else

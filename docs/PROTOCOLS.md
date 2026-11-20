@@ -47,13 +47,20 @@ all there is. It never changes a world's encoding.
 `CLIENT_VERSION`, `CHARSET`, `MTTS`, `TERMINAL_TYPE`, and as Mudlet does `ANSI`, `256_COLORS`,
 `TRUECOLOR`, `UTF-8`, `TLS`, `OSC_HYPERLINKS`, `OSC_HYPERLINKS_SEND`, `OSC_HYPERLINKS_PROMPT`,
 `SCREEN_READER`, `WORD_WRAP`. `IPADDRESS` is never sent: asked for, it comes back with no value,
-which is how RFC 1572 says "not defined".
+which is how RFC 1572 says "not defined". A name the server asked for is echoed as it asked, so in
+names and values alike the bytes 0 to 3 go with an `ESC` before them and `IAC` is doubled.
 
 **MTTS** now includes 512 (MNES), and 64 if `mtts_screen_reader` is on.
 
-**MSSP.** Parsed only for a port under `SSL` or `TLS`. If there is one and the world is not using
-TLS, a note in the output window offers to reconnect. It never switches by itself. The other link
-in the note stops it asking for this world.
+**MSSP.** Parsed only for a port under `SSL` or `TLS`, and only once the client has said `DO`. If
+there is one and the world is not using TLS, a note in the output window offers to reconnect. It
+never switches by itself. The other link in the note stops it asking for this world. Not on a
+connection a RELOCATE made, whose ports are another host's.
+
+**Locale.** The client sets the C library's locale from the system's, and in many of them
+`isalnum` and `tolower` say yes to bytes above 127. What a server sends is checked byte by byte
+against ASCII instead (names, hosts, GMCP packages, frame sizes), so it means the same on every
+machine.
 
 ## OSC 8 links
 
@@ -71,7 +78,9 @@ A relayed ESC can forge one of these, which is why `send:` says what it will sen
 if it decodes to a control character or a `|`.
 
 What was taken for a URI goes back to being text if a space or control character shows it was not
-one, if a newline arrives first, or past 4 KB. Bytes split across packets make no difference.
+one, if a newline arrives first, or past 4 KB. Bytes split across packets make no difference. In a
+UTF-8 world that text is repaired as the rest of the line is: a byte that is not part of a valid
+character is taken as Windows-1252.
 
 ## MXP
 
@@ -82,8 +91,8 @@ The client says it is MXP 1.0. `<SUPPORT>` answers truthfully, including for arg
 | Line tags 20-99, `<!TAG>` | The element with `TAG=n` applies to the line. `<!TAG>` takes `FORE`, `BACK`, `GAG`, `ENABLE`, `DISABLE`, `WINDOWNAME`. |
 | Modes 10, 11, 12, 19 | The line is tagged: see below. They do not change the security mode. Welcome text (19) is hidden after a RELOCATE. |
 | `FLAG=RoomName` etc | As before it sets `mxp_roomname`. Now it also tags the line and tells plugins. |
-| `EXPIRE`, `expire=` | Kills the links of that name, or with no name every link that has one. |
-| Entities | `ADD` and `REMOVE` treat the value as a `|` list. `DELETE`, `DESC`, `PUBLISH`, `PRIVATE`. Names stay case-insensitive, because plugins have always been told them in lower case and QuowMinimap depends on that. |
+| `EXPIRE`, `expire=` | Kills the links of that name, or with no name every link that has one. 256 names are remembered; past that the one used longest ago is forgotten, and its links stay. |
+| Entities | `ADD` and `REMOVE` treat the value as a `|` list. `DELETE`, `DESC`, `PUBLISH`, `PRIVATE`. Names stay case-insensitive, because plugins have always been told them in lower case and QuowMinimap depends on that. A value is at most 16 KB, there are at most 1024 entities, and 1 MB of values in all; a definition (or `<VAR>`) past those leaves the entity as it was, says so as an MXP error, and does not call `OnPluginMXPsetEntity`. |
 | `&#n;` | In a UTF-8 world, that character in UTF-8, up to U+10FFFF. Otherwise the byte up to 255, and beyond that what the world's code page calls it. |
 | `S`, `STRIKE`, `STRIKEOUT` | Struck out. |
 | `NOBR`, `SBR` | As the spec says. `SBR` is a space, which is where wrapping prefers to break. |
@@ -117,20 +126,45 @@ not move aside. `LEFT`, `TOP`, `WIDTH` and `HEIGHT` take pixels, `%` or `c`, `IN
 `ALIGN` says, `ACTION=REDIRECT` sends everything there until `<FRAME _top ACTION=REDIRECT>`. `DEST` takes
 `X`, `Y`, `EOL`, `EOF`, and with nothing to write erases as the spec says. Not done: moving and resizing
 them, and `FLOATING`, since a miniwindow is on top of the output anyway. Limits: eight frames, 200 rows,
-256 columns.
+256 columns. Frames are painted at most four times a second (what changes in between waits for the
+next, at most a quarter of a second), and a paint draws at most 2048 runs of one colour: past that
+the rest of each row is drawn in the colour it starts with, so a server cannot make painting cost
+more than that by giving every cell a colour of its own.
 
 A plugin can do any of it differently by returning false from `OnPluginMXPopenTag`, as for any tag.
 
 **RELOCATE.** A note says where the server wants to send you, with a link to go. It never goes
-by itself. From that moment `<USER>` and `<PASSWORD>` get nothing for the rest of the session, and a
-connection made this way sends no name, no password and no connect text. When it closes the world
-goes back to its own address.
+by itself. From that moment `<USER>` and `<PASSWORD>` get nothing for the rest of that connection,
+and a connection made this way sends no name, no password and no connect text, and gets none from
+`<USER>` and `<PASSWORD>` either.
+
+The world's own address is never changed: the destination is used for the one connection the link
+makes, and saving the world while it is up (autosave included) saves the world's own host and port.
+When that connection closes, or fails to connect, the next connection goes to the world's own
+address, as does any connection the link did not make. A link works only for its own offer on its
+own connection: a later offer replaces it, and a new connection forgets it. On a relocated connection
+there is no MSSP TLS offer, and a failed TLS handshake or certificate there gives no prompt, since
+what the prompt changes (TLS off, or any certificate accepted) is the world's own setting.
 
 ## MSP
 
 Server `IAC WILL 90`, client `IAC DO 90`, and from then on lines starting `!!SOUND(name ...)` or
 `!!MUSIC(name ...)` play, and appear nowhere: not the output, not triggers, not the log. A line where
-that is not the start, such as another player saying it, is only text.
+that is not the start, such as "Bob says, !!SOUND(...)", is only text.
+
+**Other players' text.** The client cannot tell a line the server wrote from one a player made it
+write. A line can start with `!!SOUND(` because of `@emit`, a room description someone wrote, or the
+server wrapping a long `say` at just that point, and the MSP spec leaves it to the server to filter
+`!!` out of what players send. So:
+
+- With MSP negotiated, such a line is honoured as the server's, as the spec says: another player on a
+  server that does not filter can play any sound already on your machine (by a safe name, as below),
+  stop yours, and with `U=` cause the one-time note asking to allow a host. That note names the host,
+  and nothing is fetched unless you click it and `msp_downloads` is on.
+- With `msp_without_negotiation`, which reads lines from a server that never said `WILL 90`, a line
+  gets what the old `msp.xml` gave it: a sound already here. `U=` and `Off U=` are ignored, with no
+  note, so no download and no question about one can come from it.
+- `<SOUND>` and `<MUSIC>` are secure-mode MXP tags, the server's own, and are treated as negotiated.
 
 `V=` volume, `L=` repeats (-1 for ever), `P=` priority, `C=` continue, `T=` type, `U=` where to
 download it. `Off` stops, `Off U=...` sets the default URL. `*` and `?` work in the last part of a
@@ -161,10 +195,16 @@ before). The line then stays, for their triggers.
 - No redirects to another host, or from https to http.
 - 16 MB at most, on a thread of its own, and nothing waits for it.
 - `.wav`, `.mp3`, `.flac` only, and the bytes must look like what the name says.
-- Names get past a check that refuses absolute paths, drive letters, `..`, `:` (NTFS streams),
-  device names, and anything not plain ASCII, whether reading or writing.
+- Names, and `T=` by the same rule, get past a check that refuses absolute paths, drive letters,
+  `..`, `:` (NTFS streams), device names (`NUL`, `COM0` to `COM9`, `LPT0` to `LPT9`, `CONIN$` and the
+  rest, with any extension, and with the spaces and dots Windows drops before it, as in `nul .wav`),
+  and anything not plain ASCII, whether reading or writing.
+- A name is percent-encoded into the URL: a space is `%20`.
 - It lands in `msp_cache/<world id>/` in the data folder and nowhere else, checked with links
   resolved, and never replaces a file.
+- The cache is kept to 256 MB for a world and 1 GB for every world together. Past that the oldest
+  downloads go, but only `.wav`, `.mp3` and `.flac` files, so anything else you put there stays (and
+  is not counted). A `.part` file a crash left behind goes once it is an hour old.
 - Not at all for a world using a proxy, which is there to hide your address.
 
 Music plays when it arrives. A sound effect is kept for next time, since a sword's clang

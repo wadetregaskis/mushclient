@@ -390,10 +390,33 @@ TEST (ProtoMnes, BuildingReplies)
   EXPECT_EQ (std::string (), proto::BuildEnvironReply (std::string (1, '\x02'), vars));
   EXPECT_EQ (std::string (), proto::BuildEnvironReply ("", vars));
 
-  // a value cannot contain syntax
+  // a value's syntax bytes are quoted with ESC, and IAC is doubled (RFC 1572)
   proto::EnvVars bad;
   bad.push_back ({ "X", std::string ("a\x01""b\xFF") + "c" });
-  EXPECT_EQ (std::string (1, '\0') + var + "X" + '\x01' + "abc", proto::BuildEnvironReply (send, bad));
+  EXPECT_EQ (std::string (1, '\0') + var + "X" + '\x01' + "a\x02\x01" "b\xFF\xFF" "c",
+             proto::BuildEnvironReply (send, bad));
+}
+
+TEST (ProtoMnes, RequestedNamesAreQuotedWhenEchoed)
+{
+  const std::string send (1, '\x01');
+  const std::string var (1, '\0');
+  const std::string esc (1, '\x02');
+  proto::EnvVars vars;
+
+  // A name the server asked for, with an ESCaped VALUE byte in it, and an IAC: echoed
+  // raw, the VALUE would start a value and the IAC end the subnegotiation.
+  const std::string request = send + var + "A" + esc + '\x01' + "B" + var + "C\xFF" "D" + var + "E" + esc + esc;
+  EXPECT_EQ (std::string (1, '\0') + var + "A" + esc + '\x01' + "B" + var + "C\xFF\xFF" "D" + var + "E" + esc + esc,
+             proto::BuildEnvironReply (request, vars));
+
+  // and the whole packet still parses as one subnegotiation
+  World w;
+  w.feed (kDO + (char) proto::kTelOptNewEnviron);
+  w.takeSent ();
+  w.feed (SB_ (proto::kTelOptNewEnviron, send + var + "X" + esc + '\x01' + "Y"));
+  const std::string reply = w.takeSent ();
+  EXPECT_EQ (kSB + (char) proto::kTelOptNewEnviron + '\0' + var + "X" + esc + '\x01' + "Y" + kSE, reply);
 }
 
 TEST (ProtoMnes, Negotiation)
@@ -2427,6 +2450,557 @@ TEST (ProtoGmcp, APluginsSubscriptionsGoWithIt)
   w.doc.GMCP_Unsubscribe ("char");
   EXPECT_TRUE (w.takeSent ().find ("Supports.Remove") != std::string::npos);
   EXPECT_TRUE (w.doc.m_pProto->gmcpSubs.empty ());
+}
+
+// ------------------------------------------------------------- RELOCATE, for real
+
+namespace {
+
+#ifdef _WIN32
+const int kConnRefused = WSAECONNREFUSED;
+#else
+const int kConnRefused = ECONNREFUSED;
+#endif
+
+// A transport that says where it was asked to go.  The doc owns and deletes them; the
+// last one made is the one that matters.
+struct WhereTransport : RecordingTransport
+  {
+  static WhereTransport * last;
+  int connects = 0;
+  pal::NetAddress address;
+  unsigned short port = 0;
+  std::string resolved;
+  WhereTransport () { last = this; }
+  ~WhereTransport () override { if (last == this) last = nullptr; }
+  void resolve (const char * name, pal::ResolveToken token) override
+    {
+    resolved = name ? name : "";
+    lastToken = token;
+    }
+  void connect (const pal::NetAddress & a, unsigned short p, const pal::TransportOptions &) override
+    {
+    connects++;
+    address = a;
+    port = p;
+    }
+  };
+WhereTransport * WhereTransport::last = nullptr;
+
+pal::NetAddress Numeric (const char * text)
+  {
+  pal::NetAddress a;
+  pal::ParseNumericAddress (text, a);
+  return a;
+  }
+
+struct RelocateWorld : World
+  {
+  BOOL savedNotify, savedToOutput;
+  RelocateWorld () : World (true)
+    {
+    savedNotify = App.m_bNotifyIfCannotConnect;
+    savedToOutput = App.m_bErrorNotificationToOutputWindow;
+    App.m_bNotifyIfCannotConnect = TRUE;
+    App.m_bErrorNotificationToOutputWindow = TRUE;
+    doc.m_fnTransportFactory = [] (pal::ITransportEvents &) -> pal::ITransport *
+      { return new WhereTransport (); };
+    doc.m_mush_name = "Home";
+    doc.m_server = "192.0.2.1";
+    doc.m_port = 4000;
+    doc.m_name = "Bob";
+    doc.m_password = "hunter2";
+    doc.m_connect_now = eConnectMUSH;
+    doc.m_connect_text = "say hello";
+    doc.m_bEnableTimers = FALSE;
+    t = nullptr;                // the first is gone at the first disconnect
+    }
+  ~RelocateWorld ()
+    {
+    App.m_bNotifyIfCannotConnect = savedNotify;
+    App.m_bErrorNotificationToOutputWindow = savedToOutput;
+    }
+  void offer (const std::string & where)
+    {
+    feed (kSecure + "<RELOCATE " + where + ">\r\n");
+    }
+  void click (int offerNumber)
+    {
+    Proto_RunAction (doc, "relocate", std::to_string (offerNumber).c_str ());
+    }
+  // the attempt the doc started answers
+  void answer (int error)
+    {
+    ASSERT_EQ (1u, doc.m_ConnectAttempts.size ());
+    doc.m_ConnectAttempts [0].events->onConnect (error);
+    }
+  std::string sentNow ()
+    {
+    return WhereTransport::last ? WhereTransport::last->sent : std::string ();
+    }
+  };
+
+} // anonymous namespace
+
+TEST (ProtoRelocate, ItGoesThereAndTheWorldKeepsItsOwnAddress)
+{
+  RelocateWorld w;
+  w.offer ("198.51.100.7 5000");
+  ASSERT_EQ (1, w.doc.m_pProto->relocateOffer);
+  w.click (1);
+
+  // the connection went there...
+  ASSERT_TRUE (WhereTransport::last != nullptr);
+  EXPECT_EQ (1, WhereTransport::last->connects);
+  EXPECT_TRUE (WhereTransport::last->address == Numeric ("198.51.100.7"));
+  EXPECT_EQ ((unsigned short) 5000, WhereTransport::last->port);
+
+  // ...and the world, which autosave writes as it is, did not
+  EXPECT_EQ (CString ("192.0.2.1"), w.doc.m_server);
+  EXPECT_EQ (4000, (int) w.doc.m_port);
+
+  // connected: no name, no password, no connect text
+  w.answer (0);
+  EXPECT_EQ ((int) eConnectConnectedToMud, (int) w.doc.m_iConnectPhase);
+  EXPECT_TRUE (w.sentNow ().find ("hunter2") == std::string::npos);
+  EXPECT_TRUE (w.sentNow ().find ("Bob") == std::string::npos);
+  EXPECT_TRUE (w.sentNow ().find ("hello") == std::string::npos);
+  EXPECT_TRUE (w.doc.m_pProto->bRelocated);
+
+  // a FLAG there marks the variables changed, which is what makes autosave save
+  w.feed (kSecure + "<!ELEMENT rn FLAG=\"Set x\"><rn>y</rn>\r\n");
+  EXPECT_EQ (CString ("192.0.2.1"), w.doc.m_server);
+
+  // closed, the world is home again, and the next connection goes there and logs in
+  w.doc.Disconnect ();
+  EXPECT_FALSE (w.doc.m_pProto->bRelocated);
+  w.doc.ConnectSocket ();
+  ASSERT_TRUE (WhereTransport::last != nullptr);
+  EXPECT_TRUE (WhereTransport::last->address == Numeric ("192.0.2.1"));
+  EXPECT_EQ ((unsigned short) 4000, WhereTransport::last->port);
+  w.answer (0);
+  EXPECT_TRUE (w.sentNow ().find ("connect Bob hunter2") != std::string::npos);
+}
+
+TEST (ProtoRelocate, AHostNameIsLookedUpAndTheOldAddressesAreNotUsed)
+{
+  RelocateWorld w;
+  // the world's own host was looked up before, and is remembered
+  w.doc.m_MudAddresses.assign (1, Numeric ("192.0.2.1"));
+  w.offer ("other.example 5000");
+  w.click (1);
+  ASSERT_TRUE (WhereTransport::last != nullptr);
+  EXPECT_EQ (std::string ("other.example"), WhereTransport::last->resolved);
+  EXPECT_EQ (0, WhereTransport::last->connects);
+  EXPECT_EQ ((int) eConnectMudNameLookup, (int) w.doc.m_iConnectPhase);
+
+  std::vector <pal::NetAddress> found (1, Numeric ("203.0.113.9"));
+  w.doc.LookupHostNameComplete (found, eConnectMudNameLookup, true);
+  EXPECT_TRUE (WhereTransport::last->address == Numeric ("203.0.113.9"));
+  EXPECT_EQ ((unsigned short) 5000, WhereTransport::last->port);
+  EXPECT_EQ (CString ("192.0.2.1"), w.doc.m_server);
+}
+
+TEST (ProtoRelocate, AFailedOneLeavesNothingPointingThere)
+{
+  RelocateWorld w;
+  w.offer ("198.51.100.7 5000");
+  w.click (1);
+  w.answer (kConnRefused);
+  EXPECT_EQ ((int) eConnectNotConnected, (int) w.doc.m_iConnectPhase);
+  EXPECT_EQ (CString ("192.0.2.1"), w.doc.m_server);
+
+  // the player connects again: home, with the password
+  w.doc.ConnectSocket ();
+  EXPECT_FALSE (w.doc.m_pProto->bRelocated);
+  ASSERT_TRUE (WhereTransport::last != nullptr);
+  EXPECT_TRUE (WhereTransport::last->address == Numeric ("192.0.2.1"));
+  EXPECT_EQ ((unsigned short) 4000, WhereTransport::last->port);
+  w.answer (0);
+  EXPECT_TRUE (w.sentNow ().find ("connect Bob hunter2") != std::string::npos);
+}
+
+TEST (ProtoRelocate, TheLinkIsForItsOwnOfferAndThisConnection)
+{
+  RelocateWorld w;
+  w.offer ("198.51.100.7 5000");
+  w.offer ("198.51.100.8 6000");
+  EXPECT_EQ (2, w.doc.m_pProto->relocateOffer);
+
+  // the first link does not go where the second offer says
+  w.click (1);
+  EXPECT_FALSE (w.doc.m_pProto->bRelocated);
+  EXPECT_TRUE (w.allOutput ().find ("no longer open") != std::string::npos);
+
+  // a new connection forgets the offer, and the refusal of <USER> that came with it
+  EXPECT_TRUE (w.doc.m_pProto->bRelocateAsked);
+  w.doc.m_pProto->ResetForConnection ();
+  EXPECT_FALSE (w.doc.m_pProto->bRelocateAsked);
+  EXPECT_TRUE (w.doc.m_pProto->relocateHost.empty ());
+  w.click (2);
+  EXPECT_FALSE (w.doc.m_pProto->bRelocated);
+}
+
+TEST (ProtoRelocate, NoTlsOfferFromTheOtherHost)
+{
+  RelocateWorld w;
+  w.offer ("198.51.100.7 5000");
+  w.click (1);
+  w.answer (0);
+  w.feed (kWILL + (char) proto::kTelOptMssp);
+  w.feed (SB_ (proto::kTelOptMssp, std::string ("\x01SSL\x02" "4443")));
+  EXPECT_TRUE (w.allOutput ().find ("port 4443") == std::string::npos);
+
+  // nor does an old note's link change the world's port while there
+  Proto_RunAction (w.doc, "tls_switch", "4443");
+  EXPECT_EQ (4000, (int) w.doc.m_port);
+  EXPECT_FALSE (w.doc.m_bUseSSL);
+}
+
+// ------------------------------------------------------------- the smaller ones
+
+TEST (ProtoMssp, NotReadWithoutDo)
+{
+  World w;
+  w.feed (SB_ (proto::kTelOptMssp, std::string ("\x01SSL\x02" "4443")));
+  EXPECT_TRUE (w.allOutput ().find ("port 4443") == std::string::npos);
+}
+
+TEST (ProtoFrame, DimensionsThatAreNotNumbers)
+{
+  EXPECT_EQ (0, proto::FrameDimension ("nan", 800, 8));
+  EXPECT_EQ (0, proto::FrameDimension ("-nan%", 800, 8));
+  EXPECT_EQ (0, proto::FrameDimension ("inf", 800, 8));
+  EXPECT_EQ (0, proto::FrameDimension ("abc", 800, 8));
+  EXPECT_EQ (0, proto::FrameDimension ("-", 800, 8));
+  EXPECT_EQ (12, proto::FrameDimension ("1.5c", 800, 8));
+  EXPECT_EQ (20, proto::FrameDimension ("+20", 800, 8));
+  EXPECT_EQ (4, proto::FrameDimension ("0.5%", 800, 8));
+  EXPECT_EQ (-16384, proto::FrameDimension ("-99999999999999999999999999c", 800, 8));
+  EXPECT_EQ (-1, proto::FrameDimension ("-1e999", 800, 8));     // the number is the 1
+}
+
+TEST (ProtoLocale, ServerBytesMeanTheSameInEveryLocale)
+{
+  // what MUSHclient.cpp does at start-up, on a machine with a Western European locale
+  const std::string saved = setlocale (LC_ALL, NULL);
+#ifdef _WIN32
+  const bool bSet = setlocale (LC_ALL, ".1252") != NULL;
+#else
+  const bool bSet = setlocale (LC_ALL, "de_DE.ISO-8859-1") != NULL || setlocale (LC_ALL, "de_DE") != NULL;
+#endif
+  EXPECT_FALSE (proto::IsSafeMspName ("caf\xE9.wav", false));
+  EXPECT_FALSE (proto::IsPlausibleHostName ("caf\xE9.example"));
+  EXPECT_FALSE (proto::IsValidGmcpPackage ("Char.\xC9tat"));
+  EXPECT_EQ (std::string ("abc\xC9"), proto::Lower ("ABC\xC9"));
+  EXPECT_EQ (12, proto::FrameDimension ("1.5c", 800, 8));
+  setlocale (LC_ALL, saved.c_str ());
+  (void) bSet;     // where the locale is missing, the checks above are the C locale's
+}
+
+TEST (ProtoMsp, DeviceNamesWindowsWouldTrim)
+{
+  for (const char * bad : { "nul .wav", "com1 .wav", "NUL. .wav", "lpt0.wav", "COM0.mp3",
+                            "con  .wav", "aux..wav", "a/prn .wav", "conin$.wav" })
+    EXPECT_FALSE (proto::IsSafeMspName (bad, false));
+  for (const char * good : { "null.wav", "com10.wav", "console.wav", "a/nul_x.wav", "lpt.wav" })
+    EXPECT_TRUE (proto::IsSafeMspName (good, false));
+}
+
+TEST (ProtoMsp, UrlsAreEncoded)
+{
+  EXPECT_EQ (std::string ("https://a.b/s/my%20sound.wav"), proto::MspDownloadUrl ("https://a.b/s/", "my sound.wav"));
+  EXPECT_EQ (std::string ("https://a.b/s/d/a%281%29%2B.wav"), proto::MspDownloadUrl ("https://a.b/s", "d/a(1)+.wav"));
+  // a U= that is the whole URL already, encoded as it would be
+  EXPECT_EQ (std::string ("https://a.b/s/my%20sound.wav"),
+             proto::MspDownloadUrl ("https://a.b/s/my%20sound.wav", "my sound.wav"));
+}
+
+TEST (ProtoMspStream, TypeIsCheckedOnTheWayToADownload)
+{
+  MspWorld w ("type");
+  w.doc.m_bMSPDownloads = true;
+  w.feed ("!!SOUND(a.wav T=../../evil U=https://sounds.example/s/)\r\n");
+  w.feed ("!!SOUND(b.wav T=c:x U=https://sounds.example/s/)\r\n");
+  w.feed ("!!SOUND(c.wav T=combat U=https://sounds.example/s/)\r\n");
+  ASSERT_EQ (3u, w.doc.m_pProto->mspWaiting.size ());
+  EXPECT_EQ (std::string (), w.doc.m_pProto->mspWaiting [0].second.type);
+  EXPECT_EQ (std::string (), w.doc.m_pProto->mspWaiting [1].second.type);
+  EXPECT_EQ (std::string ("combat"), w.doc.m_pProto->mspWaiting [2].second.type);
+
+  // the MXP tag's T= the same
+  World m (true);
+  m.doc.m_bMSPDownloads = true;
+  m.doc.m_pProto->bTestSound = true;
+  m.feed (kSecure + "<SOUND a.wav T=\"../up\" U=\"https://sounds.example/s/\">");
+  ASSERT_EQ (1u, m.doc.m_pProto->mspWaiting.size ());
+  EXPECT_EQ (std::string (), m.doc.m_pProto->mspWaiting [0].second.type);
+}
+
+TEST (ProtoMspStream, WithoutNegotiationNothingIsFetchedOrAsked)
+{
+  World w;
+  w.doc.m_bMSPWithoutNegotiation = true;
+  w.doc.m_bMSPDownloads = true;
+  w.doc.m_pProto->bTestSound = true;
+  // which another player could have written, on a server that never said WILL 90
+  w.feed ("!!SOUND(a.wav U=https://evil.example/s/)\r\n");
+  w.feed ("!!SOUND(Off U=https://evil.example/s/)\r\n");
+  w.feed ("!!SOUND(b.wav)\r\n");
+  EXPECT_TRUE (w.doc.m_pProto->mspHostsAsked.empty ());
+  EXPECT_TRUE (w.doc.m_pProto->mspWaiting.empty ());
+  EXPECT_TRUE (w.doc.m_pProto->mspDefaultUrl.empty ());
+  EXPECT_TRUE (w.allOutput ().find ("evil.example") == std::string::npos);
+  EXPECT_TRUE (w.allOutput ().find ("msp_downloads") == std::string::npos);
+
+  // negotiated, the same line is the server's to make
+  MspWorld n ("negotiated");
+  n.doc.m_bMSPDownloads = true;
+  n.feed ("!!SOUND(a.wav U=https://sounds.example/s/)\r\n");
+  EXPECT_EQ (1u, n.doc.m_pProto->mspHostsAsked.size ());
+}
+
+TEST (ProtoMspStream, WhatIsGivenBackKeepsItsTagsAndCharacters)
+{
+  // the trigger's length limit falls between a < and the rest of its tag
+  {
+  World w (true);
+  w.doc.m_pProto->bTestSound = true;
+  w.feed (kWILL + (char) proto::kTelOptMsp);
+  const std::string head = "!!SOUND(" + std::string (proto::kMspMaxTrigger - 9, 'a');
+  ASSERT_EQ (proto::kMspMaxTrigger - 1, head.size ());
+  w.feed (head + "<b>bold</b> after\r\n");
+  const std::string out = w.allOutput ();
+  EXPECT_TRUE (out.find ("<b>") == std::string::npos);
+  EXPECT_TRUE (out.find ("b>") == std::string::npos);
+  EXPECT_TRUE (out.find ("bold after") != std::string::npos);
+  EXPECT_EQ (NONE, w.doc.m_phase);
+  }
+  // and between the bytes of a UTF-8 character
+  {
+  World w;
+  w.doc.m_bUTF_8 = true;
+  w.doc.m_pProto->bTestSound = true;
+  w.feed (kWILL + (char) proto::kTelOptMsp);
+  const std::string head = "!!SOUND(" + std::string (proto::kMspMaxTrigger - 9, 'a');
+  w.feed (head + "\xC3\xA9 after\r\n");
+  EXPECT_TRUE (w.allOutput ().find ("a\xC3\xA9 after") != std::string::npos);
+  }
+  // a line ending is given back with what came before it
+  {
+  World w (true);
+  w.doc.m_pProto->bTestSound = true;
+  w.feed (kWILL + (char) proto::kTelOptMsp);
+  w.feed ("!!SOU<b>x\r\nnext\r\n");
+  EXPECT_TRUE (w.allOutput ().find ("!!SOUx\nnext\n") != std::string::npos);
+  }
+}
+
+TEST (ProtoMspCache, TheOldestGoFirstAndOnlyDownloads)
+{
+  const fs::path root = TempDir ("cache");
+  const fs::path mine = root / "world1";
+  const fs::path other = root / "world2";
+  const auto make = [] (const fs::path & path, size_t bytes, int ageMinutes)
+    {
+    std::error_code ec;
+    fs::create_directories (path.parent_path (), ec);
+    std::ofstream (path, std::ios::binary) << std::string (bytes, 'x');
+    fs::last_write_time (path, fs::file_time_type::clock::now () - std::chrono::minutes (ageMinutes), ec);
+    };
+
+  make (mine / "old.wav", 100, 50);
+  make (mine / "sub" / "middle.mp3", 100, 40);
+  make (mine / "new.flac", 100, 30);
+  make (mine / "just.wav", 100, 60);          // just arrived (an old server date): kept
+  make (mine / "images" / "map.png", 1000, 90);   // a player's: not counted, not removed
+  make (mine / "x.wav.123-1.part", 10, 120);  // a crash's leftover
+  make (mine / "y.wav.456-2.part", 10, 1);    // a download in progress
+  make (other / "theirs.wav", 100, 100);
+
+  // this world to 250 bytes: old.wav goes, then middle.mp3
+  Proto_MspTrimCache (root.string (), mine.string (), (mine / "just.wav").string (), 250, 10000);
+  EXPECT_FALSE (fs::exists (mine / "old.wav"));
+  EXPECT_FALSE (fs::exists (mine / "sub" / "middle.mp3"));
+  EXPECT_TRUE (fs::exists (mine / "new.flac"));
+  EXPECT_TRUE (fs::exists (mine / "just.wav"));
+  EXPECT_TRUE (fs::exists (mine / "images" / "map.png"));
+  EXPECT_FALSE (fs::exists (mine / "x.wav.123-1.part"));
+  EXPECT_TRUE (fs::exists (mine / "y.wav.456-2.part"));
+  EXPECT_TRUE (fs::exists (other / "theirs.wav"));
+
+  // every world to 150: the other world's older file goes before this one's
+  Proto_MspTrimCache (root.string (), mine.string (), (mine / "just.wav").string (), 10000, 150);
+  EXPECT_FALSE (fs::exists (other / "theirs.wav"));
+  EXPECT_FALSE (fs::exists (mine / "new.flac"));
+  EXPECT_TRUE (fs::exists (mine / "just.wav"));
+  EXPECT_TRUE (fs::exists (mine / "images" / "map.png"));
+
+  std::error_code ec;
+  fs::remove_all (root, ec);
+}
+
+TEST (ProtoOsc, WhatIsGivenBackIsValidUtf8)
+{
+  EXPECT_EQ (std::string ("a\xC3\xA9" "b"), proto::RepairUtf8 ("a\xC3\xA9" "b"));
+  EXPECT_EQ (std::string ("\xC3\xA9"), proto::RepairUtf8 ("\xE9"));
+  EXPECT_EQ (std::string ("\xE2\x82\xAC"), proto::RepairUtf8 ("\x80"));
+  EXPECT_EQ (std::string ("\xC3\x80\xC2\xAF"), proto::RepairUtf8 ("\xC0\xAF"));       // overlong
+  EXPECT_EQ (std::string ("\xC3\xA2\xE2\x80\x9A"), proto::RepairUtf8 ("\xE2\x82"));   // cut short
+  EXPECT_EQ (std::string ("\xC3\xAD\xC2\xA0\xE2\x82\xAC"), proto::RepairUtf8 ("\xED\xA0\x80"));   // a surrogate
+  EXPECT_EQ (std::string ("\xF0\x9F\x98\x80"), proto::RepairUtf8 ("\xF0\x9F\x98\x80"));
+
+  World w;
+  w.doc.m_bUTF_8 = true;
+  w.feed ("\x1B]8;;http://a/\xE9\xE9 x");
+  const std::string line (w.doc.m_pCurrentLine->text, w.doc.m_pCurrentLine->len);
+  EXPECT_EQ (std::string ("http://a/\xC3\xA9\xC3\xA9 x"), line);
+
+  // a world that is not UTF-8 keeps its bytes
+  World l;
+  l.feed ("\x1B]8;;http://a/\xE9 x");
+  EXPECT_EQ (std::string ("http://a/\xE9 x"), std::string (l.doc.m_pCurrentLine->text, l.doc.m_pCurrentLine->len));
+}
+
+TEST (ProtoMxp, EntitiesCannotGrowForEver)
+{
+  World w (true);
+  CPlugin * p = LoadPlugin (w.doc, "aaaaaaaaaaaaaaaaaaaaaa12",
+    "n = 0\nfunction OnPluginMXPsetEntity (s) n = n + 1; SetVariable ('n', n) end\n");
+  ASSERT_TRUE (p != nullptr);
+
+  // ADD, past 16 KB
+  std::string packet;
+  for (int i = 0; i < 2000; i++)
+    packet += kSecure + "<!ENTITY list item" + std::to_string (100000 + i) + " ADD>";
+  w.feed (packet);
+  CString value;
+  ASSERT_TRUE (w.doc.m_CustomEntityMap.Lookup ("list", value));
+  EXPECT_LE ((size_t) value.GetLength (), proto::kMxpMaxEntityValue);
+  EXPECT_GT ((size_t) value.GetLength (), proto::kMxpMaxEntityValue - 20);
+  const int told = atoi (PluginVar (p, "n").c_str ());
+  EXPECT_LT (told, 2000);                     // the refused ones were not passed on
+  // it can still shrink
+  w.feed (kSecure + "<!ENTITY list item100000 REMOVE>");
+  EXPECT_EQ (std::to_string (told + 1), PluginVar (p, "n"));
+
+  // one too long at once
+  w.feed (kSecure + "<!ENTITY big '" + std::string (proto::kMxpMaxEntityValue + 1, 'x') + "'>");
+  EXPECT_FALSE (w.doc.m_CustomEntityMap.Lookup ("big", value));
+
+  // how many
+  packet.clear ();
+  for (int i = 0; i < 1100; i++)
+    packet += kSecure + "<!ENTITY e" + std::to_string (i) + " 1>";
+  w.feed (packet);
+  EXPECT_LE ((size_t) w.doc.m_CustomEntityMap.GetCount (), proto::kMxpMaxEntities);
+  w.feed (kSecure + "<!ENTITY e1 changed>");   // an old one can still change
+  ASSERT_TRUE (w.doc.m_CustomEntityMap.Lookup ("e1", value));
+  EXPECT_EQ (CString ("changed"), value);
+
+  // and all of them together
+  World t (true);
+  for (int i = 0; i < 80; i++)
+    t.feed (kSecure + "<!ENTITY v" + std::to_string (i) + " '" + std::string (15000, 'y') + "'>");
+  size_t total = 0;
+  for (POSITION pos = t.doc.m_CustomEntityMap.GetStartPosition (); pos; )
+    {
+    CString key, v;
+    t.doc.m_CustomEntityMap.GetNextAssoc (pos, key, v);
+    total += (size_t) v.GetLength ();
+    }
+  EXPECT_LE (total, proto::kMxpMaxEntityTotal);
+  EXPECT_GT (total, proto::kMxpMaxEntityTotal - 15000);
+}
+
+TEST (ProtoMxp, ExpireForgetsTheStalestName)
+{
+  World w (true);
+  std::string packet;
+  for (int i = 0; i < 300; i++)
+    packet += kSecure + "<SEND href=\"go\" expire=n" + std::to_string (i) + ">x</SEND>\r\n";
+  w.feed (packet);
+  // n5 is used again, so it is not the stalest
+  w.feed (kSecure + "<SEND href=\"go\" expire=n5>x</SEND>\r\n");
+  w.feed (kSecure + "<SEND href=\"go\" expire=new>x</SEND>\r\n");
+  const auto & names = w.doc.m_pProto->expireOldest;
+  EXPECT_EQ (256u, names.size ());
+  EXPECT_EQ (1u, names.count ("new"));       // a new name can still be expired
+  EXPECT_EQ (1u, names.count ("n299"));
+  EXPECT_EQ (1u, names.count ("n5"));
+  EXPECT_EQ (0u, names.count ("n0"));
+}
+
+TEST (ProtoFrame, PaintingIsCoalescedAndBounded)
+{
+  World w (true);
+  w.doc.m_bMXPWindows = true;
+  CProtocolState & state = *w.doc.m_pProto;
+  state.testNow = 1000000;
+  w.feed (kSecure + "<FRAME Name=Status Left=0 Top=0 Width=200 Height=100>");   // painted empty
+  state.testNow += 300;
+  w.feed (kSecure + "<DEST Status>one</DEST>");
+  const uint64_t afterFirst = state.framePaintRuns;
+  EXPECT_GT (afterFirst, 0u);
+
+  // more within a quarter of a second waits
+  w.feed (kSecure + "<DEST Status>two</DEST>");
+  EXPECT_EQ (afterFirst, state.framePaintRuns);
+  EXPECT_TRUE (state.bFramesDirty);
+  Proto_Tick (w.doc);
+  EXPECT_EQ (afterFirst, state.framePaintRuns);
+
+  // and the timer paints it once it is due
+  state.testNow += 300;
+  Proto_Tick (w.doc);
+  EXPECT_GT (state.framePaintRuns, afterFirst);
+  EXPECT_FALSE (state.bFramesDirty);
+
+  // a frame full of cells each a colour of their own costs only so much
+  CMxpFrame & frame = *state.frames ["status"];
+  frame.height = 4096;
+  frame.Clear ();
+  for (size_t r = 0; r < CMxpFrame::kMaxRows; r++)
+    {
+    for (size_t c = 0; c < CMxpFrame::kMaxCols; c++)
+      frame.Put ("x", 1, (unsigned long) (c & 1), 0);
+    if (r + 1 < CMxpFrame::kMaxRows)
+      frame.NewLine ();
+    }
+  state.bFramesDirty = true;
+  state.testNow += 300;
+  const uint64_t before = state.framePaintRuns;
+  Proto_MxpPaint (w.doc);
+  EXPECT_LE (state.framePaintRuns - before, (uint64_t) (2048 + CMxpFrame::kMaxRows));
+  EXPECT_GT (state.framePaintRuns - before, (uint64_t) CMxpFrame::kMaxRows);
+}
+
+TEST (ProtoMxpLineTag, APluginsNotesAreNotTheServersLine)
+{
+  World w (true);
+  CPlugin * p = LoadPlugin (w.doc, "aaaaaaaaaaaaaaaaaaaaaa13",
+    "function OnPluginLineReceived (s) if s == 'The Square' then Note ('from the plugin') end return true end\n");
+  ASSERT_TRUE (p != nullptr);
+  w.feed ("\x1B[10zThe Square\r\nnext\r\n");
+
+  bool bSawNote = false, bSawRoom = false;
+  for (POSITION pos = w.doc.m_LineList.GetHeadPosition (); pos; )
+    {
+    CLine * line = w.doc.m_LineList.GetNext (pos);
+    const std::string text (line->text, line->len);
+    if (text == "from the plugin")
+      {
+      bSawNote = true;
+      EXPECT_EQ (0, (int) line->m_iMXPLineTag);
+      }
+    if (text == "The Square")
+      {
+      bSawRoom = true;
+      EXPECT_EQ (10, (int) line->m_iMXPLineTag);
+      }
+    }
+  EXPECT_TRUE (bSawNote);
+  EXPECT_TRUE (bSawRoom);
 }
 
 MC_TEST_MAIN ()

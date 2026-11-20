@@ -24,12 +24,22 @@ bool EqualNoCase (const std::string & a, const std::string & b)
   return a.size () == b.size () && Lower (a) == Lower (b);
   }
 
+bool IsAsciiSpace (const unsigned char c)
+  {
+  return c == ' ' || (c >= '\t' && c <= '\r');
+  }
+
+bool IsAsciiXDigit (const unsigned char c)
+  {
+  return IsAsciiDigit (c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+  }
+
 std::string Trim (const std::string & s)
   {
   size_t start = 0, end = s.size ();
-  while (start < end && isspace ((unsigned char) s [start]))
+  while (start < end && IsAsciiSpace ((unsigned char) s [start]))
     start++;
-  while (end > start && isspace ((unsigned char) s [end - 1]))
+  while (end > start && IsAsciiSpace ((unsigned char) s [end - 1]))
     end--;
   return s.substr (start, end - start);
   }
@@ -62,20 +72,32 @@ std::string Extension (const std::string & name)
 
 bool IsDeviceName (std::string component)
   {
-  // A device name is one with any extension too: NUL.txt opens NUL.
+  // A device name is one with any extension too: NUL.txt opens NUL.  And Windows drops
+  // spaces and dots from the end of the part before it, so "nul .wav" and "com1..wav"
+  // are devices as well.
   const size_t dot = component.find ('.');
   if (dot != std::string::npos)
     component.resize (dot);
+  while (!component.empty () && (component.back () == ' ' || component.back () == '.'))
+    component.pop_back ();
   component = Lower (component);
   static const char * const kNames [] =
     { "con", "prn", "aux", "nul", "conin$", "conout$", "clock$" };
   for (const char * name : kNames)
     if (component == name)
       return true;
-  if (component.size () == 4 &&
-      (component.compare (0, 3, "com") == 0 || component.compare (0, 3, "lpt") == 0) &&
-      isdigit ((unsigned char) component [3]))
-    return true;
+  if (component.size () < 4 ||
+      (component.compare (0, 3, "com") != 0 && component.compare (0, 3, "lpt") != 0))
+    return false;
+  const std::string number = component.substr (3);
+  if (number.size () == 1 && IsAsciiDigit ((unsigned char) number [0]))
+    return true;      // COM0 to COM9, LPT0 to LPT9
+  // and the superscript digits Windows also takes, in UTF-8 and as Latin-1 bytes
+  static const char * const kSuperscripts [] =
+    { "\xC2\xB9", "\xC2\xB2", "\xC2\xB3", "\xB9", "\xB2", "\xB3" };
+  for (const char * superscript : kSuperscripts)
+    if (number == superscript)
+      return true;
   return false;
   }
 
@@ -83,9 +105,20 @@ bool IsDeviceName (std::string component)
 
 std::string Lower (std::string s)
   {
-  std::transform (s.begin (), s.end (), s.begin (),
-                  [] (unsigned char c) { return (char) tolower (c); });
+  for (char & c : s)
+    if (c >= 'A' && c <= 'Z')
+      c = (char) (c - 'A' + 'a');
   return s;
+  }
+
+bool IsAsciiDigit (const unsigned char c)
+  {
+  return c >= '0' && c <= '9';
+  }
+
+bool IsAsciiAlnum (const unsigned char c)
+  {
+  return IsAsciiDigit (c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
   }
 
 // ---------------------------------------------------------------- telnet
@@ -243,16 +276,29 @@ std::string BuildEnvironReply (const std::string & request, const EnvVars & vars
 
   std::string reply (1, kIS);
 
-  const auto append = [&reply, kVAL] (char kind, const std::string & name, const std::string * value)
+  // RFC 1572: VAR, VALUE, ESC and USERVAR in a name or value have an ESC before them,
+  // and IAC is doubled as anywhere in a subnegotiation.  A requested name is echoed,
+  // and the server chose its bytes.
+  const auto quoted = [&reply, kESC] (const std::string & text)
+    {
+    for (const char v : text)
+      {
+      if ((unsigned char) v <= 3)
+        reply += kESC;
+      reply += v;
+      if (v == kIAC)
+        reply += kIAC;
+      }
+    };
+
+  const auto append = [&reply, &quoted, kVAL] (char kind, const std::string & name, const std::string * value)
     {
     reply += kind;
-    reply += name;
+    quoted (name);
     if (value)
       {
       reply += kVAL;
-      for (const char v : *value)
-        if ((unsigned char) v > 3 && (unsigned char) v != 0xFF)   // these bytes are syntax
-          reply += v;
+      quoted (*value);
       }
     };
 
@@ -297,7 +343,7 @@ int FindMsspTlsPort (const std::string & data)
       {
       bool bDigits = !text.empty () && text.size () <= 5;
       for (const char d : text)
-        if (!isdigit ((unsigned char) d))
+        if (!IsAsciiDigit ((unsigned char) d))
           bDigits = false;
       if (bDigits)
         {
@@ -344,8 +390,8 @@ OscLinkKind ClassifyOsc8Target (const std::string & uri, std::string * action)
   for (size_t i = start; i < uri.size (); i++)
     {
     unsigned char c = (unsigned char) uri [i];
-    if (c == '%' && i + 2 < uri.size () && isxdigit ((unsigned char) uri [i + 1]) &&
-        isxdigit ((unsigned char) uri [i + 2]))
+    if (c == '%' && i + 2 < uri.size () && IsAsciiXDigit ((unsigned char) uri [i + 1]) &&
+        IsAsciiXDigit ((unsigned char) uri [i + 2]))
       {
       const char hex [3] = { uri [i + 1], uri [i + 2], 0 };
       c = (unsigned char) strtoul (hex, NULL, 16);
@@ -361,6 +407,72 @@ OscLinkKind ClassifyOsc8Target (const std::string & uri, std::string * action)
 
   *action = decoded;
   return kind;
+  }
+
+namespace {
+
+// The length of the valid UTF-8 character at s [i], or 0.  As strict as PCRE's check,
+// which the display loop uses: no overlong forms, no surrogates, nothing past U+10FFFF.
+size_t ValidUtf8Length (const std::string & s, const size_t i)
+  {
+  const unsigned char lead = (unsigned char) s [i];
+  size_t length;
+  unsigned long cp;
+  if (lead < 0x80)
+    return 1;
+  else if (lead >= 0xC2 && lead <= 0xDF)
+    { length = 2; cp = lead & 0x1F; }
+  else if (lead >= 0xE0 && lead <= 0xEF)
+    { length = 3; cp = lead & 0x0F; }
+  else if (lead >= 0xF0 && lead <= 0xF4)
+    { length = 4; cp = lead & 0x07; }
+  else
+    return 0;
+
+  if (i + length > s.size ())
+    return 0;
+  for (size_t j = 1; j < length; j++)
+    {
+    const unsigned char c = (unsigned char) s [i + j];
+    if ((c & 0xC0) != 0x80)
+      return 0;
+    cp = (cp << 6) | (c & 0x3F);
+    }
+
+  if ((length == 3 && cp < 0x800) || (length == 4 && cp < 0x10000) || cp > 0x10FFFF ||
+      (cp >= 0xD800 && cp <= 0xDFFF))
+    return 0;
+  return length;
+  }
+
+} // anonymous namespace
+
+std::string RepairUtf8 (const std::string & bytes)
+  {
+  // Windows-1252's 0x80 to 0x9F; the five it leaves undefined are the C1 controls, as
+  // MultiByteToWideChar has them.  0xA0 up is Latin-1, the byte's own code point.
+  static const unsigned short kCp1252 [32] = {
+    0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+    };
+
+  std::string out;
+  out.reserve (bytes.size ());
+  for (size_t i = 0; i < bytes.size (); )
+    {
+    const size_t length = ValidUtf8Length (bytes, i);
+    if (length)
+      {
+      out.append (bytes, i, length);
+      i += length;
+      continue;
+      }
+    const unsigned char c = (unsigned char) bytes [i++];
+    out += EncodeUtf8 (c <= 0x9F ? kCp1252 [c - 0x80] : c);
+    }
+  return out;
   }
 
 // ---------------------------------------------------------------- MXP
@@ -422,7 +534,34 @@ int FrameDimension (const std::string & textIn, const int total, const int charS
   if (text.empty ())
     return 0;
 
-  const double number = atof (text.c_str ());
+  // [-+]digits[.digits], by hand: atof would take "nan" and "inf", which do not turn
+  // into an int, and in a German locale would stop at the point of "1.5c".
+  size_t i = 0;
+  bool bNegative = false;
+  if (text [i] == '-' || text [i] == '+')
+    bNegative = text [i++] == '-';
+  double number = 0;
+  bool bDigits = false;
+  for (; i < text.size () && IsAsciiDigit ((unsigned char) text [i]); i++)
+    {
+    bDigits = true;
+    if (number < 1e9)
+      number = number * 10 + (text [i] - '0');
+    }
+  if (i < text.size () && text [i] == '.')
+    {
+    double scale = 0.1;
+    for (i++; i < text.size () && IsAsciiDigit ((unsigned char) text [i]); i++, scale /= 10)
+      {
+      bDigits = true;
+      number += (text [i] - '0') * scale;
+      }
+    }
+  if (!bDigits)
+    return 0;
+  if (bNegative)
+    number = -number;
+
   double value = number;
   if (text.back () == '%')
     value = number * total / 100.0;
@@ -470,7 +609,7 @@ bool IsPlausibleHostName (const std::string & host)
   if (host.empty () || host.size () > 253)
     return false;
   for (const unsigned char c : host)
-    if (!isalnum (c) && c != '.' && c != '-' && c != ':')
+    if (!IsAsciiAlnum (c) && c != '.' && c != '-' && c != ':')
       return false;
   return true;
   }
@@ -532,19 +671,19 @@ bool ParseMspTrigger (const std::string & inner, const bool bMusic, MspTrigger *
     if (item.size () < 2 || item [1] != '=')
       continue;
     const std::string value = item.substr (2);
-    switch (toupper ((unsigned char) item [0]))
+    switch (Lower (item.substr (0, 1)) [0])
       {
-      case 'V': out->volume   = (std::min) (100, (std::max) (0, number (value, 100))); break;
-      case 'P': out->priority = (std::min) (100, (std::max) (0, number (value, 50)));  break;
-      case 'C': out->cont     = number (value, 1) ? 1 : 0;                         break;
-      case 'L':
+      case 'v': out->volume   = (std::min) (100, (std::max) (0, number (value, 100))); break;
+      case 'p': out->priority = (std::min) (100, (std::max) (0, number (value, 50)));  break;
+      case 'c': out->cont     = number (value, 1) ? 1 : 0;                         break;
+      case 'l':
         {
         const int repeats = number (value, 1);
         out->repeats = repeats == -1 ? -1 : (std::max) (1, repeats);
         }
         break;
-      case 'T': out->type = value; break;
-      case 'U': out->url  = value; break;
+      case 't': out->type = value; break;
+      case 'u': out->url  = value; break;
       default:  break;     // nothing we know; the spec may grow
       }
     }
@@ -559,7 +698,7 @@ bool IsSafeMspName (const std::string & name, const bool bWildcards)
 
   // Only characters that mean the same on every file system and in every code page.
   for (const unsigned char c : name)
-    if (!isalnum (c) && !strchr ("/._-+ ()", c) && !(bWildcards && (c == '*' || c == '?')))
+    if (!IsAsciiAlnum (c) && !(c && strchr ("/._-+ ()", c)) && !(bWildcards && (c == '*' || c == '?')))
       return false;
 
   if (name [0] == '/')        // absolute; spec: invalid
@@ -679,16 +818,29 @@ std::string MspDownloadUrl (const std::string & baseIn, const std::string & name
 
   std::string base = baseIn;
 
+  // A name may have a space, and ( ) + mean things in some servers' URLs: all but the
+  // unreserved characters of RFC 3986, and the /s between directories, are encoded.
+  std::string encoded;
+  for (const unsigned char c : name)
+    if (IsAsciiAlnum (c) || c == '-' || c == '.' || c == '_' || c == '~' || c == '/')
+      encoded += (char) c;
+    else
+      {
+      char hex [4];
+      snprintf (hex, sizeof hex, "%%%02X", c);
+      encoded += hex;
+      }
+
   // The spec says the file name is added to U=, and some servers give all of it anyway.
-  const size_t slash = name.rfind ('/');
-  const std::string leaf = slash == std::string::npos ? name : name.substr (slash + 1);
+  const size_t slash = encoded.rfind ('/');
+  const std::string leaf = slash == std::string::npos ? encoded : encoded.substr (slash + 1);
   if (base.size () > leaf.size () && base.compare (base.size () - leaf.size (), leaf.size (), leaf) == 0 &&
       base [base.size () - leaf.size () - 1] == '/')
     return base;
 
   if (base.back () != '/')
     base += '/';
-  return base + name;
+  return base + encoded;
   }
 
 std::string UrlHost (const std::string & url)
@@ -734,7 +886,7 @@ bool IsValidGmcpPackage (const std::string & package)
   if (package.empty () || package.size () > 128)
     return false;
   for (const unsigned char c : package)
-    if (!isalnum (c) && c != '.' && c != '_' && c != '-')
+    if (!IsAsciiAlnum (c) && c != '.' && c != '_' && c != '-')
       return false;
   return true;
   }
@@ -742,7 +894,7 @@ bool IsValidGmcpPackage (const std::string & package)
 void SplitGmcp (const std::string & data, std::string * package, std::string * rawText)
   {
   size_t space = 0;
-  while (space < data.size () && !isspace ((unsigned char) data [space]))
+  while (space < data.size () && !IsAsciiSpace ((unsigned char) data [space]))
     space++;
   *package = data.substr (0, space);
   *rawText = Trim (data.substr (space));
@@ -924,10 +1076,14 @@ CProtocolState::CProtocolState ()
     bBindingsDirty (false),
     bBindingWindowMade (false),
     bFramesDirty (false),
+    lastFramePaint (0),
+    framePaintRuns (0),
     bRelocateAsked (false),
     relocatePort (0),
+    relocateOffer (0),
     bRelocated (false),
-    relocateOriginalPort (0),
+    relocatedPort (0),
+    bRelocateConnecting (false),
     bMspReplaying (false),
     bMspNegotiated (false),
     bMspPluginClaimed (false),
@@ -986,5 +1142,10 @@ void CProtocolState::ResetForConnection ()
   bGmcpCoreHandshook = false;
   bGmcpInSentDoChain = false;
   bGmcpResendAdd = false;
-  // bRelocated stays: it describes the connection now starting.
+  // An offer to move was for the connection it came on, and so is the refusal of
+  // <USER> and <PASSWORD> that came with it.  (A connection that went where it said is
+  // bRelocated, which stays: it describes the connection now starting.)
+  bRelocateAsked = false;
+  relocateHost.clear ();
+  relocatePort = 0;
   }

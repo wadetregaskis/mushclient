@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -75,6 +76,19 @@ std::string SoundDirectoryOfProgram ()
   return std::string ((const char *) ExtractDirectory (App.m_strMUSHclientFileName)) + "sounds/";
   }
 
+// Every world's downloads are under this, each in a folder of its own.
+std::string CacheRoot ()
+  {
+  std::string base;
+#ifdef _WIN32
+  base = (const char *) UserData_Directory ();
+#else
+  std::error_code ec;
+  base = fs::current_path (ec).string () + "/";
+#endif
+  return base + "msp_cache/";
+  }
+
 // The directories to look in, first to last.
 std::vector <std::string> SoundRoots (CMUSHclientDoc & doc)
   {
@@ -107,7 +121,11 @@ void Matches (const std::string & root, const std::string & directory, const std
   std::error_code ec;
   for (fs::directory_iterator it (base, ec), end; !ec && it != end; it.increment (ec))
     {
-    const std::string leaf = it->path ().filename ().string ();
+    // A name the code page cannot hold makes path::string () throw on Windows.  Such a
+    // name cannot match, since what a server asks for is ASCII (IsSafeMspName).
+    std::string leaf;
+    try { leaf = it->path ().filename ().string (); }
+    catch (const std::exception &) { continue; }
     if (!proto::MspWildcardMatch (pattern, leaf))
       continue;
     std::error_code ec2;
@@ -219,7 +237,8 @@ void StopVoice (CMUSHclientDoc & doc, CMspVoice & voice)
 // Touches nothing of the document; the result goes in a queue the timer empties, which
 // survives the world being closed underneath it.
 void DownloadWorker (std::shared_ptr <CMspDownloads> downloads, const std::string name,
-                     const std::string url, const std::string path, const bool bAllowHttp)
+                     const std::string url, const std::string path, const bool bAllowHttp,
+                     const std::string cacheRoot, const std::string worldDirectory)
   {
   CMspDownloads::Result result;
   result.name = name;
@@ -274,6 +293,9 @@ void DownloadWorker (std::shared_ptr <CMspDownloads> downloads, const std::strin
 #endif
       if (!bMoved)
         result.error = "could not save the file";
+      else
+        Proto_MspTrimCache (cacheRoot, worldDirectory, path,
+                            proto::kMspCacheWorldBytes, proto::kMspCacheTotalBytes);
       }
     }
 
@@ -284,6 +306,11 @@ void DownloadWorker (std::shared_ptr <CMspDownloads> downloads, const std::strin
 void StartDownload (CMUSHclientDoc & doc, const proto::MspTrigger & trigger, const std::string & name)
   {
   CProtocolState & state = *doc.m_pProto;
+
+  // Not for a line that may be anyone's (see MspTrigger::bMayDownload).  Silently: a
+  // note would be a way for another player to write in this player's window.
+  if (!trigger.bMayDownload)
+    return;
 
   const std::string base = !trigger.url.empty () ? trigger.url : state.mspDefaultUrl;
   if (base.empty ())
@@ -307,8 +334,13 @@ void StartDownload (CMUSHclientDoc & doc, const proto::MspTrigger & trigger, con
   if (!proto::IsSafeMspName (name, false) || !proto::IsDownloadableAudioName (name))
     return;
 
-  const std::string relative = (name.find ('/') == std::string::npos && !trigger.type.empty ())
-                                  ? trigger.type + "/" + name : name;
+  // T= is the server's too, and checked by the same rule as the name, here as well as
+  // in Proto_MspPlay: this is where it becomes part of a path that is written.
+  const std::string type = proto::IsSafeMspName (trigger.type, false) ? trigger.type : "";
+  const std::string relative = (name.find ('/') == std::string::npos && !type.empty ())
+                                  ? type + "/" + name : name;
+  if (!proto::IsSafeMspName (relative, false))
+    return;
   if (state.mspInFlight.count (relative) || state.mspFailed.count (relative))
     return;
 
@@ -352,7 +384,9 @@ void StartDownload (CMUSHclientDoc & doc, const proto::MspTrigger & trigger, con
   if (trigger.bMusic)
     state.mspPendingMusic.reset (new proto::MspTrigger (trigger));
 
-  std::thread (DownloadWorker, state.downloads, relative, url, path, doc.m_bMSPAllowHttp != 0).detach ();
+  const std::string worldDirectory = Proto_WorldCacheDirectory (doc);
+  std::thread (DownloadWorker, state.downloads, relative, url, path, doc.m_bMSPAllowHttp != 0,
+               CacheRoot (), worldDirectory).detach ();
   }
 
 } // anonymous namespace
@@ -361,15 +395,102 @@ void StartDownload (CMUSHclientDoc & doc, const proto::MspTrigger & trigger, con
 
 std::string Proto_WorldCacheDirectory (CMUSHclientDoc & doc)
   {
-  std::string base;
-#ifdef _WIN32
-  base = (const char *) UserData_Directory ();
-#else
-  std::error_code ec;
-  base = fs::current_path (ec).string () + "/";
-#endif
   const std::string id = doc.m_strWorldID.IsEmpty () ? "unsaved" : (const char *) doc.m_strWorldID;
-  return base + "msp_cache/" + id + "/";
+  return CacheRoot () + id + "/";
+  }
+
+namespace {
+
+struct CachedFile
+  {
+  fs::path path;
+  uint64_t size;
+  fs::file_time_type written;
+  };
+
+// The files a download could have made, under a directory.  A .part a crash left goes
+// as it is found, once it is old enough not to be a download still being written.
+std::vector <CachedFile> CachedFiles (const fs::path & directory)
+  {
+  std::vector <CachedFile> files;
+  std::error_code ec;
+  const auto now = fs::file_time_type::clock::now ();
+  for (fs::recursive_directory_iterator it (directory, fs::directory_options::skip_permission_denied, ec), end;
+       !ec && it != end; it.increment (ec))
+    {
+    std::error_code ec2;
+    if (it->is_symlink (ec2) || !it->is_regular_file (ec2))
+      continue;
+    // Only the extension, and in ASCII.  (path::string () throws, on Windows, for a name
+    // the code page cannot hold, and this is a thread of its own: that would end the
+    // program.  A name a download made is ASCII, so anything else is not ours.)
+    const std::wstring wide = it->path ().filename ().wstring ();
+    std::string name;
+    for (const wchar_t w : wide)
+      name += (w > 0 && w < 0x80) ? (char) w : '?';
+    const auto written = it->last_write_time (ec2);
+    if (ec2)
+      continue;
+    if (name.size () > 5 && proto::Lower (name.substr (name.size () - 5)) == ".part")
+      {
+      if (now - written > std::chrono::hours (1))
+        fs::remove (it->path (), ec2);
+      continue;
+      }
+    if (!proto::IsDownloadableAudioName (name))
+      continue;       // a player's own, or an image: not ours to remove
+    const uint64_t size = it->file_size (ec2);
+    if (!ec2)
+      files.push_back (CachedFile { it->path (), size, written });
+    }
+  return files;
+  }
+
+// Remove the oldest until what is left is at most `cap`.  Not `keep`.
+void TrimTo (std::vector <CachedFile> & files, const uint64_t cap, const fs::path & keep)
+  {
+  uint64_t total = 0;
+  for (const CachedFile & file : files)
+    total += file.size;
+  if (total <= cap)
+    return;
+
+  std::sort (files.begin (), files.end (),
+             [] (const CachedFile & a, const CachedFile & b) { return a.written < b.written; });
+  std::error_code ec;
+  for (auto it = files.begin (); it != files.end () && total > cap; )
+    {
+    if (fs::equivalent (it->path, keep, ec))
+      {
+      ++it;
+      continue;
+      }
+    // A file being played may not go (Windows says so): it stays, and counts.
+    if (fs::remove (it->path, ec) && !ec)
+      {
+      total -= it->size;
+      it = files.erase (it);
+      }
+    else
+      ++it;
+    }
+  }
+
+} // anonymous namespace
+
+void Proto_MspTrimCache (const std::string & cacheRoot, const std::string & worldDirectory,
+                         const std::string & keep, const uint64_t worldCap, const uint64_t totalCap)
+  {
+  // Two downloads finishing together may both trim; removing what the other removed
+  // fails quietly, and the second pass finds less to do.
+  static std::mutex lock;
+  std::lock_guard <std::mutex> guard (lock);
+
+  std::vector <CachedFile> world = CachedFiles (fs::path (worldDirectory));
+  TrimTo (world, worldCap, fs::path (keep));
+
+  std::vector <CachedFile> all = CachedFiles (fs::path (cacheRoot));
+  TrimTo (all, totalCap, fs::path (keep));
   }
 
 std::string Proto_ContainedPath (const std::string & base, const std::string & relative)
@@ -441,12 +562,20 @@ bool Proto_MspParsing (CMUSHclientDoc & doc)
 
 // It was not a trigger.  What we held back is ordinary text, and the display loop gets
 // it as if it had arrived normally.  (But not this time as a candidate for MSP.)
-static void GiveBack (CMUSHclientDoc & doc)
+//
+// The byte that showed it was not a trigger goes with it, and the caller then takes it
+// as used up.  What was held back can leave the display loop in the middle of something
+// -- an MXP tag, a UTF-8 character, an ESC -- which the next byte is part of, and only
+// the same pass over the bytes keeps them together: the outer loop would take that byte
+// as plain text while the phase said otherwise.
+static void GiveBack (CMUSHclientDoc & doc, const int c = -1)
   {
   CProtocolState & state = *doc.m_pProto;
-  const std::string text = state.mspBuffer;
+  std::string text = state.mspBuffer;
   state.mspBuffer.clear ();
   doc.m_phase = NONE;
+  if (c >= 0)
+    text += (char) c;
   if (text.empty ())
     return;
   state.bMspReplaying = true;
@@ -476,8 +605,8 @@ bool Proto_MspByte (CMUSHclientDoc & doc, const unsigned char c)
     if (kSound.compare (0, candidate.size (), candidate) != 0 &&
         kMusic.compare (0, candidate.size (), candidate) != 0)
       {
-      GiveBack (doc);
-      return false;
+      GiveBack (doc, c);
+      return true;
       }
     state.mspBuffer = candidate;
     return true;
@@ -485,8 +614,8 @@ bool Proto_MspByte (CMUSHclientDoc & doc, const unsigned char c)
 
   if (candidate.size () > proto::kMspMaxTrigger)
     {
-    GiveBack (doc);
-    return false;
+    GiveBack (doc, c);
+    return true;
     }
 
   state.mspBuffer = candidate;
@@ -505,9 +634,12 @@ bool Proto_MspByte (CMUSHclientDoc & doc, const unsigned char c)
   proto::MspTrigger trigger;
   if (!proto::ParseMspTrigger (inner, bMusic, &trigger))
     {
-    GiveBack (doc);        // !!SOUND() is not a trigger
+    GiveBack (doc);        // !!SOUND() is not a trigger (and the ) is in the buffer)
     return true;
     }
+
+  // Without negotiation, a line starting !!SOUND( is as likely to be a player's.
+  trigger.bMayDownload = state.bMspNegotiated;
 
   state.mspBuffer.clear ();
   doc.m_phase = HAVE_MSP_AFTER;
@@ -519,8 +651,8 @@ bool Proto_MspInterrupted (CMUSHclientDoc & doc, const unsigned char c)
   {
   if (doc.m_phase == HAVE_MSP_TRIGGER)
     {
-    GiveBack (doc);
-    return false;
+    GiveBack (doc, c);     // and the line ending, ESC or IAC with it, as above
+    return true;
     }
 
   // HAVE_MSP_AFTER: the line ending goes with the trigger, which was the whole line.
@@ -539,16 +671,26 @@ bool Proto_MspInterrupted (CMUSHclientDoc & doc, const unsigned char c)
 
 // ---------------------------------------------------------------- playing
 
-void Proto_MspPlay (CMUSHclientDoc & doc, const proto::MspTrigger & trigger)
+void Proto_MspPlay (CMUSHclientDoc & doc, const proto::MspTrigger & triggerIn)
   {
   CProtocolState & state = *doc.m_pProto;
+
+  // From here on T= is either safe or nothing, for finding, for repeats and for what a
+  // download, now or once a host is allowed, writes to.
+  proto::MspTrigger trigger = triggerIn;
+  if (!proto::IsSafeMspName (trigger.type, false))
+    trigger.type.clear ();
+
   CMspVoice & voice = trigger.bMusic ? state.music : state.sound;
 
   if (trigger.bOff)
     {
     // spec: Off with U= says where things are, and Off alone stops
     if (!trigger.url.empty ())
-      state.mspDefaultUrl = trigger.url;
+      {
+      if (trigger.bMayDownload)
+        state.mspDefaultUrl = trigger.url;
+      }
     else
       StopVoice (doc, voice);
     return;
@@ -565,7 +707,7 @@ void Proto_MspPlay (CMUSHclientDoc & doc, const proto::MspTrigger & trigger)
     return;
     }
 
-  const std::string type = proto::IsSafeMspName (trigger.type, false) ? trigger.type : "";
+  const std::string type = trigger.type;
   const std::string name = proto::MspWithDefaultExtension (trigger.name, trigger.bMusic);
   const bool bPlaying = VoicePlaying (doc, voice);
 

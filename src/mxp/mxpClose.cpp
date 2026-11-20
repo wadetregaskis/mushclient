@@ -290,7 +290,8 @@ bool bHaveVariable = false;
     if (strTag != "var" && strTag != "v")
       Proto_MxpFlagClosed (*this, strVariable.Mid (4), strText);
 
-    if (strTag == "var"|| strTag == "v") // add entity to map
+    if ((strTag == "var"|| strTag == "v") &&   // add entity to map
+        Proto_MxpEntityFits (*this, strVariable, (size_t) strText.GetLength ()))
       {
       m_CustomEntityMap.SetAt (strVariable, strText);
       Proto_MxpEntityChanged (*this);

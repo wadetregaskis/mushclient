@@ -81,6 +81,8 @@ std::string MnesCharsetName (bool bUtf8, unsigned int codePage);
 // the data to send, starting with IS, or "" if the request is not a SEND.  A requested
 // variable we do not have is answered with its name and no value, which is how RFC
 // 1572 says "not defined".  IPADDRESS is never in `vars`, so that is its answer too.
+// In names and values alike, the bytes 0 to 3 go with an ESC before them and IAC is
+// doubled, so what goes between IAC SB and IAC SE is ready to send.
 typedef std::vector <std::pair <std::string, std::string> > EnvVars;
 std::string BuildEnvironReply (const std::string & request, const EnvVars & vars);
 
@@ -107,17 +109,31 @@ enum OscLinkKind
 // command: a control character, or the | that MXP treats as a menu delimiter.
 OscLinkKind ClassifyOsc8Target (const std::string & uri, std::string * action);
 
+// Bytes that were to be UTF-8 and may not be, made into UTF-8 the way the display loop
+// does it (OutputBadUTF8characters): what is a whole, valid character stays, and each
+// other byte is taken as Windows-1252.
+std::string RepairUtf8 (const std::string & bytes);
+
 // ---------------------------------------------------------------- MXP
 
 // A name in <!ENTITY ... ADD|REMOVE> is an item in a |-delimited list.
 std::string EntityListAdd (const std::string & list, const std::string & item);
 std::string EntityListRemove (const std::string & list, const std::string & item);
 
+// What a server can keep in entities.  An entity's value is a few numbers or a short
+// list in every server known; ADD makes it a list a server could grow for ever, at a
+// cost that grows with its length each time, so a definition past these is refused.
+const size_t kMxpMaxEntityValue = 16 * 1024;
+const size_t kMxpMaxEntities    = 1024;
+const size_t kMxpMaxEntityTotal = 1024 * 1024;     // every value, together
+
 // FLAG's name for an automapper tag, and the reverse.  0 and "" if it has none.
 int LineTagForFlag (const std::string & lowercaseFlag);
 std::string FlagForLineTag (int tag);
 
 // A FRAME dimension: pixels, "50%" or "20c", negative meaning from the far edge.
+// Anything that is not a number is 0, and the decimal point is a point whatever the
+// locale says.
 int FrameDimension (const std::string & text, int total, int charSize);
 
 // Encode a code point as UTF-8; "" if it is not a character.
@@ -141,9 +157,14 @@ struct MspTrigger
   int cont;         // C= 0 or 1, music
   std::string type; // T=
   std::string url;  // U=
+  // May U= (or Off U=) be acted on?  Only for what came the server's way: a line once
+  // the server has negotiated MSP, or a secure-mode MXP tag.  A line read without
+  // negotiation (msp_without_negotiation) is as likely to be another player's, and gets
+  // what the old msp.xml gave it: a file already here, and nothing fetched.
+  bool bMayDownload;
 
   MspTrigger () : bMusic (false), bOff (false), volume (100), repeats (1),
-                  priority (50), cont (1) { }
+                  priority (50), cont (1), bMayDownload (false) { }
   };
 
 // `inner` is what is between the parentheses.  False if it has no file name.
@@ -172,8 +193,14 @@ bool LooksLikeAudio (const std::string & name, const std::string & data);
 // The volume PlaySound wants, in decibels, for MSP's 0 to 100.
 double MspVolumeToDb (int volume);
 
-// The URL to download a name from, for U=.  "" unless `base` is http or https.
+// The URL to download a name from, for U=.  "" unless `base` is http or https.  The
+// name is percent-encoded: a space, which a name may have, is not allowed in a URL.
 std::string MspDownloadUrl (const std::string & base, const std::string & name);
+
+// The sounds a server has had downloaded are kept to this, for a world and for every
+// world together.  Past it, the oldest go first.
+const uint64_t kMspCacheWorldBytes = 256ull * 1024 * 1024;
+const uint64_t kMspCacheTotalBytes = 1024ull * 1024 * 1024;
 
 // The host in an http or https URL, lower case; "" if it has none.
 std::string UrlHost (const std::string & url);
@@ -184,7 +211,12 @@ std::string HostListAdd (const std::string & list, const std::string & host);
 
 // ---------------------------------------------------------------- GMCP
 
+// Lower case, of ASCII letters only.  The client sets the C locale from the system's
+// (MUSHclient.cpp), and what a server sends must not mean something else on a machine
+// in another country: these tests are by the byte, not by isalnum and friends.
 std::string Lower (std::string s);
+bool IsAsciiAlnum (unsigned char c);
+bool IsAsciiDigit (unsigned char c);
 
 bool IsValidGmcpPackage (const std::string & package);
 
@@ -362,7 +394,12 @@ class CProtocolState
     std::map <int, CMxpLineTag> lineTags;
     bool bNoBreak;               // <NOBR>
     std::string openExpire;      // expire= of the tag being opened
-    std::map <std::string, long> expireOldest;   // expire name: oldest line that has one
+    struct ExpireLines
+      {
+      long oldest;               // the oldest line with a link of this name
+      long newest;               // and the newest, so that the stalest name can go
+      };
+    std::map <std::string, ExpireLines> expireOldest;   // by expire name
     std::map <std::string, CMxpEntityInfo> entities;
     std::vector <CMxpBinding> bindings;
     bool bBindingsDirty;
@@ -379,15 +416,22 @@ class CProtocolState
     std::string redirect;        // the frame ACTION=REDIRECT sends everything to
     std::string previousRedirect;
     bool bFramesDirty;
+    uint64_t lastFramePaint;     // Now () when the frames were last painted
+    uint64_t framePaintRuns;     // runs of text painted, ever: for tests
     std::string imageFile;       // what the image window shows
 
     // --- RELOCATE
+    // The world's own address (m_server, m_port) is never changed by a relocation: it is
+    // what is saved, and what the next launch logs in to.  The destination lives here
+    // and is used only for the one connection the player clicked for.
     bool bRelocateAsked;         // this session has been asked to move: no <USER>, <PASSWORD>
-    std::string relocateHost;
+    std::string relocateHost;    // the offer on the table, if any
     int relocatePort;
-    bool bRelocated;             // this connection went where a server said
-    std::string relocateOriginalServer;
-    unsigned short relocateOriginalPort;
+    int relocateOffer;           // its number, which its link carries; 0 if none
+    bool bRelocated;             // this connection is going, or went, where a server said
+    std::string relocatedHost;   // where that is
+    unsigned short relocatedPort;
+    bool bRelocateConnecting;    // ConnectSocket is being called to go there
 
     // --- MSP
     std::string mspBuffer;
@@ -439,9 +483,20 @@ extern const char * const kProtoActionID;     // the "plugin ID" in those links
 // A click on one of those links.  False if the verb is not known.
 bool Proto_RunAction (CMUSHclientDoc & doc, const CString & verb, const CString & arg);
 
-// From the timer: repeats, finished downloads, a reconnection the player asked for.
+// From the timer: repeats, finished downloads, a reconnection the player asked for,
+// frames waiting to be painted.
 void Proto_Tick (CMUSHclientDoc & doc);
 void Proto_ConnectionClosed (CMUSHclientDoc & doc);
+
+// Where a connection goes: the world's address, or during a relocation the one the
+// player agreed to.  ConnectSocket and everything after it ask these, not m_server and
+// m_port, which a relocation never touches.
+CString Proto_ConnectHost (CMUSHclientDoc & doc);
+unsigned short Proto_ConnectPort (CMUSHclientDoc & doc);
+// ConnectSocket is starting.  Any connection but the one a relocation link asked for
+// goes to the world's own address, so a relocation that failed to connect leaves
+// nothing behind.
+void Proto_ConnectStarting (CMUSHclientDoc & doc);
 
 bool Proto_NegotiationAllowed (CMUSHclientDoc & doc, unsigned char option);
 
@@ -475,6 +530,9 @@ void Proto_MxpTagDefinition (CMUSHclientDoc & doc, const CString & strIndex, CSt
 void Proto_MxpExpire (CMUSHclientDoc & doc, const CString & strName);
 void Proto_MxpNoteExpiringLink (CMUSHclientDoc & doc);
 void Proto_MxpEntityChanged (CMUSHclientDoc & doc);
+// May an entity from the server be given a value of this length?  If not, says why
+// (an MXP error) and the definition should change nothing.
+bool Proto_MxpEntityFits (CMUSHclientDoc & doc, const CString & strName, size_t length);
 void Proto_MxpReset (CMUSHclientDoc & doc, bool bClearDefinitions);
 
 void Proto_MxpBinding (CMUSHclientDoc & doc, bool bGauge, const std::string & entity,
@@ -521,6 +579,14 @@ std::string Proto_WorldCacheDirectory (CMUSHclientDoc & doc);
 // `relative` under `base`, if once symbolic links and the like are resolved it is
 // still there.  "" if not.  Does not need the file to exist.
 std::string Proto_ContainedPath (const std::string & base, const std::string & relative);
+
+// Keep the download cache within bounds: the sounds under `worldDirectory` to
+// `worldCap` bytes and those under `cacheRoot` (every world's) to `totalCap`, the
+// least recently written going first, but never `keep`, which has just arrived.  Only
+// the kinds of file a download makes are counted or removed, and a .part left behind
+// by a crash goes once it is an hour old.  On the download's own thread.
+void Proto_MspTrimCache (const std::string & cacheRoot, const std::string & worldDirectory,
+                         const std::string & keep, uint64_t worldCap, uint64_t totalCap);
 
 // ---------------------------------------------------------------- GMCP glue
 // gmcp.cpp

@@ -1443,6 +1443,9 @@ every platform, and by hand on Windows: the document above says what was seen.
 - An MXP tag or link alone at the start of a line, with the text in the next packet, keeps its
   style. Upstream reset it when the next packet arrived.
 - `<!ENTITY x y ADD>` and `REMOVE` are lists, where upstream ignored ADD and REMOVE deleted the entity.
+- Entities from the server are limited (16 KB a value, 1024 of them, 1 MB in all), where upstream had
+  no limit: a definition or `<VAR>` past one leaves the entity as it was, and does not call
+  `OnPluginMXPsetEntity`.
 - MXP tags on a line with a line tag (modes 10 to 99) are parsed. Those modes used to replace the
   security mode, which left the tags on the line as literal text.
 

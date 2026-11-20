@@ -284,7 +284,7 @@ long CMUSHclientDoc::GMCP_Subscribe (LPCTSTR Package, LPCTSTR Version)
 
   const std::string version = Version ? Version : "";
   for (const unsigned char c : version)
-    if (!isalnum (c) && c != '.')
+    if (!proto::IsAsciiAlnum (c) && c != '.')
       return eBadParameter;
 
   const std::string key = proto::Lower (package);

@@ -191,6 +191,12 @@ void SetScrollSizes (SIZE sizeTotal,
 // rather than once per line (see CMUSHView::SetScrollSizes).
 void FlushScrollBar ();
 afx_msg LRESULT OnFlushScrollBar (WPARAM wParam, LPARAM lParam);
+// Invalidate the whole view -- unless that has been done since it was last
+// painted, when doing it again changes nothing (but costs a call into the
+// kernel: two or three for every line of output).  OnDraw clears the flag, as
+// does anything else that might shrink the update region.
+void InvalidateAll ();
+bool m_bAllInvalid;
 bool m_bScrollBarPending;      // range/position below not yet given to Windows
 bool m_bScrollFlushPosted;     // WM_USER_FLUSH_SCROLLBAR is on its way
 int  m_iPendingScrollMax;

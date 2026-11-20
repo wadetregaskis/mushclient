@@ -281,6 +281,7 @@ BEGIN_MESSAGE_MAP(CMUSHView, CView)
 CMUSHView::CMUSHView()
 {
 
+  m_bAllInvalid = false;
   m_bScrollBarPending = false;
   m_bScrollFlushPosted = false;
   m_iPendingScrollMax = 0;
@@ -1158,6 +1159,10 @@ long pixel;
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
 
+  // the paint has taken the update region (and an OnDraw with none, such as
+  // a print, only means the next InvalidateAll really calls Windows)
+  m_bAllInvalid = false;
+
   if (!pDoc->m_FontHeight)
     return;
 
@@ -2005,7 +2010,7 @@ if (pt.y < 0)
 ScrollToPosition (pt, App.m_bSmoothScrolling);
 
 
-  Invalidate ();
+  InvalidateAll ();
 
   m_last_line_drawn = lastline;
 
@@ -2195,7 +2200,7 @@ CPoint pt = GetScrollPosition ();
 
   if (pt.y == 0)
     {
-    Invalidate ();
+    InvalidateAll ();
 #if REDRAW_DEBUG
     RECT r;
     GetClientRect (&r);
@@ -4961,6 +4966,14 @@ BOOL CMUSHView::PreCreateWindow(CREATESTRUCT& cs)
 }
 
 
+void CMUSHView::InvalidateAll ()
+  {
+  if (m_bAllInvalid && GetSafeHwnd () && IsWindowVisible ())
+    return;      // still all invalid from last time: nothing has painted since
+  Invalidate ();
+  m_bAllInvalid = true;
+  }
+
 void CMUSHView::ScrollToPosition ( POINT pt, const bool bSmooth)
   {
 CMUSHclientDoc* pDoc = GetDocument();
@@ -4994,12 +5007,13 @@ int iDeltaY = m_scroll_position.y - pt.y;
           SetScrollInfo (SB_VERT, &ScrollInfo, pDoc->m_bScrollBarWanted);
         m_ScrollbarPosition.cy = ScrollInfo.nPos;
         ScrollWindow (0, iSmoothDelta);
+        m_bAllInvalid = false;   // ScrollWindow moves the update region
         UpdateWindow ();
         }
       } // end of smooth scrolling
     else
       {
-      Invalidate ();
+      InvalidateAll ();
       m_scroll_position = pt;
       if (App.m_bSmootherScrolling)
         UpdateWindow ();    // redraw immediately if wanted
@@ -5008,7 +5022,7 @@ int iDeltaY = m_scroll_position.y - pt.y;
   else
     // more than a screenfull away? just redraw the whole lot
     {
-    Invalidate ();
+    InvalidateAll ();
 #if REDRAW_DEBUG
     RECT r;
     GetClientRect (&r);

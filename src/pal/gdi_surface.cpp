@@ -35,6 +35,9 @@ GdiSurface::~GdiSurface() {
         delete m_measureDc;
         m_measureDc = nullptr;
     }
+    delete m_pen;          // CGdiObject's destructor deletes the GDI object
+    delete m_solidBrush;
+    delete m_mask;
     m_surfaces.clear();
 }
 
@@ -233,11 +236,11 @@ int GdiSurface::DrawScaledText(CDC* dc, Font* f, Point pt, Colour colour, const 
     if (f->raster) {
         // A bitmap font: draw it at its own size in a one-bit mask (in a memory DC with no
         // mapping), and stretch that on with the colour.
+        // (The mask is kept, and may be larger than w x h: only w x h of it is
+        // cleared, drawn on and stretched, so what lies beyond doesn't matter.)
         const int h = sz.cy > 0 ? sz.cy : 1;
         const int w = sz.cx > 0 ? sz.cx : 1;
-        CBitmap bitmap;
-        bitmap.CreateBitmap(w, h, 1, 1, NULL);
-        CBitmap* oldBitmap = mdc->SelectObject(&bitmap);
+        CBitmap* oldBitmap = mdc->SelectObject(maskBitmap(w, h));
         mdc->SetBkMode(TRANSPARENT);
         COLORREF oldText = mdc->SetTextColor(RGB(255, 255, 255));
         mdc->PatBlt(0, 0, w, h, BLACKNESS);
@@ -247,8 +250,7 @@ int GdiSurface::DrawScaledText(CDC* dc, Font* f, Point pt, Colour colour, const 
         const int saved = dc->SaveDC();
         if (clip)
             dc->IntersectClipRect(clip->x, clip->y, clip->x + clip->w, clip->y + clip->h);
-        CBrush brush(colour);
-        dc->SelectObject(&brush);
+        dc->SelectObject(cachedSolidBrush(colour));    // put back by RestoreDC
         dc->SetBkColor(RGB(255, 255, 255));
         dc->SetTextColor(RGB(0, 0, 0));
         dc->SetStretchBltMode(COLORONCOLOR);
@@ -399,12 +401,52 @@ static void makePen(CPen& pen, const PenSpec& p) {
     }
 }
 
+// The pen makePen would make for p: the last one, if it was for the same p (a GDI
+// pen can't change, so it draws exactly the same).  One that failed is tried again.
+CPen* GdiSurface::cachedPen(const PenSpec& p) {
+    if (m_pen && m_pen->GetSafeHandle() &&
+        m_penSpec.style == p.style && m_penSpec.width == p.width &&
+        m_penSpec.colour == p.colour && m_penSpec.endcap == p.endcap &&
+        m_penSpec.join == p.join)
+        return m_pen;
+    delete m_pen;                 // never left selected into a DC, so free to go
+    m_pen = new CPen;
+    makePen(*m_pen, p);
+    m_penSpec = p;
+    return m_pen;
+}
+
+CBrush* GdiSurface::cachedSolidBrush(Colour colour) {
+    if (m_solidBrush && m_solidBrush->GetSafeHandle() && m_solidBrushColour == colour)
+        return m_solidBrush;
+    delete m_solidBrush;
+    m_solidBrush = new CBrush(colour);   // == the CBrush brush(colour) it replaces
+    m_solidBrushColour = colour;
+    return m_solidBrush;
+}
+
+CBitmap* GdiSurface::maskBitmap(int w, int h) {
+    if (m_mask && m_mask->GetSafeHandle() && w <= m_maskW && h <= m_maskH)
+        return m_mask;
+    const int nw = m_mask && w <= m_maskW ? m_maskW : w;   // grow, never shrink
+    const int nh = m_mask && h <= m_maskH ? m_maskH : h;
+    delete m_mask;
+    m_mask = new CBitmap;
+    if (m_mask->CreateBitmap(nw, nh, 1, 1, NULL)) {
+        m_maskW = nw;
+        m_maskH = nh;
+    } else {
+        m_maskW = m_maskH = 0;
+    }
+    return m_mask;
+}
+
 void GdiSurface::line(SurfaceId id, Point p1, Point p2, const PenSpec& pen) {
     Surf* s = surf(id);
     if (!s || !s->dc || pen.style == PenStyle::Null) return;
     s->dc->SetBkMode(TRANSPARENT);                          // == old Line() SetBkMode
-    CPen cpen; makePen(cpen, pen);
-    CPen* old = s->dc->SelectObject(&cpen);
+    CPen* cpen = cachedPen(pen);
+    CPen* old = s->dc->SelectObject(cpen);
     s->dc->MoveTo(p1.x, p1.y);
     s->dc->LineTo(p2.x, p2.y);                              // == old MoveTo/LineTo
     s->dc->SelectObject(old);
@@ -414,8 +456,8 @@ void GdiSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen)
     Surf* s = surf(id);
     if (!s || !s->dc) return;
     s->dc->SetBkMode(TRANSPARENT);                          // == old Arc() SetBkMode
-    CPen cpen; makePen(cpen, pen);
-    CPen* old = s->dc->SelectObject(&cpen);
+    CPen* cpen = cachedPen(pen);
+    CPen* old = s->dc->SelectObject(cpen);
     s->dc->Arc(r.x, r.y, r.x + r.w, r.y + r.h, a.x, a.y, b.x, b.y);   // == old pdc->Arc
     s->dc->SelectObject(old);
 }
@@ -424,8 +466,8 @@ void GdiSurface::bezier(SurfaceId id, const Point* pts, size_t n, const PenSpec&
     Surf* s = surf(id);
     if (!s || !s->dc || !pts || n < 4) return;
     s->dc->SetBkMode(TRANSPARENT);                          // == old Bezier() SetBkMode
-    CPen cpen; makePen(cpen, pen);
-    CPen* old = s->dc->SelectObject(&cpen);
+    CPen* cpen = cachedPen(pen);
+    CPen* old = s->dc->SelectObject(cpen);
     std::vector<POINT> v(n);
     for (size_t i = 0; i < n; ++i) { v[i].x = pts[i].x; v[i].y = pts[i].y; }
     s->dc->PolyBezier(v.data(), (int)n);                    // == old pdc->PolyBezier
@@ -512,13 +554,13 @@ void GdiSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
                        const PenSpec& pen, const BrushSpec& brush) {
     Surf* s = surf(id);
     if (!s || !s->dc) return;
-    CPen cpen; makePen(cpen, pen);
+    CPen* cpen = cachedPen(pen);
     CBrush cbr; CBitmap patternBmp;
     if (!makeGdiBrush(cbr, s->dc, brush, patternBmp)) {     // malformed spec -> null
         LOGBRUSH nb; nb.lbStyle = BS_NULL; nb.lbColor = 0; nb.lbHatch = 0;
         cbr.CreateBrushIndirect(&nb);
     }
-    CPen*   oldPen = s->dc->SelectObject(&cpen);
+    CPen*   oldPen = s->dc->SelectObject(cpen);
     CBrush* oldBr  = s->dc->SelectObject(&cbr);
     CRect rc(r.x, r.y, r.x + r.w, r.y + r.h);
     switch (kind) {                                         // == the old CircleOp switch
@@ -536,8 +578,8 @@ void GdiSurface::polyline(SurfaceId id, const Point* pts, size_t n, const PenSpe
     Surf* s = surf(id);
     if (!s || !s->dc || !pts || n < 2) return;
     s->dc->SetBkMode(TRANSPARENT);                         // dashed-pen gaps (== pen ops)
-    CPen cpen; makePen(cpen, pen);
-    CPen* old = s->dc->SelectObject(&cpen);
+    CPen* cpen = cachedPen(pen);
+    CPen* old = s->dc->SelectObject(cpen);
     std::vector<POINT> v(n);
     for (size_t i = 0; i < n; ++i) { v[i].x = pts[i].x; v[i].y = pts[i].y; }
     s->dc->Polyline(v.data(), (int)n);                     // == old Polygon(Close=false)
@@ -548,13 +590,13 @@ void GdiSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec
                          const BrushSpec& brush, PolyFill fill) {
     Surf* s = surf(id);
     if (!s || !s->dc || !pts || n < 2) return;
-    CPen cpen; makePen(cpen, pen);
+    CPen* cpen = cachedPen(pen);
     CBrush cbr; CBitmap patternBmp;
     if (!makeGdiBrush(cbr, s->dc, brush, patternBmp)) {
         LOGBRUSH nb; nb.lbStyle = BS_NULL; nb.lbColor = 0; nb.lbHatch = 0;
         cbr.CreateBrushIndirect(&nb);
     }
-    CPen*   oldPen = s->dc->SelectObject(&cpen);
+    CPen*   oldPen = s->dc->SelectObject(cpen);
     CBrush* oldBr  = s->dc->SelectObject(&cbr);
     s->dc->SetPolyFillMode(fill == PolyFill::Winding ? WINDING : ALTERNATE);
     std::vector<POINT> v(n);

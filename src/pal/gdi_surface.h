@@ -90,11 +90,25 @@ private:
     CDC*  measureDc();               // lazily-created screen-compatible DC for
                                      // measuring / metrics (no surface needed)
 
+    // GDI objects kept from one drawing call to the next, rather than made and
+    // deleted every time: a plugin redrawing a miniwindow draws many lines in a
+    // few pens, and much text in a few colours.  Each is selected into a DC only
+    // for the call that uses it, as before, so it can be replaced at any time.
+    CPen*   cachedPen(const PenSpec&);        // the pen makePen would make
+    CBrush* cachedSolidBrush(Colour);         // DrawScaledText's brush
+    CBitmap* maskBitmap(int w, int h);        // DrawScaledText's mask, at least w x h
+
     std::map<std::uint32_t, Surf> m_surfaces;
     std::map<std::uint32_t, Font> m_fonts;
     std::uint32_t m_nextSurface = 1;
     std::uint32_t m_nextFont    = 1;
     CDC* m_measureDc = nullptr;
+    CPen*    m_pen = nullptr;
+    PenSpec  m_penSpec;
+    CBrush*  m_solidBrush = nullptr;
+    Colour   m_solidBrushColour = 0;
+    CBitmap* m_mask = nullptr;
+    int      m_maskW = 0, m_maskH = 0;
 };
 
 } // namespace pal

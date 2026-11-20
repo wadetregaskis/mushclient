@@ -308,6 +308,70 @@ TEST(ScriptEngine, ValuesPassedToTheWorldApiKeepTheirBytes)
     }
 }
 
+// ── send-to-script: the same text, compiled once ─────────────────────────
+//
+// ParseLua keeps the last chunk compiled under each name and runs it again while
+// the text is unchanged (Quow's colour handler sends the same forty lines for
+// every line from the MUD).  A script must not be able to tell.
+
+static CString LuaGlobal(Engine& e, const char* name)
+{
+    CString code;
+    code.Format("world.SetVariable('probe', tostring(%s))\n", name);
+    e.eng->Parse(code, "<probe>");
+    VARIANT v = e.doc.GetVariable("probe");
+    return v.bstrVal ? CString(v.bstrVal) : CString("");
+}
+
+TEST(ScriptEngine, TheSameSendToScriptTextRunsEachTime)
+{
+    Engine e("n = 0\n");
+    for (int i = 0; i < 3; i++)
+        EXPECT_FALSE(e.eng->Parse(CString("n = n + 1\n"), "Trigger: t"));
+    EXPECT_EQ(CString("3"), LuaGlobal(e, "n"));
+}
+
+TEST(ScriptEngine, AKeptChunkStartsInTheGlobalsEveryTime)
+{
+    // A fresh load runs in the globals, whatever the last run did to its own
+    // environment.
+    Engine e;
+    const CString code("x = (x or 0) + 1\nsetfenv(1, {})\n");
+    EXPECT_FALSE(e.eng->Parse(code, "Trigger: t"));
+    EXPECT_FALSE(e.eng->Parse(code, "Trigger: t"));
+    EXPECT_EQ(CString("2"), LuaGlobal(e, "x"));
+}
+
+TEST(ScriptEngine, ANewTextUnderTheSameNameIsCompiledAfresh)
+{
+    Engine e;
+    EXPECT_FALSE(e.eng->Parse(CString("y = 1\n"), "Trigger: t"));
+    EXPECT_FALSE(e.eng->Parse(CString("y = 2\n"), "Trigger: t"));
+    EXPECT_EQ(CString("2"), LuaGlobal(e, "y"));
+    EXPECT_FALSE(e.eng->Parse(CString("y = 1\n"), "Trigger: t"));
+    EXPECT_EQ(CString("1"), LuaGlobal(e, "y"));
+    // and the same text under another name is its own chunk
+    EXPECT_FALSE(e.eng->Parse(CString("y = 2\n"), "Trigger: u"));
+    EXPECT_EQ(CString("2"), LuaGlobal(e, "y"));
+}
+
+TEST(ScriptEngine, ErrorsAreReportedEveryTimeAsBefore)
+{
+    Engine e;
+    EXPECT_TRUE(e.eng->Parse(CString("this is not lua"), "Trigger: bad"));
+    EXPECT_TRUE(e.eng->Parse(CString("this is not lua"), "Trigger: bad"));
+    EXPECT_TRUE(e.eng->Parse(CString("error('boom')"), "Trigger: boom"));
+    EXPECT_TRUE(e.eng->Parse(CString("error('boom')"), "Trigger: boom"));
+    const std::string out = all_output(e.doc);
+    size_t compile = 0, runtime = 0;
+    for (size_t p = 0; (p = out.find("Compile error", p)) != std::string::npos; p++)
+        compile++;
+    for (size_t p = 0; (p = out.find("Run-time error", p)) != std::string::npos; p++)
+        runtime++;
+    EXPECT_EQ(2u, compile);
+    EXPECT_EQ(2u, runtime);
+}
+
 // With Trace on, every callback announces itself -- it is how a user answers
 // "why did my trigger not fire?".  The five embedded engines were silent here
 // until the shared TraceCallback helper; this pins the reference behaviour.

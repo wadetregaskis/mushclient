@@ -308,6 +308,85 @@ void CScriptEngine::CloseLua ()
   }  // end of CScriptEngine::CloseLua
 
 // send some code to Lua to be parsed
+/*
+Compile a chunk for ParseLua, leaving it on the top of the stack (or, if it
+won't compile, the error, and returning non-zero), as luaL_loadbuffer does.
+
+Send-to-script triggers, aliases and timers come here with the same text, under
+the same name, again and again: Quow's QuowColourHandler, for one, sends forty
+lines of Lua for every line from the MUD, and compiling them took longer than
+running them.  So the last chunk compiled under each name is kept, in a table in
+the registry, with its text, and used again while the text is the same.
+
+A plugin can't tell.  A chunk has no upvalues in Lua 5.1; its environment is
+put back to the globals each time, as a fresh load would have it (in case the
+chunk changed it with setfenv); and a chunk that won't compile isn't kept, so
+its error is reported each time, as before.  Only short ones are kept (not
+script files), and only one per name, so the table stays small; it goes with
+the Lua state.
+*/
+
+#define LUA_CHUNK_CACHE "mushclient.chunks"
+#define LUA_CHUNK_CACHE_MAX_LENGTH 16384
+
+static int LoadLuaChunk (lua_State * L, const CString & strCode, const CString & strWhat)
+  {
+  const size_t iLength = strCode.GetLength ();
+
+  if (iLength > LUA_CHUNK_CACHE_MAX_LENGTH)
+    return luaL_loadbuffer (L, strCode, iLength, strWhat);
+
+  const int top = lua_gettop (L);
+
+  lua_getfield (L, LUA_REGISTRYINDEX, LUA_CHUNK_CACHE);     // cache
+  if (lua_istable (L, -1))
+    {
+    lua_getfield (L, -1, strWhat);                         // cache entry
+    if (lua_istable (L, -1))
+      {
+      lua_rawgeti (L, -1, 1);                              // cache entry text
+      size_t iCachedLength = 0;
+      const char * sCached = lua_tolstring (L, -1, &iCachedLength);
+      if (sCached && iCachedLength == iLength &&
+          memcmp (sCached, (const char *) strCode, iLength) == 0)
+        {
+        lua_rawgeti (L, -2, 2);                            // cache entry text chunk
+        if (lua_isfunction (L, -1))
+          {
+          lua_pushvalue (L, LUA_GLOBALSINDEX);
+          lua_setfenv (L, -2);                             // as a fresh load has it
+          lua_replace (L, top + 1);
+          lua_settop (L, top + 1);                         // chunk
+          return 0;
+          }
+        }
+      }
+    }
+  lua_settop (L, top);
+
+  const int error = luaL_loadbuffer (L, strCode, iLength, strWhat);
+  if (error)
+    return error;
+
+  // keep it: registry [LUA_CHUNK_CACHE] [strWhat] = { text, chunk }
+  lua_getfield (L, LUA_REGISTRYINDEX, LUA_CHUNK_CACHE);
+  if (!lua_istable (L, -1))
+    {
+    lua_pop (L, 1);
+    lua_newtable (L);
+    lua_pushvalue (L, -1);
+    lua_setfield (L, LUA_REGISTRYINDEX, LUA_CHUNK_CACHE);
+    }                                                      // chunk cache
+  lua_createtable (L, 2, 0);                               // chunk cache entry
+  lua_pushlstring (L, strCode, iLength);
+  lua_rawseti (L, -2, 1);
+  lua_pushvalue (L, top + 1);
+  lua_rawseti (L, -2, 2);
+  lua_setfield (L, -2, strWhat);                           // chunk cache
+  lua_pop (L, 1);                                          // chunk
+  return 0;
+  }
+
 bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
   {
 
@@ -324,7 +403,7 @@ bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
     { start.QuadPart = 0; finish.QuadPart = 0; }
 
   // note - an error here is a *compile* error
-  if (luaL_loadbuffer(L, strCode, strCode.GetLength (), strWhat))
+  if (LoadLuaChunk (L, strCode, strWhat))
     {
     LuaError (L, "Compile error", "", "", "", m_pDoc);
     return true;
@@ -615,7 +694,9 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
                 finish;
 
   // do not trace OnPluginDrawOutputWindow or OnPluginTick because they can spam the output window
-  if (ON_PLUGIN_DRAW_OUTPUT_WINDOW != szProcedure &&
+  // (and Trace does nothing unless tracing is on: don't make the message for nothing)
+  if (m_pDoc->m_bTrace &&
+      ON_PLUGIN_DRAW_OUTPUT_WINDOW != szProcedure &&
       ON_PLUGIN_TICK != szProcedure)
     // Trace takes a FORMAT; szProcedure is a plugin-supplied callback name, so
     // handing the composed string straight in would let a '%' in it read a
@@ -940,7 +1021,9 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
                 finish;
 
   // do not trace OnPluginDrawOutputWindow or OnPluginTick because they can spam the output window
-  if (ON_PLUGIN_DRAW_OUTPUT_WINDOW != szProcedure &&
+  // (and Trace does nothing unless tracing is on: don't make the message for nothing)
+  if (m_pDoc->m_bTrace &&
+      ON_PLUGIN_DRAW_OUTPUT_WINDOW != szProcedure &&
       ON_PLUGIN_TICK != szProcedure)
     // Same reason as the sibling call above: Trace takes a format, and
     // szProcedure is plugin-supplied.

@@ -749,6 +749,9 @@ if(NOT WIN32)
         src/protocols_mxp.cpp
         src/msp.cpp
         src/gmcp.cpp
+        src/speech_router.cpp
+        src/a11y.cpp
+        src/a11y_shims.cpp
         src/pal/netaddress.cpp
         src/Line.cpp
         src/ProcessPreviousLine.cpp
@@ -1186,6 +1189,7 @@ if(NOT WIN32)
             src/platform/wx_surface.cpp
             # GUI widgets (wx headers first, then MUSHclient headers)
             src/platform/wx_outputpane.cpp
+            src/platform/wx_a11y_pane.cpp
             # In-app conformance harness for the pane (--outputpane-selftest);
             # here, not in mushgui_adapters, because it includes wx headers.
             src/platform/outputpane_selftest.cpp
@@ -1283,7 +1287,8 @@ if(NOT WIN32)
             target_link_libraries(mushgui PRIVATE
                 "-framework CoreAudio" "-framework AudioToolbox"
                 "-framework AudioUnit" "-framework CoreFoundation"
-                "-framework CoreText")  # utils.glyph_available (wx_osx_text.mm)
+                "-framework CoreText"   # utils.glyph_available (wx_osx_text.mm)
+                "-framework AVFoundation")  # the system voice (wx_osx_speech.mm)
         else()
             find_package(Threads REQUIRED)
             target_link_libraries(mushgui PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
@@ -1324,6 +1329,7 @@ if(NOT WIN32)
             target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/src/platform/spell_engine_mac.mm)
         else()
             target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/src/platform/spell_engine_enchant.cpp)
+            target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/src/platform/linux_speech.cpp)
         endif()
 
         # wxWidgets on macOS needs the bundle type for proper menu bar / event loop
@@ -1331,6 +1337,7 @@ if(NOT WIN32)
             # macOS-only Obj-C++ helper (AppKit): disable NSTextView smart-quote
             # substitution so typed/pasted Lua isn't corrupted in script edits.
             target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/src/platform/wx_osx_text.mm)
+            target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/src/platform/wx_osx_speech.mm)
             # The NSStatusItem behind Global Preferences > "Icon Placement:
             # System tray" -- macOS's nearest equivalent of the Windows system
             # tray.  Obj-C++ for the same reason wx_osx_text.mm is: AppKit types

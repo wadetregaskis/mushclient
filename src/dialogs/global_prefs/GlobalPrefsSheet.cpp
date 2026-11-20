@@ -33,6 +33,7 @@ CGlobalPrefsSheet::CGlobalPrefsSheet(CWnd* pWndParent)
 	AddPage(&m_Page11);
 	AddPage(&m_Page12);
 	AddPage(&m_Page13);
+	AddPage(&m_Page14);
   
   m_Page1.m_pCurrentDoc = NULL;
 

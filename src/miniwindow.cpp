@@ -5,6 +5,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "a11y.h"
 #include "mushview.h"
 #include "scripting/errors.h"
 #include "Color.h"
@@ -315,6 +316,9 @@ void  CMiniWindow::Show (bool bShow)
 // various rectangle operations
 long  CMiniWindow::RectOp (short Action, long Left, long Top, long Right, long Bottom, long Colour1, long Colour2)
   {
+  if (!m_DrawnText.empty ())
+    ForgetDrawnText (Left, Top, FixRight (Right), FixBottom (Bottom));
+
   // Draw through the pal::ISurface adapter adopted onto this window's pdc
   // (docs/PAL.md S3). FixRight/FixBottom (<=0 = offset-from-edge) stays engine-
   // side, above the seam. The adapter is the native drawing backend on every
@@ -923,12 +927,53 @@ long CMiniWindow::Text (LPCTSTR FontId,  // which previously-created font
   const long bottom = FixBottom (Bottom);
   const pal::Rect clip { (int) Left, (int) Top, (int) (right - Left), (int) (bottom - Top) };
 
+  if (A11y_AutoReading ())
+    RememberDrawnText (Left, Top, right, bottom, Text);
+
   pal::LegacyTextScope legacy (!Unicode);   // the font's charset, whatever the bytes look like
   int width = srf->drawText (m_surfaceId, it->second, Text, length,
                              { (int) Left, (int) Top }, (pal::Colour) Colour, &clip);
 
   return min ((long) width, right - Left);  // if clipped, length is width of rectangle
   } // end of CMiniWindow::Text
+
+// ---------------------------------------------------------------- text, for a screen reader
+
+void CMiniWindow::RememberDrawnText (long Left, long Top, long Right, long Bottom, const char * sText)
+  {
+  ForgetDrawnText (Left, Top, Right, Bottom);
+  if (m_DrawnText.size () >= 500)     // a window that draws forever, without ever clearing
+    m_DrawnText.erase (m_DrawnText.begin ());
+  SDrawnText drawn;
+  drawn.rect = CRect (Left, Top, Right, Bottom);
+  drawn.text = sText;
+  m_DrawnText.push_back (drawn);
+  }
+
+// Whatever started inside this rectangle has been drawn over.
+void CMiniWindow::ForgetDrawnText (long Left, long Top, long Right, long Bottom)
+  {
+  for (size_t i = m_DrawnText.size (); i-- > 0; )
+    {
+    const CRect & r = m_DrawnText [i].rect;
+    if (r.left >= Left && r.left < Right && r.top >= Top && r.top < Bottom)
+      m_DrawnText.erase (m_DrawnText.begin () + i);
+    }
+  }
+
+string CMiniWindow::TextInRect (const CRect & rect) const
+  {
+  string out;
+  for (const SDrawnText & drawn : m_DrawnText)
+    if (drawn.rect.left >= rect.left && drawn.rect.left < rect.right &&
+        drawn.rect.top >= rect.top && drawn.rect.top < rect.bottom)
+      {
+      if (!out.empty ())
+        out += " ";
+      out += drawn.text;
+      }
+  return out;
+  }
 
 
 // measure text, ordinary or UTF8

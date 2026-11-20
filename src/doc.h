@@ -1062,6 +1062,17 @@ public:
   CString m_strMSPAllowedHosts;         // hosts the player agreed to download from
   class CProtocolState * m_pProto;      // never NULL
 
+  // accessibility options; a11y.h has the state behind them
+  unsigned short m_bSpeechMute;              // this world says nothing
+  unsigned short m_bSpeechBackground;        // speak this world's lines when it is not the active one
+  unsigned short m_bSpeechReadAll;           // read output aloud even with no screen reader
+  unsigned short m_bSpeechBraille;           // what is said goes to a braille display too
+  unsigned short m_bSpeechInterruptOnEnter;  // sending a command silences speech
+  unsigned short m_bSpeechHoldWhileReviewing;// new lines wait while the player is reading old ones
+  long m_iSpeechFloodLines;                  // lines waiting before the middle is dropped; 0 is never
+  CString m_strSpeechCategories;             // CategoriesToText
+  class CA11yState * m_pA11y;                // NULL until someone wants any of it
+
   // more new stuff
 
   unsigned short m_bAutoCopyInHTML;     // auto-copy to clipboard in HTML
@@ -3714,6 +3725,14 @@ public:
 	afx_msg long GMCP_Send(LPCTSTR Package, LPCTSTR Json);
 	afx_msg VARIANT GMCP_Get(LPCTSTR Package);
 	afx_msg VARIANT MXPEntityInfo(LPCTSTR Name, short InfoType);
+	afx_msg long Speak(LPCTSTR Text, LPCTSTR Category, short Priority, BOOL Interrupt);
+	afx_msg long StopSpeech();
+	afx_msg long SpeechReview(LPCTSTR Action);
+	afx_msg VARIANT SpeechInfo(short InfoType);
+	afx_msg long SpeechCategory(LPCTSTR Name, LPCTSTR Option, LPCTSTR Value);
+	afx_msg long WindowHotspotLabel(LPCTSTR Name, LPCTSTR HotspotId, LPCTSTR Label);
+	afx_msg BSTR AccessibleHotspots();
+	afx_msg long ActivateHotspot(LPCTSTR Name, LPCTSTR HotspotId);
 	afx_msg BSTR Metaphone(LPCTSTR Word, short Length);
 	afx_msg long EditDistance(LPCTSTR Source, LPCTSTR Target);
 	afx_msg long FlushLog();

@@ -229,6 +229,7 @@ Section "-MUSHclient program (required)"
   ; into the exe), and the VC++ runtime the Python and Ruby DLLs import.  The
   ; DLLs sit beside the exe because the exe imports them; each runtime finds
   ; its library beside its DLL (python\, lib\ruby\, tcl8.6\).
+  File "${DEPS}\bin\nvdaControllerClient.dll"
   File "${DEPS}\bin\python3*.dll"
   File "${DEPS}\bin\*-ruby*.dll"
   ; Only what something imports (build-app.ps1 checks): vcruntime140_1.dll is
@@ -428,6 +429,7 @@ Section "Licences"
   File "..\licences\Luasocket licence.txt"
   File "..\licences\MD5 licence.txt"
   File "..\licences\MUSHclient licence.txt"
+  File "..\licences\NVDA Controller Client licence.txt"
   File "..\licences\Mersenne Twister licence.txt"
   File "..\licences\PCRE licence.txt"
   File "..\licences\README.txt"

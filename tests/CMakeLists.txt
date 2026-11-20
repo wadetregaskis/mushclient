@@ -64,6 +64,7 @@ mc_test(test_display)
 mc_test(test_telnet)
 mc_test(test_mxp)
 mc_test(test_protocols)
+mc_test(test_speech_router)
 mc_test(test_triggers)
 mc_test(test_world_load)
 mc_test(test_aliases)
@@ -170,6 +171,13 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME lint_ascii_literals_selftest
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/check_ascii_literals.py
+                     --selftest)
+    add_test(NAME lint_dialog_labels
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_dialog_labels.py)
+    add_test(NAME lint_dialog_labels_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_dialog_labels.py
                      --selftest)
 else()
     # Without a Python3 interpreter the two lint tests above are never

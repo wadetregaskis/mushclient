@@ -95,7 +95,14 @@ void CTimerDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Check(pDX, IDC_TEMPORARY, m_bTemporary);
 	DDX_Check(pDX, IDC_ACTIVE_WHEN_CLOSED, m_bActiveWhenClosed);
 	DDX_Text(pDX, IDC_GROUP, m_strGroup);
-	DDX_CBIndex(pDX, IDC_SEND_TO, m_iSendTo);
+	// This list stops at "World (immediate)", and then has Speech: no "Script (after omit)"
+	{
+	int iSendToIndex = m_iSendTo == eSendToSpeech ? eSendToScriptAfterOmit :
+	                   m_iSendTo == eSendToScriptAfterOmit ? -1 : m_iSendTo;
+	DDX_CBIndex(pDX, IDC_SEND_TO, iSendToIndex);
+	if (pDX->m_bSaveAndValidate)
+	  m_iSendTo = iSendToIndex == eSendToScriptAfterOmit ? eSendToSpeech : iSendToIndex;
+	}
 	DDX_Text(pDX, IDC_VARIABLE, m_strVariable);
 	DDX_Text(pDX, IDC_INCLUDED, m_strIncluded);
 	DDX_Check(pDX, IDC_OMIT_FROM_OUTPUT, m_bOmitFromOutput);

@@ -287,6 +287,7 @@ W '    <ClCompile Include="tests\win\test_text_boundary.cpp" />'
 W '    <ClCompile Include="tests\win\test_ui_thread.cpp" />'
 W '    <ClCompile Include="tests\win\test_https_get.cpp" />'
 W '    <ClCompile Include="tests\win\test_win_worldview.cpp" />'
+W '    <ClCompile Include="tests\win\test_win_a11y_pane.cpp" />'
 W '    <ClCompile Include="tests\win\test_user_data.cpp" />'
 W '    <ClCompile Include="tests\win\test_spell_engine.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
@@ -310,4 +311,4 @@ W '  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />'
 W '</Project>'
 
 Set-Content -Path 'MUSHclient_tests.vcxproj' -Value $sb.ToString().TrimEnd() -Encoding UTF8
-"wrote MUSHclient_tests.vcxproj ($($platforms -join ', ')): $($sources.Count) engine sources, $($tests.Count) test files + 6 Windows-only, $($excluded.Count) excluded"
+"wrote MUSHclient_tests.vcxproj ($($platforms -join ', ')): $($sources.Count) engine sources, $($tests.Count) test files + 7 Windows-only, $($excluded.Count) excluded"

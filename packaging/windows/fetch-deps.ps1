@@ -24,6 +24,8 @@
     lua        Lua 5.1.5 as lua5.1.dll + lua5.1.lib (lua.org, pinned), every
                symbol the x86 DLL exports, x86's rounding (Build-Lua).
     luasocket  LuaSocket 3.1.0: socket\core.dll + mime\core.dll.
+    nvda       NV Access's nvdaControllerClient.dll, unmodified (LGPL 2.1; pinned),
+               for speech through NVDA.  Win32 too, with -Arch x86 -Only nvda.
     dina       the Dina bitmap font one bundled plugin uses, from its author's
                own release (pinned; MIT licence) -- architecture-neutral.
     python     python.org's NuGet package: python3XX.dll + python\.
@@ -101,7 +103,7 @@ param(
   [string]$OpenSslSeries = '3.5',
   [switch]$NoAsm,
   [string]$LocaleSource = '',
-  [ValidateSet('openssl', 'lua', 'luasocket', 'dina', 'locale', 'python', 'tcl', 'ruby', 'quickjs')] [string[]]$Only = @(),
+  [ValidateSet('openssl', 'lua', 'luasocket', 'dina', 'locale', 'python', 'tcl', 'ruby', 'quickjs', 'nvda')] [string[]]$Only = @(),
   [string]$StageTo = '',
   [switch]$Force
 )
@@ -118,8 +120,8 @@ Set-StrictMode -Version 2
 $Platform = @{ x64 = 'x64'; arm64 = 'ARM64'; x86 = 'Win32' }[$Arch.ToLowerInvariant()]     # MSBuild's spelling
 $Machine  = @{ x64 = 'X64'; ARM64 = 'ARM64'; Win32 = 'X86' }[$Platform]      # link /MACHINE:
 $PeMachine = @{ x64 = 0x8664; ARM64 = 0xAA64; Win32 = 0x14C }[$Platform]
-if ($Platform -eq 'Win32' -and (-not $Only.Count -or ($Only | Where-Object { $_ -notin 'openssl', 'luasocket' }))) {
-  throw '-Arch x86 builds only -Only openssl and/or luasocket: the rest of Win32 is committed or comes from an installation'
+if ($Platform -eq 'Win32' -and (-not $Only.Count -or ($Only | Where-Object { $_ -notin 'openssl', 'luasocket', 'nvda' }))) {
+  throw '-Arch x86 builds only -Only openssl, luasocket and/or nvda: the rest of Win32 is committed or comes from an installation'
 }
 
 $Repo   = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -161,6 +163,9 @@ $QuickJsSha256  = '559bc4c420475e55c7ab4510adbc562f55d7524d75e8e89d79ce4bb02f568
 # Dina, the bitmap font the Current_Output_Window plugin loads (Dina.fon in
 # the install directory): Joergen Ibsen's own release, MIT-licensed.  Its
 # regular face, DinaR.fon, ships as Dina.fon, the name the plugin uses.
+# NVDA's controller client, unmodified: one DLL per architecture in one zip.
+$NvdaVersion   = '2026.3'
+$NvdaSha256    = 'e38a00689eab422f13aaed9aaaacdd3ae96411643b6f2f5fbf86222660ac7938'
 $DinaUrl       = 'https://www.dcmembers.com/jibsen/_dl/61/Dina.zip'
 $DinaSha256    = '1f51bba53f75a64d2d8bd037e8e0f84b6f8064e50a72ee954033bede173508cf'
 
@@ -196,7 +201,7 @@ $LuaExports = @(
   'luaopen_package','luaopen_string','luaopen_table'
 )
 
-$Components = if ($Only.Count) { $Only } else { @('openssl', 'lua', 'luasocket', 'dina', 'python', 'tcl', 'ruby', 'quickjs') }
+$Components = if ($Only.Count) { $Only } else { @('openssl', 'lua', 'luasocket', 'dina', 'python', 'tcl', 'ruby', 'quickjs', 'nvda') }
 $Versions = [ordered]@{}
 
 function Note([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
@@ -827,6 +832,21 @@ function Build-Ruby {
   $Versions['Ruby'] = "$RubyVersion ($($dll.Name), sha256 $($tgz.Sha256)); libyaml $YamlVersion"
 }
 
+# -------------------------------------------------------------------- NVDA ---
+# bin\nvdaControllerClient.dll, beside the exe, which loads it only if NVDA is running.
+# Its licence is licences\NVDA Controller Client licence.txt.
+
+function Build-Nvda {
+  $name = "nvda_$NvdaVersion`_controllerClient.zip"
+  $zip = Get-Download -Url "https://download.nvaccess.org/releases/$NvdaVersion/$name" -Name $name -Sha256 $NvdaSha256
+  $x = Join-Path $Work 'nvda'
+  Expand-Archive -Force -Path $zip.Path -DestinationPath $x
+  $dir = @{ x64 = 'x64'; ARM64 = 'arm64'; Win32 = 'x86' }[$Platform]
+  New-Item -ItemType Directory -Force $OutBin | Out-Null
+  Copy-Item -Force (Join-Path $x "$dir\nvdaControllerClient.dll") $OutBin
+  $Versions['NVDA client'] = "$NvdaVersion (download.nvaccess.org, sha256 $NvdaSha256)"
+}
+
 # -------------------------------------------------------------------- Dina ---
 
 # packaging\windows\deps\common\ (architecture-neutral): Dina.fon + its licence.
@@ -1100,6 +1120,7 @@ if ($Components -contains 'openssl')   { Build-OpenSsl }
 if ($Components -contains 'lua')       { Build-Lua }
 if ($Components -contains 'luasocket') { Build-LuaSocket }
 if ($Components -contains 'dina')      { Build-Dina }
+if ($Components -contains 'nvda')      { Build-Nvda }
 if ($Components -contains 'locale')    { Build-Locale }
 if ($Components -contains 'python')    { Build-Python }
 if ($Components -contains 'tcl')       { Build-Tcl }

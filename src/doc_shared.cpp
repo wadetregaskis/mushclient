@@ -10,6 +10,7 @@
 #include "MUSHclient.h"
 #include "mainfrm.h"            // Frame (ConnectionClosed's status/button updates)
 #include "doc.h"
+#include "a11y.h"
 #include "mushview.h"           // CMUSHView (DisplayMsg/StartNewLine view-notify loops)
 #ifdef _WIN32
 #include "sendvw.h"             // CSendView (SendTo's eSendToCommand view walk)
@@ -6076,6 +6077,10 @@ void CMUSHclientDoc::SendTo (
                bOmitFromLog ? FALSE :  LoggingInput ());
         break;
 
+
+    case eSendToSpeech:
+      A11y_SendToSpeech (*this, strSendText);
+      break;
 
     case eSendToScriptAfterOmit:
 

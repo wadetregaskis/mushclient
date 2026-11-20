@@ -173,6 +173,10 @@ public:
   unsigned int m_nPrinterLinesPerPage;
   unsigned int m_nPrinterTopMargin;
   unsigned int m_nTimerInterval;
+  unsigned int m_iSpeechMode;      // a11y.h: off, through a screen reader, always
+  int m_iSpeechRate;               // -10 .. 10, for the system's voice (signed in the prefs table)
+  int m_iSpeechVolume;           // 0 .. 100, ditto
+  unsigned int m_iA11yTextPane;    // a11y.h
   unsigned int m_bEnablePackageLibrary;
   unsigned int m_iFixedPitchFontSize;
   unsigned int m_bTabInsertsTab;
@@ -205,6 +209,7 @@ public:
   CString m_strLuaScript;
   CString m_strLocale;
   CString m_strFixedPitchFont;
+  CString m_strSpeechVoice;
 
 // other things
 

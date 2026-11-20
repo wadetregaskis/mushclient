@@ -69,6 +69,18 @@ void CColourButton::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
    CString strText;
    GetWindowText(strText);
 
+   // The caption is what a screen reader says: "Custom colour 3 text".  All that
+   // shows on the swatch is the number, if it has one.
+   {
+   CString strDigits;
+   for (int i = 0; i < strText.GetLength (); i++)
+     if (isdigit ((unsigned char) strText [i]))
+       strDigits += strText [i];
+     else if (!strDigits.IsEmpty ())
+       break;
+   strText = strDigits;
+   }
+
    COLORREF crOldColor;
 
    // if colour is dark, use white, otherwise use black

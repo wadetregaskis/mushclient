@@ -15,6 +15,7 @@
 #  include "../MUSHclient.h"
 #  include "../doc.h"
 #include "xmlparse.h"
+#include "../a11y.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -234,6 +235,16 @@ void CXMLparser::BuildStructure (CFile * file)
         (unsigned char) m_strxmlBuffer [2] == 0xBF)
       m_strxmlBuffer = m_strxmlBuffer.Mid (3);  // skip them
 
+
+  // a plugin the client now does itself: see a11y_shims.cpp
+  {
+  std::string strShadow;
+  if (A11y_ShadowPlugin (m_strxmlBuffer, strShadow))
+    {
+    m_strxmlBuffer = strShadow.c_str ();
+    m_xmlLength = (UINT) strShadow.size ();
+    }
+  }
 
   // convert tabs to spaces, we don't want tabs in our data
   m_strxmlBuffer.Replace ('\t', ' ');

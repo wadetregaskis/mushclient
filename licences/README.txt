@@ -146,3 +146,12 @@ Mersenne Twister (pseudo random number generator)
 
   Mersenne Twister licence.txt
 
+
+
+----
+
+NVDA Controller Client (speech through the NVDA screen reader, unmodified, from NV Access)
+
+  https://github.com/nvaccess/nvda/tree/master/extras/controllerClient
+
+  NVDA Controller Client licence.txt

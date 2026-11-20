@@ -5,6 +5,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "a11y.h"
 #include "protocols.h"
 #include "mainfrm.h"
 #include "sendvw.h"
@@ -431,6 +432,8 @@ void CMUSHclientDoc::CheckTickTimers ()
     }
 
   SendToAllPluginCallbacks (ON_PLUGIN_TICK);
+
+  A11y_Tick (*this);
 
   // for output window fading
   if (m_iFadeOutputBufferAfterSeconds > 0 &&

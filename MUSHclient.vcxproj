@@ -2076,6 +2076,11 @@
     <ClCompile Include="src\protocols_mxp.cpp" />
     <ClCompile Include="src\msp.cpp" />
     <ClCompile Include="src\gmcp.cpp" />
+    <ClCompile Include="src\speech_router.cpp" />
+    <ClCompile Include="src\a11y.cpp" />
+    <ClCompile Include="src\a11y_shims.cpp" />
+    <ClCompile Include="src\pal\win_speech.cpp" />
+    <ClCompile Include="src\pal\win_a11y_pane.cpp" />
     <ClCompile Include="src\platform\ma_decode.cpp" />
     <ClCompile Include="src\pal\win_worldview.cpp" />
     <!-- The embedded scripting engines (MUSHclient.engines.props).  Empty
@@ -2171,6 +2176,10 @@
     <ClInclude Include="src\script_text.h" />
     <ClInclude Include="src\pal\win_transport.h" />
     <ClInclude Include="src\pal\win_worldview.h" />
+    <ClInclude Include="src\pal\ispeech.h" />
+    <ClInclude Include="src\pal\win_a11y_pane.h" />
+    <ClInclude Include="src\a11y.h" />
+    <ClInclude Include="src\speech_router.h" />
     <ClInclude Include="src\stdafx.h" />
     <ClInclude Include="src\version.h" />
   </ItemGroup>

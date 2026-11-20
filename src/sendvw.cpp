@@ -16,6 +16,8 @@
 #include "doc.h"
 #include "mushview.h"
 #include "sendvw.h"
+#include "a11y.h"
+#include "pal/win_a11y_pane.h"
 #include "mainfrm.h"
 #include "childfrm.h"
 #include "dialogs/GlobalChangeDlg.h"
@@ -626,7 +628,9 @@ void CSendView::SendCommand (const CString strOriginalCommand,
 
   pDoc->m_bOmitFromCommandHistory = false;    // don't omit it yet
 
-  // auto-say only applies when you actually type something, so I removed it 
+  A11y_CommandEntered (*pDoc);     // what was being read is no longer news
+
+  // auto-say only applies when you actually type something, so I removed it
   // from the execute function
 
   // handle auto-say
@@ -1719,10 +1723,25 @@ ASSERT_VALID(pDoc);
 }
 
 
+// What a screen reader calls this: MFC answers WM_GETOBJECT itself for a CWnd, and otherwise
+// has no name to give it.
+HRESULT CSendView::get_accName (VARIANT varChild, BSTR * pszName)
+  {
+  if (varChild.vt == VT_I4 && varChild.lVal == CHILDID_SELF && pszName)
+    {
+    *pszName = SysAllocString (L"Command");
+    return *pszName ? S_OK : E_OUTOFMEMORY;
+    }
+  return CEditView::get_accName (varChild, pszName);
+  }
+
 BOOL CSendView::PreTranslateMessage(MSG* pMsg)
 {
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
+
+    if (WinA11y_CommandBoxKey (pDoc, pMsg))    // review keys, for someone using speech
+      return TRUE;
 
     // Shift+Return inserts a line break instead of sending, so a multi-line
     // command can be composed by hand rather than only pasted in.  The command

@@ -451,6 +451,14 @@ library MUSHclient
 			[id(421)] long GMCP_Send(BSTR Package, BSTR Json);
 			[id(422)] VARIANT GMCP_Get(BSTR Package);
 			[id(423)] VARIANT MXPEntityInfo(BSTR Name, short InfoType);
+			[id(424)] long Speak(BSTR Text, BSTR Category, short Priority, BOOL Interrupt);
+			[id(425)] long StopSpeech();
+			[id(426)] VARIANT SpeechInfo(short InfoType);
+			[id(427)] long SpeechCategory(BSTR Name, BSTR Option, BSTR Value);
+			[id(428)] long WindowHotspotLabel(BSTR Name, BSTR HotspotId, BSTR Label);
+			[id(429)] BSTR AccessibleHotspots();
+			[id(430)] long ActivateHotspot(BSTR Name, BSTR HotspotId);
+			[id(431)] long SpeechReview(BSTR Action);
 			//}}AFX_ODL_METHOD
 
 	};

@@ -11,6 +11,7 @@
 
 #include "doc.h"
 #include "scrollback_store.h"
+#include "a11y.h"
 #include "mushview.h"
 #include "mainfrm.h"
 #include "childfrm.h"
@@ -3787,6 +3788,8 @@ void CMUSHclientDoc::Screendraw  (const long iType,
                                   const long iLog,
                                   const char * sText)
   {
+
+  A11y_Screendraw (*this, iType, sText);
 
   // don't recurse into infinite loops
   if (m_bInScreendraw)

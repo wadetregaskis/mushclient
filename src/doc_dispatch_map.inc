@@ -422,4 +422,12 @@
 	DISP_FUNCTION(CMUSHclientDoc, "GMCP_Send", GMCP_Send, VT_I4, VTS_BSTR VTS_BSTR)
 	DISP_FUNCTION(CMUSHclientDoc, "GMCP_Get", GMCP_Get, VT_VARIANT, VTS_BSTR)
 	DISP_FUNCTION(CMUSHclientDoc, "MXPEntityInfo", MXPEntityInfo, VT_VARIANT, VTS_BSTR VTS_I2)
+	DISP_FUNCTION(CMUSHclientDoc, "Speak", Speak, VT_I4, VTS_BSTR VTS_BSTR VTS_I2 VTS_BOOL)
+	DISP_FUNCTION(CMUSHclientDoc, "StopSpeech", StopSpeech, VT_I4, VTS_NONE)
+	DISP_FUNCTION(CMUSHclientDoc, "SpeechReview", SpeechReview, VT_I4, VTS_BSTR)
+	DISP_FUNCTION(CMUSHclientDoc, "SpeechInfo", SpeechInfo, VT_VARIANT, VTS_I2)
+	DISP_FUNCTION(CMUSHclientDoc, "SpeechCategory", SpeechCategory, VT_I4, VTS_BSTR VTS_BSTR VTS_BSTR)
+	DISP_FUNCTION(CMUSHclientDoc, "WindowHotspotLabel", WindowHotspotLabel, VT_I4, VTS_BSTR VTS_BSTR VTS_BSTR)
+	DISP_FUNCTION(CMUSHclientDoc, "AccessibleHotspots", AccessibleHotspots, VT_BSTR, VTS_NONE)
+	DISP_FUNCTION(CMUSHclientDoc, "ActivateHotspot", ActivateHotspot, VT_I4, VTS_BSTR VTS_BSTR)
 	//}}AFX_DISPATCH_MAP

@@ -98,6 +98,7 @@ int RunInputSelfTest();
 // is a wxScrolledWindow in mushgui_adapters, so the headless tests cannot see it.
 int RunOutputPaneSelfTest();
 
+#include "pal/ispeech.h"
 #include "pal/surface_bridge.h"   // pal::g_surface — checked before installing
                                   // the bridge for the miniwindow selftest
 
@@ -224,6 +225,9 @@ public:
         // Install the pal::ISurface adapter as the miniwindow-drawing bridge
         // (docs/PAL.md S3) before any world/plugin can create a miniwindow.
         InstallWxSurfaceBridge();
+
+        // Finds nothing and loads nothing until a screen reader runs (pal/ispeech.h)
+        pal::InstallPlatformSpeech();
 
         // Register every wxImage handler (BMP/PNG/ICO/…) up front, before any
         // MUSHclient code can load an image — the Tip-of-the-Day bulb, dialog art,

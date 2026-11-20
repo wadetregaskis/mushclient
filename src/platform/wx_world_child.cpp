@@ -67,6 +67,7 @@
 #include <cstdio>
 #include <ctime>
 #include <sys/stat.h>
+#include "../a11y.h"
 
 // Defined in wx_gdi_compat.cpp (same convention as wxgdi_read_bgra in
 // wx_surface.cpp): the backing-store scale miniwindow canvases are created at —
@@ -4266,6 +4267,7 @@ void CWorldChildFrame::CheckForSelectionChange()
 
 void CWorldChildFrame::UnpauseOutputOnSend()
 {
+    if (m_doc) A11y_CommandEntered(*m_doc);   // what was being read is no longer news
     if (!m_doc || !m_output) return;
     if (!m_doc->m_bUnpauseOnSend || !m_output->IsPaused()) return;
     m_output->SetPaused(false);
@@ -4453,6 +4455,10 @@ void CWorldChildFrame::RestoreWorldWindow()
 void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 {
     int code = evt.GetKeyCode();
+
+    // Review keys, for someone using speech (a11y.cpp)
+    if (A11yKeyDown(evt))
+        return;
 
     // A real keystroke here (Cmd+A itself never arrives -- it is consumed by
     // the menu bar's accelerator before any control's key handler sees it)
@@ -5900,6 +5906,7 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         m_pluginTickAccum -= 40;
         m_doc->SendToAllPluginCallbacks(ON_PLUGIN_TICK);
     }
+    A11y_Tick(*m_doc);
 
     // ── Plugin-layout settle re-notify ───────────────────────────────────────
     // Some plugins (e.g. Quow's Cow Bar) only lay out their docked miniwindows

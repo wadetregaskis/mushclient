@@ -1587,3 +1587,29 @@ It no longer does anything by itself.
 
 **Verification:** `tests/test_update.cpp`, with the network faked.  A real release and real
 elevation haven't been tried.
+
+## 36 — Output is read to a screen reader, and two speech plugins are replaced
+
+**Where:** `a11y.*`, `speech_router.*`, `a11y_shims.cpp`, `pal/ispeech.h` and the backends;
+Global Preferences > Accessibility.  `docs/ACCESSIBILITY.md` has all of it.
+
+**Upstream:** nothing is spoken unless a plugin does it, usually MushReader or LuaAudio, whose
+DLLs are 32-bit.
+
+**Now:** with a screen reader running, new output goes to it, with keys to review it and a
+read-only text pane for the reader's own caret.  Without one, nothing changes.  Differences a
+plugin or a world file can see:
+
+- A plugin file with MushReader's ID (`925cdd0331023d9f0b8f05a7`) or LuaAudio's
+  (`aedf0cb0be5bf045860d54b7`) loads as a small Lua plugin of the client's with the same
+  functions, and the file is left alone.  Loading MushReader sets `speech_read_all`.
+- Send To: Speech is 15.  An older client refuses a world file that uses it.
+- While speech is in use, the words `tts`, `tts_note`, `tts_interrupt`, `tts_stop` and
+  `subst` are commands, Alt+Shift keys review output, Ctrl+Shift+F12 mutes, F6 goes to the pane
+  unless the world gave F6 a macro, and Enter silences speech.
+
+**Why:** the owner asked for screen reader support built in, on every platform that can have it.
+
+**Verification:** `tests/test_speech_router.cpp`, `tests/win/test_win_a11y_pane.cpp`,
+`tests/check_dialog_labels.py`; NVDA 2026.3 in the client, from its log.  JAWS, Narrator and a
+braille display haven't been tried, and no blind player has used it yet.

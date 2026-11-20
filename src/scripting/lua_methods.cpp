@@ -5344,6 +5344,93 @@ static int L_MXPEntityInfo (lua_State *L)
   } // end of L_MXPEntityInfo
 
 //----------------------------------------
+//  world.Speak
+//----------------------------------------
+static int L_Speak (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  lua_pushnumber (L, pDoc->Speak (my_checkstring (L, 1),
+                                  my_optstring (L, 2, ""),
+                                  (short) my_optnumber (L, 3, -1),
+                                  optboolean (L, 4, 0)));
+  return 1;  // number of result fields
+  } // end of L_Speak
+
+//----------------------------------------
+//  world.StopSpeech
+//----------------------------------------
+static int L_StopSpeech (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  lua_pushnumber (L, pDoc->StopSpeech ());
+  return 1;  // number of result fields
+  } // end of L_StopSpeech
+
+//----------------------------------------
+//  world.SpeechReview
+//----------------------------------------
+static int L_SpeechReview (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  lua_pushnumber (L, pDoc->SpeechReview (my_checkstring (L, 1)));
+  return 1;  // number of result fields
+  } // end of L_SpeechReview
+
+//----------------------------------------
+//  world.SpeechInfo
+//----------------------------------------
+static int L_SpeechInfo (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  VARIANT v = pDoc->SpeechInfo ((short) my_checknumber (L, 1));
+  return pushVariant (L, v);
+  } // end of L_SpeechInfo
+
+//----------------------------------------
+//  world.SpeechCategory
+//----------------------------------------
+static int L_SpeechCategory (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  lua_pushnumber (L, pDoc->SpeechCategory (my_checkstring (L, 1),
+                                           my_checkstring (L, 2),
+                                           my_checkstring (L, 3)));
+  return 1;  // number of result fields
+  } // end of L_SpeechCategory
+
+//----------------------------------------
+//  world.WindowHotspotLabel
+//----------------------------------------
+static int L_WindowHotspotLabel (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  lua_pushnumber (L, pDoc->WindowHotspotLabel (my_checkstring (L, 1),
+                                               my_checkstring (L, 2),
+                                               my_checkstring (L, 3)));
+  return 1;  // number of result fields
+  } // end of L_WindowHotspotLabel
+
+//----------------------------------------
+//  world.AccessibleHotspots
+//----------------------------------------
+static int L_AccessibleHotspots (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  BSTR str = pDoc->AccessibleHotspots ();
+  return pushBstr (L, str);
+  } // end of L_AccessibleHotspots
+
+//----------------------------------------
+//  world.ActivateHotspot
+//----------------------------------------
+static int L_ActivateHotspot (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = doc (L);
+  lua_pushnumber (L, pDoc->ActivateHotspot (my_checkstring (L, 1), my_checkstring (L, 2)));
+  return 1;  // number of result fields
+  } // end of L_ActivateHotspot
+
+//----------------------------------------
 //  world.SendPkt
 //----------------------------------------
 static int L_SendPkt (lua_State *L)
@@ -7265,6 +7352,14 @@ static const struct luaL_Reg worldlib [] =
   {"GMCP_Send", L_GMCP_Send},
   {"GMCP_Get", L_GMCP_Get},
   {"MXPEntityInfo", L_MXPEntityInfo},
+  {"Speak", L_Speak},
+  {"StopSpeech", L_StopSpeech},
+  {"SpeechReview", L_SpeechReview},
+  {"SpeechInfo", L_SpeechInfo},
+  {"SpeechCategory", L_SpeechCategory},
+  {"WindowHotspotLabel", L_WindowHotspotLabel},
+  {"AccessibleHotspots", L_AccessibleHotspots},
+  {"ActivateHotspot", L_ActivateHotspot},
   {"SendPush", L_SendPush},
   {"SendSpecial", L_SendSpecial},
   {"SendToNotepad", L_SendToNotepad},
@@ -7618,6 +7713,7 @@ static flags_pair send_to_destinations [] =
   {  "script",           eSendToScript  },
   {  "immediate",        eSendImmediate  },
   {  "scriptafteromit",  eSendToScriptAfterOmit  },
+  {  "speech",           eSendToSpeech  },
 
   { NULL, 0 }
 };

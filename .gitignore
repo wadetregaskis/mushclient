@@ -126,3 +126,7 @@ packaging/windows/deps/
 # (the project sets no <PrecompiledHeaderOutputFile>), so it lands here as a
 # ~50 MB untracked file after every Windows build.
 *.pch
+
+# built by hand
+tests/win/uia_probe/*.exe
+tests/win/uia_probe/*.obj

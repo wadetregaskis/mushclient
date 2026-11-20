@@ -248,8 +248,11 @@ SHA-256 under a first line naming the version, and its Ed25519 signature,
 `...SHA256SUMS.txt.sig`.  The first line stops an old signed release being passed off as
 a new one.  A package changed or added after signing means signing again.
 
-Both scripts need OpenSSL 1.1.1 or later.  macOS's `/usr/bin/openssl` is LibreSSL and
-won't do: `OPENSSL=$(brew --prefix openssl@3)/bin/openssl packaging/make-update-key`,
+`make-update-key` needs OpenSSL 1.1.1 or later, and `sign-update-manifest` 3.0 or later
+(Ed25519 signs the file itself, which `openssl pkeyutl -rawin` does, and 1.1.1 can't).
+The folder can be build-app's output as it is: only package files are signed, not the
+unpacked trees beside them or the selftest reports.  macOS's `/usr/bin/openssl` is
+LibreSSL and won't do: `OPENSSL=$(brew --prefix openssl@3)/bin/openssl packaging/make-update-key`,
 or use `packaging/openssl/` after `fetch-openssl.sh`.
 
 ---

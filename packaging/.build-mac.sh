@@ -188,8 +188,9 @@ SEED="$APP/Contents/Resources/userdata-seed"
 # Start from nothing.  The build dir (and so $APP) is reused between runs and
 # only the executable is relinked, so without this a plain build that follows a
 # --with-discworld one would still ship the Discworld world, Quow's plugins, the
-# maps AND the auto-open marker -- i.e. silently be the Discworld edition.
-rm -rf "$SEED" "$APP/Contents/Resources/default-world"
+# maps AND the auto-open marker -- i.e. silently be the Discworld edition.  The
+# edition marker goes too, or the updater would fetch the Discworld edition for it.
+rm -rf "$SEED" "$APP/Contents/Resources/default-world" "$APP/Contents/Resources/discworld-edition.txt"
 mkdir -p "$SEED/worlds/plugins"
 if [ -f "$REPO/packaging/bundled-plugins.txt" ]; then
     while IFS= read -r p || [ -n "$p" ]; do
@@ -662,5 +663,7 @@ note "done."
 echo
 echo "  app : $OUTPUT_DIR/$APP_NAME.app"
 echo "  zip : $ZIP"
-[ "$MAKE_DMG" = 1 ] && echo "  dmg : $OUTPUT_DIR/$APP_NAME.dmg"
-[ "$SIGN_ID" = "-" ] && echo "  (ad-hoc signed — for a distributable build pass --sign-identity / --notarize-profile)"
+# (if, not `[ ] && echo`: as the last command, a false test would be the exit status)
+if [ "$MAKE_DMG" = 1 ]; then echo "  dmg : $OUTPUT_DIR/$APP_NAME.dmg"; fi
+if [ "$SIGN_ID" = "-" ]; then echo "  (ad-hoc signed — for a distributable build pass --sign-identity / --notarize-profile)"; fi
+exit 0

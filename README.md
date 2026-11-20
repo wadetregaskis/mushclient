@@ -65,7 +65,7 @@ All third-party libraries needed for _core_ functionality (PCRE2, libpng, SQLite
 ### Prerequisites
 
 * **CMake** 3.14 or later
-* A modern C++ compiler supporting C++14 or C++17 (`clang++` or `g++`)
+* A C++17 compiler (`clang++` or `g++`)
 * **llvm-rc** (LLVM's resource compiler), which builds the dialogs, menus and art from `resources/en.rc`, the same source Windows uses: Homebrew's `llvm`, or Debian/Ubuntu's `llvm` and `clang` (below)
 
 **On Linux (Debian / Ubuntu):**

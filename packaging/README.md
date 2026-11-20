@@ -27,6 +27,10 @@ This builds Release mode with CMake, vendors/relocates dynamic libraries, stages
 - `dist/mushclient-6.00-linux-<arch>.tar.xz`: self-contained relocatable tarball archive
 - `dist/mushclient_6.00_<arch>.deb`: standard Debian/Ubuntu package for system installation
 
+It changes nothing outside the repository unless asked: `--install-desktop-entry`
+also puts `dist/mushclient/` in your applications menu
+(`~/.local/share/applications/mushclient.desktop`).
+
 To include Quow's Discworld plugins and maps:
 ```bash
 packaging/fetch-discworld-plugins.sh
@@ -36,8 +40,8 @@ packaging/build-app.sh --with-discworld
 ### Linux Prerequisites
 
 - CMake 3.14+ (`apt install cmake ninja-build`)
-- C++14 compiler (`g++` or `clang++`)
-- wxWidgets 3.2+ GTK3 development headers (`apt install libwxgtk3.2-dev` or `libwxgtk3.0-gtk3-dev`)
+- C++17 compiler (`g++` or `clang++`)
+- wxWidgets 3.2+ GTK3 development headers (`apt install libwxgtk3.2-dev`; 3.0, as on Ubuntu 22.04, is too old)
 - Lua 5.1 development library (`apt install liblua5.1-0-dev`)
 - llvm-rc and clang, which compile `resources/en.rc` (`apt install llvm clang`):
   see [Dialogs, menus and art](#dialogs-menus-and-art-resourcesenrc)
@@ -122,7 +126,7 @@ your Apple Developer ID (see below).
 
 | Script | What it does |
 |--------|--------------|
-| [`windows/fetch-deps.ps1`](windows/fetch-deps.ps1) | Build or fetch every third-party piece for one architecture (OpenSSL, Lua, LuaSocket, Python, Tcl, QuickJS, Ruby) and the Dina font.  `locale\en.dll` is built from [`../resources/`](../resources/README.md) with the client. |
+| [`windows/fetch-deps.ps1`](windows/fetch-deps.ps1) | Build or fetch every third-party piece for one architecture (OpenSSL, Lua, LuaSocket, Python, Tcl, QuickJS, Ruby, NV Access's NVDA controller client) and the Dina font.  `locale\en.dll` is built from [`../resources/`](../resources/README.md) with the client. |
 | [`windows/build-app.ps1`](windows/build-app.ps1) | Release build, NSIS installer, portable zip, self-containment check, every language's selftest from the package. |
 
 ```powershell
@@ -154,7 +158,7 @@ The scripting runtimes, as on the other platforms, are the package's own:
 | Engine | Source | Where it ends up |
 |--------|--------|------------------|
 | **Lua 5.1** | lua.org 5.1.5, built as `lua5.1.dll` | beside the exe |
-| **Python 3.14** | python.org's NuGet package | `python3XX.dll` beside the exe, stdlib in `python\` |
+| **Python 3.15** | python.org's NuGet package | `python3XX.dll` beside the exe, stdlib in `python\` |
 | **Tcl 8.6** | built static from source | linked into the exe; script library in `tcl8.6\` |
 | **Ruby 4.0** | built from source (MSVC) | `<arch>-vcruntime140-ruby400.dll` beside the exe, stdlib in `lib\ruby\` |
 | **JavaScript** | QuickJS-ng, built static | linked into the exe (macOS/Linux use JavaScriptCore, which Windows lacks) |
@@ -367,7 +371,7 @@ up automatically):
 | Engine | Source | Where it ends up in the `.app` |
 |--------|--------|--------------------------------|
 | **Lua 5.1** | Homebrew `lua@5.1`, else FetchContent | statically linked into the executable |
-| **Python 3.14** | `fetch-python.sh` (python.org framework) | `Contents/Frameworks/Python.framework` (relocated) |
+| **Python 3.15** | `fetch-python.sh` (python.org framework) | `Contents/Frameworks/Python.framework` (relocated) |
 | **Tcl 8.6** | `fetch-tcl.sh` (built static) | statically linked; script library at `Contents/Resources/tcl8.6` |
 | **Ruby 4.0** | `fetch-ruby.sh` (built shared) | `Contents/lib/libruby.<ver>.dylib` + stdlib |
 | **Perl 5.34** | system `libperl` | not bundled (always present) |
@@ -382,7 +386,15 @@ downloaded source and only rebuilds if the staged output is missing. Versions ar
 overridable, e.g. `RUBY_VERSION=4.0.9 packaging/fetch-ruby.sh`,
 `TCL_VERSION=8.6.18 packaging/fetch-tcl.sh`,
 `PYTHON_VERSION=3.15.2 packaging/fetch-python.sh` (the last also accepts
-`--pkg ~/Downloads/python-3.15.2-macos11.pkg` for a fully offline run).
+`--pkg ~/Downloads/python-3.15.2-macos11.pkg` for a fully offline run).  Every
+download is checked against a SHA-256 pinned in its script (the same ones
+`windows/fetch-deps.ps1` pins, where both use a tarball); another version needs its
+own, given as `TCL_SHA256`, `RUBY_SHA256`, `YAML_SHA256` or `PYTHON_SHA256`.  On
+Linux, `fetch-python.sh` stops if the standalone Python can't be downloaded, rather
+than quietly staging the system's: `--system`, or `MC_ALLOW_SYSTEM_PYTHON=1`, asks
+for that.  A machine that needs a build environment of its own (a sysroot, as
+`MC_SYSROOT`) puts it in `packaging/local-env.sh`, which git ignores and the scripts
+source; nothing is taken from `/tmp`.
 
 Notes:
 - **Python** — `fetch-python.sh` downloads the official installer, extracts its

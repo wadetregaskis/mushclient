@@ -11,9 +11,12 @@
 #include "doc.h"
 #include "scrollback_store.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
@@ -26,6 +29,9 @@
 #include "command_history_store.h"
 #ifdef _WIN32
 #include "sendvw.h"
+#ifdef _DEBUG
+#include <crtdbg.h>
+#endif
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -704,6 +710,205 @@ TEST (ScrollbackStore, AFailedReclaimIsTriedAgain)
   EXPECT_TRUE (Numbers (r) == Range (27001, 30000));
   remove (path.c_str ());
   }
+
+// A DropBefore waiting for the file, done once it can be opened again, rewrites it, and
+// then it can't be opened again.  What waited after it, and what was asked for then, keep
+// waiting, and are done when it can: none of it is lost.
+TEST (ScrollbackStore, AHeldRewriteThatCantOpenTheFileAgainKeepsTheRestHeld)
+  {
+  const std::string path = TempFile ("heldreopen");
+  int attempt = 0;
+  std::vector<int> failing;
+  SetReopenHookForTest ([&] { ++attempt; return std::find (failing.begin (), failing.end (), attempt) == failing.end (); });
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  AppendBlock (w, 1, 3);
+  w.Flush ();
+  // 1: DropBefore (2)'s rewrite can't open the file again; 2, 3: nor can the next two,
+  // which wait; 4: the third can, and does the waiting append; 5: then the waiting
+  // DropBefore (3)'s rewrite can't open it again.
+  failing = { 1, 2, 3, 5 };
+  w.DropBefore (2);
+  AppendBlock (w, 4, 3);
+  w.DropBefore (3);
+  AppendBlock (w, 7, 3);
+  w.Flush ();
+  EXPECT_EQ (5, attempt);
+  w.SetLiveFrom (3);        // 6: and now all is well
+  w.Flush ();
+  EXPECT_EQ (6, attempt);
+  }
+  SetReopenHookForTest (nullptr);
+  LoadResult r = Load (path, false, 0);
+  EXPECT_TRUE (Numbers (r) == Range (3, 9));
+  remove (path.c_str ());
+  }
+
+// So much waiting that it can't all be kept: the lines go, and only they.  What was in
+// the file stays, and what takes text out of it still happens.
+TEST (ScrollbackStore, HoldingTooMuchLosesOnlyTheLinesThatWaited)
+  {
+  const std::string path = TempFile ("heldtoomuch");
+  bool bShut = false;
+  SetReopenHookForTest ([&] { return !bShut; });
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  AppendBlock (w, 1, 3000);
+  AppendBlock (w, 3001, 3000);
+  w.Flush ();
+  bShut = true;
+  w.DropBefore (2);             // rewritten, and then it can't be opened again
+  AppendBlock (w, 6001, 3);
+  w.TruncateFrom (5001);        // world.DeleteLines reaching saved lines
+  for (int i = 0; i < 1100; i++)
+    AppendBlock (w, 5001 + i * 3, 3);
+  w.SetFlags (10, 1);           // a bookmark on a line in the file
+  w.Flush ();
+  bShut = false;
+  AppendBlock (w, 9001, 3);
+  w.Flush ();
+  EXPECT_TRUE (w.LastError () != std::string ());     // it says so
+  }
+  SetReopenHookForTest (nullptr);
+  LoadResult r = Load (path, false, 0);
+  std::vector<int64_t> expected = Range (2, 5000);
+  for (int64_t n = 9001; n <= 9003; n++)
+    expected.push_back (n);
+  EXPECT_TRUE (Numbers (r) == expected);
+  bool bBookmarked = false;
+  for (const auto & block : r.blocks)
+    for (const Line & line : block->lines)
+      if (line.number == 10)
+        bBookmarked = line.flags == 1;
+  EXPECT_TRUE (bBookmarked);
+
+  // A clear among what waited still clears, whatever came before it.
+  bShut = false;
+  SetReopenHookForTest ([&] { return !bShut; });
+  {
+  Writer w (path, false, Load (path, false, 0));
+  bShut = true;
+  w.DropBefore (3);
+  w.Clear (false);
+  for (int i = 0; i < 1100; i++)
+    AppendBlock (w, 20001 + i * 3, 3);
+  w.Flush ();
+  bShut = false;
+  AppendBlock (w, 30001, 3);
+  w.Flush ();
+  }
+  SetReopenHookForTest (nullptr);
+  EXPECT_TRUE (Numbers (Load (path, false, 0)) == Range (30001, 30003));
+  remove (path.c_str ());
+  }
+
+// Closing stops reclaiming before its last hand-over, so the close doesn't wait for a
+// rewrite of the whole file.  A DropBefore still rewrites: that is about the text.
+TEST (ScrollbackStore, NoReclaimingOnceStopped)
+  {
+  const std::string path = TempFile ("noreclaim");
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  unsigned seed = 99;
+  for (int b = 0; b < 10; b++)
+    AppendNoiseBlock (w, 1 + b * 3000, 3000, seed);
+  w.Flush ();
+  const size_t before = ReadAll (path).size ();
+  w.StopReclaiming ();
+  w.SetLiveFrom (27001);        // would rewrite (see AFailedReclaimIsTriedAgain)
+  AppendNoiseBlock (w, 30001, 3000, seed);
+  w.Flush ();
+  EXPECT_GT (ReadAll (path).size (), before);
+  w.DropBefore (27001);
+  w.Flush ();
+  EXPECT_LT (ReadAll (path).size (), before / 2);
+  }
+  EXPECT_TRUE (Numbers (Load (path, false, 0)) == Range (27001, 33000));
+  remove (path.c_str ());
+  }
+
+#if defined(_WIN32) && defined(_DEBUG)
+
+// Running out of memory, for real: the debug heap's hook refuses an allocation.  For
+// blocks being inflated, any allocation of one of these sizes (the blocks' raw sizes)
+// past the first few; for lines being restored, a CLine (an MFC object of its size) once
+// that many are alive, so that letting some go makes room for others, as it would.
+namespace {
+
+std::vector<size_t> g_rawSizes;
+std::atomic<long> g_rawBudget (-1);         // -1, no limit
+std::atomic<long> g_rawMade (0);
+std::atomic<long> g_lineBudget (-1);
+std::atomic<long> g_liveLines (0);
+
+bool IsALine (size_t size, int blockType)
+  {
+  return size == sizeof (CLine) && _BLOCK_TYPE (blockType) == _CLIENT_BLOCK;
+  }
+
+int __cdecl BudgetHook (int type, void * pvData, size_t size, int blockType, long, const unsigned char *, int)
+  {
+  if (type == _HOOK_ALLOC)
+    {
+    if (g_lineBudget.load () >= 0 && IsALine (size, blockType))
+      {
+      if (g_liveLines.load () >= g_lineBudget.load ())
+        return FALSE;
+      g_liveLines++;
+      }
+    if (g_rawBudget.load () >= 0 && std::find (g_rawSizes.begin (), g_rawSizes.end (), size) != g_rawSizes.end ())
+      {
+      if (g_rawMade.load () >= g_rawBudget.load ())
+        return FALSE;
+      g_rawMade++;
+      }
+    }
+  else if (type == _HOOK_FREE && pvData && g_lineBudget.load () >= 0 && _BLOCK_TYPE (blockType) == _CLIENT_BLOCK)
+    {
+    long request = 0;
+    char * file = nullptr;
+    int line = 0;
+    if (_CrtIsMemoryBlock (pvData, (unsigned) sizeof (CLine), &request, &file, &line))
+      g_liveLines--;
+    }
+  return TRUE;
+  }
+
+} // anonymous namespace
+
+// Short of memory, loading keeps the newest blocks that fit, and not none of them.
+TEST (ScrollbackStore, OutOfMemoryLoadingKeepsTheNewestBlocksThatFit)
+  {
+  const std::string path = TempFile ("loadoom");
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  for (int b = 0; b < 10; b++)
+    AppendBlock (w, 1 + b * 3000, 3000);
+  }
+  {
+  const LoadResult probe = Load (path, false, 0);
+  ASSERT_EQ (10u, probe.liveBlocks.size ());
+  g_rawSizes.clear ();
+  for (const BlockInfo & b : probe.liveBlocks)
+    g_rawSizes.push_back (b.rawSize);
+  }
+  g_rawMade = 0;
+  g_rawBudget = 3;
+  const _CRT_ALLOC_HOOK oldHook = _CrtSetAllocHook (BudgetHook);
+  LoadResult r = Load (path, false, 0, 1);
+  _CrtSetAllocHook (oldHook);
+  g_rawBudget = -1;
+  EXPECT_TRUE (r.outOfMemory);
+  EXPECT_TRUE (Numbers (r) == Range (21001, 30000));
+  EXPECT_EQ (10u, r.liveBlocks.size ());      // the file keeps the rest
+  remove (path.c_str ());
+  }
+
+#endif // _WIN32 && _DEBUG
 
 TEST (ScrollbackStore, OneWriterAtATime)
   {
@@ -1575,6 +1780,291 @@ TEST (SavedScrollback, AWorldWithANewIDEachTimeFindsItsOutput)
   Forget ("testnewid3");
   }
 
+// A copy that has files of its own keeps them when the original is deleted: that doesn't
+// make it the original, and the original's files mustn't replace its own.
+TEST (SavedScrollback, ACopyWithFilesOfItsOwnKeepsThemWhenTheOriginalGoes)
+  {
+  const char * id = "testcopykeeps";
+  Forget (id);
+  const std::string original = MakeWorldFile ("keeps-original");
+  const std::string copy = MakeWorldFile ("keeps-copy");
+  std::string copyFile;
+  {
+  SessionFixture s (id, 5000, false, true, true, original.c_str ());
+  FeedLine (s.doc, "the original's");
+  s.End ();
+  }
+  {
+  SessionFixture s (id, 5000, false, true, true, copy.c_str ());
+  copyFile = (const char *) s.doc.ScrollbackFilePath ();
+  FeedLine (s.doc, "the copy's");
+  s.End ();
+  }
+  remove (original.c_str ());
+  {
+  SessionFixture s (id, 5000, false, true, true, copy.c_str ());
+  EXPECT_TRUE (std::string ("the copy's") == s.Text (1));
+  EXPECT_TRUE (std::string ((const char *) s.doc.ScrollbackFilePath ()) == copyFile);
+  s.End ();
+  }
+  RemoveSaved (copyFile);
+  remove (copy.c_str ());
+  Forget (id);
+  }
+
+// Save As used to rename a world: the new name starts empty, because the old world file
+// is still there and could be opened again.  Deleting or moving the old one before the
+// new one is first opened gives it the output, as for a world renamed in Explorer.
+TEST (SavedScrollback, SavedUnderANewNameTheOutputFollowsIfTheOldFileGoesFirst)
+  {
+  const char * id = "testsaveas";
+  Forget (id);
+  const std::string before = MakeWorldFile ("saveas-old");
+  const std::string after = MakeWorldFile ("saveas-new");
+  {
+  SessionFixture s (id, 5000, false, true, true, before.c_str ());
+  FeedLine (s.doc, "under the old name");
+  s.doc.SetPathName (after.c_str (), FALSE);       // File > Save As
+  FeedLine (s.doc, "under the new name");
+  s.End ();
+  }
+  remove (before.c_str ());
+  {
+  SessionFixture s (id, 5000, false, true, true, after.c_str ());
+  EXPECT_TRUE (std::string ("under the old name") == s.Text (1));
+  EXPECT_TRUE (std::string ("under the new name") == s.Text (2));
+  s.End ();
+  }
+  remove (after.c_str ());
+  Forget (id);
+  }
+
+// A copy whose option is off is not given the ID's files to delete, though it has the
+// name they go by until something claims them; and it notices when something does.
+TEST (SavedScrollback, ACopyWithSavingOffDeletesNothingOfTheOriginals)
+  {
+  const char * id = "testcopyoff";
+  Forget (id);
+  const std::string original = MakeWorldFile ("off-original");
+  const std::string copy = MakeWorldFile ("off-copy");
+  std::string originalFile;
+  {
+  // The copy opens first, with the option off, before the original has said it's the owner.
+  SessionFixture c (id, 5000, false, false, true, copy.c_str ());
+  c.doc.m_bSaveScrollback = FALSE;
+  c.doc.StartOutputBuffer ();
+  EXPECT_FALSE (c.doc.SavedFilesAreMine ());
+  {
+  SessionFixture s (id, 5000, false, true, true, original.c_str ());
+  originalFile = (const char *) s.doc.ScrollbackFilePath ();
+  FeedLine (s.doc, "the original's");
+  s.End ();
+  }
+  EXPECT_TRUE (c.doc.ScrollbackFilePath () != originalFile.c_str ());
+  c.doc.ClearSavedScrollback ();
+  for (int i = 0; i < 3; i++)
+    c.doc.ScrollbackTick ();
+  c.End ();
+  }
+  {
+  SessionFixture s (id, 5000, false, true, true, original.c_str ());
+  EXPECT_TRUE (std::string ("the original's") == s.Text (1));
+  s.End ();
+  }
+  remove (original.c_str ());
+  remove (copy.c_str ());
+  Forget (id);
+  }
+
+// With "keep commands on the same line", an alias's echo of what was typed with echo off
+// stays off the saved output all the same, wherever it is drawn.
+TEST (SavedScrollback, AnEchoedPasswordAfterAPromptIsNotSaved)
+  {
+  const char * id = "testnoechosame";
+  Forget (id);
+  std::string path;
+  {
+  SessionFixture s (id);
+  path = (const char *) s.doc.ScrollbackFilePath ();
+  s.doc.m_bKeepCommandsOnSameLine = TRUE;
+  s.doc.m_enable_aliases = TRUE;
+  s.doc.m_display_my_input = TRUE;
+  s.doc.m_iConnectPhase = eConnectConnectedToMud;
+  s.doc.m_pTransport = new RecordingTransport ();
+  CAlias * a = new CAlias ();
+  a->name = "pw *";
+  a->contents = "connect %1";
+  a->bEnabled = TRUE;
+  a->bRegexp = false;
+  a->bEchoAlias = TRUE;
+  a->iSendTo = eSendToWorld;
+  a->iSequence = DEFAULT_ALIAS_SEQUENCE;
+  a->strLabel = "pw";
+  a->regexp = regcomp (ConvertToRegularExpression (a->name, true, true), 0);
+  s.doc.GetAliasMap ().SetAt (a->strLabel, a);
+  s.doc.GetAliasArray ().Add (a);
+  s.doc.GetAliasRevMap () [a] = "pw *";
+  s.doc.DisplayMsg ("Password: ", 10, 0);     // a prompt: no newline
+  bool bOmit = false;
+  s.doc.m_bNoEcho = true;
+  s.doc.EvaluateCommand (CString ("pw hunter3"), true, bOmit, false);
+  s.doc.m_bNoEcho = false;
+  FeedLine (s.doc, "Welcome.");
+  s.End ();
+  }
+  LoadResult r = Load (path, false, 0);
+  std::string all;
+  for (const auto & block : r.blocks)
+    all += std::string (block->text, block->textSize) + "|";
+  EXPECT_TRUE (all.find ("hunter3") == std::string::npos);
+  EXPECT_TRUE (all.find ("Welcome.") != std::string::npos);
+  Forget (id);
+  }
+
+#ifdef _WIN32
+
+namespace {
+
+// A drive letter nothing is on, or 0.
+char UnusedDrive ()
+  {
+  const DWORD used = GetLogicalDrives ();
+  for (char c = 'Z'; c >= 'D'; c--)
+    if (!(used & (1u << (c - 'A'))))
+      return c;
+  return 0;
+  }
+
+void WriteOwner (const char * id, const std::string & owner)
+  {
+  CMUSHclientDoc doc;
+  doc.m_strWorldID = id;
+  const CString strPath = doc.ScrollbackFilePath ();
+  const CString strOwner = strPath.Left (strPath.GetLength () - 5) + ".owner";
+  FILE * f = fopen (strOwner, "wb");
+  ASSERT_TRUE (f != nullptr);
+  fputs (owner.c_str (), f);
+  fclose (f);
+  }
+
+} // anonymous namespace
+
+// The owner on a drive or share that isn't there just now hasn't gone: a copy opened
+// meanwhile doesn't take its files.  An owner whose folder has gone, on a drive that is
+// there, has.
+TEST (SavedScrollback, AnOwnerThatCantBeLookedForIsNotGone)
+  {
+  const char drive = UnusedDrive ();
+  if (!drive)
+    return;
+  const char * id = "testunreachable";
+  Forget (id);
+  const std::string original = MakeWorldFile ("unreachable-original");
+  const std::string other = MakeWorldFile ("unreachable-other");
+  {
+  SessionFixture s (id, 5000, false, true, true, original.c_str ());
+  FeedLine (s.doc, "the original's");
+  s.End ();
+  }
+  WriteOwner (id, std::string (1, drive) + ":\\worlds\\gone for now.mcl");
+  std::string otherFile;
+  {
+  SessionFixture s (id, 5000, false, true, true, other.c_str ());
+  EXPECT_EQ (1L, s.Count ());
+  otherFile = (const char *) s.doc.ScrollbackFilePath ();
+  s.End ();
+  }
+  RemoveSaved (otherFile);
+  WriteOwner (id, std::string (getenv ("TEMP")) + "\\no such folder 7f3a\\gone.mcl");
+  {
+  SessionFixture s (id, 5000, false, true, true, other.c_str ());
+  EXPECT_TRUE (std::string ("the original's") == s.Text (1));
+  s.End ();
+  }
+  remove (original.c_str ());
+  remove (other.c_str ());
+  Forget (id);
+  }
+
+// One world file, by two paths: a hard link, and a path with . and .. in it.  It is the
+// owner by either.
+TEST (SavedScrollback, TheSameWorldFileByAnotherPathIsTheSameWorld)
+  {
+  const char * id = "testsamefile";
+  Forget (id);
+  const std::string world = MakeWorldFile ("samefile");
+  const std::string link = std::string (getenv ("TEMP")) + "\\mc_scrollback_samefile_link.mcl";
+  remove (link.c_str ());
+  {
+  SessionFixture s (id, 5000, false, true, true, world.c_str ());
+  FeedLine (s.doc, "the world's");
+  s.End ();
+  }
+  if (CreateHardLinkA (link.c_str (), world.c_str (), NULL))
+    {
+    SessionFixture s (id, 5000, false, true, true, link.c_str ());
+    EXPECT_TRUE (std::string ("the world's") == s.Text (1));
+    s.End ();
+    }
+  const size_t slash = world.find_last_of ("\\/");
+  const std::string roundabout = world.substr (0, slash) + "\\.\\x\\..\\" + world.substr (slash + 1);
+  {
+  SessionFixture s (id, 5000, false, true, true, roundabout.c_str ());
+  EXPECT_TRUE (std::string ("the world's") == s.Text (1));
+  s.End ();
+  }
+  remove (link.c_str ());
+  remove (world.c_str ());
+  Forget (id);
+  }
+
+#ifdef _DEBUG
+
+// Short of memory restoring, the newest lines that fit come back: as many as there's room
+// for, and not almost none, as when the oldest were built first and a gap cost them all.
+TEST (SavedScrollback, OutOfMemoryRestoringKeepsTheNewestThatFit)
+  {
+  const char * id = "testrestoreoom";
+  Forget (id);
+  std::string path;
+  {
+  SessionFixture s (id, 0, false, false);
+  path = (const char *) s.doc.ScrollbackFilePath ();
+  }
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  for (int b = 0; b < 10; b++)
+    AppendBlock (w, 1 + b * 2000, 2000);
+  }
+  for (const unsigned threads : { 0u, 1u })
+    {
+    SetMaxThreadsForTest (threads);
+    SessionFixture s (id, 0, false, false);
+    s.doc.m_total_lines = 0;
+    g_liveLines = 0;
+    g_lineBudget = 5000;
+    const _CRT_ALLOC_HOOK oldHook = _CrtSetAllocHook (BudgetHook);
+    s.doc.RestoreSavedScrollback ();
+    _CrtSetAllocHook (oldHook);
+    g_lineBudget = -1;
+    SetMaxThreadsForTest (0);
+    EXPECT_EQ (5000L, (long) s.doc.m_LineList.GetCount ());
+    if (!s.doc.m_LineList.IsEmpty ())
+      {
+      EXPECT_EQ (15001L, s.doc.m_LineList.GetHead ()->m_nLineNumber);
+      EXPECT_EQ (20000L, s.doc.m_LineList.GetTail ()->m_nLineNumber);
+      }
+    s.doc.FlushSavedScrollback (true);
+    }
+  EXPECT_EQ (20000u, Load (path, false, 0).lineCount);    // the file keeps them all
+  Forget (id);
+  }
+
+#endif // _DEBUG
+
+#endif // _WIN32
+
 #ifdef _WIN32
 
 // The command box's history, on Windows (the port's is in wx_world_child.cpp).
@@ -1658,6 +2148,70 @@ TEST (SavedCommandHistory, EveryChangeIsSaved)
   f.view->SaveCommandHistoryIfChanged (true);
   EXPECT_TRUE (f.Saved ().empty ());
   remove (f.path.c_str ());
+  }
+
+// Window > New Window: closing the first command box, while the second stays, saves the
+// first's history, and the second saves its own from then on.  Closing the second while
+// the first stays saves nothing: the first is the one being saved.
+TEST (SavedCommandHistory, ClosingTheFirstCommandBoxSavesAndHandsOver)
+  {
+  CSendView * second = (CSendView *) RUNTIME_CLASS (CSendView)->CreateObject ();
+  {
+  SendViewFixture f ("testhisttwo");
+  f.doc->AddView (second);
+
+  second->AddToCommandHistory ("second's");
+  second->SaveCommandHistoryIfChanged (true);
+  EXPECT_TRUE (f.Saved ().empty ());
+
+  f.view->AddToCommandHistory ("first's");
+  f.view->SaveCommandHistoryIfChanged (true);
+  EXPECT_TRUE (f.Saved () == std::vector<std::string> ({ "first's" }));
+
+  f.doc->RemoveView (f.view);       // closed
+  second->AddToCommandHistory ("and more");
+  second->m_tHistoryChecked = 0;    // the 30 s since it last looked
+  second->SaveCommandHistoryIfChanged (false);
+  EXPECT_TRUE (f.Saved () == std::vector<std::string> ({ "second's", "and more" }));
+  remove (f.path.c_str ());
+  }                                 // the document, which lets go of the second view
+  delete (CObject *) second;
+  Forget ("testhisttwo");
+  }
+
+// The option off, the history file goes, if it's this world's: a copy of the world with the
+// option off has the name the original's goes by until the original claims it.
+TEST (SavedCommandHistory, ACopyWithSavingOffLeavesTheOriginalsAlone)
+  {
+  const std::string original = MakeWorldFile ("histoff-original");
+  const std::string copy = MakeWorldFile ("histoff-copy");
+  Forget ("testhistoff");
+  CMUSHclientDoc * doc = new CMUSHclientDoc;
+  doc->m_strWorldID = "testhistoff";
+  doc->SetPathName (copy.c_str (), FALSE);
+  doc->m_bSaveScrollback = FALSE;
+  CSendView * view = (CSendView *) RUNTIME_CLASS (CSendView)->CreateObject ();
+  doc->AddView (view);
+  const std::string unclaimed = (const char *) doc->CommandHistoryFilePath ();
+  std::string originalFile;
+  {
+  SessionFixture s ("testhistoff", 5000, false, true, true, original.c_str ());
+  originalFile = (const char *) s.doc.CommandHistoryFilePath ();
+  EXPECT_TRUE (originalFile == unclaimed);
+  EXPECT_TRUE (command_history::Save (originalFile, { "the original's" }));
+  s.End ();
+  }
+  view->SaveCommandHistoryIfChanged (false);
+  view->SaveCommandHistoryIfChanged (true);
+  delete doc;
+  delete (CObject *) view;
+  std::vector<std::string> got;
+  EXPECT_TRUE (command_history::Load (originalFile, got));
+  EXPECT_TRUE (got == std::vector<std::string> ({ "the original's" }));
+  remove (originalFile.c_str ());
+  remove (original.c_str ());
+  remove (copy.c_str ());
+  Forget ("testhistoff");
   }
 
 #endif // _WIN32

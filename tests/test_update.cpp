@@ -1686,6 +1686,42 @@ TEST (WorldBackups, ACopyWithTheSameNameDoesNotReplaceTheOther)
   EXPECT_TRUE (fs::exists (where / "20200101-120000 keep.mcl"));
   }
 
+// Copies sharing a name's time are newest by their number, so "the same as the newest"
+// compares with the right one: the folder lists "-2" and "-3" ahead of the first.
+TEST (WorldBackups, TheNewestOfCopiesWithOneTimeIsTheHighestNumber)
+  {
+  const fs::path folder = TempFolder ("backups-newest");
+  const std::string root = (folder / "backups").u8string () + "/";
+  const fs::path world = folder / "w.mcl";
+  const std::string worldPath = world.u8string ();
+  const fs::path where = fs::u8path (world_backups::FolderFor (root, worldPath));
+  const time_t now = 1800000000;
+
+  for (const char * text : { "one", "two", "three" })
+    {
+    WriteText (world, text);
+    EXPECT_TRUE (world_backups::BackUpIfDue (root, worldPath, true, now));
+    }
+  // As the third: nothing to keep.
+  EXPECT_FALSE (world_backups::BackUpIfDue (root, worldPath, true, now));
+  size_t n = 0;
+  for (const auto & entry : fs::directory_iterator (where))
+    {
+    (void) entry;
+    n++;
+    }
+  EXPECT_EQ (3u, n);
+
+  // And pruning sorts them the same way.
+  std::vector<world_backups::Entry> entries;
+  for (int i = 0; i < 7; i++)
+    entries.push_back ({ i ? "20270115-080000-" + std::to_string (i + 1) + ".mcl" : std::string ("20270115-080000.mcl"), now });
+  const std::vector<std::string> doomed = world_backups::ChooseToDelete (entries, now);
+  ASSERT_EQ (2u, doomed.size ());
+  for (const std::string & name : doomed)
+    EXPECT_TRUE (name == "20270115-080000.mcl" || name == "20270115-080000-2.mcl");
+  }
+
 TEST (WorldBackups, DifferentFoldersForDifferentWorlds)
   {
   EXPECT_TRUE (world_backups::FolderFor ("b/", "C:\\one\\x.mcl") != world_backups::FolderFor ("b/", "C:\\two\\x.mcl"));

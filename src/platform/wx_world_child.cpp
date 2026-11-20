@@ -4005,7 +4005,10 @@ void CWorldChildFrame::SaveCommandHistoryFile()
     // The world option covers this as well as the output, and a world that has
     // never been saved has nowhere to come back to it from.
     if (!m_doc->m_bSaveScrollback || m_doc->GetPathName().IsEmpty()) {
-        remove(m_historyFilePath.c_str());
+        // Only if it is this world's: a copy with the option off shares the name.
+        if (m_doc->SavedFilesAreMine() &&
+            m_historyFilePath == static_cast<const char*>(m_doc->CommandHistoryFilePath()))
+            remove(m_historyFilePath.c_str());
         m_historyAsSaved = m_history;
         return;
     }

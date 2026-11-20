@@ -2304,6 +2304,11 @@ public:
   CString ScrollbackFileBase (void) const;
   mutable CString m_strScrollbackBase;
   mutable CString m_strScrollbackBaseForID;   // what m_strWorldID was when it was decided
+  mutable CString m_strScrollbackBaseForPath; // ... and the world file's path
+  // Whether the files at ScrollbackFileBase are this world's to delete: named by its path
+  // or a fresh ID, or the owner file names it.  Asked again each time, since another world
+  // with the ID may have taken them meanwhile.  Nothing deletes them otherwise.
+  bool SavedFilesAreMine (void) const;
   // The ID the world file has, when loading had to change it (m_bWorldIDIsNew); empty
   // if the file has none.
   CString m_strWorldIDInFile;

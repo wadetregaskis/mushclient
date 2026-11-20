@@ -1266,7 +1266,9 @@ void CSendView::SaveCommandHistoryIfChanged (const bool bClosing)
     return;
 
   // Window > New Window gives a world a second command box, with a history of its own,
-  // and one file can't hold both.  The world's first one saves; closing, the last.
+  // and one file can't hold both.  The world's first one saves, closing as well, which
+  // hands the job to the next: from then on it is that one's history that is saved, when
+  // it changes.  Closing one that isn't first saves nothing.
   int iSendViews = 0;
   bool bFirst = false;
   for (POSITION pos = pDoc->GetFirstViewPosition (); pos; )
@@ -1279,13 +1281,15 @@ void CSendView::SaveCommandHistoryIfChanged (const bool bClosing)
       iSendViews++;
       }
     }
-  if (bClosing ? iSendViews > 1 : !bFirst)
+  if (!bFirst)
     return;
 
-  // With nowhere to come back to, or the option off, there should be no file at all.
-  if (!pDoc->m_bSaveScrollback || (bClosing && pDoc->GetPathName ().IsEmpty ()))
+  // With nowhere to come back to, or the option off, there should be no file at all, if
+  // it is this world's: a copy of it with the option off mustn't delete the original's.
+  if (!pDoc->m_bSaveScrollback || (bClosing && iSendViews == 1 && pDoc->GetPathName ().IsEmpty ()))
     {
-    remove (strPath);
+    if (m_iHistorySavedChanges != -1 && pDoc->SavedFilesAreMine ())
+      remove (pDoc->CommandHistoryFilePath ());    // decided for good now
     m_iHistorySavedChanges = -1;
     return;
     }

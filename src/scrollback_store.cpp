@@ -8,6 +8,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <functional>
+#include <map>
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -876,7 +878,7 @@ LoadResult LoadFile (const std::string & path, bool bUtf8, size_t maxLines, unsi
   std::vector<State> state (blocks.size (), kNotTried);
   std::vector<std::unique_ptr<DecodedBlock>> decoded (blocks.size ());
   if (threads == 0)
-    threads = (std::min) ((std::max) (std::thread::hardware_concurrency (), 1u), 8u);
+    threads = ThreadsToUse ();
 
   size_t firstNeeded = blocks.size ();
   size_t lines = 0;
@@ -892,35 +894,52 @@ LoadResult LoadFile (const std::string & path, bool bUtf8, size_t maxLines, unsi
     if (firstNeeded == end)
       break;
 
-    // Inflate and parse.  Blocks are independent, so this is plain parallel work.
+    // Inflate and parse.  Blocks are independent, so this is plain parallel work, and it
+    // goes newest first: if memory runs out, the oldest are the ones to do without, and
+    // once it has, nothing older than the block it ran out on is started.
     const size_t count = end - firstNeeded;
     std::atomic<size_t> next (0);
+    std::atomic<size_t> noMemoryAbove (0);    // 1 + the newest block that ran out, or 0
+    auto decodeOne = [&] (const size_t i)
+      {
+      const BlockInfo & info = blocks [i];
+      // Out of memory (a huge file in a 32-bit process) costs blocks, and not the
+      // client: an exception leaving a thread would end the process.
+      try
+        {
+        std::unique_ptr<DecodedBlock> block (new DecodedBlock);
+        if (InflateAndDecode (file.data () + info.offset, (size_t) info.recordSize, *block))
+          {
+          ApplyToBlock (info, *block);
+          decoded [i] = std::move (block);
+          state [i] = kGood;
+          }
+        else
+          state [i] = kBad;
+        }
+      catch (...)
+        {
+        decoded [i].reset ();
+        state [i] = kNoMemory;
+        }
+      };
     auto worker = [&] ()
       {
       for (;;)
         {
-        const size_t i = firstNeeded + next.fetch_add (1);
-        if (i >= end)
+        const size_t n = next.fetch_add (1);
+        if (n >= count)
           return;
-        const BlockInfo & info = blocks [i];
-        // Out of memory (a huge file in a 32-bit process) costs blocks, and not the
-        // client: an exception leaving a thread would end the process.
-        try
+        const size_t i = end - 1 - n;
+        if (i + 1 < noMemoryAbove.load ())
+          continue;
+        decodeOne (i);
+        if (state [i] == kNoMemory)
           {
-          std::unique_ptr<DecodedBlock> block (new DecodedBlock);
-          if (InflateAndDecode (file.data () + info.offset, (size_t) info.recordSize, *block))
+          size_t seen = noMemoryAbove.load ();
+          while (seen < i + 1 && !noMemoryAbove.compare_exchange_weak (seen, i + 1))
             {
-            ApplyToBlock (info, *block);
-            decoded [i] = std::move (block);
-            state [i] = kGood;
             }
-          else
-            state [i] = kBad;
-          }
-        catch (...)
-          {
-          decoded [i].reset ();
-          state [i] = kNoMemory;
           }
         }
       };
@@ -938,6 +957,29 @@ LoadResult LoadFile (const std::string & path, bool bUtf8, size_t maxLines, unsi
     for (std::thread & t : pool)
       t.join ();
 
+    // Other threads were decoding older blocks when one ran out: what they hold is no use
+    // past the gap, and may be what it ran out for.  Let it go, and carry on from that
+    // block one at a time, until there's no more room.
+    bool bNoMemory = false;
+    if (noMemoryAbove.load () > 0)
+      {
+      const size_t newest = noMemoryAbove.load () - 1;
+      for (size_t i = firstNeeded; i < newest; i++)
+        {
+        decoded [i].reset ();
+        state [i] = kNotTried;
+        }
+      for (size_t i = newest + 1; i-- > firstNeeded; )
+        {
+        decodeOne (i);
+        if (state [i] == kNoMemory)
+          {
+          bNoMemory = true;
+          break;
+          }
+        }
+      }
+
     bool bShort = false;
     for (size_t i = firstNeeded; i < end; i++)
       if (state [i] != kGood && !blocks [i].cutFrom)
@@ -946,7 +988,7 @@ LoadResult LoadFile (const std::string & path, bool bUtf8, size_t maxLines, unsi
         bShort |= state [i] == kBad;
         }
     // Short of memory is not a reason to try for more of it.
-    if (!bShort || maxLines == 0)
+    if (!bShort || maxLines == 0 || bNoMemory)
       break;
     }
 
@@ -1003,6 +1045,39 @@ LoadResult LoadFile (const std::string & path, bool bUtf8, size_t maxLines, unsi
 } // anonymous namespace
 
 // ---------------- writing ----------------
+
+namespace {
+
+std::function<bool ()> g_reopenHook;
+
+// The file, again, after a rewrite or to catch up.
+void * OpenAgain (const std::string & path)
+  {
+  if (g_reopenHook && !g_reopenHook ())
+    return nullptr;
+  return FileOpen (path, false);
+  }
+
+} // anonymous namespace
+
+void SetReopenHookForTest (std::function<bool ()> hook)
+  {
+  g_reopenHook = std::move (hook);
+  }
+
+static std::atomic<unsigned> g_maxThreads (0);
+
+unsigned ThreadsToUse ()
+  {
+  unsigned n = (std::min) ((std::max) (std::thread::hardware_concurrency (), 1u), 8u);
+  const unsigned limit = g_maxThreads.load ();
+  return limit && limit < n ? limit : n;
+  }
+
+void SetMaxThreadsForTest (unsigned n)
+  {
+  g_maxThreads = n;
+  }
 
 Writer::Writer (const std::string & path, bool bUtf8, const LoadResult & load)
   : m_path (path), m_bUtf8 (bUtf8)
@@ -1096,6 +1171,12 @@ void Writer::DropBefore (int64_t number)
   op.kind = Op::Drop;
   op.first = number;
   Post (std::move (op));
+  }
+
+void Writer::StopReclaiming ()
+  {
+  std::lock_guard<std::mutex> lock (m_mutex);
+  m_bNoReclaim = true;
   }
 
 void Writer::Flush ()
@@ -1357,7 +1438,7 @@ void Writer::MaybeReclaim ()
   // still happens: that is about taking text out of the file, not about space.)
     {
     std::lock_guard<std::mutex> lock (m_mutex);
-    if (m_bStop)
+    if (m_bStop || m_bNoReclaim)
       return;
     }
   uint64_t live = 0;
@@ -1512,7 +1593,7 @@ bool Writer::Rewrite (int64_t keepFrom, bool bExact)
     m_tail.clear ();
     m_tailLines = 0;
     }
-  m_file = FileOpen (m_path, false);
+  m_file = OpenAgain (m_path);
   if (!m_file)
     Fail ("could not open the saved output buffer again, so it is not being saved for now");
   return bRenamed && m_file;
@@ -1524,7 +1605,7 @@ bool Writer::Reopen ()
   {
   if (m_file)
     return true;
-  m_file = FileOpen (m_path, false);
+  m_file = OpenAgain (m_path);
   if (!m_file)
     return false;
   // Anything that got there meanwhile is cut off, as a torn tail would be.
@@ -1536,37 +1617,101 @@ bool Writer::Reopen ()
 // While the file is shut, what is asked for waits, up to a point.
 void Writer::Hold (Op && op)
   {
-  if (m_bHeldTooMuch)
-    return;
   if (op.kind == Op::ClearAll)
     {
     m_held.clear ();      // nothing before a clear matters
     m_heldBytes = 0;
     }
+  if (m_bHeldTooMuch && op.kind == Op::Append)
+    return;               // the gap is there already: these lines are in it
   m_heldBytes += op.block.size ();
   m_held.push_back (std::move (op));
   if (m_held.size () > kMaxHeldOps || m_heldBytes > kMaxHeldBytes)
     {
-    m_held.clear ();
-    m_heldBytes = 0;
     m_bHeldTooMuch = true;
+    CompactHeld ();
     }
   }
 
-// False if the file is still shut.  Otherwise, whatever waited has been done.
+// Too much has waited.  The lines go, all of them from now until the file can be written
+// again: the file has a gap there, as it has for a line typed with echo off, and keeps what
+// it had before.  What stays is what takes text out of the file, which must still happen
+// (a clear, a TRUNCATE for world.DeleteLines, a DropBefore), and the newest flags and live
+// line, folded into as few as do the same.  With the lines gone these commute: a TRUNCATE
+// and a DropBefore each remove a set of numbers, a clear makes everything before it moot,
+// and a flag for a line that isn't in the file (dropped, or since truncated) changes
+// nothing, so they can be done in any order, and this one is as good as the original.
+void Writer::CompactHeld ()
+  {
+  bool bClear = false;
+  bool bUtf8 = m_bUtf8;
+  int64_t truncateFrom = 0;     // 0, none: a TRUNCATE is from line 1 at the least
+  int64_t dropBefore = 0;
+  bool bLiveFrom = false;
+  int64_t liveFrom = 0;
+  std::map<int64_t, uint8_t> flags;
+  for (const Op & op : m_held)
+    switch (op.kind)
+      {
+      case Op::ClearAll:
+        bClear = true;
+        bUtf8 = op.bUtf8;
+        truncateFrom = 0;
+        dropBefore = 0;
+        flags.clear ();
+        break;
+      case Op::Truncate:
+        truncateFrom = truncateFrom ? (std::min) (truncateFrom, op.first) : op.first;
+        break;
+      case Op::Drop:
+        dropBefore = (std::max) (dropBefore, op.first);
+        break;
+      case Op::Flags:
+        flags [op.first] = op.flags;
+        break;
+      case Op::LiveFrom:
+        bLiveFrom = true;
+        liveFrom = op.first;
+        break;
+      default:
+        break;      // Append, Sync
+      }
+  // Bookmarks by the thousand: let them go too, rather than hold ever more.
+  if (flags.size () > kMaxHeldOps / 2)
+    flags.clear ();
+
+  std::deque<Op> kept;
+  auto keep = [&kept] (Op::Kind kind, int64_t first)
+    {
+    Op op;
+    op.kind = kind;
+    op.first = first;
+    kept.push_back (std::move (op));
+    return &kept.back ();
+    };
+  if (bClear)
+    keep (Op::ClearAll, 0)->bUtf8 = bUtf8;
+  if (truncateFrom)
+    keep (Op::Truncate, truncateFrom);
+  if (dropBefore)
+    keep (Op::Drop, dropBefore);
+  for (const auto & f : flags)
+    keep (Op::Flags, f.first)->flags = f.second;
+  if (bLiveFrom)
+    keep (Op::LiveFrom, liveFrom);
+  m_held.swap (kept);
+  m_heldBytes = 0;
+  }
+
+// False if the file is still shut, and then whatever is still waiting stays waiting.
+// Otherwise, whatever waited has been done.
 bool Writer::CatchUp ()
   {
   if (!Reopen ())
     return false;
   if (m_bHeldTooMuch)
     {
-    // Too much to keep: start again, rather than leave a gap, or keep text that
-    // something since asked to be cleared.
     m_bHeldTooMuch = false;
-    Op clear;
-    clear.kind = Op::ClearAll;
-    clear.bUtf8 = m_bUtf8;
-    Do (clear);
     Fail ("some of the output buffer could not be saved");
     }
   while (!m_held.empty ())
@@ -1575,6 +1720,10 @@ bool Writer::CatchUp ()
     m_held.pop_front ();
     m_heldBytes -= held.block.size ();
     Do (held);
+    // A held DropBefore's rewrite, or a reclaim an append set off, closed the file and
+    // couldn't open it again.  The rest, and what was asked for now, wait for next time.
+    if (!m_file)
+      return false;
     }
   return true;
   }

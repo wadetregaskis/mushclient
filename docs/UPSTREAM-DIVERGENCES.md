@@ -1536,25 +1536,40 @@ that echoes the typed line draws it on the screen even with echo off, as upstrea
 that line is left out of the saved output.
 
 The files are named by the world's ID, which a copy of the world file shares, so
-`<world id>.owner` says which world file they belong to.  A different world file with that
-ID (a copy made for an alt, by Save As or in Explorer) gets `w-<hash of its path>.mcsb` and
-`.history` of its own, unless the owner is no longer there: then it was moved or renamed,
-and takes them over.  A world file with no ID, which is given a new one each time it opens
+`<world id>.owner` says which world file they belong to: the same file however it's reached
+(a mapped drive or its UNC name, `subst`, a junction, a hard link, an 8.3 name).  A different
+world file with that ID (a copy made for an alt, by Save As or in Explorer) gets
+`w-<hash of its path>.mcsb` and `.history` of its own.  If the owner is no longer there, it
+was moved or renamed, and the world file opened with its ID takes the files over, unless
+that one has files of its own already, which it keeps: deleting the original doesn't give a
+copy the original's output.  An owner on a drive or share that can't be reached just now is
+not taken to be gone.  A world file with no ID, which is given a new one each time it opens
 until it is saved, uses the path name meanwhile, and the files go over to the ID once the
 world has been saved with one.  Files from before there was an owner go to the first world
-to open with that ID.  A world renamed by Save As keeps writing where it started until it
-is closed.
+to open with that ID, unless it has its own.  Taking over a world's files means writing its
+`.owner`, which only a world with the option on does; one with it off deletes nothing that
+isn't its own, so a copy with saving off can't delete the original's files.
+
+A world renamed by Save As keeps writing where it started until it is closed, and the new
+name starts with nothing, since the old world file is still there and is still the owner.
+To carry the output over to the new name, delete or move the old world file before opening
+the new one for the first time: it is then a world that was moved.  (Once the new one has
+been opened it has files of its own, and keeps them.)
 
 The command history is saved every 30 seconds if it has changed, and on close, on both
 platforms.  With Window > New Window, a world has two command boxes, each with a history of
-its own: the first one's is saved, or, when one is closed, the other's.
+its own: the first one's is saved, including when it is closed, after which the next one's
+is, from its next change.  Closing any other saves nothing.
 
 **File format:** see the head of `scrollback_store.h`.  A file saved with the world's UTF-8
 option the other way round isn't used; a file from a later version is left alone.  A block
 that is damaged costs that block, and older ones are restored in its place if the buffer
 has room; damage in a record's header costs only that record, and doesn't stop the rest
 being read or cut it off.  If there isn't the memory to restore it all, the newest lines
-come back and the file keeps the rest.
+that fit come back and the file keeps the rest.  If the file can't be opened again after a
+rewrite (something else had it for a moment), what is asked for waits, up to 1000 changes
+or 64 MB; past that, the lines that waited are lost, leaving a gap in the file, but what it
+held before is kept, and clears, deletions and bookmarks that waited still happen.
 
 **Why:** the owner asked for it, up to the full size of the buffer, unlimited included, and
 for reopening to be quick on a slow disk.  1,000,000 lines of styled text take 19 MB and

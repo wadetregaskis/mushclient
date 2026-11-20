@@ -37,6 +37,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -208,6 +209,11 @@ class Writer
   void Clear (bool bUtf8);
   void DropBefore (int64_t number);
 
+  // From now on space is not reclaimed (an explicit DropBefore still rewrites).  Closing
+  // calls this before its last hand-over and Flush, which would otherwise wait for a
+  // rewrite of the whole file that can as well happen next session.
+  void StopReclaiming ();
+
   // Blocks until everything asked for so far is on disk (or has failed).
   void Flush ();
   // Blocks until the worker is finished and the file closed; optionally deletes it.
@@ -243,6 +249,7 @@ class Writer
   bool Rewrite (int64_t keepFrom, bool bExact);
   bool Reopen ();
   void Hold (Op && op);
+  void CompactHeld ();
   bool CatchUp ();
   void Fail (const std::string & why);
 
@@ -259,7 +266,7 @@ class Writer
   // Asked for while the file couldn't be opened again after a rewrite.  Worker only.
   std::deque<Op> m_held;
   size_t   m_heldBytes = 0;
-  bool     m_bHeldTooMuch = false;    // so much was held that some was let go
+  bool     m_bHeldTooMuch = false;    // so much was held that the lines were let go
 
   // Blocks written this session that are still small, with their bytes, for merging
   // into one.  Worker only.
@@ -279,6 +286,7 @@ class Writer
   std::deque<Op>          m_queue;
   bool        m_bBusy = false;
   bool        m_bStop = false;
+  bool        m_bNoReclaim = false;
   std::string m_error;
   std::thread m_thread;
   };
@@ -290,5 +298,15 @@ bool WriteFileAtomically (const std::string & path, const void * data, size_t si
 
 // Makes every folder in the path of this file that doesn't exist.
 void MakeFoldersFor (const std::string & path);
+
+// How many threads loading and restoring use: as many as are useful, up to 8.
+unsigned ThreadsToUse ();
+// For tests: at most this many (0, the default, is no limit beyond ThreadsToUse's own).
+void SetMaxThreadsForTest (unsigned n);
+
+// For tests: asked before a Writer opens its file again (after a rewrite, or to catch up);
+// false makes that fail, as something else holding the file for a moment would.  Set it
+// only while no Writer is busy.  Empty is the default: always try.
+void SetReopenHookForTest (std::function<bool ()> hook);
 
 } // namespace scrollback

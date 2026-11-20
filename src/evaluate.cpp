@@ -1105,16 +1105,25 @@ bool CMUSHclientDoc::ProcessOneAliasSequence (const CString strCurrentLine,
                   USER_INPUT | (LoggingInput () ? LOG_LINE : 0));
       // Typed with echo off, it may be a password.  It's drawn, as ever, but it must
       // not go on to the saved output buffer (doc_scrollback_shared.cpp).
+      // A line the echo went on the end of keeps that line's flags (a prompt, with
+      // "keep commands on the same line"), so the first is looked for by its text too.
       if (m_bNoEcho)
+        {
+        const CString strFirst = strCurrentLine.SpanExcluding ("\r\n");
         for (POSITION pos = m_LineList.GetTailPosition (); pos; )
           {
           CLine * pLine = m_LineList.GetPrev (pos);
           if (pLine->m_nLineNumber < iFirstEchoed)
             break;
           // Not the line now in progress, which is for whatever comes next.
-          if (pLine != m_pCurrentLine && (pLine->flags & USER_INPUT))
+          if (pLine == m_pCurrentLine)
+            continue;
+          if ((pLine->flags & USER_INPUT) ||
+              (pLine->m_nLineNumber == iFirstEchoed && !strFirst.IsEmpty () &&
+               CString (pLine->text, pLine->len).Find (strFirst) >= 0))
             pLine->m_bNotSaved = true;
           }
+        }
       bEchoAlias = false;   // don't echo the same line twice
       // and log the command the actually typed
       if (LoggingInput ())

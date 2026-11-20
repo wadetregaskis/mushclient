@@ -33,10 +33,17 @@
 
 #include <atomic>
 #include <cctype>
+#include <cerrno>
+#include <climits>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -110,17 +117,151 @@ unsigned long PathHash (const CString & strPath)
   return hash;
   }
 
+#ifdef _WIN32
+
+std::wstring Wide (const CString & strPath)
+  {
+  const int n = MultiByteToWideChar (CP_ACP, 0, strPath, -1, NULL, 0);
+  if (n <= 0)
+    return std::wstring ();
+  std::wstring wide ((size_t) n, L'\0');
+  MultiByteToWideChar (CP_ACP, 0, strPath, -1, &wide [0], n);
+  wide.resize ((size_t) n - 1);
+  return wide;
+  }
+
+CString Narrow (const std::wstring & wide)
+  {
+  const int n = WideCharToMultiByte (CP_ACP, 0, wide.c_str (), -1, NULL, 0, NULL, NULL);
+  if (n <= 0)
+    return CString ();
+  std::string narrow ((size_t) n, '\0');
+  WideCharToMultiByte (CP_ACP, 0, wide.c_str (), -1, &narrow [0], n, NULL, NULL);
+  return CString (narrow.c_str ());
+  }
+
+// Whole, with long names in place of 8.3 ones as far as they exist, and backslashes.
+CString NormalPath (const CString & strPath)
+  {
+  std::wstring wide = Wide (strPath);
+  if (wide.empty ())
+    return strPath;
+  DWORD n = GetFullPathNameW (wide.c_str (), 0, NULL, NULL);
+  if (n > 0)
+    {
+    std::wstring full ((size_t) n, L'\0');
+    n = GetFullPathNameW (wide.c_str (), n, &full [0], NULL);
+    if (n > 0 && n < full.size ())
+      {
+      full.resize (n);
+      wide = full;
+      }
+    }
+  DWORD m = GetLongPathNameW (wide.c_str (), NULL, 0);
+  if (m > 0)
+    {
+    std::wstring longer ((size_t) m, L'\0');
+    m = GetLongPathNameW (wide.c_str (), &longer [0], m);
+    if (m > 0 && m < longer.size ())
+      {
+      longer.resize (m);
+      wide = longer;
+      }
+    }
+  return Narrow (wide);
+  }
+
+// The volume and the file on it, which is the same for a file however it's reached: a
+// mapped drive or its UNC name, subst, a junction, a hard link.  False if it can't say.
+bool FileIdentity (const CString & strPath, BY_HANDLE_FILE_INFORMATION & info)
+  {
+  const HANDLE h = CreateFileW (Wide (strPath).c_str (), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+  if (h == INVALID_HANDLE_VALUE)
+    return false;
+  const bool bOK = GetFileInformationByHandle (h, &info) != 0;
+  CloseHandle (h);
+  return bOK && (info.nFileIndexHigh || info.nFileIndexLow);
+  }
+
 bool SamePath (const CString & a, const CString & b)
   {
-#ifdef _WIN32
-  CString strA (a), strB (b);
-  strA.Replace ('/', '\\');
-  strB.Replace ('/', '\\');
-  return strA.CompareNoCase (strB) == 0;
-#else
-  return a == b;
-#endif
+  BY_HANDLE_FILE_INFORMATION infoA, infoB;
+  if (FileIdentity (a, infoA) && FileIdentity (b, infoB))
+    return infoA.dwVolumeSerialNumber == infoB.dwVolumeSerialNumber &&
+           infoA.nFileIndexHigh == infoB.nFileIndexHigh && infoA.nFileIndexLow == infoB.nFileIndexLow;
+  return NormalPath (a).CompareNoCase (NormalPath (b)) == 0;
   }
+
+enum class Presence { There, Gone, CantTell };
+
+// Whether a world file is still where it was.  "Can't tell" (a share or a drive that isn't
+// there just now, no permission to look) is not "gone": a copy of that world mustn't take
+// its files because a network was down when it opened.
+Presence WorldFilePresence (const CString & strPath)
+  {
+  const std::wstring wide = Wide (NormalPath (strPath));
+  if (GetFileAttributesW (wide.c_str ()) != INVALID_FILE_ATTRIBUTES)
+    return Presence::There;
+  switch (GetLastError ())
+    {
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_INVALID_NAME:
+    case ERROR_BAD_PATHNAME:
+      return Presence::Gone;
+    case ERROR_PATH_NOT_FOUND:
+      {
+      // A folder that has gone, or a drive or share that is not there.  Only the drive or
+      // share being there says which.
+      std::wstring root;
+      if (wide.compare (0, 2, L"\\\\") == 0)
+        {
+        // \\server\share\ (or \\?\... , which NormalPath doesn't make)
+        size_t at = wide.find (L'\\', 2);
+        if (at != std::wstring::npos)
+          at = wide.find (L'\\', at + 1);
+        root = at == std::wstring::npos ? wide + L"\\" : wide.substr (0, at + 1);
+        }
+      else if (wide.size () >= 3 && wide [1] == L':')
+        root = wide.substr (0, 3);
+      if (!root.empty () && GetFileAttributesW (root.c_str ()) != INVALID_FILE_ATTRIBUTES)
+        return Presence::Gone;
+      return Presence::CantTell;
+      }
+    default:      // ERROR_BAD_NETPATH, ERROR_BAD_NET_NAME, ERROR_NOT_READY, ERROR_NETWORK_UNREACHABLE,
+      return Presence::CantTell;    // ERROR_ACCESS_DENIED and the rest
+    }
+  }
+
+#else   // POSIX: uncompiled here
+
+CString NormalPath (const CString & strPath)
+  {
+  char resolved [PATH_MAX];
+  if (realpath (strPath, resolved))
+    return CString (resolved);
+  return strPath;
+  }
+
+bool SamePath (const CString & a, const CString & b)
+  {
+  struct stat sa, sb;
+  if (stat (a, &sa) == 0 && stat (b, &sb) == 0)
+    return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+  return NormalPath (a) == NormalPath (b);
+  }
+
+enum class Presence { There, Gone, CantTell };
+
+Presence WorldFilePresence (const CString & strPath)
+  {
+  struct stat st;
+  if (stat (strPath, &st) == 0)
+    return Presence::There;
+  return errno == ENOENT || errno == ENOTDIR ? Presence::Gone : Presence::CantTell;
+  }
+
+#endif
 
 bool FileExists (const CString & strPath)
   {
@@ -148,6 +289,29 @@ CString ReadOwner (const CString & strPath)
   return strOwner;
   }
 
+CString ScrollbackFolder ()
+  {
+  CString strFolder (working_dir);
+#ifdef _WIN32
+  strFolder += "scrollback\\";
+#else
+  strFolder += "scrollback/";
+#endif
+  return strFolder;
+  }
+
+CString ByPathBase (const CString & strFolder, const CString & strWorld)
+  {
+  CString strByPath;
+  strByPath.Format ("%sw-%08lx", (LPCTSTR) strFolder, PathHash (strWorld));
+  return strByPath;
+  }
+
+bool HasSavedFiles (const CString & strBase)
+  {
+  return FileExists (strBase + ".mcsb") || FileExists (strBase + ".history");
+  }
+
 } // anonymous namespace
 
 
@@ -155,10 +319,18 @@ CString ReadOwner (const CString & strPath)
 // and a copy of a world file says the same: an alt's world made by Save As or by
 // copying the file would otherwise be given the original's output and command history,
 // and the two would overwrite each other's.  So <id>.owner says which world file the
-// files under <id> are for.  A world file that isn't that one gets w-<hash of its
-// path> instead, unless the owner has gone (it was renamed or moved, so this is it).
-// The first world to come along with the ID takes it, which is how files from before
-// there was an owner are found again.
+// files under <id> are for (the same file, however it's reached: see SamePath).  A world
+// file that isn't that one gets w-<hash of its path> instead, unless the owner has gone
+// (it was renamed or moved, so this is it), and this one has no files of its own by its
+// path, in which case it takes the ID's over.  A copy that has files of its own keeps
+// them: the original being deleted doesn't make the copy the original.  An owner that
+// can't be looked for (on a share that isn't there just now) is not gone.  With no owner
+// at all, the first world to come along with the ID takes it, which is how files from
+// before there was an owner are found again, unless, again, it has its own.
+//
+// Taking the ID's files means writing the owner, which only happens with the option on.
+// With it off the answer isn't kept, and the files aren't this world's to delete
+// (SavedFilesAreMine): a copy with saving off would otherwise delete its original's.
 //
 // A world file with no ID gets a new one each time it's opened until it is saved: its
 // files are named by its path meanwhile, and taken over by the ID when it has one.  One
@@ -169,16 +341,11 @@ CString CMUSHclientDoc::ScrollbackFileBase (void) const
   if (!m_strScrollbackBase.IsEmpty () && m_strScrollbackBaseForID == m_strWorldID)
     return m_strScrollbackBase;
 
-  CString strFolder (working_dir);
-#ifdef _WIN32
-  strFolder += "scrollback\\";
-#else
-  strFolder += "scrollback/";
-#endif
-
+  const CString strFolder = ScrollbackFolder ();
   const CString strWorld = GetPathName ();
   const CString strID = SafeForAFileName (m_bWorldIDIsNew ? m_strWorldIDInFile : m_strWorldID);
   CString strBase;
+  bool bSettled = true;
   if (strWorld.IsEmpty ())
     {
     // Never saved: nothing can find these again, and closing deletes them, unless it
@@ -190,36 +357,64 @@ CString CMUSHclientDoc::ScrollbackFileBase (void) const
     }
   else
     {
-    CString strByPath;
-    strByPath.Format ("%sw-%08lx", (LPCTSTR) strFolder, PathHash (strWorld));
+    const CString strByPath = ByPathBase (strFolder, strWorld);
     if (strID.IsEmpty ())
       strBase = strByPath;
     else
       {
-      strBase = strFolder + strID;
-      const CString strOwnerFile = strBase + ".owner";
+      const CString strIDBase = strFolder + strID;
+      const CString strOwnerFile = strIDBase + ".owner";
       const CString strOwner = ReadOwner (strOwnerFile);
-      if (!strOwner.IsEmpty () && !SamePath (strOwner, strWorld) && FileExists (strOwner))
+      const bool bMine = !strOwner.IsEmpty () && SamePath (strOwner, strWorld);
+      bool bTake = bMine;
+      if (!bMine)
+        {
+        const bool bOwnerGone = strOwner.IsEmpty () || WorldFilePresence (strOwner) == Presence::Gone;
+        // Files of its own count only if the ID has some to lose by taking it over.
+        bTake = bOwnerGone && !(HasSavedFiles (strByPath) && HasSavedFiles (strIDBase));
+        }
+      if (!bTake)
         strBase = strByPath;      // a copy of that world
       else
         {
-        if (m_bSaveScrollback && (strOwner.IsEmpty () || !SamePath (strOwner, strWorld)))
-          scrollback::WriteFileAtomically ((const char *) strOwnerFile, (LPCTSTR) strWorld,
-                                           (size_t) strWorld.GetLength ());
+        strBase = strIDBase;
+        if (!bMine)
+          bSettled = m_bSaveScrollback &&
+                     scrollback::WriteFileAtomically ((const char *) strOwnerFile, (LPCTSTR) strWorld,
+                                                      (size_t) strWorld.GetLength ());
         // What was kept for it by path, before its ID stuck.
-        if (!FileExists (strBase + ".mcsb") && !FileExists (strBase + ".history"))
+        if (bSettled && !HasSavedFiles (strIDBase))
           {
-          rename (strByPath + ".mcsb", strBase + ".mcsb");
-          rename (strByPath + ".history", strBase + ".history");
+          rename (strByPath + ".mcsb", strIDBase + ".mcsb");
+          rename (strByPath + ".history", strIDBase + ".history");
           }
         }
       }
     }
 
-  m_strScrollbackBase = strBase;
-  m_strScrollbackBaseForID = m_strWorldID;
+  if (bSettled)
+    {
+    m_strScrollbackBase = strBase;
+    m_strScrollbackBaseForID = m_strWorldID;
+    m_strScrollbackBaseForPath = strWorld;
+    }
   return strBase;
   } // end of CMUSHclientDoc::ScrollbackFileBase
+
+
+bool CMUSHclientDoc::SavedFilesAreMine (void) const
+  {
+  const CString strBase = ScrollbackFileBase ();
+  if (strBase.IsEmpty () || m_strScrollbackBase != strBase || m_strScrollbackBaseForID != m_strWorldID)
+    return false;     // not decided for good, so not taken
+  const CString strWorld = m_strScrollbackBaseForPath;
+  if (strWorld.IsEmpty ())
+    return true;      // a fresh ID, which nothing else has
+  if (strBase == ByPathBase (ScrollbackFolder (), strWorld))
+    return true;
+  const CString strOwner = ReadOwner (strBase + ".owner");
+  return !strOwner.IsEmpty () && SamePath (strOwner, strWorld);
+  } // end of CMUSHclientDoc::SavedFilesAreMine
 
 
 CString CMUSHclientDoc::ScrollbackFilePath (void) const
@@ -267,10 +462,14 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
 
   // Build the lines.  The blocks are independent, and building a line touches nothing
   // shared but the heap, so this goes across as many threads as Load's decoding did.
+  // Newest first, each block from its newest line back, so that if memory runs out it is
+  // the oldest lines that are done without (see below).
   const size_t iBlocks = load.blocks.size ();
-  std::vector<std::vector<CLine *>> built (iBlocks);
+  std::vector<std::vector<CLine *>> built (iBlocks);   // in order; null until built
+  std::vector<size_t> firstBuilt (iBlocks, 0);           // built [b] is built from here on
   struct PendingAction
     {
+    size_t slot;               // in built [b]
     CStyle * pStyle;
     const scrollback::Action * pAction;
     };
@@ -300,62 +499,116 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
     iNextNumber += (long) load.blocks [b]->lines.size () - (b == 0 ? (long) load.firstLineInFirstBlock : 0);
     }
 
-  std::vector<char> failed (iBlocks, 0);
-  std::atomic<size_t> next (0);
-  auto buildBlocks = [&] ()
+  // Builds what is left of block b, newest line first.  False if memory ran out, which
+  // (a huge buffer in a 32-bit process) must not leave a thread as an exception: that
+  // would end the client, and would every time the world was opened.  What it built
+  // before then stays built.
+  auto buildBlock = [&] (const size_t b) -> bool
     {
-    for (;;)
+    const scrollback::DecodedBlock & block = *load.blocks [b];
+    const size_t iFirst = b == 0 ? load.firstLineInFirstBlock : 0;
+    std::vector<CLine *> & lines = built [b];
+    if (lines.empty ())
       {
-      const size_t b = next.fetch_add (1);
-      if (b >= iBlocks)
-        return;
-      const scrollback::DecodedBlock & block = *load.blocks [b];
-      const size_t iFirst = b == 0 ? load.firstLineInFirstBlock : 0;
-      std::vector<CLine *> & lines = built [b];
-      // Out of memory (a huge buffer in a 32-bit process) must not leave this thread
-      // as an exception, which would end the client, and would every time the world
-      // was opened.  The block is given up, and with it everything older.
       try
         {
-        lines.reserve (block.lines.size () - iFirst);
-        long iNumber = firstNumbers [b];
-        for (size_t i = iFirst; i < block.lines.size (); i++)
+        lines.assign (block.lines.size () - iFirst, nullptr);
+        }
+      catch (...)
+        {
+        return false;
+        }
+      firstBuilt [b] = lines.size ();
+      }
+    while (firstBuilt [b] > 0)
+      {
+      const size_t slot = firstBuilt [b] - 1;
+      const scrollback::Line & line = block.lines [iFirst + slot];
+      CLine * pLine = nullptr;
+      try
+        {
+        pLine = new CLine (bRenumber ? firstNumbers [b] + (long) slot : (long) line.number,
+                           CTime ((time_t) line.time),
+                           iStartedHP + (LONGLONG) (line.time - tStarted) * iFrequency,
+                           (unsigned char) (line.flags & ~LOG_LINE),
+                           line.hardReturn,
+                           line.charCount,
+                           (short) line.preamble,
+                           block.text + line.textOffset,
+                           (int) line.length);
+        for (uint32_t s = 0; s < line.styleCount; s++)
           {
-          const scrollback::Line & line = block.lines [i];
-          CLine * pLine = new CLine (bRenumber ? iNumber++ : (long) line.number,
-                                     CTime ((time_t) line.time),
-                                     iStartedHP + (LONGLONG) (line.time - tStarted) * iFrequency,
-                                     (unsigned char) (line.flags & ~LOG_LINE),
-                                     line.hardReturn,
-                                     line.charCount,
-                                     (short) line.preamble,
-                                     block.text + line.textOffset,
-                                     (int) line.length);
-          lines.push_back (pLine);    // can't throw: reserved
-          for (uint32_t s = 0; s < line.styleCount; s++)
+          const scrollback::Style & saved = block.styles [line.firstStyle + s];
+          CStyle * pStyle = new CStyle;
+          pStyle->iLength = (unsigned short) saved.length;
+          pStyle->iFlags = (unsigned short) saved.flags;
+          pStyle->iForeColour = saved.fore;
+          pStyle->iBackColour = saved.back;
+          if (!ActionSurvivesRestore (saved.flags))
+            pStyle->iFlags &= ~ACTIONTYPE;
+          try
             {
-            const scrollback::Style & saved = block.styles [line.firstStyle + s];
-            CStyle * pStyle = new CStyle;
-            pStyle->iLength = (unsigned short) saved.length;
-            pStyle->iFlags = (unsigned short) saved.flags;
-            pStyle->iForeColour = saved.fore;
-            pStyle->iBackColour = saved.back;
-            if (!ActionSurvivesRestore (saved.flags))
-              pStyle->iFlags &= ~ACTIONTYPE;
             pLine->styleList.AddTail (pStyle);
-            if (ActionSurvivesRestore (saved.flags) && saved.action >= 0)
-              actions [b].push_back (PendingAction { pStyle, &block.actions [(size_t) saved.action] });
             }
+          catch (...)
+            {
+            delete pStyle;
+            throw;
+            }
+          if (ActionSurvivesRestore (saved.flags) && saved.action >= 0)
+            actions [b].push_back (PendingAction { slot, pStyle, &block.actions [(size_t) saved.action] });
           }
         }
       catch (...)
         {
-        failed [b] = 1;
+        // Its styles go with it, so their actions mustn't be left for a later try at it.
+        while (!actions [b].empty () && actions [b].back ().slot == slot)
+          actions [b].pop_back ();
+        delete pLine;
+        return false;
+        }
+      lines [slot] = pLine;
+      firstBuilt [b] = slot;
+      }
+    return true;
+    };
+
+  // Lines of b and every block before it go: there's a gap after them.
+  auto letGoUpTo = [&] (const size_t b)
+    {
+    for (size_t gone = 0; gone < b; gone++)
+      {
+      for (size_t slot = firstBuilt [gone]; slot < built [gone].size (); slot++)
+        delete built [gone] [slot];
+      built [gone].clear ();
+      firstBuilt [gone] = 0;
+      actions [gone].clear ();
+      }
+    };
+
+  std::atomic<size_t> next (0);
+  std::atomic<size_t> failedAbove (0);     // 1 + the newest block that ran out, or 0
+  auto buildBlocks = [&] ()
+    {
+    for (;;)
+      {
+      const size_t n = next.fetch_add (1);
+      if (n >= iBlocks)
+        return;
+      const size_t b = iBlocks - 1 - n;
+      if (b + 1 < failedAbove.load ())
+        continue;     // older than one that ran out: no use
+      if (!buildBlock (b))
+        {
+        size_t seen = failedAbove.load ();
+        while (seen < b + 1 && !failedAbove.compare_exchange_weak (seen, b + 1))
+          {
+          }
         }
       }
     };
 
-  unsigned iThreads = (std::min) ((std::max) (std::thread::hardware_concurrency (), 1u), 8u);
+  unsigned iThreads = scrollback::ThreadsToUse ();
   if (iBlocks < iThreads)
     iThreads = iBlocks > 0 ? (unsigned) iBlocks : 1;
   std::vector<std::thread> pool;
@@ -371,33 +624,35 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
   for (std::thread & t : pool)
     t.join ();
 
-  // A block that didn't fit in memory, and everything before it, goes: what comes back
-  // is the newest lines, without a gap.  The file keeps them all.
-  for (size_t b = iBlocks; b > 0; b--)
-    if (failed [b - 1])
-      {
-      for (size_t gone = 0; gone < b; gone++)
+  // What comes back is the newest lines, without a gap, as many as fit; the file keeps
+  // them all.  Other threads were building older blocks when one ran out, which is no use
+  // past the gap and may be what it ran out for: they go, and that block and the ones
+  // before it carry on, one at a time, until there's no more room.
+  if (failedAbove.load () > 0)
+    {
+    const size_t newest = failedAbove.load () - 1;
+    letGoUpTo (newest);
+    for (size_t b = newest + 1; b-- > 0; )
+      if (!buildBlock (b))
         {
-        for (CLine * pLine : built [gone])
-          delete pLine;
-        built [gone].clear ();
-        actions [gone].clear ();
+        letGoUpTo (b);
+        break;
         }
-      break;
-      }
+    }
 
   // Actions are the document's, and shared between styles.
-  for (const std::vector<PendingAction> & blockActions : actions)
-    for (const PendingAction & a : blockActions)
-      a.pStyle->pAction = GetAction (a.pAction->action.c_str (), a.pAction->hint.c_str (), a.pAction->variable.c_str ());
+  for (size_t b = 0; b < iBlocks; b++)
+    for (const PendingAction & a : actions [b])
+      if (a.slot >= firstBuilt [b])
+        a.pStyle->pAction = GetAction (a.pAction->action.c_str (), a.pAction->hint.c_str (), a.pAction->variable.c_str ());
 
   // Into the buffer.
   m_LinePositions.BeginRebuild ();
   long iCount = 0;
-  for (const std::vector<CLine *> & lines : built)
-    for (CLine * pLine : lines)
+  for (size_t b = 0; b < iBlocks; b++)
+    for (size_t slot = firstBuilt [b]; slot < built [b].size (); slot++)
       {
-      const POSITION pos = m_LineList.AddTail (pLine);
+      const POSITION pos = m_LineList.AddTail (built [b] [slot]);
       if (iCount % JUMP_SIZE == 0)
         m_LinePositions.Append (pos);
       iCount++;
@@ -416,9 +671,12 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
     m_total_lines = iFileLast;
 
   // And carry on writing.  A second copy of the client with this world open means no
-  // writer: what it restored is still worth seeing, but it can't save.
-  std::unique_ptr<scrollback::Writer> writer (new scrollback::Writer ((const char *) strPath, m_bUTF_8 != 0, load));
-  if (writer->IsOpen ())
+  // writer: what it restored is still worth seeing, but it can't save.  Nor if the files
+  // couldn't be claimed (the owner file couldn't be written).
+  std::unique_ptr<scrollback::Writer> writer;
+  if (SavedFilesAreMine ())
+    writer.reset (new scrollback::Writer ((const char *) strPath, m_bUTF_8 != 0, load));
+  if (writer && writer->IsOpen ())
     {
     m_pScrollback = new CScrollbackSession;
     m_pScrollback->writer = std::move (writer);
@@ -454,7 +712,7 @@ void CMUSHclientDoc::ScrollbackTick (void)
       {
       m_bScrollbackWanted = false;
       const CString strPath = ScrollbackFilePath ();
-      if (!strPath.IsEmpty ())
+      if (!strPath.IsEmpty () && SavedFilesAreMine ())
         {
         scrollback::LoadResult none;    // anything already there is replaced
         std::unique_ptr<scrollback::Writer> writer (new scrollback::Writer ((const char *) strPath, m_bUTF_8 != 0, none));
@@ -472,7 +730,7 @@ void CMUSHclientDoc::ScrollbackTick (void)
   // Turned off: stop, and don't leave what was saved lying around.
   if (!m_bSaveScrollback)
     {
-    m_pScrollback->writer->Close (true);
+    m_pScrollback->writer->Close (SavedFilesAreMine ());    // a file that is still ours, that is
     delete m_pScrollback;
     m_pScrollback = NULL;
     m_bScrollbackWanted = true;
@@ -509,6 +767,11 @@ void CMUSHclientDoc::FlushSavedScrollback (const bool bClosing)
     return;
 
   CScrollbackSession & session = *m_pScrollback;
+
+  // What is handed over below could set off a rewrite of the whole file to reclaim space,
+  // and the close waits for the worker.  That can as well happen next session.
+  if (bClosing)
+    session.writer->StopReclaiming ();
 
   // Find what hasn't been saved, walking back from the end: the first line of it, and
   // the last line that is finished with.  A wrapped line is not finished until its
@@ -615,7 +878,7 @@ void CMUSHclientDoc::FlushSavedScrollback (const bool bClosing)
     // A world that has never been saved has no way to find this again, unless it is
     // saved after all (at which point this hasn't happened yet: this is the close).
     const bool bForget = m_strPathName.IsEmpty () || !m_bSaveScrollback;
-    session.writer->Close (bForget);
+    session.writer->Close (bForget && SavedFilesAreMine ());
     delete m_pScrollback;
     m_pScrollback = NULL;
     return;
@@ -691,7 +954,7 @@ void CMUSHclientDoc::ClearSavedScrollback (void)
     return;
     }
   const CString strPath = ScrollbackFilePath ();
-  if (!strPath.IsEmpty ())
+  if (!strPath.IsEmpty () && SavedFilesAreMine ())
     {
     scrollback::LoadResult none;
     scrollback::Writer writer ((const char *) strPath, m_bUTF_8 != 0, none);

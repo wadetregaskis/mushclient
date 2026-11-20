@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -54,6 +55,21 @@ long DayOf (const time_t when)
   if (!t)
     return (long) (when / kDay);
   return (long) (t->tm_year + 1900) * 10000 + (t->tm_mon + 1) * 100 + t->tm_mday;
+  }
+
+// The n of a "-n" copy, which was taken after the one without it and those with a lower n:
+// copies with one name share a time, and that is the only way to tell them apart.
+int CopyNumber (const std::string & name)
+  {
+  const size_t kStamp = 15;     // "dddddddd-dddddd"
+  if (name.size () > kStamp + 1 && name [kStamp] == '-')
+    return atoi (name.c_str () + kStamp + 1);
+  return 1;
+  }
+
+bool Newer (const Entry & a, const Entry & b)
+  {
+  return a.when != b.when ? a.when > b.when : CopyNumber (a.name) > CopyNumber (b.name);
   }
 
 std::string ReadAll (const fs::path & path)
@@ -129,8 +145,7 @@ std::string FolderFor (const std::string & backupsRoot, const std::string & worl
 std::vector<std::string> ChooseToDelete (std::vector<Entry> entries, const time_t now)
   {
   // Newest first.
-  std::sort (entries.begin (), entries.end (),
-             [] (const Entry & a, const Entry & b) { return a.when > b.when; });
+  std::sort (entries.begin (), entries.end (), Newer);
 
   std::set<std::string> keep;
 
@@ -190,7 +205,7 @@ bool BackUpIfDue (const std::string & backupsRoot, const std::string & worldPath
 
   const Entry * pNewest = nullptr;
   for (const Entry & e : entries)
-    if (!pNewest || e.when > pNewest->when)
+    if (!pNewest || Newer (e, *pNewest))
       pNewest = &e;
 
   if (!bFirstThisSession && pNewest && now - pNewest->when < kHour)

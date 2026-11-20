@@ -695,6 +695,10 @@ private:
     enum EHistPark { eHistNotParked, eHistParkedOld, eHistParkedNew };
     EHistPark             m_histParked = eHistNotParked;
     std::string           m_historyFilePath;    // per-world history file, fixed at construction
+    // What the file was last given, and when the world timer last looked: it saves
+    // every 30 s if the history has changed, as Windows does, and not only on close.
+    std::vector<wxString> m_historyAsSaved;
+    time_t                m_tHistoryChecked = 0;
 
     // ── Kill ring (emacs-style) ────────────────────────────────────────────
     // Ctrl+K and Ctrl+W save the killed text here; Ctrl+Y pastes it back.

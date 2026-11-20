@@ -11,6 +11,7 @@
 
 #include <wx/wx.h>
 #include <wx/image.h>          // wxInitAllImageHandlers
+#include <wx/modalhook.h>      // wxModalDialogHook
 #include <csignal>             // signal, SIGPIPE
 #include <cstdlib>             // std::exit (selftest flag)
 #include "platform/extended_selftest.h"   // the loop-running test mode
@@ -124,6 +125,23 @@ int RunOutputPaneSelfTest();
     std::exit(rc);
 }
 
+// Counts the modal dialogs that are up, native ones included (wx calls the hook for
+// those too), so that a world doesn't save itself from a timer in the middle of one:
+// World Properties, say, with half its changes made.  Windows asks whether the main
+// window is enabled (doc_autosave_shared.cpp).
+class CModalDialogCounter : public wxModalDialogHook {
+public:
+    int m_iOpen = 0;
+protected:
+    int Enter(wxDialog*) override { m_iOpen++; return wxID_NONE; }
+    void Exit(wxDialog*) override { if (m_iOpen > 0) m_iOpen--; }
+};
+// Never deleted: a hook is unregistered by its destructor, which for a static would
+// run after wx has gone.
+static CModalDialogCounter * g_pModalDialogs = nullptr;
+extern bool (*g_pfnModalDialogUp)();
+static bool ModalDialogUp() { return g_pModalDialogs && g_pModalDialogs->m_iOpen > 0; }
+
 class CMUSHWxApp : public wxApp {
     bool m_extendedSelfTest = false;
 public:
@@ -134,6 +152,10 @@ public:
         // Win32 MFC command IDs >= 0x8000, or CaptureMouse on an unmapped
         // test window).
         wxDisableAsserts();
+
+        g_pModalDialogs = new CModalDialogCounter;
+        g_pModalDialogs->Register();
+        g_pfnModalDialogUp = ModalDialogUp;
 
         // before InitInstance reads the preference and calls Appearance_Init
         extern void WxAppearance_Install();

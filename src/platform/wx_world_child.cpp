@@ -4006,6 +4006,7 @@ void CWorldChildFrame::SaveCommandHistoryFile()
     // never been saved has nowhere to come back to it from.
     if (!m_doc->m_bSaveScrollback || m_doc->GetPathName().IsEmpty()) {
         remove(m_historyFilePath.c_str());
+        m_historyAsSaved = m_history;
         return;
     }
 
@@ -4013,7 +4014,8 @@ void CWorldChildFrame::SaveCommandHistoryFile()
     commands.reserve(m_history.size());
     for (const wxString& cmd : m_history)
         commands.push_back(cmd.ToUTF8().data());
-    command_history::Save(m_historyFilePath, commands);
+    if (command_history::Save(m_historyFilePath, commands))
+        m_historyAsSaved = m_history;
 }
 
 // Everything OnClose writes to disk before the teardown begins.  BOTH close
@@ -5742,6 +5744,14 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
             m_lastStatusTick = nowSec;
             RefreshTimePane();
         }
+        // The command history, if it has changed, every 30 s (CSendView::
+        // SaveCommandHistoryIfChanged): a crash or a forced quit would lose the
+        // session's commands otherwise.
+        if (nowSec - m_tHistoryChecked >= 30) {
+            m_tHistoryChecked = nowSec;
+            if (m_history != m_historyAsSaved)
+                SaveCommandHistoryFile();
+        }
     }
 
     // Keep the freeze pane's PAUSE/MORE distinction honest.  Unlike the clock
@@ -6517,6 +6527,11 @@ std::vector<std::string> CWorldChildFrame::commandList(long count) const
 void CWorldChildFrame::addToCommandHistory(const char* text)
 {
     if (!*text) return;
+    // A script adding to it with echo off (a plugin keeping the reply to a password
+    // prompt, say) must not put it in the history file, and unlike Windows this
+    // port's history has no way to keep an entry in memory only: refuse it, as
+    // pushCommand does.
+    if (m_doc && m_doc->m_bNoEcho) return;
     wxString entry = wxString::FromUTF8(text);
     if (!m_history.empty() && m_history.back() == entry)
         return;   // same as last entry — don't add duplicate

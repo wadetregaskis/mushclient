@@ -35,6 +35,12 @@ static char BASED_CODE THIS_FILE[] = __FILE__;
 
 extern char working_dir [_MAX_PATH];
 
+#ifndef _WIN32
+// The wx frontend sets this (wx_app.cpp): true while a modal dialog is up.  Null where
+// there are none, in the tests and selftests.
+bool (*g_pfnModalDialogUp) () = nullptr;
+#endif
+
 namespace {
 
 const int kQuietSeconds = 7;
@@ -166,6 +172,9 @@ void CMUSHclientDoc::AutosaveTick (void)
     return;
 #if defined(_WIN32) && !defined(MUSHCLIENT_TESTS)
   if (App.m_pMainWnd && !App.m_pMainWnd->IsWindowEnabled ())
+    return;
+#elif !defined(_WIN32)
+  if (g_pfnModalDialogUp && g_pfnModalDialogUp ())
     return;
 #endif
 

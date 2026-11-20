@@ -651,6 +651,13 @@ bool Proto_MspInterrupted (CMUSHclientDoc & doc, const unsigned char c)
   {
   if (doc.m_phase == HAVE_MSP_TRIGGER)
     {
+    // A CR stays with the caller, which looks at the byte after it (to tell CR LF from
+    // a CR that clears the line): replayed on its own, the next byte would be the end.
+    if (c == '\r')
+      {
+      GiveBack (doc);
+      return false;
+      }
     GiveBack (doc, c);     // and the line ending, ESC or IAC with it, as above
     return true;
     }

@@ -831,11 +831,17 @@ std::string MspDownloadUrl (const std::string & baseIn, const std::string & name
       encoded += hex;
       }
 
-  // The spec says the file name is added to U=, and some servers give all of it anyway.
-  const size_t slash = encoded.rfind ('/');
-  const std::string leaf = slash == std::string::npos ? encoded : encoded.substr (slash + 1);
-  if (base.size () > leaf.size () && base.compare (base.size () - leaf.size (), leaf.size (), leaf) == 0 &&
-      base [base.size () - leaf.size () - 1] == '/')
+  // The spec says the file name is added to U=, and some servers give all of it anyway,
+  // as they wrote it (door(1).wav) or already encoded (door%281%29.wav).
+  const auto endsWithLeaf = [&base] (const std::string & path)
+    {
+    const size_t slash = path.rfind ('/');
+    const std::string leaf = slash == std::string::npos ? path : path.substr (slash + 1);
+    return !leaf.empty () && base.size () > leaf.size () &&
+           base.compare (base.size () - leaf.size (), leaf.size (), leaf) == 0 &&
+           base [base.size () - leaf.size () - 1] == '/';
+    };
+  if (endsWithLeaf (encoded) || endsWithLeaf (name))
     return base;
 
   if (base.back () != '/')

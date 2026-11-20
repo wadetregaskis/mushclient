@@ -2714,6 +2714,23 @@ TEST (ProtoMsp, UrlsAreEncoded)
   // a U= that is the whole URL already, encoded as it would be
   EXPECT_EQ (std::string ("https://a.b/s/my%20sound.wav"),
              proto::MspDownloadUrl ("https://a.b/s/my%20sound.wav", "my sound.wav"));
+  // ... or as the server wrote the name, which it may well have
+  EXPECT_EQ (std::string ("http://x/sounds/door(1).wav"),
+             proto::MspDownloadUrl ("http://x/sounds/door(1).wav", "door(1).wav"));
+  EXPECT_EQ (std::string ("http://x/sounds/a+b.wav"),
+             proto::MspDownloadUrl ("http://x/sounds/a+b.wav", "a+b.wav"));
+}
+
+// A line that started like a trigger and wasn't one is replayed as text.  Its CR goes
+// back to the display loop as it came, so CR LF is still CR LF to "CR clears line".
+TEST (ProtoMspStream, AnUnfinishedTriggerKeepsItsLineWhenCrClearsLine)
+{
+  World w;
+  w.doc.m_bMSPWithoutNegotiation = true;
+  w.doc.m_bCarriageReturnClearsLine = true;
+  w.feed ("!!SOUND(foo.wav\r\nnext\r\n");
+  EXPECT_TRUE (w.allOutput ().find ("!!SOUND(foo.wav") != std::string::npos);
+  EXPECT_TRUE (w.allOutput ().find ("next") != std::string::npos);
 }
 
 TEST (ProtoMspStream, TypeIsCheckedOnTheWayToADownload)

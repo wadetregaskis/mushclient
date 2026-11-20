@@ -122,6 +122,15 @@ void CWindowPlacement::GetProfileWP(LPCSTR lpKeyName)
 
   RECT& rc = rcNormalPosition;  // because I hate typing
 
+#ifdef _WIN32
+  // What's stored is in 96-dpi pixels (below), so the defaults have to be too.
+  const int iDpi = Dpi_ForSystem ();
+  rc.left   = ::MulDiv (rc.left, 96, iDpi);
+  rc.right  = ::MulDiv (rc.right, 96, iDpi);
+  rc.top    = ::MulDiv (rc.top, 96, iDpi);
+  rc.bottom = ::MulDiv (rc.bottom, 96, iDpi);
+#endif
+
   rc.left   = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.left"),   rc.left);
   rc.right  = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.right"),  rc.right);
   rc.top    = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.top"),    rc.top);
@@ -130,7 +139,6 @@ void CWindowPlacement::GetProfileWP(LPCSTR lpKeyName)
 #ifdef _WIN32
   // Kept in 96-dpi pixels, which is what a dpi-unaware 5.x or 6.0 saved too.  Asked for
   // on another monitor, it gets WM_DPICHANGED and comes right.
-  const int iDpi = Dpi_ForSystem ();
   rc.left   = ::MulDiv (rc.left, iDpi, 96);
   rc.right  = ::MulDiv (rc.right, iDpi, 96);
   rc.top    = ::MulDiv (rc.top, iDpi, 96);

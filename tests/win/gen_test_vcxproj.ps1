@@ -210,16 +210,17 @@ foreach ($cfg in @('Debug','Release')) {
   W '    </Link>'
   # DPI awareness is part of "how this builds on Windows" just as much as the
   # source list, and getting it wrong changes what every PIXEL measurement in
-  # the suite means.  MUSHclient.vcxproj sets EnableDpiAwareness=false in both
-  # configurations (its manifest declares no dpiAware element either), so the
-  # shipping client is DPI-UNAWARE: Windows lies to it about the display and
-  # GetDeviceCaps (LOGPIXELSY) answers 96 whatever the monitor is doing.
+  # the suite means.  The client is per-monitor aware (src/dpi.h), through the
+  # manifest src\MUSHclient.rc embeds, and that comes along with the resources
+  # here.  The suite wants 96 dpi on any machine, so MC_TEST_WIN_HOST_INIT
+  # (tests/mc_test.h) pins its thread unaware at startup; tests of other scales
+  # ask for them (tests/win/test_hidpi_win.cpp).  This setting is for the linker's
+  # own manifest, which would otherwise say aware as well: MSBuild's default.
   #
-  # MSBuild's default for a VC project is DPI-AWARE.  Without this the test
-  # binary read the real screen -- 216 on the machine this was found on -- so
-  # CMiniWindow::Font's MulDiv (points, dpi(), 72) produced a 24-pixel cell for
-  # an 8-point font where the client produces 11, and LuaSurface's font-parity
-  # pin failed against a client that was never wrong.  Mirror the app.
+  # Before any of that, the test binary read the real screen -- 216 on the machine
+  # this was found on -- so CMiniWindow::Font's MulDiv (points, dpi(), 72) produced a
+  # 24-pixel cell for an 8-point font where the client produces 11, and LuaSurface's
+  # font-parity pin failed against a client that was never wrong.
   W '    <Manifest>'
   W '      <EnableDpiAwareness>false</EnableDpiAwareness>'
   W '    </Manifest>'
@@ -290,6 +291,7 @@ W '    <ClCompile Include="tests\win\test_win_worldview.cpp" />'
 W '    <ClCompile Include="tests\win\test_user_data.cpp" />'
 W '    <ClCompile Include="tests\win\test_spell_engine.cpp" />'
 W '    <ClCompile Include="tests\win\test_hidpi_win.cpp" />'
+W '    <ClCompile Include="tests\win\test_split_win.cpp" />'
 foreach ($t in $tests) { W "    <ClCompile Include=`"$t`" />" }
 W '  </ItemGroup>'
 W '  <ItemGroup>'

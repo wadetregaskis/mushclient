@@ -2179,6 +2179,41 @@ void COutputPane::OnPaint(wxPaintEvent&)
             DrawPendingRow(dc, pendingY);
     }
 
+    // ── The live tail, while scrolled back ─────────────────
+    // The same lines through the same DrawLine, with the origin moved so that the last
+    // row lands at the bottom of the strip.  Miniwindows are composited after this, as
+    // they are over any text.  Nothing here moves the scroll position or changes what a
+    // plugin can read.
+    {
+        int stripTop = 0, stripRows = 0;
+        long long tailTopRow = 0;
+        if (SplitGeometry(stripTop, stripRows, tailTopRow)) {
+            const int stripW = trActive ? (trR - trL) : clientW;
+            if (trActive) dc.DestroyClippingRegion();
+            dc.SetDeviceOrigin(0, 0);
+            dc.SetDeviceClippingRegion(wxRegion(trL, trT + stripTop, stripW, stripRows * m_lineH + 2));
+            dc.SetBrush(wxBrush(bgCol));
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.DrawRectangle(trL, trT + stripTop, stripW, stripRows * m_lineH + 2);
+            dc.SetBrush(wxBrush(wxColour(128, 128, 128)));
+            dc.DrawRectangle(trL, trT + stripTop, stripW, 2);
+
+            dc.SetDeviceOrigin(trL + m_pixelOffset - scrollX * unitW,
+                               (wxCoord) (trT + stripTop + 2 - tailTopRow * m_lineH));
+            dc.SetFont(m_font);
+            const int firstTail = std::max(0, VisualRowToLogical(pal::clampToDeviceExtent(tailTopRow)));
+            for (int i = firstTail; i < LineCountI(); ++i)
+                DrawLine(dc, i, RowStartOf(i) * m_lineH);
+            if (!m_pendingLine.empty())
+                DrawPendingRow(dc, pal::clampToDeviceExtent(pal::rowsToPixels(m_totalVisualRows, m_lineH)));
+
+            dc.DestroyClippingRegion();
+            dc.SetDeviceOrigin(trL + m_pixelOffset - scrollX * unitW, trT - scrollY * unitH);
+            if (trActive)
+                dc.SetDeviceClippingRegion(wxRegion(trL, trT, trR - trL, trB - trT));
+        }
+    }
+
     if (trActive)
         dc.DestroyClippingRegion();   // text drawing done; miniwindows aren't clipped
 
@@ -3059,6 +3094,36 @@ void COutputPane::OnSize(wxSizeEvent& evt)
 
 // ── Selection helpers ─────────────────────────────────────────────────────────
 
+bool COutputPane::SplitGeometry(int& stripTop, int& rows, long long& tailTopRow) const
+{
+    if (!m_splitScrollback || m_autoScroll || m_lineH <= 0 || LineCountI() == 0)
+        return false;
+
+    int l, t, r, b;
+    TextRect(l, t, r, b);
+    // the hint bar, which is still how to get back with a click, sits below the strip
+    const int usableH = (b - t) - kHintBarH;
+    if (usableH < m_lineH * 8)
+        return false;
+
+    rows = std::max(2, usableH * m_splitPercent / 100 / m_lineH);
+    stripTop = usableH - rows * m_lineH - 2;
+    const long long total = m_totalVisualRows + (m_pendingLine.empty() ? 0 : 1);
+    tailTopRow = std::max(0LL, total - rows);
+    return true;
+}
+
+// clientY is below the text area's top.  The pixel of the line buffer that it's over, which
+// in the strip isn't where the scroll position would put it.
+long long COutputPane::ClientYToVirtual(long long scrollPix, int clientY) const
+{
+    int stripTop = 0, rows = 0;
+    long long tailTopRow = 0;
+    if (SplitGeometry(stripTop, rows, tailTopRow) && clientY >= stripTop + 2)
+        return tailTopRow * m_lineH + (clientY - stripTop - 2);
+    return scrollPix + clientY;
+}
+
 int COutputPane::YToLine(int clientY, bool* outside) const
 {
     // Windows' bOutside starts TRUE and is cleared only when the raw row lands
@@ -3074,7 +3139,7 @@ int COutputPane::YToLine(int clientY, bool* outside) const
     const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
     int unitH;
     const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
-    const long long yPix   = (long long) scrollY * unitH + clientY;
+    const long long yPix   = ClientYToVirtual((long long) scrollY * unitH, clientY);
     const long long rawRow = (m_lineH > 0) ? (yPix / m_lineH) : 0;
     const int visRow = pal::clampToDeviceExtent(rawRow);
     // The row the pixel really named, BEFORE the clamp above -- Windows keeps
@@ -3146,7 +3211,7 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY,
     // line was clicked, so we can add (vrOffset * m_wrapCols) to the column.
     int vrOffset = 0;
     if (m_wrapCols > 0 && m_lineH > 0) {
-        int yPix       = scrollY * unitH + clientY;
+        int yPix       = (int) ClientYToVirtual((long long) scrollY * unitH, clientY);
         int clickVR    = yPix / m_lineH;
         int lineStartVR = RowStartOf(lineIdx);
         vrOffset = std::max(0, clickVR - lineStartVR);

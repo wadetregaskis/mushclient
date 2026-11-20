@@ -2092,6 +2092,7 @@ void CWorldChildFrame::ApplyGlobalPrefs()
     // CMUSHView::OnDraw / ScrollToPosition -- a view the port never constructs
     // -- so both checkboxes were inert.
     m_output->SetBleedBackground(App.m_bBleedBackground != 0);
+    m_output->SetSplitScrollback(App.m_bSplitScrollback != 0, (int) App.m_iSplitScrollbackPercent);
     m_output->SetSmootherScrolling(App.m_bSmootherScrolling != 0);
     m_output->SetSmoothScrolling(App.m_bSmoothScrolling != 0);
 

@@ -151,6 +151,8 @@ public:
   unsigned int m_bOpenWorldsMaximised;
   unsigned int m_iWindowTabsStyle;
   unsigned int m_iAppearance;   // APPEARANCE_SYSTEM etc. (appearance.h)
+  unsigned int m_bSplitScrollback;      // scrolled back, show the live tail below
+  unsigned int m_iSplitScrollbackPercent;   // how much of the output window it takes
   unsigned int m_bReconnectOnLinkFailure;
   unsigned int m_bRegexpMatchEmpty;
   unsigned int m_bShowGridLinesInListViews;

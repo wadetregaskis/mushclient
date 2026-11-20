@@ -100,6 +100,7 @@ public:
 	int		m_iWindowTabsStyle;
 	BOOL	m_bFlatToolbars;
 	int		m_iAppearance;
+	BOOL	m_bSplitScrollback;
 	BOOL	m_bErrorNotificationToOutputWindow;
 	CString	m_strLocale;
 	//}}AFX_DATA

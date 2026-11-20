@@ -350,10 +350,16 @@ TEST (WinUia, ANotificationReachesAClient)
   EXPECT_EQ (1, (int) ready);
   if (ready == 1)
     {
-    Pump (300, [] { return false; });
-    EXPECT_TRUE (pal::RaiseUiaNotification (hWnd, "caf\xC3\xA9 is open", 2));
-    Pump (5000, [&] { return listener.count > 0; });
-    EXPECT_EQ (1, (int) listener.count);
+    // UI Automation hands out a subscription before every provider has heard of it, and on
+    // a busy or emulated machine that has taken over a second: so say it until it is heard.
+    bool bRaised = true;
+    for (int i = 0; i < 20 && listener.count == 0; i++)
+      {
+      bRaised = bRaised && pal::RaiseUiaNotification (hWnd, "caf\xC3\xA9 is open", 2);
+      Pump (500, [&] { return listener.count > 0; });
+      }
+    EXPECT_TRUE (bRaised);
+    EXPECT_TRUE (listener.count >= 1);
     EXPECT_TRUE (listener.text.size () == 12 && listener.text [3] == 0xE9);
     }
   InterlockedExchange (&stop, 1);

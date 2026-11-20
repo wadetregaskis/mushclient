@@ -12,8 +12,9 @@
 #include "../ColourPickerDlg.h"
 #include "../EditMultiLine.h"
 
+#include "../../a11y.h"     // the accessibility page, on every platform
+
 #ifdef _WIN32
-#include "../../a11y.h"
 #include <shlobj.h>
 #include <cderr.h>
 #endif
@@ -2005,7 +2006,12 @@ BOOL CGlobalPrefsP14::OnInitDialog()
 			pVoice->AddString (voice.c_str ());
 
 	// Saying what was found, so that a screen reader flag left on by something else is seen
-	CString strStatus = pReader ? pReader->name () : Translate ("No screen reader");
+	// (not a ?: -- const char * against CString is ambiguous with the port's CString)
+	CString strStatus;
+	if (pReader)
+		strStatus = pReader->name ();
+	else
+		strStatus = Translate ("No screen reader");
 	if (pReader && strcmp (pReader->name (), "UI Automation") == 0)
 		strStatus = Translate ("Screen reader flag (UI Automation)");
 	SetDlgItemText (IDC_SPEECH_STATUS, strStatus);

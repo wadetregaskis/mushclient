@@ -41,6 +41,7 @@ MAKE_TAR=1
 MAKE_DEB=1
 DO_RELOCATE=1
 DO_CLEAN=0
+INSTALL_DESKTOP_ENTRY=0    # --install-desktop-entry: put it in this user's applications menu
 JOBS="$(nproc 2>/dev/null || echo 4)"
 
 note() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -61,6 +62,9 @@ Options:
       --no-deb              skip .deb creation
       --no-relocate         skip library bundling into lib/
       --clean               wipe the build dir first
+      --install-desktop-entry
+                            also put this build in your applications menu
+                            (~/.local/share/applications/mushclient.desktop)
   -h, --help                show this help
 EOF
 }
@@ -77,6 +81,7 @@ while [ $# -gt 0 ]; do
         --no-deb)             MAKE_DEB=0; shift;;
         --no-relocate)        DO_RELOCATE=0; shift;;
         --clean)              DO_CLEAN=1; shift;;
+        --install-desktop-entry) INSTALL_DESKTOP_ENTRY=1; shift;;
         -h|--help)            usage; exit 0;;
         *) die "unknown option: $1 (try --help)";;
     esac
@@ -84,16 +89,19 @@ done
 
 [ "$(uname -s)" = "Linux" ] || die "this script builds Linux packages; run it on Linux"
 
-# Source environment script if present (e.g. non-root sysroot or development env)
-if [ -f "/tmp/env.sh" ]; then
+# A local environment script (a sysroot in MC_SYSROOT, a non-root toolchain), if this
+# checkout has one: packaging/local-env.sh, which git ignores.  Never one from /tmp,
+# where anyone on the machine could have put it.
+if [ -f "$(dirname "${BASH_SOURCE[0]}")/local-env.sh" ]; then
     set +u
     # shellcheck disable=SC1091
-    . /tmp/env.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/local-env.sh"
     set -u
 fi
 
-if [ -d "/tmp/sysroot" ]; then
-    export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-/tmp/sysroot}"
+# A sysroot to build against, if local-env.sh (or the caller) names one.
+if [ -n "${MC_SYSROOT:-}" ] && [ -d "$MC_SYSROOT" ]; then
+    export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-$MC_SYSROOT}"
 fi
 
 command -v cmake >/dev/null 2>&1 || die "cmake not found; please install cmake"
@@ -173,7 +181,7 @@ cp "$REPO/src/platform/MUSHclient.png" "$STAGE_APP/"
 
 # Bundle scripting runtime libraries and stdlibs if present
 # 1. Tcl script library
-for tcldir in "$REPO/packaging/tcl/install/lib/tcl8.6" "$BUILD_DIR/tcl8.6" "/tmp/sysroot/usr/share/tcltk/tcl8.6" "/usr/share/tcltk/tcl8.6"; do
+for tcldir in "$REPO/packaging/tcl/install/lib/tcl8.6" "$BUILD_DIR/tcl8.6" ${MC_SYSROOT:+"$MC_SYSROOT/usr/share/tcltk/tcl8.6"} "/usr/share/tcltk/tcl8.6"; do
     if [ -d "$tcldir" ] && [ -f "$tcldir/init.tcl" ]; then
         cp -R "$tcldir" "$STAGE_APP/"
         note "  bundled Tcl 8.6 script library"
@@ -366,8 +374,10 @@ EOF
 chmod +x "$STAGE_APP/mushclient.desktop"
 gio set "$STAGE_APP/mushclient.desktop" metadata::trusted true 2>/dev/null || true
 
-# Also register in user applications menu if directory exists
-if [ -d "$HOME/.local/share/applications" ] || mkdir -p "$HOME/.local/share/applications" 2>/dev/null; then
+# In this user's applications menu too, only when asked (--install-desktop-entry): a
+# package build has no business changing the desktop of whoever runs it, and the entry
+# points into dist/, which the next build replaces.
+if [ "$INSTALL_DESKTOP_ENTRY" = 1 ] && { [ -d "$HOME/.local/share/applications" ] || mkdir -p "$HOME/.local/share/applications" 2>/dev/null; }; then
     cat <<EOF > "$HOME/.local/share/applications/mushclient.desktop"
 [Desktop Entry]
 Name=MUSHclient
@@ -484,6 +494,11 @@ fi
 note "Linux packaging complete."
 echo
 echo "  bundle : $STAGE_APP"
-[ "$MAKE_TAR" = 1 ] && echo "  tar.xz : $OUTPUT_DIR/mushclient-${VERSION}-linux-${ARCH_TAG}.tar.xz"
-[ "$MAKE_DEB" = 1 ] && [ -f "$OUTPUT_DIR/mushclient_${VERSION}_${DEB_ARCH}.deb" ] && \
+# (if, not `[ ] && echo`: as the last command, a false test would be the exit status)
+if [ "$MAKE_TAR" = 1 ]; then
+    echo "  tar.xz : $OUTPUT_DIR/mushclient-${VERSION}-linux-${ARCH_TAG}.tar.xz"
+fi
+if [ "$MAKE_DEB" = 1 ] && [ -f "$OUTPUT_DIR/mushclient_${VERSION}_${DEB_ARCH}.deb" ]; then
     echo "  deb    : $OUTPUT_DIR/mushclient_${VERSION}_${DEB_ARCH}.deb"
+fi
+exit 0

@@ -25,17 +25,23 @@
 #
 set -euo pipefail
 
-# Source environment script if present (e.g. non-root sysroot or development env)
-if [ -f "/tmp/env.sh" ]; then
+# A local environment script (a sysroot in MC_SYSROOT, a non-root toolchain), if this
+# checkout has one: packaging/local-env.sh, which git ignores.  Never one from /tmp,
+# where anyone on the machine could have put it.
+if [ -f "$(dirname "${BASH_SOURCE[0]}")/local-env.sh" ]; then
     set +u
     # shellcheck disable=SC1091
-    . /tmp/env.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/local-env.sh"
     set -u
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/tcl"
-VERSION="${TCL_VERSION:-8.6.18}"
+DEFAULT_VERSION="8.6.18"
+# The source tarball's SHA-256, the same one packaging/windows/fetch-deps.ps1 pins.
+# Another version needs its own: TCL_SHA256=... (from tcl.tk's download page).
+DEFAULT_SHA256="14f9af32b1767ff718477a8f974ad03c34341097e6b43f4ce54644ee974e268e"
+VERSION="${TCL_VERSION:-$DEFAULT_VERSION}"
 MACOS_MIN="${MACOS_MIN:-11.0}"
 MACOS_ARCHS="${MACOS_ARCHS:-arm64 x86_64}"
 FORCE=0
@@ -68,12 +74,20 @@ if [ "$FORCE" = 0 ] && [ "$(cat "$INSTALL/.stamp" 2>/dev/null || true)" = "$STAM
     exit 0
 fi
 
+WANT_SHA="${TCL_SHA256:-}"
+if [ -z "$WANT_SHA" ]; then
+    [ "$VERSION" = "$DEFAULT_VERSION" ] || die "no SHA-256 known for Tcl $VERSION: give it as TCL_SHA256=..."
+    WANT_SHA="$DEFAULT_SHA256"
+fi
+
 if [ ! -f "$CACHE" ]; then
     note "downloading $URL"
-    curl -fL --retry 3 -o "$CACHE" "$URL" || die "download failed"
+    curl -fL --retry 3 -o "$CACHE.part" "$URL" || die "download failed"
+    mv "$CACHE.part" "$CACHE"
 fi
-# Guard against SourceForge handing back an HTML mirror page instead of the tarball.
-file "$CACHE" | grep -q gzip || die "download is not a gzip tarball (got an HTML page?); re-download $CACHE"
+# Also catches SourceForge handing back an HTML mirror page instead of the tarball.
+got="$( (sha256sum "$CACHE" 2>/dev/null || shasum -a 256 "$CACHE") | cut -d' ' -f1)"
+[ "$got" = "$WANT_SHA" ] || { rm -f "$CACHE"; die "checksum mismatch for $PKG (got $got, want $WANT_SHA); deleted it, re-run to download again"; }
 
 note "extracting Tcl $VERSION source"
 rm -rf "$INSTALL" "$DEST/src"

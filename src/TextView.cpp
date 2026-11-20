@@ -708,8 +708,10 @@ bool CTextView::SetText(const char * sText)
     // garbage.  SetWindowText converts for an ANSI window on every version.
     // Unlike the handle, it is held to the control's text limit (CEditView's
     // is about 1 MB), which a big recall can exceed.
+#ifdef _WIN32
     if ((UINT) nLen > GetEditCtrl().GetLimitText ())
       GetEditCtrl().SetLimitText (nLen);
+#endif
     BOOL bResult = ::SetWindowText(m_hWnd, sText);
 
     // make sure that SetWindowText was successful

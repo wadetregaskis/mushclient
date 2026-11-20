@@ -1705,8 +1705,9 @@ ASSERT_VALID(pDoc);
 }
 
 
+#ifdef _WIN32
 // What a screen reader calls this: MFC answers WM_GETOBJECT itself for a CWnd, and otherwise
-// has no name to give it.
+// has no name to give it.  (The port names the command box through wx: platform/wx_a11y.h.)
 HRESULT CSendView::get_accName (VARIANT varChild, BSTR * pszName)
   {
   if (varChild.vt == VT_I4 && varChild.lVal == CHILDID_SELF && pszName)
@@ -1716,14 +1717,17 @@ HRESULT CSendView::get_accName (VARIANT varChild, BSTR * pszName)
     }
   return CEditView::get_accName (varChild, pszName);
   }
+#endif
 
 BOOL CSendView::PreTranslateMessage(MSG* pMsg)
 {
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
 
+#ifdef _WIN32
     if (WinA11y_CommandBoxKey (pDoc, pMsg))    // review keys, for someone using speech
       return TRUE;
+#endif
 
     // Shift+Return inserts a line break instead of sending, so a multi-line
     // command can be composed by hand rather than only pasted in.  The command

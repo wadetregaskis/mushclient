@@ -118,8 +118,15 @@ OutFile ${OUTFILE}
 !insertmacro MUI_RESERVEFILE_LANGDLL
 
 
-; The default installation directory
-InstallDir ${PROGDIR}\MUSHclient
+; The default installation directory.  MUSHclient 5 was 32-bit, in
+; $PROGRAMFILES\MUSHclient: a 64-bit build's $PROGRAMFILES64\MUSHclient is another
+; folder, but the 32-bit build's would be 5.x's own, and installing there would
+; replace it (see below).  So that one has a folder of its own too.
+!ifdef PLAT
+InstallDir "${PROGDIR}\MUSHclient"
+!else
+InstallDir "${PROGDIR}\MUSHclient 6"
+!endif
 
 ; This version's own keys and Start menu folder: MUSHclient 5 used
 ; "Gammon Software Solutions\MUSHclient", the "MUSHclient" uninstall entry and a
@@ -230,6 +237,12 @@ Section "-MUSHclient program (required)"
   ; DLLs sit beside the exe because the exe imports them; each runtime finds
   ; its library beside its DLL (python\, lib\ruby\, tcl8.6\).
   File "${DEPS}\bin\nvdaControllerClient.dll"
+  ; Its licence (LGPL 2.1) goes wherever it does, not only with the optional
+  ; Licences section.
+  CreateDirectory "$INSTDIR\licences"
+  SetOutPath $INSTDIR\licences
+  File "..\licences\NVDA Controller Client licence.txt"
+  SetOutPath $INSTDIR
   File "${DEPS}\bin\python3*.dll"
   File "${DEPS}\bin\*-ruby*.dll"
   ; Only what something imports (build-app.ps1 checks): vcruntime140_1.dll is
@@ -240,7 +253,10 @@ Section "-MUSHclient program (required)"
     File "${CRTDIR}\vcruntime140_1.dll"
   !endif
   ; Replaced, not merged, on an upgrade: a stale module of an older runtime
-  ; must not shadow the new one's.
+  ; must not shadow the new one's.  (Decided 2026-11-20: so anything a user put
+  ; inside them goes too, on an upgrade as on uninstalling.  Packages belong in
+  ; the per-user site-packages, docs/WINDOWS-64BIT.md, which this never touches;
+  ; a compiled one, built for the old runtime, might not load in the new one.)
   RMDir /r "$INSTDIR\python"
   RMDir /r "$INSTDIR\lib\ruby"
   RMDir /r "$INSTDIR\tcl8.6"
@@ -748,7 +764,8 @@ Section Uninstall
   Delete "$INSTDIR\Dina.fon"
 
 !ifdef PLAT
-  ; the embedded scripting runtimes and the VC++ runtime
+  ; NVDA's controller client, the embedded scripting runtimes and the VC++ runtime
+  Delete "$INSTDIR\nvdaControllerClient.dll"
   Delete "$INSTDIR\python3*.dll"
   Delete "$INSTDIR\*-ruby*.dll"
   Delete "$INSTDIR\vcruntime140.dll"
@@ -918,6 +935,7 @@ Section Uninstall
   Delete "$INSTDIR\licences\Luasocket licence.txt"
   Delete "$INSTDIR\licences\MD5 licence.txt"
   Delete "$INSTDIR\licences\MUSHclient licence.txt"
+  Delete "$INSTDIR\licences\NVDA Controller Client licence.txt"
   Delete "$INSTDIR\licences\Mersenne Twister licence.txt"
   Delete "$INSTDIR\licences\PCRE licence.txt"
   Delete "$INSTDIR\licences\README.txt"
@@ -1034,7 +1052,10 @@ Section Uninstall
   Delete "${SMDIR}\*.lnk"
   RMDir "${SMDIR}"
 
-  ; delete worlds, lua and logs directory, if empty
+  ; delete worlds, lua and logs directory, if empty (worlds\plugins\state and
+  ; worlds\plugins first: the installer made them, and worlds can't go before they do)
+  RMDir  "$INSTDIR\worlds\plugins\state"
+  RMDir  "$INSTDIR\worlds\plugins"
   RMDir  "$INSTDIR\worlds"
   RMDir  "$INSTDIR\logs"
   RMDir  "$INSTDIR\lua"

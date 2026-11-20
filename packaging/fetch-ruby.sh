@@ -29,18 +29,26 @@
 #
 set -euo pipefail
 
-# Source environment script if present (e.g. non-root sysroot or development env)
-if [ -f "/tmp/env.sh" ]; then
+# A local environment script (a sysroot in MC_SYSROOT, a non-root toolchain), if this
+# checkout has one: packaging/local-env.sh, which git ignores.  Never one from /tmp,
+# where anyone on the machine could have put it.
+if [ -f "$(dirname "${BASH_SOURCE[0]}")/local-env.sh" ]; then
     set +u
     # shellcheck disable=SC1091
-    . /tmp/env.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/local-env.sh"
     set -u
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/ruby"
-RUBY_VERSION="${RUBY_VERSION:-4.0.9}"
-YAML_VERSION="${YAML_VERSION:-0.2.5}"
+# The tarballs' SHA-256s, the same ones packaging/windows/fetch-deps.ps1 pins.  Another
+# version needs its own: RUBY_SHA256=... (ruby-lang.org's download page) or YAML_SHA256=...
+DEFAULT_RUBY_VERSION="4.0.9"
+DEFAULT_RUBY_SHA256="c35350682ff050b79702d57ade4516e7336063f510155d19fb2fb5b3f3909511"
+DEFAULT_YAML_VERSION="0.2.5"
+DEFAULT_YAML_SHA256="c642ae9b75fee120b2d96c712538bd2cf283228d2337df2cf2988e3c02678ef4"
+RUBY_VERSION="${RUBY_VERSION:-$DEFAULT_RUBY_VERSION}"
+YAML_VERSION="${YAML_VERSION:-$DEFAULT_YAML_VERSION}"
 OPENSSL_PREFIX="${OPENSSL_PREFIX:-}"
 MACOS_MIN="${MACOS_MIN:-11.0}"
 MACOS_ARCHS="${MACOS_ARCHS:-arm64 x86_64}"
@@ -79,7 +87,7 @@ else
         "${PKG_CONFIG_SYSROOT_DIR:-}/usr"
         "/usr"
         "/usr/local"
-        "/tmp/sysroot/usr"
+        "${MC_SYSROOT:+$MC_SYSROOT/usr}"
     )
     OPENSSL_PREFIX=""
     for d in "${candidates[@]}"; do
@@ -98,14 +106,30 @@ SRC="$DEST/src"
 JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 mkdir -p "$DEST" "$SRC"
 
-# download $1=url $2=cache-file ; verify it is a gzip tarball
+# download $1=url $2=cache-file, and check it against $3=its SHA-256
 fetch() {
-    local url="$1" out="$2"
+    local url="$1" out="$2" want="$3" got
     if [ ! -f "$out" ]; then
         note "downloading $url"
-        curl -fL --retry 3 -o "$out" "$url" || die "download failed: $url"
+        curl -fL --retry 3 -o "$out.part" "$url" || die "download failed: $url"
+        mv "$out.part" "$out"
     fi
-    file "$out" | grep -q gzip || die "not a gzip tarball (got an HTML page?): $out"
+    got="$( (sha256sum "$out" 2>/dev/null || shasum -a 256 "$out") | cut -d' ' -f1)"
+    [ "$got" = "$want" ] || { rm -f "$out"; die "checksum mismatch for $out (got $got, want $want); deleted it, re-run to download again"; }
+}
+
+# The SHA-256 to check $1 (ruby or yaml) against: the pinned one for the default
+# version, or RUBY_SHA256 / YAML_SHA256 for another.  (Called as a=$(want_sha x), so
+# that set -e stops the script when it dies.)
+want_sha() {
+    case "$1" in
+        ruby) [ -n "${RUBY_SHA256:-}" ] && { echo "$RUBY_SHA256"; return; }
+              [ "$RUBY_VERSION" = "$DEFAULT_RUBY_VERSION" ] || die "no SHA-256 known for Ruby $RUBY_VERSION: give it as RUBY_SHA256=..."
+              echo "$DEFAULT_RUBY_SHA256" ;;
+        yaml) [ -n "${YAML_SHA256:-}" ] && { echo "$YAML_SHA256"; return; }
+              [ "$YAML_VERSION" = "$DEFAULT_YAML_VERSION" ] || die "no SHA-256 known for libyaml $YAML_VERSION: give it as YAML_SHA256=..."
+              echo "$DEFAULT_YAML_SHA256" ;;
+    esac
 }
 
 extract() {  # $1=tarball $2=dest-dir (stripped of the top component)
@@ -123,7 +147,8 @@ YAML_STAMP="$YAML_VERSION"
 if [ ! -f "$DEPS/lib/libyaml.a" ] || [ "$(cat "$DEPS/.stamp" 2>/dev/null || true)" != "$YAML_STAMP" ]; then
     rm -rf "$DEPS"
     PKG="yaml-$YAML_VERSION.tar.gz"
-    fetch "https://github.com/yaml/libyaml/releases/download/$YAML_VERSION/$PKG" "$DEST/$PKG"
+    yaml_sha="$(want_sha yaml)"
+    fetch "https://github.com/yaml/libyaml/releases/download/$YAML_VERSION/$PKG" "$DEST/$PKG" "$yaml_sha"
     extract "$DEST/$PKG" "$SRC/yaml"
     note "building libyaml $YAML_VERSION (static)"
     YAML_CFLAGS="-O2"
@@ -145,7 +170,8 @@ fi
 # ── 3. Ruby (shared, load-relative) ───────────────────────────────────────────
 SHORT="${RUBY_VERSION%.*}"                           # 4.0.5 -> 4.0
 PKG="ruby-$RUBY_VERSION.tar.gz"
-fetch "https://cache.ruby-lang.org/pub/ruby/$SHORT/$PKG" "$DEST/$PKG"
+ruby_sha="$(want_sha ruby)"
+fetch "https://cache.ruby-lang.org/pub/ruby/$SHORT/$PKG" "$DEST/$PKG" "$ruby_sha"
 note "building Ruby $RUBY_VERSION (shared, load-relative)"
 rm -rf "$INSTALL"
 RB_CFLAGS="-I$DEPS/include -I$OPENSSL_PREFIX/include"

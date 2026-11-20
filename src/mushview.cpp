@@ -360,7 +360,9 @@ static inline short get_background (int style)
 #endif
 
 static long MeasureBitmapFontRun (HDC hdc, const char * p, const int iLength, const int iScale);
+#ifdef _WIN32
 static bool RunHasOnlyLatin (const char * p, const int iLength);
+#endif
 
 // The width of the first len bytes of a line.  Hit testing asks this for every column up
 // to the mouse, on every move, so for one line the answers are kept: a line doesn't
@@ -489,6 +491,7 @@ POSITION pos;
   } // end of calculate_width
 
 
+#ifdef _WIN32
 /*
    So that italic text doesn't get chopped off at the RH boundary we will draw each
    line twice - once for the background, and then redraw over it transparently for the
@@ -645,6 +648,13 @@ static void ForEachFontSegment (HDC hdc, const char * p, const int iLength, FN f
   if (i > iSegment)
     fn (p + iSegment, i - iSegment, bSegment);
   }
+#else  // !_WIN32
+// The port never has a bitmap font to split up or blow up: ChangeFont leaves
+// m_bRasterOutputFont false and m_iRasterScale 1 there, so nothing reaches these.  They
+// are here so that display_text and calculate_width compile unchanged.
+template <typename FN>
+static void ForEachFontSegment (HDC, const char *, const int, FN) {}
+#endif  // _WIN32
 
 static std::wstring WideFromUtf8 (const char * p, const int iLength)
   {
@@ -653,6 +663,7 @@ static std::wstring WideFromUtf8 (const char * p, const int iLength)
   return s;
   }
 
+#ifdef _WIN32
 static bool RunHasOnlyLatin (const char * p, const int iLength)
   {
   for (int i = 0; i < iLength; i++)
@@ -814,6 +825,23 @@ static void DrawBlownUpText (CDC * pDC, const RECT & r, const CHAR_TYPE * pText,
 
   ::SelectObject (hMask, hOldFont);
   }
+#else  // !_WIN32
+// (see ForEachFontSegment above: no bitmap font on the port, so never called)
+bool CMUSHView::RunNeedsFallbackFont (HDC, const char *, const int)
+  {
+  return false;
+  }
+
+static long MeasureBitmapFontRun (HDC, const char *, const int, const int)
+  {
+  return 0;
+  }
+
+template <typename CHAR_TYPE>
+static void DrawBlownUpText (CDC *, const RECT &, const CHAR_TYPE *, const int, const int)
+  {
+  }
+#endif  // _WIN32
 
 
 void CMUSHView::display_text (CDC* pDC,
@@ -1076,6 +1104,9 @@ public:
       // Create a Memory DC
       CreateCompatibleDC(pDC);
       const CSize size (m_rect.Width(), m_rect.Height());
+#ifdef _WIN32
+      // (the port makes a bitmap per paint, as this did before: its CBitmap is a wx
+      // bitmap, which a static would outlive wx to destroy)
       if (!s_backBufferInUse)
         {
         if (!s_backBuffer.GetSafeHandle () ||
@@ -1088,6 +1119,7 @@ public:
           }
         m_bShared = s_backBuffer.GetSafeHandle () != NULL;
         }
+#endif
       if (m_bShared)
         {
         s_backBufferInUse = true;
@@ -2205,8 +2237,10 @@ ASSERT_VALID(pDoc);
 
   sizewindow ();
 
+#ifdef _WIN32
   // it may have opened on a monitor other than the one the fonts were made for
   pDoc->SetDpi (Dpi_ForWindow (m_hWnd));
+#endif
 
   FixupTitle ();
 
@@ -2555,11 +2589,13 @@ long pixel;
   // Where this point is depends on which part of the view it's in.  A drag belongs to
   // wherever it began, so that a selection runs off the bottom of the history as it
   // always has, rather than jumping to the far end of the buffer.
+  // (LONG on Windows, int in the port's CPoint)
+  typedef decltype (m_scroll_position.y) ScrollValue;
   struct CScrollRestore
     {
-    long & m_iValue;
-    const long m_iSaved;
-    CScrollRestore (long & iValue) : m_iValue (iValue), m_iSaved (iValue) {}
+    ScrollValue & m_iValue;
+    const ScrollValue m_iSaved;
+    CScrollRestore (ScrollValue & iValue) : m_iValue (iValue), m_iSaved (iValue) {}
     ~CScrollRestore () { m_iValue = m_iSaved; }
     } scrollRestore (m_scroll_position.y);
 
@@ -7363,7 +7399,9 @@ LRESULT CMUSHView::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
 
     // Dragging the strip's bar holds the mouse; lose it any way but the button coming
     // up (a menu, alt-tab, another window taking it) and the drag is over, or every
-    // later mouse move would go on resizing the strip.
+    // later mouse move would go on resizing the strip.  (The port's shim sends no such
+    // message.)
+#ifdef _WIN32
     case WM_CAPTURECHANGED:
       if (m_bSplitDragging && (HWND) lParam != m_hWnd)
         {
@@ -7371,6 +7409,7 @@ LRESULT CMUSHView::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
         App.db_write_int ("prefs", "SplitScrollbackPercent", App.m_iSplitScrollbackPercent);
         }
       return CView::WindowProc(message, wParam, lParam);
+#endif
 
     default: 
       return CView::WindowProc(message, wParam, lParam);

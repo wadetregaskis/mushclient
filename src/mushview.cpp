@@ -300,6 +300,14 @@ CMUSHView::CMUSHView()
   m_freeze = FALSE;
   m_bSplitSelecting = false;
   m_bSplitDragging = false;
+  m_iSplitHeldY = 0;      // the start is the end of an empty buffer
+  m_iWidthCacheLine = -1;
+  m_pWidthCacheLine = NULL;
+  m_iWidthCacheLen = 0;
+  m_pWidthCacheFont = NULL;
+  m_iWidthCacheScale = 0;
+  m_hWidthCacheFont = NULL;
+  m_iWidthCacheFontWidth = 0;
   m_bAtBufferEnd = false;
   m_last_line_drawn = 0;
   m_last_line = 0;
@@ -354,7 +362,52 @@ static inline short get_background (int style)
 static long MeasureBitmapFontRun (HDC hdc, const char * p, const int iLength, const int iScale);
 static bool RunHasOnlyLatin (const char * p, const int iLength);
 
+// The width of the first len bytes of a line.  Hit testing asks this for every column up
+// to the mouse, on every move, so for one line the answers are kept: a line doesn't
+// change once it has arrived and its triggers have run.  Measuring a run DirectWrite
+// draws builds a layout, which made that many a move a cost.
 long CMUSHView::calculate_width (const int & line,
+                       const int len,
+                       CMUSHclientDoc* pDoc,
+                       CClientDC & dc)
+  {
+  if (len <= 0)
+    return 0;
+
+  const CLine * pLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (line));
+
+  // the line still arriving can change under the same length (a trigger restyles it
+  // when it ends), so it is measured every time, as everything used to be
+  if (pLine == pDoc->m_pCurrentLine)
+    return measure_width (pLine, len, pDoc, dc);
+
+  if (m_pWidthCacheLine != pLine || m_iWidthCacheLine != pLine->m_nLineNumber || m_iWidthCacheLen != pLine->len ||
+      m_pWidthCacheFont != pDoc->m_font [0] || m_iWidthCacheScale != pDoc->m_iRasterScale * 2 + (pDoc->m_bUTF_8 ? 1 : 0) ||
+      m_hWidthCacheFont != (pDoc->m_font [0] ? pDoc->m_font [0]->m_hObject : NULL) ||
+      m_iWidthCacheFontWidth != pDoc->m_FontWidth)
+    {
+    m_pWidthCacheLine = pLine;
+    m_iWidthCacheLine = pLine->m_nLineNumber;
+    m_iWidthCacheLen = pLine->len;
+    m_pWidthCacheFont = pDoc->m_font [0];
+    m_iWidthCacheScale = pDoc->m_iRasterScale * 2 + (pDoc->m_bUTF_8 ? 1 : 0);
+    m_hWidthCacheFont = pDoc->m_font [0] ? pDoc->m_font [0]->m_hObject : NULL;
+    m_iWidthCacheFontWidth = pDoc->m_FontWidth;
+    m_vWidthCache.assign (pLine->len + 2, -1);
+    }
+
+  if (len < (int) m_vWidthCache.size ())
+    {
+    long & iCached = m_vWidthCache [len];
+    if (iCached < 0)
+      iCached = measure_width (pLine, len, pDoc, dc);
+    return iCached;
+    }
+
+  return measure_width (pLine, len, pDoc, dc);
+  }
+
+long CMUSHView::measure_width (const CLine * pLine,
                        const int len,
                        CMUSHclientDoc* pDoc,
                        CClientDC & dc)
@@ -365,7 +418,6 @@ int thislen;
 CSize textsize;
 long pixel = 0;
 POSITION pos;
-CLine * pLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (line));
 
   if (len <= 0)
     return 0;
@@ -400,9 +452,9 @@ CLine * pLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (line));
 
       // now calculate width of Unicode pixels
       int iShapedWidth = 0;
-      if (pDoc->m_bRasterOutputFont && !RunHasOnlyLatin (&pLine->text [thiscol], thislen))
+      if (pDoc->m_bRasterOutputFont && RunNeedsFallbackFont (dc.m_hDC, &pLine->text [thiscol], thislen))
         textsize.cx = MeasureBitmapFontRun (dc.m_hDC, &pLine->text [thiscol], thislen, pDoc->m_iRasterScale) / pDoc->m_iRasterScale;
-      else if (unicode::Utf8NeedsShaping (&pLine->text [thiscol], thislen) &&
+      else if (!pDoc->m_bRasterOutputFont && unicode::Utf8NeedsShaping (&pLine->text [thiscol], thislen) &&
           dwtext::Measure (dc.m_hDC, sUnicodeText, iUnicodeCharacters, iShapedWidth))
         textsize.cx = iShapedWidth;
       else
@@ -457,24 +509,131 @@ static inline void ExtTextOutBoth (HDC hdc, const char * pText, const int iLengt
 // they come out monochrome and, blown up, blocky.  So in a UTF-8 world in FixedSys and
 // the like, what the font has stays the font's, and the clusters it can't have go to
 // DirectWrite.  Each is measured and drawn in turn, so that it all lines up.
-static bool ClusterIsForBitmapFont (const char * p, const size_t iLength)
+//
+// What it has is what GDI says it covers.  A bitmap font is one code page, so FixedSys
+// has smart quotes and the euro and no Cyrillic, and Terminal (OEM) has box drawing.
+// Asked once per font, and kept: a world has sixteen of them.
+namespace {
+
+struct FontCoverage
+  {
+  std::vector<std::pair<unsigned int, unsigned int> > ranges;   // first and last, in order
+  bool bKnown;
+
+  FontCoverage () : bKnown (false) {}
+
+  bool Has (const unsigned int iCodePoint) const
+    {
+    if (!bKnown)
+      return iCodePoint < 0x250;    // couldn't ask: what this did before it could
+    size_t lo = 0, hi = ranges.size ();
+    while (lo < hi)
+      {
+      const size_t mid = (lo + hi) / 2;
+      if (ranges [mid].second < iCodePoint)
+        lo = mid + 1;
+      else
+        hi = mid;
+      }
+    return lo < ranges.size () && ranges [lo].first <= iCodePoint;
+    }
+  };
+
+// A code page font's coverage, from its code page, for when GDI won't say.
+void CoverageFromCodePage (FontCoverage & coverage, const BYTE iCharset)
+  {
+  // (an OEM font, such as Terminal, is drawn from Unicode through the ANSI page, as
+  // GetFontUnicodeRanges reports it: so that is the page here too)
+  CHARSETINFO csi;
+  UINT iCodePage = CP_ACP;
+  if (iCharset != OEM_CHARSET &&
+      ::TranslateCharsetInfo ((DWORD *) (DWORD_PTR) iCharset, &csi, TCI_SRCCHARSET))
+    iCodePage = csi.ciACP;
+
+  for (unsigned int c = 0x20; c < 0x10000; c++)
+    {
+    if (c >= 0xD800 && c <= 0xDFFF)
+      continue;
+    const WCHAR w = (WCHAR) c;
+    char s [8];
+    BOOL bDefault = FALSE;
+    const int n = ::WideCharToMultiByte (iCodePage, WC_NO_BEST_FIT_CHARS, &w, 1, s, sizeof s, NULL, &bDefault);
+    if (n <= 0 || bDefault)
+      continue;
+    if (!coverage.ranges.empty () && coverage.ranges.back ().second == c - 1)
+      coverage.ranges.back ().second = c;
+    else
+      coverage.ranges.push_back (std::make_pair (c, c));
+    }
+  coverage.bKnown = true;
+  }
+
+const FontCoverage & CoverageOf (HDC hdc)
+  {
+  static std::map<std::string, FontCoverage> cache;
+
+  LOGFONTW lf;
+  memset (&lf, 0, sizeof lf);
+  ::GetObjectW (::GetCurrentObject (hdc, OBJ_FONT), sizeof lf, &lf);
+  // the face name only up to its end, so two of the same font are one
+  const size_t iFace = wcsnlen (lf.lfFaceName, LF_FACESIZE);
+  memset (lf.lfFaceName + iFace, 0, (LF_FACESIZE - iFace) * sizeof (WCHAR));
+  const std::string key ((const char *) &lf, sizeof lf);
+
+  std::map<std::string, FontCoverage>::iterator it = cache.find (key);
+  if (it != cache.end ())
+    return it->second;
+
+  FontCoverage & coverage = cache [key];
+  const DWORD iSize = ::GetFontUnicodeRanges (hdc, NULL);
+  if (iSize >= sizeof (GLYPHSET))
+    {
+    std::vector<BYTE> buffer (iSize);
+    GLYPHSET * pSet = (GLYPHSET *) &buffer [0];
+    pSet->cbThis = iSize;
+    if (::GetFontUnicodeRanges (hdc, pSet) && pSet->cRanges > 0)
+      {
+      for (DWORD i = 0; i < pSet->cRanges; i++)
+        if (pSet->ranges [i].cGlyphs > 0)
+          coverage.ranges.push_back (std::make_pair ((unsigned int) pSet->ranges [i].wcLow,
+                                                     (unsigned int) pSet->ranges [i].wcLow + pSet->ranges [i].cGlyphs - 1));
+      std::sort (coverage.ranges.begin (), coverage.ranges.end ());
+      coverage.bKnown = true;
+      }
+    }
+  if (!coverage.bKnown)
+    {
+    TEXTMETRICW tm;
+    if (::GetTextMetricsW (hdc, &tm))
+      CoverageFromCodePage (coverage, tm.tmCharSet);
+    }
+  return coverage;
+  }
+
+// A cluster of one code point that the font has.  Anything below U+0280 counts as the
+// font's (RunHasOnlyLatin's line, below), whatever it is: that is what a run of nothing
+// else gets, and the same letter mustn't look different with a Cyrillic word beside it.
+bool ClusterIsForBitmapFont (const FontCoverage & coverage, const char * p, const size_t iLength)
   {
   unsigned int iCodePoint;
   const int n = unicode::DecodeUtf8 (p, iLength, iCodePoint);
-  return (size_t) n == iLength && iCodePoint < 0x250;
+  return (size_t) n == iLength && (iCodePoint < 0x280 || coverage.Has (iCodePoint));
   }
+
+}  // end of anonymous namespace
 
 // Calls fn (pBytes, iBytes, bForBitmapFont) for each stretch of one kind.
 template <typename FN>
-static void ForEachFontSegment (const char * p, const int iLength, FN fn)
+static void ForEachFontSegment (HDC hdc, const char * p, const int iLength, FN fn)
   {
+  const FontCoverage & coverage = CoverageOf (hdc);
   int iSegment = 0;
   bool bSegment = true;
   int i = 0;
   while (i < iLength)
     {
     const int iEnd = (int) unicode::Utf8ClusterEnd (p + i, iLength - i, 1) + i;
-    const bool bBitmap = ClusterIsForBitmapFont (p + i, iEnd - i);
+    const bool bBitmap = ClusterIsForBitmapFont (coverage, p + i, iEnd - i);
     if (i > iSegment && bBitmap != bSegment)
       {
       fn (p + iSegment, i - iSegment, bSegment);
@@ -502,10 +661,28 @@ static bool RunHasOnlyLatin (const char * p, const int iLength)
   return true;
   }
 
+// Does a run in the bitmap font selected into hdc have anything in it the font hasn't?
+// Only then is it drawn a segment at a time: a run of what it has is drawn as it always
+// was, in one go, with no DirectWrite in it.
+bool CMUSHView::RunNeedsFallbackFont (HDC hdc, const char * p, const int iLength)
+  {
+  if (RunHasOnlyLatin (p, iLength))
+    return false;
+  const FontCoverage & coverage = CoverageOf (hdc);
+  for (int i = 0; i < iLength; )
+    {
+    const int iEnd = (int) unicode::Utf8ClusterEnd (p + i, iLength - i, 1) + i;
+    if (!ClusterIsForBitmapFont (coverage, p + i, iEnd - i))
+      return true;
+    i = iEnd;
+    }
+  return false;
+  }
+
 static long MeasureBitmapFontRun (HDC hdc, const char * p, const int iLength, const int iScale)
   {
   long iWidth = 0;
-  ForEachFontSegment (p, iLength, [&] (const char * pSegment, const int iBytes, const bool bBitmap)
+  ForEachFontSegment (hdc, p, iLength, [&] (const char * pSegment, const int iBytes, const bool bBitmap)
     {
     const std::wstring s = WideFromUtf8 (pSegment, iBytes);
     int iShaped = 0;
@@ -521,22 +698,100 @@ static long MeasureBitmapFontRun (HDC hdc, const char * p, const int iLength, co
   return iWidth;
   }
 
+// The DC and mask bitmap DrawBlownUpText draws into, and the brush it paints with: kept
+// from one run to the next rather than made and deleted for every run of every line of
+// every paint (as GdiSurface keeps its own for miniwindows).  The bitmap only grows, and
+// only the w x h corner of it is cleared, drawn on and stretched, so what lies beyond is
+// never read.  Nothing is left selected into the DC between calls but the bitmap: the
+// font goes back, so the world's fonts can still be deleted.  For the process, on the
+// thread that paints.
+namespace {
+struct BlowUpCache
+  {
+  HDC hdc;
+  HBITMAP hBitmap;
+  HGDIOBJ hOriginalBitmap;
+  int iWidth, iHeight;
+  HBRUSH hBrush;
+  COLORREF cBrush;
+
+  BlowUpCache () : hdc (NULL), hBitmap (NULL), hOriginalBitmap (NULL), iWidth (0), iHeight (0),
+                   hBrush (NULL), cBrush (0) {}
+  ~BlowUpCache ()
+    {
+    if (hdc)
+      {
+      ::SelectObject (hdc, hOriginalBitmap);
+      ::DeleteDC (hdc);
+      }
+    if (hBitmap)
+      ::DeleteObject (hBitmap);
+    if (hBrush)
+      ::DeleteObject (hBrush);
+    }
+
+  // a DC with a one-bit bitmap of at least w x h in it, or NULL
+  HDC Mask (const int w, const int h)
+    {
+    if (!hdc)
+      {
+      hdc = ::CreateCompatibleDC (NULL);
+      if (!hdc)
+        return NULL;
+      }
+    if (!hBitmap || w > iWidth || h > iHeight)
+      {
+      const int nw = hBitmap && w <= iWidth ? iWidth : w;
+      const int nh = hBitmap && h <= iHeight ? iHeight : h;
+      HBITMAP hNew = ::CreateBitmap (nw, nh, 1, 1, NULL);
+      if (!hNew)
+        return NULL;
+      HGDIOBJ hOld = ::SelectObject (hdc, hNew);
+      if (!hBitmap)
+        hOriginalBitmap = hOld;
+      else
+        ::DeleteObject (hBitmap);
+      hBitmap = hNew;
+      iWidth = nw;
+      iHeight = nh;
+      }
+    return hdc;
+    }
+
+  HBRUSH Brush (const COLORREF c)
+    {
+    if (hBrush && cBrush == c)
+      return hBrush;
+    if (hBrush)
+      ::DeleteObject (hBrush);
+    hBrush = ::CreateSolidBrush (c);
+    cBrush = c;
+    return hBrush;
+    }
+  };
+
+BlowUpCache & TheBlowUpCache ()
+  {
+  static BlowUpCache cache;
+  return cache;
+  }
+}  // end of anonymous namespace
+
 // A bitmap font (FixedSys, Terminal, Dina) comes in fixed sizes, and on a high-dpi display
 // it is drawn at its own size and blown up by a whole number, so that it keeps its look.
 // That is a one-bit mask, stretched, painted in the text colour through ROP 0xE20746:
 // where the mask is set, the brush; where it isn't, leave alone whatever's underneath.
-static void BlowUpMask (CDC * pDC, const RECT & r, CDC & mask, const int iWidth, const int iHeight, const int iScale)
+static void BlowUpMask (CDC * pDC, const RECT & r, HDC hMask, const int iWidth, const int iHeight, const int iScale)
   {
-  CBrush brush (pDC->GetTextColor ());
-  CBrush * pOldBrush = pDC->SelectObject (&brush);
+  HGDIOBJ hOldBrush = ::SelectObject (pDC->m_hDC, TheBlowUpCache ().Brush (pDC->GetTextColor ()));
   const COLORREF cOldBack = pDC->SetBkColor (RGB (255, 255, 255));
   const COLORREF cOldText = pDC->SetTextColor (RGB (0, 0, 0));
   const int iOldMode = pDC->SetStretchBltMode (COLORONCOLOR);
-  pDC->StretchBlt (r.left, r.top, iWidth * iScale, iHeight * iScale, &mask, 0, 0, iWidth, iHeight, 0x00E20746);
+  ::StretchBlt (pDC->m_hDC, r.left, r.top, iWidth * iScale, iHeight * iScale, hMask, 0, 0, iWidth, iHeight, 0x00E20746);
   pDC->SetStretchBltMode (iOldMode);
   pDC->SetTextColor (cOldText);
   pDC->SetBkColor (cOldBack);
-  pDC->SelectObject (pOldBrush);
+  ::SelectObject (pDC->m_hDC, hOldBrush);
   }
 
 template <typename CHAR_TYPE>
@@ -545,22 +800,19 @@ static void DrawBlownUpText (CDC * pDC, const RECT & r, const CHAR_TYPE * pText,
   const int iWidth = (r.right - r.left) / iScale + 1;
   const int iHeight = (r.bottom - r.top) / iScale + 1;
 
-  CDC mask;
-  mask.CreateCompatibleDC (pDC);
-  CBitmap bitmap;
-  bitmap.CreateBitmap (iWidth, iHeight, 1, 1, NULL);
-  CBitmap * pOldBitmap = mask.SelectObject (&bitmap);
-  CFont * pOldFont = mask.SelectObject (pDC->GetCurrentFont ());
+  HDC hMask = TheBlowUpCache ().Mask (iWidth, iHeight);
+  if (!hMask)
+    return;
+  HGDIOBJ hOldFont = ::SelectObject (hMask, ::GetCurrentObject (pDC->m_hDC, OBJ_FONT));
 
-  mask.SetBkMode (TRANSPARENT);
-  mask.SetTextColor (RGB (255, 255, 255));
-  mask.PatBlt (0, 0, iWidth, iHeight, BLACKNESS);
-  ExtTextOutBoth (mask.m_hDC, pText, iLength);
+  ::SetBkMode (hMask, TRANSPARENT);
+  ::SetTextColor (hMask, RGB (255, 255, 255));
+  ::PatBlt (hMask, 0, 0, iWidth, iHeight, BLACKNESS);
+  ExtTextOutBoth (hMask, pText, iLength);
 
-  BlowUpMask (pDC, r, mask, iWidth, iHeight, iScale);
+  BlowUpMask (pDC, r, hMask, iWidth, iHeight, iScale);
 
-  mask.SelectObject (pOldFont);
-  mask.SelectObject (pOldBitmap);
+  ::SelectObject (hMask, hOldFont);
   }
 
 
@@ -646,12 +898,12 @@ bool bMixedBitmapRun = false;    // a bitmap font, and some things it hasn't got
 
       // now calculate width of Unicode pixels
       int iShapedWidth = 0;
-      if (pDoc->m_bRasterOutputFont && !RunHasOnlyLatin (&pLine->text [thiscol], thislen))
+      if (pDoc->m_bRasterOutputFont && RunNeedsFallbackFont (pDC->m_hDC, &pLine->text [thiscol], thislen))
         {
         textsize.cx = MeasureBitmapFontRun (pDC->m_hDC, &pLine->text [thiscol], thislen, pDoc->m_iRasterScale) / pDoc->m_iRasterScale;
         bMixedBitmapRun = true;
         }
-      else if (unicode::Utf8NeedsShaping (&pLine->text [thiscol], thislen) &&
+      else if (!pDoc->m_bRasterOutputFont && unicode::Utf8NeedsShaping (&pLine->text [thiscol], thislen) &&
           dwtext::Measure (pDC->m_hDC, sUnicodeText, iUnicodeCharacters, iShapedWidth))
         {
         textsize.cx = iShapedWidth;
@@ -711,7 +963,7 @@ bool bMixedBitmapRun = false;    // a bitmap font, and some things it hasn't got
         {
         const int iScale = pDoc->m_iRasterScale;
         RECT rectSegment = r;
-        ForEachFontSegment (&pLine->text [thiscol], thislen, [&] (const char * pSegment, const int iBytes, const bool bBitmap)
+        ForEachFontSegment (pDC->m_hDC, &pLine->text [thiscol], thislen, [&] (const char * pSegment, const int iBytes, const bool bBitmap)
           {
           const std::wstring s = WideFromUtf8 (pSegment, iBytes);
           int iWidth = 0;
@@ -948,6 +1200,9 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
   r.right = pScaleDoc->ToLogical (r.right);
   r.bottom = pScaleDoc->ToLogical (r.bottom);
 #define X(v) (pScaleDoc->ToPhysical (v))
+// the real width of what runs from v for w: one window or tile ends where the next starts,
+// which rounding the width on its own doesn't promise at a fractional scale
+#define XW(v, w) (X ((v) + (w)) - X (v))
 
   pDestDC->SetStretchBltMode (HALFTONE);  // looks better when squashed
 
@@ -1029,7 +1284,7 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
           for (y = 0; y < iDown; y++)
             {
              if (bScaled)
-               pDestDC->StretchBlt (X (x * iWidth), X (y * iHeight), X (iWidth), X (iHeight),
+               pDestDC->StretchBlt (X (x * iWidth), X (y * iHeight), XW (x * iWidth, iWidth), XW (y * iHeight, iHeight),
                                     pSrcDC, 0, 0, iWidth, iHeight, SRCCOPY);
              else
              pDestDC->BitBlt (x * iWidth, y * iHeight,
@@ -1064,7 +1319,7 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
 
       // Create the mask bitmap for the subset of the main image
       CBitmap bitmapTrans;
-      bitmapTrans.CreateBitmap(X (iWidth), X (iHeight), 1, 1, NULL);
+      bitmapTrans.CreateBitmap(XW (rect.left, iWidth), XW (rect.top, iHeight), 1, 1, NULL);
 
       // Select the mask bitmap into the appropriate dc
       CBitmap* pOldBitmapTrans = dcTrans.SelectObject(&bitmapTrans);
@@ -1076,12 +1331,12 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
       if (bScaled)
         {
         dcTrans.SetStretchBltMode (COLORONCOLOR);
-        dcTrans.StretchBlt (0, 0, X (iWidth), X (iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCCOPY);
+        dcTrans.StretchBlt (0, 0, XW (rect.left, iWidth), XW (rect.top, iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCCOPY);
 
         // Do the work
-        pDestDC->StretchBlt (X (rect.left), X (rect.top), X (iWidth), X (iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCINVERT);
-        pDestDC->BitBlt (X (rect.left), X (rect.top), X (iWidth), X (iHeight), &dcTrans, 0, 0, SRCAND);
-        pDestDC->StretchBlt (X (rect.left), X (rect.top), X (iWidth), X (iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCINVERT);
+        pDestDC->StretchBlt (X (rect.left), X (rect.top), XW (rect.left, iWidth), XW (rect.top, iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCINVERT);
+        pDestDC->BitBlt (X (rect.left), X (rect.top), XW (rect.left, iWidth), XW (rect.top, iHeight), &dcTrans, 0, 0, SRCAND);
+        pDestDC->StretchBlt (X (rect.left), X (rect.top), XW (rect.left, iWidth), XW (rect.top, iHeight), pSrcDC, 0, 0, iWidth, iHeight, SRCINVERT);
         }
       else
         {
@@ -1100,13 +1355,14 @@ void CMUSHView::Blit_Bitmap (CDC* pDestDC, CDC* pSrcDC,
       pSrcDC->SetBkColor(crOldBackground);
       }
     else if (bScaled)   // not transparent
-      pDestDC->StretchBlt (X (rect.left), X (rect.top), X (rect.right), X (rect.bottom),
+      pDestDC->StretchBlt (X (rect.left), X (rect.top), XW (rect.left, rect.right), XW (rect.top, rect.bottom),
                            pSrcDC, 0, 0, rect.right, rect.bottom, SRCCOPY);
     else    // not transparent
       pDestDC->BitBlt (rect.left, rect.top, rect.right, rect.bottom, pSrcDC, 0, 0, SRCCOPY);
     }
   
 #undef X
+#undef XW
 
   // make into rectangle, not position and width/height
   rect.right += rect.left;
@@ -1297,11 +1553,16 @@ RECT r;
          }  // end for each window
 
 
-  if (HaveTextRectangle ())
+  // With the live tail showing, the history stops at the strip: it is the strip's text
+  // that goes there, over the same background, image and miniwindows underneath.
+  const bool bSplit = IsSplit ();
+
+  if (HaveTextRectangle () || bSplit)
     {
     // clip to rectangle
     CRgn rgn;
-    rgn.CreateRectRgn (TextRectangle.left, TextRectangle.top, TextRectangle.right, TextRectangle.bottom);
+    rgn.CreateRectRgn (TextRectangle.left, TextRectangle.top, TextRectangle.right,
+                       bSplit ? SplitStripRect ().top : TextRectangle.bottom);
     pDC->SelectClipRgn (&rgn);
     }
 
@@ -1325,8 +1586,10 @@ RECT r;
     startline = lastline - 20;
 
   // give the user a chance to update miniwindows to match text in the output window
+  // (the scroll position as GetInfo (296) has it, in 96-dpi pixels; at 96 dpi that is
+  // pt.y - PixelOffset (), as it always was)
   pDoc->SendToAllPluginCallbacks (ON_PLUGIN_DRAW_OUTPUT_WINDOW,
-                                  startline + 1, pt.y - pDoc->PixelOffset (),
+                                  startline + 1, pDoc->ToLogical (pt.y) - pDoc->m_iPixelOffset,
                                   "", false, false);
 
 POSITION pos = pDoc->GetLinePosition (startline);
@@ -1761,15 +2024,16 @@ double opacity;  // for fading lines
 
   DrawTextLines ();
 
-  if (IsSplit ())
+  if (bSplit)
     {
     const CRect rectStrip = SplitStripRect ();
 
-    // the bar across the top of it, then its own background
+    // the bar across the top of it; below that the background is already what it is
+    // under the history (colour, image, miniwindows drawn underneath), as the history
+    // was clipped above it
     CRgn rgnStrip;
     rgnStrip.CreateRectRgn (rectStrip.left, rectStrip.top, rectStrip.right, rectStrip.bottom);
     pDC->SelectClipRgn (&rgnStrip);
-    pDC->FillRect (&rectStrip, &backbr);
 
     const int iBar = pDoc->ToPhysical (2);
     CRect rectBar (rectStrip.left, rectStrip.top, rectStrip.right, rectStrip.top + iBar);
@@ -1842,9 +2106,27 @@ double opacity;  // for fading lines
 // A strip only makes sense while the view is frozen and not at the end, and in a window
 // with room for it.  Frozen is the existing idea: scrolling back with "Auto Pause" on, or
 // Pause.  Without Auto Pause the view jumps back on new output and there's nothing to split.
+//
+// Paused at the end is not scrolled back: what is on the screen is what's being read,
+// and new output arriving below it shouldn't cover the bottom of it.  The strip waits
+// until the view moves (m_iSplitHeldY, ScrollToPosition).
 bool CMUSHView::IsSplit ()
   {
-  if (!App.m_bSplitScrollback || !m_freeze)
+  if (!m_freeze || !SplitPossible ())
+    return false;
+
+  // at the end there is nothing below it to show
+  if (m_scroll_position.y >= m_ScrollbarSizeTotal.cy - m_ScrollbarSizePage.cy)
+    return false;
+
+  // still where it was when it was last at the end
+  return m_scroll_position.y != m_iSplitHeldY;
+  }
+
+// The preference, and a window with room for the strip.
+bool CMUSHView::SplitPossible ()
+  {
+  if (!App.m_bSplitScrollback)
     return false;
 
   CMUSHclientDoc* pDoc = GetDocument();
@@ -1852,11 +2134,18 @@ bool CMUSHView::IsSplit ()
   if (!pDoc->m_FontHeight)
     return false;
 
-  // at the end there is nothing below it to show
-  if (m_scroll_position.y >= m_ScrollbarSizeTotal.cy - m_ScrollbarSizePage.cy)
-    return false;
-
   return GetOutputWindowHeight () >= pDoc->m_FontHeight * 8;
+  }
+
+// How far Page Down or Page Up goes: what can be seen of the history, less a line, so
+// that nothing is skipped.  With the strip that is the part above it.
+long CMUSHView::PageStep (const bool bSplit)
+  {
+  CMUSHclientDoc* pDoc = GetDocument();
+  const long iHeight = bSplit ? SplitStripRect ().top - GetTextRectangle ().top
+                              : GetOutputWindowHeight ();
+  const long iStep = iHeight - pDoc->m_FontHeight;
+  return bSplit && iStep < pDoc->m_FontHeight ? pDoc->m_FontHeight : iStep;
   }
 
 CRect CMUSHView::SplitStripRect ()
@@ -2036,7 +2325,8 @@ CPoint pt = GetScrollPosition ();
 int lastline;
 
 
-pt.y += GetOutputWindowHeight () - pDoc->m_FontHeight;
+// (with the strip showing, only what is above it: PageStep)
+pt.y += PageStep (IsSplit ());
 
 // include partial last line if necessary
 
@@ -2061,7 +2351,9 @@ ASSERT_VALID(pDoc);
 
 CPoint pt = GetScrollPosition ();
 
-pt.y -= GetOutputWindowHeight () - pDoc->m_FontHeight;
+// Moving back from the end puts the strip up, if it will be (Auto Pause, or paused
+// already), so the page is what will be left above it.
+pt.y -= PageStep (IsSplit () || (SplitPossible () && (m_freeze || pDoc->m_bAutoFreeze)));
 
 if (pt.y < 0)
   pt.y = 0;
@@ -3345,18 +3637,24 @@ if (m_freeze)
   {
 
   CPoint orig_top = GetScrollPosition ();
-  
+  // paused at the end, and no strip yet: the same text, so still no strip
+  const bool bHeld = orig_top.y == m_iSplitHeldY;
+
   orig_top.y -= JUMP_SIZE * pDoc->m_FontHeight;
 
   if (orig_top.y < 0)
     {
     // The lines at the top of the buffer have gone.  Without a strip, this is where
     // the view catches up with the output.  With one, it can be read as it arrives
-    // anyway, so what's being read stays where it is.
-    if (!App.m_bSplitScrollback)
+    // anyway, so what's being read stays where it is.  (A window too small for the
+    // strip has none, so it catches up as it always did.)
+    if (!SplitPossible ())
       m_freeze = FALSE;
     orig_top.y = 0;
     }
+
+  if (bHeld)
+    m_iSplitHeldY = orig_top.y;
 
 
   ScrollToPosition (orig_top, App.m_bSmoothScrolling);
@@ -3543,8 +3841,9 @@ void CMUSHView::AutoWrapWindowWidth (CMUSHclientDoc* pDoc)
 
     dc.CreateCompatibleDC (NULL);
 
-    // the same size ChangeFont asked for
-    int lfHeight = -MulDiv(pDoc->m_font_height, pDoc->m_iRasterScale > 1 ? 96 : pDoc->m_iDpi, 72);
+    // the same size ChangeFont asked for: a bitmap font at its own size whatever the
+    // scale, including at 125%, where it is drawn at that size and not blown up
+    int lfHeight = -MulDiv(pDoc->m_font_height, pDoc->m_bRasterOutputFont ? 96 : pDoc->m_iDpi, 72);
     CFont font;
 
      font.CreateFont(lfHeight, // int nHeight, 
@@ -3578,25 +3877,12 @@ void CMUSHView::AutoWrapWindowWidth (CMUSHclientDoc* pDoc)
 
   // We must adjust the current line to allow for the new wrap size
 
+    // The buffer is in bytes (four a column for UTF-8, as CLine's constructor sizes
+    // it) and iMemoryAllocated must say how big it is: this site used to reallocate
+    // to the column count and leave iMemoryAllocated at the old size, so AddToLine's
+    // bounds check answered for a buffer that was gone.  docs/UPSTREAM-BUGS.md #100.
     if (pDoc->m_pCurrentLine)     // a new world might not have a line yet
-      {
-      // save current line text
-      CString strLine = CString (pDoc->m_pCurrentLine->text, pDoc->m_pCurrentLine->len);
-
-  #ifdef USE_REALLOC
-      pDoc->m_pCurrentLine->text  = (char *) realloc (pDoc->m_pCurrentLine->text, 
-                                               MAX (pDoc->m_pCurrentLine->len, iWidth) 
-                                               * sizeof (char));
-  #else
-      delete [] pDoc->m_pCurrentLine->text;
-      pDoc->m_pCurrentLine->text = new char [MAX (pDoc->m_pCurrentLine->len, iWidth)];
-  #endif
-
-      // put text back
-      memcpy (pDoc->m_pCurrentLine->text, (LPCTSTR) strLine, pDoc->m_pCurrentLine->len);
-      ASSERT (pDoc->m_pCurrentLine->text);
-    
-      }   // end of having a current line
+      pDoc->m_pCurrentLine->SetCapacity (iWidth * (pDoc->m_bUTF_8 ? 4 : 1));
 
     pDoc->m_nWrapColumn = iWidth;
 
@@ -4983,6 +5269,23 @@ SCROLLINFO ScrollInfo;
 RECT r;
 int iDeltaY = m_scroll_position.y - pt.y;
 
+  // The strip is held off where the view was last at the end, paused there or not
+  // (IsSplit); going anywhere else lets it show.
+  const bool bWasSplit = IsSplit ();
+  if (pt.y >= m_ScrollbarSizeTotal.cy - m_ScrollbarSizePage.cy)
+    m_iSplitHeldY = pt.y;
+  else if (pt.y != m_iSplitHeldY)
+    m_iSplitHeldY = -1;
+  const bool bSplit = IsSplit ();
+  if (bSplit != bWasSplit)
+    InvalidateAll ();     // it comes or goes, and everything below its top changes
+  // Smooth scrolling moves the pixels already there, which must not include the strip's:
+  // it shows the end of the buffer wherever the view is.
+  CRect rectSmooth;
+  GetClientRect (&rectSmooth);
+  if (bSplit)
+    rectSmooth.bottom = SplitStripRect ().top;
+
   // only remove tool tip if a miniwindow didn't put it there
   if (m_nLastToolTipLine || m_nLastToolTipColumn)
     RemoveToolTip ();
@@ -5006,7 +5309,7 @@ int iDeltaY = m_scroll_position.y - pt.y;
         if (pDoc->m_bScrollBarWanted)
           SetScrollInfo (SB_VERT, &ScrollInfo, pDoc->m_bScrollBarWanted);
         m_ScrollbarPosition.cy = ScrollInfo.nPos;
-        ScrollWindow (0, iSmoothDelta);
+        ScrollWindow (0, iSmoothDelta, bSplit ? &rectSmooth : NULL, bSplit ? &rectSmooth : NULL);
         m_bAllInvalid = false;   // ScrollWindow moves the update region
         UpdateWindow ();
         }
@@ -5072,6 +5375,10 @@ int iDeltaY = m_scroll_position.y - pt.y;
       m_freeze = pt.y < (m_ScrollbarSizeTotal.cy - m_ScrollbarSizePage.cy);
     }
   }
+
+  // and if pausing or catching up just now put the strip up or took it down
+  if (IsSplit () != bSplit)
+    InvalidateAll ();
 
   } // end of CMUSHView::ScrollToPosition
 
@@ -6684,9 +6991,30 @@ void CMUSHView::OnSysCommand(UINT nID, LPARAM lParam)
 // docs/PAL.md S4) this view's tooltip / capture / keyboard services — each
 // method is exactly the code the old member functions ran inline.
 // Plugins live in 96-dpi coordinates (dpi.h).
-static CPoint LogicalPoint (const CMUSHclientDoc * pDoc, const CPoint & point)
+//
+// Which logical pixel a real one is in.  Logical pixel L is drawn from ToPhysical (L),
+// rounded to nearest, up to ToPhysical (L + 1), so the answer is the last L that starts
+// at or before p: not p rounded, which puts the last real pixel of a hotspot in the
+// pixel after it.  It is also what keeps the mouse-leave point (-1, -1) at -1 when the
+// scale is 225% or more, where rounding made it 0, inside every window at the left.
+// The identity at 96 dpi, as everything here is.
+static int HitLogical (const CMUSHclientDoc * pDoc, const int iPhysical)
   {
-  return CPoint (pDoc->ToLogical (point.x), pDoc->ToLogical (point.y));
+  if (pDoc->m_iDpi == 96 || pDoc->m_iDpi <= 0)
+    return iPhysical;
+  // MulDiv rounds halves away from zero, so ToPhysical (-L) is -ToPhysical (L), and the
+  // pixels left of 0 mirror the ones right of it: -1 is in -1, as 0 is in 0.
+  if (iPhysical < 0)
+    return -HitLogical (pDoc, -iPhysical - 1) - 1;
+  // the last L with floor (L * dpi / 96 + 1/2) <= p, which is ceil ((2p + 1) * 96 / (2 * dpi)) - 1
+  const long long iNum = (2LL * iPhysical + 1) * 96;
+  const long long iDen = 2LL * pDoc->m_iDpi;
+  return (int) ((iNum + iDen - 1) / iDen - 1);
+  }
+
+CPoint CMUSHView::LogicalPoint (const CMUSHclientDoc * pDoc, const CPoint & point)
+  {
+  return CPoint (HitLogical (pDoc, point.x), HitLogical (pDoc, point.y));
   }
 
 struct CMUSHViewMouseHooks : public MiniWindowMouseHooks
@@ -7028,6 +7356,17 @@ LRESULT CMUSHView::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
 
       return 0;
     }  // end of WM_MOUSELEAVE
+
+    // Dragging the strip's bar holds the mouse; lose it any way but the button coming
+    // up (a menu, alt-tab, another window taking it) and the drag is over, or every
+    // later mouse move would go on resizing the strip.
+    case WM_CAPTURECHANGED:
+      if (m_bSplitDragging && (HWND) lParam != m_hWnd)
+        {
+        m_bSplitDragging = false;
+        App.db_write_int ("prefs", "SplitScrollbackPercent", App.m_iSplitScrollbackPercent);
+        }
+      return CView::WindowProc(message, wParam, lParam);
 
     default: 
       return CView::WindowProc(message, wParam, lParam);

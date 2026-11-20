@@ -1351,6 +1351,7 @@ private:
     bool m_bleedBackground = false;   // App.m_bBleedBackground
     bool m_splitScrollback = false;   // App.m_bSplitScrollback
     int  m_splitPercent = 25;         // App.m_iSplitScrollbackPercent
+    mutable int m_splitHeldY = -1;    // scroll position paused at the end: no strip there
     // The strip, in pixels below the text area's top: false if it isn't showing.
     bool SplitGeometry(int& stripTop, int& rows, long long& tailTopRow) const;
     long long ClientYToVirtual(long long scrollPix, int clientY) const;

@@ -2932,9 +2932,9 @@ if (((iLineLength >= m_nWrapColumn) && bNewCharacter) ||
 ```
 
 — the single guard against overrunning this buffer, and it was answering for the
-allocation the line used to have. The other site that re-allocates the same
-buffer (`doc_shared.cpp`, the end-of-line shrink) updates `iMemoryAllocated`
-first and allocates from it; only this one did not.
+allocation the line used to have. The end-of-line shrink (`doc_shared.cpp`) and
+World Properties' wrap column (`configuration.cpp`) update `iMemoryAllocated`
+and allocate from it. One other site does not: see "A second site" below.
 
 **Measured**, with the update removed: a UTF-8 line built at wrap 80 has
 `iMemoryAllocated == 320`; after `SetOption ("wrap_column", 200)` the buffer is
@@ -2954,6 +2954,19 @@ non-vacuous.
 
 **Shared code — the same defect ships on macOS**, where a UTF-8 world is the
 common case rather than the unusual one.
+
+**A second site (found 2026-11).** This entry said the other sites were fine; one
+wasn't. `CMUSHView::AutoWrapWindowWidth` (`mushview.cpp`, "Auto-wrap to window
+size") re-allocated the current line with the same two defects: the size was
+`MAX (len, iWidth)`, the column count, a quarter of what a UTF-8 line holds, and
+`iMemoryAllocated` was left at the old size. It runs on every resize of the window,
+so in a UTF-8 world with auto-wrap on, making the window narrower or wider was
+enough: a line of Cyrillic or accented text (two bytes a character) as long as
+the new column count wrote past the end. It, and AddToLine's
+own growing of a line, now go through `CLine::SetCapacity` (`Line.cpp`), which
+keeps the record and the allocation together. Pinned by
+`OutputViewDpi.AutoWrapKeepsTheLineBufferAndItsSizeInStep`. Windows only: the port
+has no copy of this site.
 
 ## 101 — Four world options silently revert to their defaults when set to zero
 

@@ -386,10 +386,13 @@ static void GetWindowHeight (CWnd * pWnd, VARIANT & vaResult, const bool client 
       }
     }
   else
-    rect.right = -1;
+    rect.right = -1;    // (upstream's: so with no window the height is 0, not -1)
+  // in 96-dpi pixels, as its partner GetWindowWidth is (and every size a plugin sees)
+  if (pWnd->m_hWnd)
+    rect.bottom = ::MulDiv (rect.bottom, 96, Dpi_ForWindow (pWnd->m_hWnd));
   VariantClear (&vaResult);
   vaResult.vt = VT_I4;
-  vaResult.lVal = rect.bottom; 
+  vaResult.lVal = rect.bottom;
   }   // end of GetWindowHeight
 #endif // _WIN32
 
@@ -1013,7 +1016,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
       if (pmyView)
         {
         RECT rect = pmyView->GetTextRectangle ();
-        SetUpVariantLong (vaResult, rect.left);
+        SetUpVariantLong (vaResult, ToLogical (rect.left));   // 96-dpi, as m_TextRectangle is
         break;
         }
 #endif
@@ -1030,7 +1033,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
       if (pmyView)
         {
         RECT rect = pmyView->GetTextRectangle ();
-        SetUpVariantLong (vaResult, rect.top);
+        SetUpVariantLong (vaResult, ToLogical (rect.top));   // 96-dpi, as m_TextRectangle is
         break;
         }
 #endif
@@ -1047,7 +1050,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
       if (pmyView)
         {
         RECT rect = pmyView->GetTextRectangle ();
-        SetUpVariantLong (vaResult, rect.right);
+        SetUpVariantLong (vaResult, ToLogical (rect.right));   // 96-dpi, as m_TextRectangle is
         break;
         }
 #endif
@@ -1064,7 +1067,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
       if (pmyView)
         {
         RECT rect = pmyView->GetTextRectangle ();
-        SetUpVariantLong (vaResult, rect.bottom);
+        SetUpVariantLong (vaResult, ToLogical (rect.bottom));   // 96-dpi, as m_TextRectangle is
         break;
         }
 #endif

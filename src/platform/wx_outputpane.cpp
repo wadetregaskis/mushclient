@@ -1115,6 +1115,11 @@ void COutputPane::ScrollToBufferEnd()
 void COutputPane::SetPaused(bool paused)
 {
     if (paused) {
+        // paused at the end: no strip until the view moves (SplitGeometry)
+        if (IsAtBufferEnd())
+            GetViewStart(nullptr, &m_splitHeldY);
+        else
+            m_splitHeldY = -1;
         // Disengage auto-scroll without moving the viewport: new lines will
         // continue to be appended to the buffer but won't scroll into view.
         bool wasAuto = m_autoScroll;
@@ -2195,6 +2200,15 @@ void COutputPane::OnPaint(wxPaintEvent&)
             dc.SetBrush(wxBrush(bgCol));
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.DrawRectangle(trL, trT + stripTop, stripW, stripRows * m_lineH + 2);
+            // and over that what is under the text everywhere else: the background image
+            // and the miniwindows drawn underneath (CMUSHView::OnDraw clips the history
+            // above the strip instead, to the same effect)
+            if (m_fn_draw_background_image)
+                m_fn_draw_background_image(dc, clientW, clientH);
+            if (m_fn_composite_miniwindows)
+                m_fn_composite_miniwindows(dc, clientW, clientH, /*bUnder=*/true);
+            dc.SetDeviceOrigin(0, 0);
+            dc.SetPen(*wxTRANSPARENT_PEN);
             dc.SetBrush(wxBrush(wxColour(128, 128, 128)));
             dc.DrawRectangle(trL, trT + stripTop, stripW, 2);
 
@@ -3099,6 +3113,18 @@ bool COutputPane::SplitGeometry(int& stripTop, int& rows, long long& tailTopRow)
     if (!m_splitScrollback || m_autoScroll || m_lineH <= 0 || LineCountI() == 0)
         return false;
 
+    // At the end there is nothing below to show; and paused at the end is not scrolled
+    // back: the strip waits until the view moves (CMUSHView::IsSplit, m_iSplitHeldY).
+    if (IsAtBufferEnd())
+        return false;
+    {
+        int scrollY = 0;
+        const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
+        if (scrollY == m_splitHeldY)
+            return false;
+        m_splitHeldY = -1;     // it has moved: from now on, scrolled back
+    }
+
     int l, t, r, b;
     TextRect(l, t, r, b);
     // the hint bar, which is still how to get back with a click, sits below the strip
@@ -3119,8 +3145,19 @@ long long COutputPane::ClientYToVirtual(long long scrollPix, int clientY) const
 {
     int stripTop = 0, rows = 0;
     long long tailTopRow = 0;
-    if (SplitGeometry(stripTop, rows, tailTopRow) && clientY >= stripTop + 2)
-        return tailTopRow * m_lineH + (clientY - stripTop - 2);
+    if (SplitGeometry(stripTop, rows, tailTopRow)) {
+        // A drag belongs to wherever it began (CMUSHView's m_bSplitSelecting): one that
+        // started in the history runs off the bottom of it, rather than jumping into the
+        // tail, and one that started in the strip stays there.
+        int y = clientY;
+        if (m_dragging) {
+            y = m_dragStartY;
+            int l, t, r, b;
+            if (TextRect(l, t, r, b)) y -= t;
+        }
+        if (y >= stripTop + 2)
+            return tailTopRow * m_lineH + (clientY - stripTop - 2);
+    }
     return scrollPix + clientY;
 }
 

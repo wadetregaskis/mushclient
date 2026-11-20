@@ -138,6 +138,11 @@ CMiniWindow * Mouse_Over_Miniwindow (CMUSHclientDoc* pDoc,
                                      CHotspot * &pHotspot, 
                                      string & sMiniwindowId);
 
+// a point in this view, in real pixels, as the 96-dpi point plugins see (dpi.h)
+static CPoint LogicalPoint (const CMUSHclientDoc * pDoc, const CPoint & point);
+// UTF-8 in the bitmap font selected into hdc: anything in it the font hasn't got?
+static bool RunNeedsFallbackFont (HDC hdc, const char * p, const int iLength);
+
 bool Mouse_Move_MiniWindow (CMUSHclientDoc* pDoc, CPoint point);
 bool Mouse_Down_MiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags);
 bool Mouse_Up_MiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags);
@@ -158,6 +163,10 @@ void did_jump (void);
 // It's all drawn inside this one view, so that miniwindows are composed once.  None
 // of it is visible to plugins: the scroll position still means what it did.
 bool IsSplit ();                    // is the strip showing just now?
+bool SplitPossible ();              // the preference, and room for it
+long PageStep (const bool bSplit);  // how far Page Down / Page Up go
+long m_iSplitHeldY;                 // the scroll position when last at the end: no strip
+                                    // there, paused or not (-1 once it has moved)
 CRect SplitStripRect ();            // where, in client coordinates
 long SplitTailScroll ();            // the scroll position that puts the last line at the bottom
 bool PointInSplitStrip (const CPoint & point);
@@ -209,6 +218,17 @@ bool calculate_line_and_column (const CPoint & point,
                                 int & col,
                                 const bool bHalfWay = true);
 long calculate_width (const int & line, const int len, CMUSHclientDoc* pDoc, CClientDC & dc);
+long measure_width (const CLine * pLine, const int len, CMUSHclientDoc* pDoc, CClientDC & dc);
+// calculate_width's last line: the width of each start of it measured so far, for the
+// mouse, which asks for every column up to where it is on every move
+const CLine * m_pWidthCacheLine;
+long m_iWidthCacheLine;              // its m_nLineNumber, or -1
+int m_iWidthCacheLen;                // its len then
+const CFont * m_pWidthCacheFont;     // and the fonts (m_font [0] stands for all 16)
+int m_iWidthCacheScale;
+HGDIOBJ m_hWidthCacheFont;           // (a font made again can come back at the same address)
+long m_iWidthCacheFontWidth;
+std::vector<long> m_vWidthCache;     // by column; -1 not yet measured
 void extend_selection (const int line, const int col);
 void PrintWorld (void);
 void RemoveToolTip (void);

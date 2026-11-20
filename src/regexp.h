@@ -63,6 +63,13 @@ class t_regexp
   // line.  Copied into m_vOffsets only on a successful match, so the NOMATCH path
   // still leaves m_vOffsets untouched.
   pcre2_match_data * m_match;
+  // A literal every match must contain (mc_pcre_required_literal), found when
+  // the pattern is compiled: a subject without it is a NOMATCH without running
+  // the pattern at all.  Empty if there is none we can be sure of.
+  string m_sRequired;
+  int m_iRequiredAnchor = 0;    // mc_pcre_literal_anchor
+  bool m_bRequiredCaseless = false;
+  bool m_bUTF8 = false;
   int m_iJitOnly;        // mc_pcre_is_jit_only: -1 until asked
   int m_iCaptureCount;   // -1 until first computed from the compiled program
   // count of matching wildcards
@@ -111,6 +118,11 @@ t_regexp * regcomp(const char *exp, const int options = 0);
 int regexec(t_regexp *prog,
             const char *string,
             const int start_offset = 0);
+// The same, for a subject whose length the caller knows (the trigger path).
+int regexec(t_regexp *prog,
+            const char *string,
+            const int length,
+            const int start_offset);
 
 bool CheckRegularExpression (const CString strRegexp, const int iOptions);
 

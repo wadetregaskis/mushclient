@@ -734,5 +734,127 @@ TEST(RegexpCompat, AFailedCompileReportsThePatternAsWritten) {
     EXPECT_EQ(4, offset);
 }
 
+// ── The required-literal prefilter (mc_pcre_required_literal, regexec) ────
+//
+// A literal is only ever claimed when every match must contain it: a wrong one
+// would make a trigger miss lines, silently.  tools/trigger_bench checks the rule
+// against every pattern in the tree and Quow's run-time triggers; these pin the
+// shape of it.
+
+static std::string RequiredLiteral(const char* pattern, int options = 0) {
+    char out[32];
+    const int n = mc_pcre_required_literal(pattern, options, out, sizeof out);
+    return std::string(out, n);
+}
+
+TEST(RegexpPrefilter, TheLiteralIsALongestRunEveryMatchHas) {
+    const int I = PCRE_CASELESS, U = PCRE_UTF8;
+    const struct { const char* pattern; int options; const char* literal; } cases[] = {
+        { "^You have (\\d+) items$",                     0, "You have " },
+        { "^(?:> )?(?P<who>(?:\\w+\\b\\W*?){1,8}) has no arcane(?: or divine)? protection\\.$",
+                                                         0, " has no arcane" },
+        { "abc|def",                                     0, "" },     // either will do
+        { "(?:abc|xyz)def",                              0, "def" },  // not inside the alternation
+        { "(?:abc)?defg",                                0, "defg" }, // not inside an optional group
+        { "(?:abcd)+ef",                                 0, "ef" },   // nor a repeated one
+        { "(abcd)ef",                                    0, "abcd" }, // a required group counts
+        { "(?<name>abcd)ef",                             0, "abcd" },
+        { "(?>abcd)ef",                                  0, "abcd" },
+        { "(?=abcd)ef",                                  0, "ef" },   // a lookahead does not
+        { "(?<!abcd)ef",                                 0, "ef" },
+        { "xab+cde",                                     0, "cde" },  // b+ ends the run "xa"
+        { "abcx?de",                                     0, "abc" },
+        { "abcx{2}de",                                   0, "abc" },
+        { "abcx{2,}de",                                  0, "abc" },
+        { "a.bc[xyz]def\\dgh",                           0, "def" },
+        { "[]abc]xy",                                    0, "xy" },   // ] first in a class
+        { "[^]a]xy",                                     0, "xy" },
+        { "[[:alpha:]]xy",                               0, "xy" },
+        { "a\\.b\\(c",                                   0, "a.b(c" },
+        { "\\x41xyz",                                    0, "xyz" },  // (\x41BC would lose BC: safe)
+        { "\\x{41}BC",                                   0, "BC" },
+        { "(?<n>x)\\k<n>abcd",                           0, "abcd" },
+        { "(x)\\g{-1}abcd",                              0, "abcd" },
+        { "\\p{Lu}abc",                                  0, "abc" },
+        { "\\babc\\b",                                   0, "abc" },
+        { "ABC",                                         I, "abc" },  // caseless: lower case
+        // anything not understood: nothing at all
+        { "(?i)abc",                                     0, "" },
+        { "a(?i:b)cd",                                   0, "" },
+        { "(*UTF)abc",                                   0, "" },
+        { "abc(*ACCEPT)def",                             0, "" },
+        { "\\Qabc\\E",                                   0, "" },
+        { "abc{,3}de",                                   0, "" },     // {,3}: text to PCRE 8
+        { "abc{ 3 }de",                                  0, "" },
+        { "abc(?#note)",                                 0, "" },
+        { "(?(1)a|b)cd",                                 0, "" },
+        { "abc(?R)?",                                    0, "" },
+        { "\\yabc",                                      0, "" },     // a letter with no meaning
+        { "abcd",                         PCRE_EXTENDED,    "" },
+        // UTF-8: a character outside ASCII ends a run, quantified or not
+        { "caf\xC3\xA9+ au lait",                        U, " au lait" },
+        { "caf\xC3\xA9 au lait",                         0, "caf\xC3\xA9 au lait" },
+        // caseless UTF-8: K and S also match the Kelvin sign and the long s
+        { "Kelvins",                                 I | U, "elvin" },
+        { "Kelvins",                                     I, "kelvins" },
+        // non-ASCII is not taken caseless
+        { "caf\xE9s",                                    I, "caf" },
+        // a long run is kept in pieces
+        { "There is a sudden white flash\\.  Your magical shield has broken",
+                                                         0, "There is a sudden white flash.  " },
+    };
+    for (auto& c : cases)
+        EXPECT_EQ(std::string(c.pattern) + " -> " + c.literal,
+                  std::string(c.pattern) + " -> " + RequiredLiteral(c.pattern, c.options));
+}
+
+TEST(RegexpPrefilter, TheSearchFindsTheLiteralWhereverItIs) {
+    const char* lit = "arcane";
+    for (int anchor = 0; anchor < 6; anchor++) {
+        EXPECT_TRUE(mc_pcre_has_literal("arcane", 6, lit, 6, 0, anchor));
+        EXPECT_TRUE(mc_pcre_has_literal("has no arcane protection", 24, lit, 6, 0, anchor));
+        EXPECT_TRUE(mc_pcre_has_literal("xxarcane", 8, lit, 6, 0, anchor));
+        EXPECT_FALSE(mc_pcre_has_literal("arcan", 5, lit, 6, 0, anchor));
+        EXPECT_FALSE(mc_pcre_has_literal("arcanX arcan", 12, lit, 6, 0, anchor));
+        EXPECT_FALSE(mc_pcre_has_literal("ARCANE", 6, lit, 6, 0, anchor));
+        EXPECT_TRUE(mc_pcre_has_literal("ARCANE", 6, lit, 6, 1, anchor));
+        EXPECT_TRUE(mc_pcre_has_literal("no ArCaNe!", 10, lit, 6, 1, anchor));
+        EXPECT_FALSE(mc_pcre_has_literal("no ArCaN!", 9, lit, 6, 1, anchor));
+    }
+    // a byte that only folds to a letter by |0x20 is not that letter
+    EXPECT_FALSE(mc_pcre_has_literal("[", 1, "{", 1, 1, 0));
+    EXPECT_FALSE(mc_pcre_has_literal("A", 1, "a", 1, 0, 0));
+    // the rarest byte is looked for first
+    EXPECT_EQ(1, mc_pcre_literal_anchor(" has no", 7, 0));     // the h
+    EXPECT_EQ(2, mc_pcre_literal_anchor(" slithers", 9, 0));   // the l, not the space
+}
+
+// What a plugin can see of a prefiltered attempt is what it saw before: no
+// match, the attempt counted, the last match's text kept.
+TEST(RegexpPrefilter, ASkippedAttemptIsCountedAsANoMatch) {
+    Regexp r("^You have (\\d+) items$");
+    ASSERT_FALSE(r->m_sRequired.empty());
+    EXPECT_EQ(1, regexec(r.get(), "You have 3 items"));
+    EXPECT_EQ(std::string("3"), r->GetWildcard(1));
+    const long attempts = r->m_iMatchAttempts;
+    for (int i = 0; i < 100; i++)
+        EXPECT_EQ(0, regexec(r.get(), "The rat bites you."));
+    EXPECT_EQ(attempts + 100, r->m_iMatchAttempts);
+    EXPECT_EQ(std::string("You have 3 items"), r->m_sTarget);
+    EXPECT_EQ(std::string("3"), r->GetWildcard(1));
+    EXPECT_GE(r->iTimeTaken, 0);
+}
+
+// In UTF-8 mode, a subject that isn't valid UTF-8 is still an error, as it was:
+// the prefilter stands aside for anything not plain ASCII.
+TEST(RegexpPrefilter, BadUtf8IsStillAnErrorInUtf8Mode) {
+    Regexp r("abc", PCRE_UTF8);
+    ASSERT_FALSE(r->m_sRequired.empty());
+    EXPECT_EQ(0, regexec(r.get(), "plain ascii"));      // skipped: no error possible
+    EXPECT_EQ(0, r->m_iExecutionError);
+    EXPECT_EQ(0, regexec_erroring(r.get(), "bad \xFF byte"));
+    EXPECT_EQ(PCRE_ERROR_BADUTF8, r->m_iExecutionError);
+}
+
 
 MC_TEST_MAIN()

@@ -134,6 +134,25 @@ int mc_pcre_is_jit_only (const pcre2_code * code);
 int mc_pcre_match_jit (const pcre2_code * code, pcre2_match_data ** md,
                        const char * subject, int length, int start_offset, int options);
 
+/* A literal that every match of `pattern`, compiled with `options` (PCRE 8's),
+   must contain: up to `size` bytes of it to out, and its length, or 0 if none
+   could be found for certain.  For a pattern that is caseless the literal is in
+   lower case, and is to be compared ignoring ASCII case.  If the subject lacks
+   it, the pattern cannot match there, and running it can be skipped: the
+   trigger path's prefilter (regexec).  Conservative: see mc_pcre.c, and
+   tools/trigger_bench, which checks it against every pattern we know of. */
+int mc_pcre_required_literal (const char * pattern, int options, char * out, int size);
+
+/* Which byte of a literal to look for first: the one least likely to be in a
+   line of text.  Worked out once, with the literal. */
+int mc_pcre_literal_anchor (const char * literal, size_t n, int caseless);
+
+/* Is literal[0..n) in subject[0..length)?  caseless: literal is in lower case,
+   and ASCII letters in the subject are compared folded.  anchor: from
+   mc_pcre_literal_anchor (any index into the literal is correct, only slower). */
+int mc_pcre_has_literal (const char * subject, size_t length,
+                         const char * literal, size_t n, int caseless, int anchor);
+
 /* A match's offsets, as ints with -1 for unset: pairs of them to out[]. */
 void mc_pcre_get_offsets (pcre2_match_data * md, int * out, int pairs);
 

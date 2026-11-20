@@ -39,12 +39,43 @@ pcre2_code * program;
   re->m_program = program;
   re->m_iExecutionError = 0; // no error now
 
+  // the prefilter: a literal any match must contain
+  char literal [32];
+  const int iLiteral = mc_pcre_required_literal (exp, options, literal, sizeof literal);
+  if (iLiteral > 0)
+    {
+    re->m_sRequired.assign (literal, iLiteral);
+    re->m_bRequiredCaseless = (options & PCRE_CASELESS) != 0;
+    re->m_iRequiredAnchor = mc_pcre_literal_anchor (literal, iLiteral, re->m_bRequiredCaseless);
+    }
+  re->m_bUTF8 = (options & PCRE_UTF8) != 0;
 
   return re;
   }
 
 int regexec(t_regexp *prog,
             const char *string,
+            const int start_offset)
+  {
+  return regexec (prog, string, (int) strlen (string), start_offset);
+  }
+
+// Is every byte ASCII?  (Then it is valid UTF-8, whatever the validator.)
+static bool AllAscii (const char * s, const int length)
+  {
+  unsigned char any = 0;
+  for (int i = 0; i < length; i++)
+    any |= (unsigned char) s [i];
+  return any < 0x80;
+  }
+
+// How often a NOMATCH decided by the prefilter alone is timed, as a power of
+// two; each one timed counts for that many.  See regexec.
+#define PREFILTER_TIME_SHIFT 4
+
+int regexec(t_regexp *prog,
+            const char *string,
+            const int length,
             const int start_offset)
   {
 #if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
@@ -73,20 +104,60 @@ int count;
   if (prog->m_iJitOnly < 0)
     prog->m_iJitOnly = mc_pcre_is_jit_only(prog->m_program);
 
+  const bool bTimed = App.m_iCounterFrequency != 0;
   LARGE_INTEGER start, finish;
-  if (App.m_iCounterFrequency)
+
+  /*
+  The prefilter.  If the subject lacks a literal that every match must contain,
+  the pattern cannot match, and running it would say NOMATCH: so say it without
+  running it.  That is all a plugin can see, provided running it could not have
+  said something else first, so the prefilter stands aside where it could: a bad
+  start offset, no match data, and in UTF-8 mode a subject with anything but
+  ASCII in it (which PCRE2 would check, and might reject as bad UTF-8).  The one
+  difference left is a pattern that, on a line without its literal, would have
+  run out of its match limit or JIT stack: that is now simply no match.
+
+  The time taken: one of these is about the cost of a clock read, so only one in
+  2^PREFILTER_TIME_SHIFT is timed, and counts for that many.  A run of the
+  pattern is timed every time, as before.
+  */
+
+  if (!prog->m_sRequired.empty () &&
+      prog->m_match != NULL &&
+      start_offset >= 0 && start_offset <= length)
+    {
+    const bool bSample = bTimed &&
+        (prog->m_iMatchAttempts & ((1 << PREFILTER_TIME_SHIFT) - 1)) == 0;
+    if (bSample)
+      QueryPerformanceCounter (&start);
+    if (!mc_pcre_has_literal (string, length,
+                              prog->m_sRequired.data (), prog->m_sRequired.size (),
+                              prog->m_bRequiredCaseless, prog->m_iRequiredAnchor) &&
+        (!prog->m_bUTF8 || AllAscii (string, length)))
+      {
+      if (bSample)
+        {
+        QueryPerformanceCounter (&finish);
+        prog->iTimeTaken += (finish.QuadPart - start.QuadPart) << PREFILTER_TIME_SHIFT;
+        }
+      prog->m_iMatchAttempts++;  // how many times did we try to match?
+      return false;              // no match
+      }
+    }
+
+  if (bTimed)
     QueryPerformanceCounter (&start);
   else
     { start.QuadPart = 0; finish.QuadPart = 0; }
 
   if (prog->m_iJitOnly)
-    count = mc_pcre_match_jit(prog->m_program, &prog->m_match, string, (int) strlen (string),
+    count = mc_pcre_match_jit(prog->m_program, &prog->m_match, string, length,
                               start_offset, options);
   else
-    count = mc_pcre_match(prog->m_program, &prog->m_match, string, (int) strlen (string),
+    count = mc_pcre_match(prog->m_program, &prog->m_match, string, length,
                           start_offset, options, NULL, NULL);
 
-  if (App.m_iCounterFrequency)
+  if (bTimed)
     {
     QueryPerformanceCounter (&finish);
     prog->iTimeTaken += finish.QuadPart - start.QuadPart;

@@ -614,6 +614,488 @@ pcre2_code * mc_pcre_compile (const char * pattern, int options,
   return code;
   }
 
+/* -------------------------------------------------- a required literal ---- */
+
+/* See mc_pcre.h.  The rule is that a mistake may only ever lose a literal, never
+   invent one: a literal that a match need not contain would make a trigger miss
+   a line it matches, silently.  So the pattern is read as PCRE2 reads it, and
+   anything not understood completely gives up on the whole pattern:
+
+   - A run of plain characters at the top level of the pattern, or inside a
+     group that is itself required (not quantified, not a lookaround, and with no
+     alternation of its own), must be in every match.  A quantifier takes the
+     character before it out of the run; anything else that isn't a plain
+     character (a class, a dot, an escape like \d, an anchor, a group) ends it.
+   - A sequence with a | at its own level has no required literal.
+   - Option settings like (?i), verbs like (*ACCEPT), conditions, recursion,
+     callouts, \Q..\E, extended mode, and a brace that isn't a plain {n}, {n,}
+     or {n,m}: no literal at all.
+   - Caseless: compared ignoring ASCII case, and no character outside ASCII is
+     taken.  In UTF-8 mode caseless K and S are not taken either, since there they
+     also match the Kelvin sign and the long s.  In UTF-8 mode no character
+     outside ASCII is taken at all, so a quantifier on one is always seen. */
+
+#define MC_LITERAL_RUN 32
+
+typedef struct
+  {
+  char text [MC_LITERAL_RUN];
+  int length;
+  } lit_run_t;
+
+typedef struct
+  {
+  const char * p;
+  int caseless, utf;
+  int bad;               /* something not understood: no literal at all */
+  } lit_scan_t;
+
+static void lit_keep (lit_run_t * best, lit_run_t * run)
+  {
+  if (run->length > best->length)
+    *best = *run;
+  run->length = 0;
+  }
+
+/* A quantifier at s->p: consumes it and says so.  A brace that isn't a plain
+   {n}, {n,} or {n,m} might be one to PCRE2 ({,m}, spaces) or a literal: give up. */
+static int lit_quantifier (lit_scan_t * s)
+  {
+  const char * p = s->p;
+  if (*p == '?' || *p == '*' || *p == '+')
+    p++;
+  else if (*p == '{')
+    {
+    if (!pcre8_quantifier (p) || pcre2_quantifier (p) != 1)
+      {
+      s->bad = 1;
+      return 0;
+      }
+    p = strchr (p, '}') + 1;
+    }
+  else
+    return 0;
+  if (*p == '?' || *p == '+')   /* lazy or possessive */
+    p++;
+  s->p = p;
+  return 1;
+  }
+
+/* Skip to and past `close`, through characters that may be in a name. */
+static void lit_skip_name (lit_scan_t * s, char close)
+  {
+  const char * p = s->p;
+  while (is_alpha (*p) || is_digit (*p) || *p == '_')
+    p++;
+  if (*p != close)
+    s->bad = 1;
+  else
+    s->p = p + 1;
+  }
+
+/* Skip a braced argument {...} at s->p. */
+static void lit_skip_braced (lit_scan_t * s)
+  {
+  const char * close = strchr (s->p, '}');
+  if (close == NULL)
+    s->bad = 1;
+  else
+    s->p = close + 1;
+  }
+
+/* An escape, at its backslash.  Returns the character if it stands for one plain
+   character that may be taken into a literal, else -1 (having skipped all of it). */
+static int lit_escape (lit_scan_t * s)
+  {
+  const unsigned char e = (unsigned char) s->p [1];
+  if (e == '\0' || e >= 0x80)
+    {
+    s->bad = 1;
+    return -1;
+    }
+  s->p += 2;
+  if (!is_alpha ((char) e) && !is_digit ((char) e))
+    return e;                     /* \. \\ \( \  and so on: the character */
+  if (is_digit ((char) e))
+    {
+    while (is_digit (*s->p))      /* a back reference, or octal */
+      s->p++;
+    return -1;
+    }
+  switch (e)
+    {
+    case 'x':
+      if (*s->p == '{')
+        lit_skip_braced (s);
+      else
+        while (is_hex (*s->p))     /* more than two is just losing a literal */
+          s->p++;
+      return -1;
+    case 'o':
+      if (*s->p != '{')
+        s->bad = 1;
+      else
+        lit_skip_braced (s);
+      return -1;
+    case 'N':
+      if (*s->p == '{')
+        lit_skip_braced (s);
+      return -1;
+    case 'c':
+      if (*s->p == '\0' || (unsigned char) *s->p >= 0x80)
+        s->bad = 1;
+      else
+        s->p++;
+      return -1;
+    case 'p': case 'P':
+      if (*s->p == '{')
+        lit_skip_braced (s);
+      else if (*s->p == '\0')
+        s->bad = 1;
+      else
+        s->p++;
+      return -1;
+    case 'g':
+      if (*s->p == '{')
+        lit_skip_braced (s);
+      else if (*s->p == '<' || *s->p == '\'')
+        {
+        const char close = *s->p == '<' ? '>' : '\'';
+        s->p++;
+        if (*s->p == '-' || *s->p == '+')
+          s->p++;
+        lit_skip_name (s, close);
+        }
+      else
+        {
+        if (*s->p == '-' || *s->p == '+')
+          s->p++;
+        while (is_digit (*s->p))
+          s->p++;
+        }
+      return -1;
+    case 'k':
+      if (*s->p == '{')
+        lit_skip_braced (s);
+      else if (*s->p == '<' || *s->p == '\'')
+        {
+        const char close = *s->p == '<' ? '>' : '\'';
+        s->p++;
+        lit_skip_name (s, close);
+        }
+      else
+        s->bad = 1;
+      return -1;
+    default:
+      if (strchr ("dDwWsShHvVRXCbBAzZGKntrefa", e) == NULL)
+        s->bad = 1;               /* \Q \E, and letters with no meaning */
+      return -1;
+    }
+  }
+
+/* A class, at its '['. */
+static void lit_class (lit_scan_t * s)
+  {
+  const char * p = s->p + 1;
+  if (*p == '^')
+    p++;
+  if (*p == ']')
+    p++;
+  while (*p != ']')
+    {
+    if (*p == '\0')
+      {
+      s->bad = 1;
+      return;
+      }
+    if (*p == '\\')
+      {
+      if (p [1] == '\0' || p [1] == 'Q' || p [1] == 'E')
+        {
+        s->bad = 1;
+        return;
+        }
+      p += 2;
+      }
+    else if (p [0] == '[' && (p [1] == ':' || p [1] == '.' || p [1] == '='))
+      {
+      const char end [3] = { p [1], ']', '\0' };
+      const char * close = strstr (p + 2, end);
+      if (close == NULL)
+        {
+        s->bad = 1;
+        return;
+        }
+      p = close + 2;
+      }
+    else
+      p++;
+    }
+  s->p = p + 1;
+  }
+
+static void lit_sequence (lit_scan_t * s, lit_run_t * best, int depth);
+
+/* A group, at its '('.  Its literal counts only if the group must be matched,
+   once, as it stands. */
+static void lit_group (lit_scan_t * s, lit_run_t * best, int depth)
+  {
+  const char * p = s->p + 1;
+  int required = 1;
+  lit_run_t inner;
+
+  if (depth > 50 || *p == '*')    /* (*ACCEPT) and every other verb */
+    {
+    s->bad = 1;
+    return;
+    }
+  if (*p == '?')
+    {
+    p++;
+    if (*p == ':' || *p == '>')
+      p++;
+    else if (*p == '=' || *p == '!')
+      {
+      p++;
+      required = 0;
+      }
+    else if (*p == '<' && (p [1] == '=' || p [1] == '!'))
+      {
+      p += 2;
+      required = 0;
+      }
+    else if (*p == '<' || *p == '\'' || (*p == 'P' && p [1] == '<'))
+      {
+      const char close = *p == '\'' ? '\'' : '>';
+      s->p = p + (*p == 'P' ? 2 : 1);
+      lit_skip_name (s, close);
+      if (s->bad)
+        return;
+      p = s->p;
+      }
+    else
+      {
+      /* (?i) (?#...) (?(...)) (?R) (?1) (?&name) (?P=name) (?C) (?|...) ... */
+      s->bad = 1;
+      return;
+      }
+    }
+  s->p = p;
+  lit_sequence (s, &inner, depth + 1);
+  if (s->bad)
+    return;
+  if (*s->p != ')')
+    {
+    s->bad = 1;
+    return;
+    }
+  s->p++;
+  if (lit_quantifier (s))
+    required = 0;
+  if (required)
+    lit_keep (best, &inner);
+  }
+
+/* A sequence of items, to an unmatched ')' or the end. */
+static void lit_sequence (lit_scan_t * s, lit_run_t * best, int depth)
+  {
+  lit_run_t run, mine;
+  int alternation = 0;
+  run.length = 0;
+  mine.length = 0;
+
+  while (!s->bad && *s->p != '\0' && *s->p != ')')
+    {
+    const unsigned char c = (unsigned char) *s->p;
+    int literal = -1;
+
+    switch (c)
+      {
+      case '|':
+        alternation = 1;
+        run.length = 0;
+        s->p++;
+        continue;
+      case '(':
+        lit_keep (&mine, &run);
+        lit_group (s, &mine, depth);
+        continue;
+      case '\\':
+        literal = lit_escape (s);
+        break;
+      case '[':
+        lit_class (s);
+        break;
+      case '?': case '*': case '+': case '{':
+        s->bad = 1;              /* a quantifier with nothing to quantify, or a brace */
+        continue;
+      case '.': case '^': case '$': case ']': case '}':
+        s->p++;
+        break;
+      default:
+        if (c >= 0x80 && s->utf)
+          {
+          s->p++;                /* the whole character, so a quantifier is seen */
+          while (((unsigned char) *s->p & 0xC0) == 0x80)
+            s->p++;
+          }
+        else
+          {
+          s->p++;
+          literal = c;
+          }
+        break;
+      }
+    if (s->bad)
+      break;
+
+    if (literal >= 0 && s->caseless)
+      {
+      if (literal >= 0x80 ||
+          (s->utf && (literal == 'k' || literal == 'K' || literal == 's' || literal == 'S')))
+        literal = -1;
+      else if (literal >= 'A' && literal <= 'Z')
+        literal += 'a' - 'A';
+      }
+
+    if (lit_quantifier (s) || literal < 0)
+      lit_keep (&mine, &run);    /* that was the last of this run */
+    else
+      {
+      if (run.length == MC_LITERAL_RUN)
+        lit_keep (&mine, &run);
+      run.text [run.length++] = (char) literal;
+      }
+    }
+
+  lit_keep (&mine, &run);
+  if (alternation)
+    mine.length = 0;
+  *best = mine;
+  }
+
+int mc_pcre_required_literal (const char * pattern, int options, char * out, int size)
+  {
+  lit_scan_t s;
+  lit_run_t best;
+  const int understood = PCRE_CASELESS | PCRE_MULTILINE | PCRE_DOTALL | PCRE_UTF8 |
+                         PCRE_ANCHORED | PCRE_DOLLAR_ENDONLY | PCRE_UNGREEDY |
+                         PCRE_NO_AUTO_CAPTURE | PCRE_DUPNAMES;
+
+  if (pattern == NULL || (options & ~understood) != 0 || size < 1)
+    return 0;
+  s.p = pattern;
+  s.caseless = (options & PCRE_CASELESS) != 0;
+  s.utf = (options & PCRE_UTF8) != 0;
+  s.bad = 0;
+  lit_sequence (&s, &best, 0);
+  if (s.bad || *s.p != '\0' || best.length == 0)
+    return 0;                    /* a stray ')' is an error anyway */
+  if (best.length > size)
+    best.length = size;
+  memcpy (out, best.text, best.length);
+  return best.length;
+  }
+
+/* Fold ASCII upper case to lower. */
+static unsigned char lit_fold (unsigned char c)
+  {
+  return c >= 'A' && c <= 'Z' ? (unsigned char) (c + ('a' - 'A')) : c;
+  }
+
+/* Roughly how common a byte is in a MUD's English output, so that the search
+   looks first for the literal's rarest byte: a space or an 'e' turns up on
+   every line, and a 'k' or a digit seldom. */
+static int lit_commonness (unsigned char c)
+  {
+  static const unsigned char lower [26] =
+    { /* a */ 65, 12, 22, 35, 100, 18, 17, 50, 58, 1, 6, 33, 20,
+      /* n */ 57, 62, 15, 1, 50, 52, 75, 23, 8, 19, 1, 16, 1 };
+  if (c == ' ')
+    return 180;
+  if (c >= 'a' && c <= 'z')
+    return lower [c - 'a'];
+  if (c >= 'A' && c <= 'Z')
+    return 4;
+  if (c == '.' || c == ',')
+    return 8;
+  if (c >= '0' && c <= '9')
+    return 4;
+  return 2;
+  }
+
+int mc_pcre_literal_anchor (const char * literal, size_t n, int caseless)
+  {
+  size_t i, best = 0;
+  int least = 1000;
+  for (i = 0; i < n; i++)
+    {
+    const unsigned char c = (unsigned char) literal [i];
+    /* caseless, a letter is looked for in both cases: less selective */
+    int w = lit_commonness (c);
+    if (caseless && c >= 'a' && c <= 'z')
+      w += 4;
+    if (w < least)
+      {
+      least = w;
+      best = i;
+      }
+    }
+  return (int) best;
+  }
+
+int mc_pcre_has_literal (const char * subject, size_t length,
+                         const char * literal, size_t n, int caseless, int anchor)
+  {
+  const unsigned char * s = (const unsigned char *) subject;
+  const unsigned char * l = (const unsigned char *) literal;
+  unsigned char a;
+  /* where the anchor byte can be: the literal must fit around it */
+  const unsigned char * p, * end;
+  size_t j;
+
+  if (n == 0)
+    return 1;
+  if (length < n)
+    return 0;
+  if (anchor < 0 || (size_t) anchor >= n)
+    anchor = 0;
+  a = l [anchor];
+  p = s + anchor;
+  end = s + length - (n - 1 - anchor);
+  if (!caseless || a < 'a' || a > 'z')
+    {
+    while (p < end && (p = (const unsigned char *) memchr (p, a, end - p)) != NULL)
+      {
+      const unsigned char * start = p - anchor;
+      if (!caseless)
+        {
+        if (memcmp (start, l, n) == 0)
+          return 1;
+        }
+      else
+        {
+        for (j = 0; j < n && lit_fold (start [j]) == l [j]; j++)
+          ;
+        if (j == n)
+          return 1;
+        }
+      p++;
+      }
+    return 0;
+    }
+  for (; p < end; p++)
+    if ((*p | 0x20) == a)   /* a is a lower-case letter: this is it in either case */
+      {
+      const unsigned char * start = p - anchor;
+      for (j = 0; j < n && lit_fold (start [j]) == l [j]; j++)
+        ;
+      if (j == n)
+        return 1;
+      }
+  return 0;
+  }
+
 /* ----------------------------------------------------------- running ---- */
 
 int mc_pcre_match (const pcre2_code * code, pcre2_match_data ** md,

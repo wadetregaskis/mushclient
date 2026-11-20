@@ -390,6 +390,12 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
   if (!m_enable_triggers)
     return NULL;    // error return
 
+  // What the triggers are matched against, without copying it for each one.
+  // The length is up to the first NUL, as it always was (regexec took strlen).
+  const char * const pInput = input;
+  const int iInputLength = (int) strlen (pInput);
+  string sMultiLine;    // a multi-line trigger's text, assembled
+
   for ( ; iItem < iCount; iItem++)
     {
     trigger_item = GetTriggerArray () [iItem];
@@ -432,12 +438,14 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
     // do regular expression, if available
     if (trigger_item->regexp)
       {
-      CString strTarget;
-      
+      const char * pTarget = pInput;
+      int iTargetLength = iInputLength;
+
       if (trigger_item->bMultiLine)
         {
 //        timer t ("Assembling text");
-        string s;
+        string & s = sMultiLine;
+        s.clear ();
 
         // can't do it if not enough lines received (hmm, maybe not)
 //        if (m_sRecentLines.size () < trigger_item->iLinesToMatch)
@@ -457,10 +465,11 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
           s += m_sRecentLines [iPos];
           s += '\n';  // multi-line triggers always end in newlines (new in version 3.50)
           } // end of assembling text
-        strTarget = s.c_str ();
+        // up to the first NUL, as when it went through a CString (the recent
+        // lines are kept from a const char *, so there is none)
+        pTarget = s.c_str ();
+        iTargetLength = (int) strlen (pTarget);
         }
-      else
-        strTarget = input;
 
   /*
   New feature in 3.18 - trigger match strings can incorporate variables in 
@@ -555,7 +564,7 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
       try
         {
 //        timer t ("Evaluating regular expression");
-        if (!regexec (trigger_item->regexp, strTarget))
+        if (!regexec (trigger_item->regexp, pTarget, iTargetLength, 0))
           continue;
         } // end of try
     	catch(CException* e)

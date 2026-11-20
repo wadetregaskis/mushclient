@@ -1,0 +1,10 @@
+There are two obvious exits: north and out.
+Hp: 1312 (1450)  Gp: 198 (245)  Xp: 120210
+(newbie) Pemberton: how do I get to Sto Lat from here?
+Wombat tells you: forty dollars?
+You tell Wombat: I have one, how much?
+You hit the rat in the body with your fist.
+You have been awarded 3240 experience points and given 4 Ankh-Morpork dollars.
+Your lungs feel a bit heavy.
+There are four obvious exits: north, south, east and west.
+The ragged beggar asks you: Spare a penny for an old soldier?

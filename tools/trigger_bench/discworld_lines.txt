@@ -1,0 +1,135 @@
+The Mended Drum
+This is the infamous Mended Drum, the most disreputable tavern in Ankh-Morpork.  A
+haze of pipe smoke hangs over the sticky tables, and the floor is covered in a layer
+of sawdust that has seen better days, and worse liquids.  A troll stands by the door.
+It is a cold winter evening with a light drizzle and a strong breeze.
+There are two obvious exits: north and out.
+Detritus the troll is standing here.
+A drunken sailor and two dock workers are sitting at a table.
+> look
+>
+Hp: 1450 (1450)  Gp: 245 (245)  Xp: 120034
+Hp: 1312 (1450)  Gp: 198 (245)  Xp: 120210
+Short Street
+You are on Short Street, which is, despite its name, the longest street in the city.
+Houses and shops line both sides of the road.
+It is a warm summer afternoon with scattered clouds and no wind.
+There are four obvious exits: north, south, east and west.
+A city guard and a ragged beggar are standing here.
+A large rat is scurrying around here.
+(chat) Wombat: anyone selling a black glass knife?
+(chat) Grimnir: try the Shades, but bring friends
+(Ankh-Morpork) Tilly: lfg sewers
+(newbie) Pemberton: how do I get to Sto Lat from here?
+(newbie) Helper Bob: take the coach from the Hubward gate, or walk along the Sto Plains
+Olaf the barbarian says: Where is the nearest pub?
+The ragged beggar asks you: Spare a penny for an old soldier?
+The city guard says: Move along there, nothing to see.
+You say: hello everyone
+You exclaim: what a day!
+You ask: has anyone seen my hat?
+You tell Wombat: I have one, how much?
+Wombat tells you: forty dollars?
+Wombat exclaims to you: deal!
+You give the black glass knife to Wombat.
+Wombat gives you forty Ankh-Morpork dollars.
+You put the forty Ankh-Morpork dollars in your purse.
+The rat bites you on the leg.
+You punch the rat in the head.
+You kick the rat but it dodges out of the way.
+The rat tries to bite you but you dodge out of the way.
+You hit the rat in the body with your fist.
+The rat is in good shape.
+The rat is slightly hurt.
+The rat is badly hurt.
+The rat is dead.
+You killed the rat.
+The rat dies.
+Death says: OH DEAR.
+You get a rat corpse.
+You can't find any "sword" here.
+What?
+You are carrying a leather backpack, a dagger, a candle, a tinderbox and a loaf of bread.
+Your purse contains: forty-two Ankh-Morpork dollars and sixty pence.
+You are wearing a cloak, a pair of boots and a hat.
+You are wielding a dagger in your left hand.
+You are unburdened (4% of your capacity).
+You are quite hungry.
+You feel a little tired.
+You have 34 hours and 12 minutes of playing time left this month.
+The sun rises in the east.
+The sun sets slowly in the west, painting the sky with vibrant colours.
+A cold wind blows in from the Hub.
+The bells of the Patrician's Palace ring out the hour of six.
+A pigeon flies overhead, and a white splotch lands near your feet.
+Some street urchins run past, shouting at each other.
+Someone sneezes loudly in the distance.
+A cart rumbles past, piled high with turnips.
+Mr. Pounder the rat-catcher wanders in from the south.
+Mr. Pounder the rat-catcher leaves north.
+A small dog arrives from the east, wagging its tail.
+The small dog leaves west.
+Rincewind runs past screaming "Run! Run!"
+The Luggage follows Rincewind on hundreds of little legs.
+You hear a loud crash from somewhere nearby.
+Cut-Me-Own-Throat Dibbler shouts: Sausages! Inna bun! Get 'em while they're hot!
+Cut-Me-Own-Throat Dibbler says: Tell you what, I'll do you a special price.
+Your skill in fighting.melee.unarmed has increased.
+You think you have learned a little more about fighting.
+You have been awarded 3240 experience points and given 4 Ankh-Morpork dollars.
+The Lancre Highway
+This is a muddy road that winds through the Ramtop foothills towards Lancre.
+There are three obvious exits: northwest, southeast and east.
+A mountain goat is grazing here.
+Two trolls, an old woman and a broomstick are here.
+Granny Weatherwax looks at you.
+Nanny Ogg grins at you.
+You smile happily.
+Nanny Ogg laughs.
+You wave.
+You are in a cramped little shop.  Shelves line every wall.
+The shopkeeper says: Can I help you?
+For sale: a rope (12 pence), a lantern (2 dollars), a bag (40 pence).
+You buy a rope for twelve pence.
+You read the sign:
+    Opening hours: whenever I feel like it.
+The door is closed.
+You open the door.
+You close the door.
+It is too dark to see.
+You light the candle.
+The candle burns brightly.
+You are in a dark, damp tunnel.
+Water drips from the ceiling.
+There is one obvious exit: up.
+You climb up.
+You fall over and land on your face.
+Ouch!
+You feel better.
+You are no longer stunned.
+Your concentration returns.
+You start to meditate.
+You stop meditating.
+Everyone in the room claps.
+The party has ended.
+A gentle breeze ruffles your hair.
+It starts to rain.
+It stops raining.
+The cobbles are slippery.
+Somewhere a clock strikes thirteen.
+You can see the Tower of Art rising in the distance.
+Wizards hurry past, arguing about something called a thaum.
+A student wizard is reading a book here.
+The Librarian says: Ook.
+The Librarian says: Ook ook!
+The Librarian bangs you on the head with a book.
+You are now in a hurry.
+Your pack feels lighter.
+The horse neighs.
+You mount the horse.
+You dismount from the horse.
+Thursday the 3rd of Offle, 2026
+It is nearly midnight.
+Wizard's Way
+The narrow lane outside Unseen University is busy with students and tradesmen.
+There are five obvious exits: north, south, east, west and northeast.

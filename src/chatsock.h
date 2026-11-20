@@ -139,7 +139,19 @@ public:
   // delivers WM_TIMER, and the caller uses the socket when the box closes.
   int  m_iInModal = 0;
   bool m_bFileOfferPending = false;   // asking about an offered file
+  bool m_bSnoopPending = false;       // asking whether they may snoop
   bool m_bAskedForConnections = false;  // we sent CHAT_REQUEST_CONNECTIONS
+  // Accept prompts up, across every world: at most one at a time.
+  static int s_iAcceptPromptsUp;
+
+  // Files saved unasked ("auto-allow files") this session, and their bytes.
+  // Past the limits below an offer is asked about like any other, so a peer
+  // cannot fill the disk while nobody is looking.
+  long m_iAutoFilesReceived = 0;
+  double m_fAutoBytesReceived = 0;
+  static const long kMaxAutoFileSize      = 100L * 1024 * 1024;  // one file
+  static const long kMaxAutoFilesPerSession = 100;
+  static constexpr double kMaxAutoBytesPerSession = 1024.0 * 1024 * 1024;  // 1 GB
   struct ModalGuard
     {
     explicit ModalGuard (CChatSocket * p) : m_p (p) { m_p->m_iInModal++; }
@@ -210,6 +222,7 @@ public:
   void MakeCall (void);
   void SendData (const CString & strText);
 
+  void ProcessConnectionRequest (const char * buff, const int count);
   void ProcessChatMessage (const int iMessage, const CString strMessage);
   void SendChatMessage (const int iMessage, 
                         const CString strMessage, 
@@ -261,5 +274,8 @@ public:
 // we will have a list of them
 
 typedef CTypedPtrList <CPtrList, CChatSocket*> CChatSocketList;
+
+// A file name a peer offers that can be saved as itself (chatsock.cpp).
+bool IsSafeChatFileName (const CString & strName);
 
 #endif // __CHATSOCK_H__

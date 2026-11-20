@@ -354,9 +354,14 @@ void CMUSHclientDoc::CheckTimers ()
       // An incoming call that never says who it is.  Nothing timed these out,
       // so a caller that connected and stayed silent held a session -- and,
       // with the cap in CChatListenSocket::OnAccept, a slot -- for good.
+      // Not one whose call is being asked about (m_iInModal): it did say who
+      // it was, and it is the user who has not answered.  Closing it under its
+      // box freed its listener slot while the box stayed up, so callers could
+      // stack accept prompts one a minute without limit.
       if (pSocket->m_bIncoming &&
           pSocket->m_iChatStatus == eChatAwaitingConnectionRequest &&
           !pSocket->m_bDeleteMe &&
+          pSocket->m_iInModal == 0 &&
           (CTime::GetCurrentTime () - pSocket->m_tWhenStarted).GetTotalSeconds () >= 60)
         {
         ChatNote (eChatConnection,

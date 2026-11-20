@@ -1745,3 +1745,27 @@ times faster and Discworld-like output 3 times.
 **Verification:** `tools/trigger_bench`: 11,068 patterns (every one in the tree, Quow's runtime
 triggers, each in UTF-8 mode too) against 33,428 lines, 637 million checks, no skipped attempt
 that would have matched.
+
+## 39 — A world load's warnings share one box
+
+**Where:** `xml/xml_load_world.cpp`, `CMUSHclientDoc::LoadError` and
+`ShowDeferredLoadErrors` (called when the outermost `Load_World_XML` finishes).
+
+**Upstream:** each warning raised before the output window exists is a modal box
+of its own. A world whose plugins carry a few dozen attributes this version does
+not use (a plugin written for a later client, say) is a few dozen OKs before it
+opens -- and a hostile file can make it thousands.
+
+**Now:** the warnings are collected during the load, world, plugins and
+includes together, and shown in one box when it finishes: the first ten, each
+under the file it is in (`Error loading <file>`, as in 24), then "... and N
+more". All of them are also notes in the output window, on Windows too now --
+the port always noted them, its box being a stderr stub. A warning raised
+outside any load is shown at once, as before.
+
+**Why:** found in the 2026-11 review of the XML loader. Decided without the
+owner (he asked for the review's findings to be fixed while he was away); one
+box keeps "you can't scroll past a broken world" and loses the wall of boxes.
+
+**Verification:** `XmlHardening.ALoadWithManyWarningsShowsOneBox` (fifteen
+unused tags: one box naming ten, "and 5 more", all fifteen noted).

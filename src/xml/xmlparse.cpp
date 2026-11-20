@@ -44,14 +44,14 @@ CString strEntityContents;
       {
       for (int i = 2; i < strName.GetLength (); i++)
         {
-        if (!isxdigit (strName [i]))
+        if (!isxdigit ((unsigned char) strName [i]))
           {
           ThrowErrorException ("Invalid hex number in XML entity: &%s;" ,
                               (LPCTSTR) strName);
           return "";
           }
 
-        int iNewDigit = toupper (strName [i]);
+        int iNewDigit = toupper ((unsigned char) strName [i]);
         if (iNewDigit >= 'A')
           iNewDigit -= 7;
         if (iResult & 0xF0)
@@ -65,7 +65,7 @@ CString strEntityContents;
       {
       for (int i = 1; i < strName.GetLength (); i++)
         {
-        if (!isdigit (strName [i]))
+        if (!isdigit ((unsigned char) strName [i]))
           {
           ThrowErrorException ("Invalid number in XML entity: &%s;" ,
                               (LPCTSTR) strName);
@@ -253,6 +253,13 @@ void CXMLparser::BuildStructure (CFile * file)
 
   m_xmlBuff = m_strxmlBuffer;    // get const char * pointer to buffer
 
+  // entity references may add up to twice the file, or 16 MB if more
+  m_iDepth = 0;
+  m_fEntityBytes = 0;
+  m_fMaxEntityBytes = 2.0 * m_strxmlBuffer.GetLength ();
+  if (m_fMaxEntityBytes < MIN_XML_ENTITY_EXPANSION)
+    m_fMaxEntityBytes = MIN_XML_ENTITY_EXPANSION;
+
   ProcessNode (m_xmlRoot);  // process root node
 
   }   // end of CXMLparser::BuildStructure
@@ -287,7 +294,7 @@ int iNameLen;
                           sType);
 
   // name must start with letter or underscore
-  if (!isalpha (m_xmlBuff [m_xmlPos]) && m_xmlBuff [m_xmlPos]  != '_')
+  if (!isalpha ((unsigned char) m_xmlBuff [m_xmlPos]) && m_xmlBuff [m_xmlPos]  != '_')
       ThrowErrorException ("%s name must start with letter or underscore, "
                            "but starts with \"%c\"",
                           sType,
@@ -295,7 +302,7 @@ int iNameLen;
 
   // build up name
 
-  while (isalnum (m_xmlBuff [m_xmlPos]) ||
+  while (isalnum ((unsigned char) m_xmlBuff [m_xmlPos]) ||
          m_xmlBuff [m_xmlPos] == '-' ||
          m_xmlBuff [m_xmlPos] == '.' ||
          m_xmlBuff [m_xmlPos] == '_')
@@ -587,7 +594,14 @@ UINT iFirstLine = m_xmlLine;
       // drop down to find children for it - unless 'empty' element
 
       if (!pElement->bEmpty)
+        {
+        if (++m_iDepth > MAX_XML_DEPTH)
+          ThrowErrorException ("Elements nested too deeply: <%s> is more than %i levels down",
+                               (LPCTSTR) strName,
+                               MAX_XML_DEPTH);
         ProcessNode (*pElement);
+        m_iDepth--;
+        }
 
       }   // end of non-declaration
     } // end of processing buffer
@@ -837,7 +851,7 @@ void CXMLparser::ProcessDoctype (void)
 
   // document name may be followed by SYSTEM or PUBLIC
 
-  if (isalpha (m_xmlBuff [m_xmlPos]))
+  if (isalpha ((unsigned char) m_xmlBuff [m_xmlPos]))
     {
     CString strName = GetName ("External ID");
     
@@ -979,7 +993,7 @@ long length;
       pEntity = p; // where entity starts
       if (*p == '#')
         p++;
-      while (isalnum (*p) ||
+      while (isalnum ((unsigned char) *p) ||
              *p == '-' ||
              *p == '.' ||
              *p == '_')
@@ -990,7 +1004,19 @@ long length;
                   (LPCTSTR) CString (pEntity, p - pEntity)); 
 
       CString s (pEntity, p - pEntity);
-      strFixedValue += Get_XML_Entity (s);    // add to list
+      const CString strExpansion = Get_XML_Entity (s);
+
+      // Count what each reference adds, and stop at the limit (see
+      // MIN_XML_ENTITY_EXPANSION): the check is before the append, so a bomb
+      // is refused before it is built.
+      m_fEntityBytes += strExpansion.GetLength ();
+      if (m_fEntityBytes > m_fMaxEntityBytes)
+        ThrowErrorException ("XML entities expand to too much text "
+                             "(more than %i bytes) at \"&%s;\"",
+                             (int) m_fMaxEntityBytes,
+                             (LPCTSTR) s);
+
+      strFixedValue += strExpansion;    // add to list
   
       pStart = p + 1;   // move on past the entity
 
@@ -1176,14 +1202,14 @@ bool bNegative = false;
       ThrowErrorException ("No number suppied for numeric attribute named '%s'" ,
                           sName);
 
-  if (!isdigit (*p))
+  if (!isdigit ((unsigned char) *p))
     ThrowErrorException ("Invalid number \"%s\" for numeric attribute named '%s'" ,
                           (LPCTSTR) strValue,
                           sName);
 
   for (iResult = 0; *p; p++)
     {
-    if (!isdigit (*p))
+    if (!isdigit ((unsigned char) *p))
       ThrowErrorException ("Invalid character '%c' in numeric attribute named '%s'" ,
                           *p,
                           sName);
@@ -1263,7 +1289,7 @@ int iExponents = 0;
       ThrowErrorException ("No number suppied for numeric attribute named '%s'" ,
                           sName);
 
-  if (!isdigit (*p))
+  if (!isdigit ((unsigned char) *p))
     ThrowErrorException ("Invalid number \"%s\" for numeric attribute named '%s'" ,
                           (LPCTSTR) strValue,
                           sName);
@@ -1276,7 +1302,7 @@ int iExponents = 0;
         ThrowErrorException ("Too many decimal places for numeric attribute named '%s'" ,
                             sName);
       }  // end of decimal place
-    else if (toupper (*p) == 'E')
+    else if (toupper ((unsigned char) *p) == 'E')
       {
       if (++iExponents > 1)
         ThrowErrorException ("Too many 'E' characters for numeric attribute named '%s'" ,
@@ -1288,7 +1314,7 @@ int iExponents = 0;
       if (p[1] == '-' || p[1] == '+')
         p++;
       } // end of exponent
-    else if(!isdigit (*p))
+    else if(!isdigit ((unsigned char) *p))
       ThrowErrorException ("Invalid character '%c' in numeric attribute named '%s'" ,
                           *p,
                           sName);
@@ -1475,7 +1501,7 @@ const char * p = str;
     p++;
 
   for ( ; *p; p++)
-    if (!isdigit (*p))
+    if (!isdigit ((unsigned char) *p))
       return false;
 
   // see if out of range of a long

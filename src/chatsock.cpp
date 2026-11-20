@@ -19,6 +19,7 @@
 // into mushcore's CORE_SOURCES, so OnReceive below is the real state machine
 // in both builds, not an empty stub.
 #include "pal/chat_protocol.h"
+#include "pal/path_safety.h"
 #include "pal/itransport.h"
 #ifdef _WIN32
 #include "pal/win_transport.h"
@@ -75,14 +76,29 @@ static_assert ((int) pal::kChatFileBlockSize == 500 &&
 // (ptr, len) constructor, Mid and Left all use -- memcpys the length it is
 // given.  So only appending needs this, and it is expressed with those safe
 // primitives so both platforms' CString take the same path.
+//
+// ...and without copying what is already there.  This used to build a
+// std::string of dest plus the new bytes and assign it back: two copies of the
+// whole buffer per append, so a peer feeding the 1 MB input cap 999 bytes at a
+// time cost about a gigabyte of copying.  ATL's GetBuffer grows the buffer
+// geometrically (by half again each time) and ReleaseBuffer with an explicit
+// length takes it as given, NULs and all, so appending is amortised to the
+// bytes appended.  The port's CString is a std::string whose += is binary-safe
+// and amortised already, while its GetBuffer copies the lot into a scratch
+// buffer -- so each platform takes the path that is cheap on it.
 static void ChatAppendBytes (CString & dest, const char * pSrc, const int nLength)
   {
   if (pSrc == NULL || nLength <= 0)
     return;
 
-  std::string combined (dest.GetString (), (size_t) dest.GetLength ());
-  combined.append (pSrc, (size_t) nLength);
-  dest = CString (combined.data (), (int) combined.size ());
+#ifdef _WIN32
+  const int iOldLength = dest.GetLength ();
+  char * p = dest.GetBuffer (iOldLength + nLength);
+  memcpy (p + iOldLength, pSrc, (size_t) nLength);
+  dest.ReleaseBuffer (iOldLength + nLength);
+#else
+  dest += CString (pSrc, nLength);
+#endif
   }   // end of ChatAppendBytes
 
 // A file (or anything) of this name exists already.
@@ -94,9 +110,11 @@ static bool FileExists (const CString & strName)
 
 // A file name a peer offers that can be saved as itself: not empty or dots
 // only, no stream (":") or other characters Windows refuses, and not a
-// device's name (CON, PRN, AUX, NUL, COM1-9, LPT1-9), with or without an
-// extension, which Windows takes for the device wherever the folder is.
-static bool IsSafeChatFileName (const CString & strName)
+// device's name, with or without an extension, which Windows takes for the
+// device wherever the folder is.  pal::IsWindowsDeviceName has the list: it
+// used to stop at COM1-9/LPT1-9, so "COM0", "LPT0", "CONIN$" and "COM" with a
+// superscript digit (byte B9, COM¹, which Windows maps to COM1) got through.
+bool IsSafeChatFileName (const CString & strName)
   {
   if (strName.IsEmpty () || strName.SpanIncluding (_T(". ")) == strName)
     return false;
@@ -105,19 +123,9 @@ static bool IsSafeChatFileName (const CString & strName)
   for (int i = 0; i < strName.GetLength (); i++)
     if ((unsigned char) strName [i] < ' ')
       return false;
-  CString strStem = strName;
-  const int iDot = strStem.Find ('.');
-  if (iDot >= 0)
-    strStem = strStem.Left (iDot);
-  strStem.TrimRight ();
-  strStem.MakeUpper ();
-  static const char * const kDevices [] =
-    { "CON", "PRN", "AUX", "NUL",
-      "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-      "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
-  for (const char * p : kDevices)
-    if (strStem == p)
-      return false;
+  if (pal::IsWindowsDeviceName (std::string (strName.GetString (),
+                                             (size_t) strName.GetLength ())))
+    return false;
   return true;
   }
 
@@ -356,110 +364,9 @@ int count = Receive (buff, sizeof (buff) - 1);
      break;   // end of eChatAwaitingConnectConfirm
 
     case eChatAwaitingConnectionRequest:
-
-#if CHAT_DEBUG
-
-      m_pDoc->Note (TFormat ("Incoming packet on %i: \"%s\"",
-                    m_iChatID,
-                    (LPCTSTR) CString (buff, count)));
-
-#endif
-
-      const pal::ChatRequest request = pal::parseChatConnectionRequest (buff, count);
-
-      if (!request.ok)
-        {
-        m_pDoc->ChatNote (eChatConnection,
-                      _T("Unexpected chat negotiation."));
-        SendData ("NO");
-        OnClose (0);
-        return;
-        } // end of not accepting it
-
-      m_iChatConnectionType = request.connectionType;
-      m_iFileBlockSize      = request.fileBlockSize;   // 1024 for zChat
-      m_strRemoteUserName   = CString (request.remoteUserName.data (),
-                                       (int) request.remoteUserName.size ());
-
-      if (request.haveAllegedAddress)
-        {
-        m_iAllegedPort = request.allegedPort;
-        m_strAllegedAddress = CString (request.allegedAddress.data (),
-                                       (int) request.allegedAddress.size ());
-        }
-
-      count = 0;    // can't see how this packet can be reasonably terminated
-
-      pal::ChatAcceptDecision decision = pal::chatAcceptAfterPlugins (
-              m_pDoc->SendToAllPluginCallbacks (ON_PLUGIN_CHAT_ACCEPT,
-                        pal::chatAcceptCallbackArgument (
-                                  pal::FormatAddress (m_ServerAddr).c_str (),
-                                  string (m_strRemoteUserName)).c_str (),
-                        true),   // stop on false response
-              m_pDoc->m_bValidateIncomingCalls);
-
-      if (decision == pal::eChatAcceptAsk)
-        {
-        // One question at a time, and the socket kept while it is asked
-        // (m_iInModal).  OnReceive runs again inside the box's message loop,
-        // and a caller that kept talking got a second, nested box.
-        if (m_iInModal)
-          return;
-        m_pDoc->Activate ();
-          {
-          ModalGuard guard (this);
-          decision = pal::chatAcceptAfterUser (::UMessageBox (
-                TFormat ("Incoming chat call to world %s from %s, IP address: %s.\n\nAccept it?",
-                         (LPCTSTR) m_pDoc->m_mush_name,
-                         (LPCTSTR) m_strRemoteUserName,
-                         pal::FormatAddress (m_ServerAddr).c_str ()),
-              MB_YESNO) == IDYES);
-          }
-        if (m_bDeleteMe)
-          return;     // they hung up while we were asking
-        }  // end of needing to validate calls
-
-      if (!pal::chatConnectionAllowed (decision))
-        {
-        // tell them our rejection
-        SendData ("NO");
-        OnClose (0);
-        return;   // a plugin, or the user, said no
-        }
-
-      m_pDoc->ChatNote (eChatSession,
-                  TFormat ("Chat session accepted, remote user: \"%s\"",
-                    (LPCTSTR) m_strRemoteUserName));
-
-      // tell them our acceptance, and chat name
-      SendData (CFormat ("YES:%s\n", (LPCTSTR) m_pDoc->m_strOurChatName));
-
-      // connected now
-      m_iChatStatus = eChatConnected;
-      m_bWasConnected = true;
-
-      // identify ourselves
-      CString strVersion = "MUSHclient v";
-      strVersion += MUSHCLIENT_VERSION;
-      SendChatMessage (CHAT_VERSION, strVersion);
-
-      if (m_iChatConnectionType == eChatZMud)
-        {
-        SendChatMessage (CHAT_STATUS, (char) 1);  // normal status
-        SendChatMessage (CHAT_STAMP, MakeStamp (m_zChatStamp));  // send it
-        }
-
-      // tell each plugin about the new user
-      m_pDoc->SendToAllPluginCallbacks (ON_PLUGIN_CHAT_NEWUSER, 
-                                        m_iChatID,     // user ID
-                                        string (m_strRemoteUserName),
-                                        false,
-                                        false);
-
-      if (count <= 0)
-        return;       // only the negotiation text here
-
-      break;  // end of eChatAwaitingConnectionRequest
+      // The caller's request, and our answer to it: ProcessConnectionRequest.
+      ProcessConnectionRequest (buff, count);
+      return;
     } // end of switch on m_iChatStatus
 
 // now take the incoming text and break into blocks
@@ -569,6 +476,152 @@ int count = Receive (buff, sizeof (buff) - 1);
 
 
 }
+
+// The number of accept prompts up, in every world: see ProcessConnectionRequest.
+int CChatSocket::s_iAcceptPromptsUp = 0;
+
+// An incoming caller's first packet: "CHAT:name\naddressport" or the zChat
+// equivalent.  Decides whether to take the call -- the plugins, then the user
+// if the world asks -- and answers YES or NO.
+void CChatSocket::ProcessConnectionRequest (const char * buff, const int count)
+  {
+
+  // Nothing they send while their call is being asked about counts.  OnReceive
+  // runs again inside the box's message loop, and this used to parse the new
+  // packet before noticing the box: a caller could re-handshake under the
+  // question, so the user said yes to "Fred" on MudMaster and got whatever
+  // name, dialect, file block size and call-back address came second.  The
+  // bytes were read (so FD_READ keeps coming) and are dropped, as the rest of a
+  // request packet always has been.
+  if (m_iInModal)
+    return;
+
+#if CHAT_DEBUG
+
+  m_pDoc->Note (TFormat ("Incoming packet on %i: \"%s\"",
+                m_iChatID,
+                (LPCTSTR) CString (buff, count)));
+
+#endif
+
+  const pal::ChatRequest request = pal::parseChatConnectionRequest (buff, count);
+
+  if (!request.ok)
+    {
+    m_pDoc->ChatNote (eChatConnection,
+                  _T("Unexpected chat negotiation."));
+    SendData ("NO");
+    OnClose (0);
+    return;
+    } // end of not accepting it
+
+  m_iChatConnectionType = request.connectionType;
+  m_iFileBlockSize      = request.fileBlockSize;   // 1024 for zChat
+  m_strRemoteUserName   = CString (request.remoteUserName.data (),
+                                   (int) request.remoteUserName.size ());
+
+  if (request.haveAllegedAddress)
+    {
+    m_iAllegedPort = request.allegedPort;
+    m_strAllegedAddress = CString (request.allegedAddress.data (),
+                                   (int) request.allegedAddress.size ());
+    }
+
+  // (anything after the request in this packet is discarded: we can't see how
+  // it could reasonably be terminated)
+
+  pal::ChatAcceptDecision decision = pal::chatAcceptAfterPlugins (
+          m_pDoc->SendToAllPluginCallbacks (ON_PLUGIN_CHAT_ACCEPT,
+                    pal::chatAcceptCallbackArgument (
+                              pal::FormatAddress (m_ServerAddr).c_str (),
+                              string (m_strRemoteUserName)).c_str (),
+                    true),   // stop on false response
+          m_pDoc->m_bValidateIncomingCalls);
+
+  if (m_bDeleteMe)
+    return;     // a plugin closed it
+
+  if (decision == pal::eChatAcceptAsk)
+    {
+    // One accept question at a time, in the whole program.  Each box runs a
+    // message loop in which the next caller's packet arrives and asked again,
+    // so callers stacked boxes without limit -- and the listener's cap on
+    // unidentified callers did not hold them back, because a caller whose box
+    // is up has identified itself.  A second caller while one is being asked
+    // about is turned away; it can call again.
+    if (s_iAcceptPromptsUp > 0)
+      {
+      m_pDoc->ChatNote (eChatConnection,
+                  TFormat ("Refused call from %s (%s): another call is waiting for an answer.",
+                           (LPCTSTR) m_strRemoteUserName,
+                           pal::FormatAddress (m_ServerAddr).c_str ()));
+      SendData ("NO");
+      OnClose (0);
+      return;
+      }
+
+    m_pDoc->Activate ();
+      {
+      // The socket is kept while it is asked (m_iInModal: the reaper leaves
+      // it, and OnReceive above ignores what it sends).
+      ModalGuard guard (this);
+      struct PromptCount
+        {
+        PromptCount () { s_iAcceptPromptsUp++; }
+        ~PromptCount () { s_iAcceptPromptsUp--; }
+        } prompt;
+      decision = pal::chatAcceptAfterUser (::UMessageBox (
+            TFormat ("Incoming chat call to world %s from %s, IP address: %s.\n\nAccept it?",
+                     (LPCTSTR) m_pDoc->m_mush_name,
+                     (LPCTSTR) m_strRemoteUserName,
+                     pal::FormatAddress (m_ServerAddr).c_str ()),
+          MB_YESNO) == IDYES);
+      }
+    if (m_bDeleteMe)
+      return;     // they hung up while we were asking
+    }  // end of needing to validate calls
+
+  if (!pal::chatConnectionAllowed (decision))
+    {
+    // tell them our rejection
+    SendData ("NO");
+    OnClose (0);
+    return;   // a plugin, or the user, said no
+    }
+
+  m_pDoc->ChatNote (eChatSession,
+              TFormat ("Chat session accepted, remote user: \"%s\"",
+                (LPCTSTR) m_strRemoteUserName));
+
+  // tell them our acceptance, and chat name
+  SendData (CFormat ("YES:%s\n", (LPCTSTR) m_pDoc->m_strOurChatName));
+
+  if (m_bDeleteMe)
+    return;     // the answer could not be sent: OnSend closed it
+
+  // connected now
+  m_iChatStatus = eChatConnected;
+  m_bWasConnected = true;
+
+  // identify ourselves
+  CString strVersion = "MUSHclient v";
+  strVersion += MUSHCLIENT_VERSION;
+  SendChatMessage (CHAT_VERSION, strVersion);
+
+  if (m_iChatConnectionType == eChatZMud)
+    {
+    SendChatMessage (CHAT_STATUS, (char) 1);  // normal status
+    SendChatMessage (CHAT_STAMP, MakeStamp (m_zChatStamp));  // send it
+    }
+
+  // tell each plugin about the new user
+  m_pDoc->SendToAllPluginCallbacks (ON_PLUGIN_CHAT_NEWUSER,
+                                    m_iChatID,     // user ID
+                                    string (m_strRemoteUserName),
+                                    false,
+                                    false);
+
+  } // end of CChatSocket::ProcessConnectionRequest
 
 void CChatSocket::OnSend(int nErrorCode)
 {
@@ -1017,6 +1070,11 @@ void CChatSocket::Process_Name_change				  (const CString strMessage)
   CString strOldName = m_strRemoteUserName;
   m_strRemoteUserName = strMessage;
 
+  // Kept, so ChatGetID and the chat list know them by it, but not announced
+  // for someone being ignored: the name is their text, as much as a message.
+  if (m_bIgnore)
+    return;
+
   m_pDoc->ChatNote (eChatNameChange,
               TFormat ("%s has changed his/her name to %s.",
                             (LPCTSTR) strOldName,
@@ -1301,7 +1359,25 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
 
   double K = m_iFileSize / 1024.0;
 
-  if (!m_pDoc->m_bAutoAllowFiles)
+  // Saved unasked only within reason.  "Auto-allow files" with a save folder
+  // took any number of files of any size (up to the protocol's 2 GB each) from
+  // anyone allowed to send them, so a peer could fill the disk while nobody was
+  // watching.  Past these limits the offer is asked about, as it is without
+  // auto-allow: a big file someone really meant to send still gets through.
+  const bool bAutoAccept = m_pDoc->m_bAutoAllowFiles &&
+                           m_iFileSize <= kMaxAutoFileSize &&
+                           m_iAutoFilesReceived < kMaxAutoFilesPerSession &&
+                           m_fAutoBytesReceived + m_iFileSize <= kMaxAutoBytesPerSession;
+
+  if (m_pDoc->m_bAutoAllowFiles && !bAutoAccept)
+    m_pDoc->ChatNote (eChatFile,
+            TFormat ("%s offers the file \"%s\" (%ld bytes): more than is saved "
+                     "without asking, so you are asked.",
+                     (LPCTSTR) m_strRemoteUserName,
+                     (LPCTSTR) m_strSenderFileName,
+                     m_iFileSize));
+
+  if (!bAutoAccept)
     {
      m_pDoc->Activate ();
      ModalGuard guard (this);   // the socket is kept while we ask (see chatsock.h)
@@ -1318,10 +1394,20 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
   if (m_bDeleteMe)
     return;     // they hung up while we were asking
 
+  // A transfer started while we were asking (ChatSendFile refuses to now, but
+  // this is what would have put a second CFile over its open one).
+  if (m_bDoingFileTransfer)
+    {
+    SendChatMessage (CHAT_FILE_DENY,
+                    TFormat ("%s is already transferring a file.",
+                    (LPCTSTR) m_pDoc->m_strOurChatName));
+    return;
+    }
+
   if (bWanted)
     {
     if (m_pDoc->m_strChatSaveDirectory.IsEmpty () ||
-         !m_pDoc->m_bAutoAllowFiles)  // no auto-save
+         !bAutoAccept)  // no auto-save
       {
       CFileDialog filedlg (FALSE,   // saving the file
                            _T(""),    // default extension
@@ -1383,6 +1469,27 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
       for (int i = 2; i < 1000 && FileExists (m_strOurFileName); i++)
         m_strOurFileName = m_pDoc->m_strChatSaveDirectory +
                            CFormat ("%s (%i)%s", (LPCTSTR) strBase, i, (LPCTSTR) strExt);
+
+      // ...and when "name (2)" to "name (999)" are all taken too, refuse: the
+      // loop used to stop there and the file went over "name (999)".
+      if (FileExists (m_strOurFileName))
+        {
+        SendChatMessage (CHAT_FILE_DENY,
+                        TFormat ("%s already has too many files called \"%s\".",
+                        (LPCTSTR) m_pDoc->m_strOurChatName,
+                        (LPCTSTR) m_strSenderFileName));
+        m_pDoc->ChatNote (eChatFile,
+                TFormat ("Refused the file \"%s\" from %s: no free name for it in %s.",
+                         (LPCTSTR) m_strSenderFileName,
+                         (LPCTSTR) m_strRemoteUserName,
+                         (LPCTSTR) m_pDoc->m_strChatSaveDirectory));
+        m_strOurFileName.Empty ();
+        m_iFileSize = 0;
+        return;
+        }
+
+      m_iAutoFilesReceived++;
+      m_fAutoBytesReceived += m_iFileSize;
       }
     }   // end of if (bWanted)
 
@@ -1447,7 +1554,10 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
 
 void CChatSocket::Process_File_deny				    (const CString strMessage)
   {
-  m_pDoc->ChatNote (eChatFile, strMessage);
+  // Their reason is their text: not shown for someone being ignored, though
+  // the refusal itself still stops the transfer (and says so).
+  if (!m_bIgnore)
+    m_pDoc->ChatNote (eChatFile, strMessage);
   StopFileTransfer (true);    // close file
   } // end of CChatSocket::Process_File_deny
 
@@ -1720,10 +1830,10 @@ void CChatSocket::Process_Ping_response				(const CString strMessage)
                         (LPCTSTR) m_strRemoteUserName,
                         (LPCTSTR) strPingTime));
     }
-  else
+  else if (!m_bIgnore)    // the bare response is their text, and was unasked
     m_pDoc->ChatNote (eChatPing,
                 TFormat ("Ping response: %s", (LPCTSTR) strMessage));
-  } // end of CChatSocket::Process_Ping_response	
+  } // end of CChatSocket::Process_Ping_response
 
 void CChatSocket::Process_Peek_connections		(const CString strMessage)
   {
@@ -1771,6 +1881,14 @@ void CChatSocket::Process_Peek_list			    	(const CString strMessage)
   CStringList strList;
   int iCount;
 
+  // A peek list is one chat message, shown a connection to a line, so the
+  // world's limit on a message's lines never applied to it: it is the limit on
+  // the connections listed.  And nothing of theirs is shown while ignoring them.
+  if (m_bIgnore)
+    return;
+  const int iMaxShown = m_pDoc->m_iMaxChatLinesPerMessage > 0 ?
+                        (int) m_pDoc->m_iMaxChatLinesPerMessage : INT_MAX;
+
   if (m_iChatConnectionType == eChatZMud)
     {
     StringToList (strMessage, ",", strList);
@@ -1789,7 +1907,7 @@ void CChatSocket::Process_Peek_list			    	(const CString strMessage)
                   "=========================  =====");
       }
   
-    for (int i = 0; i < iCount; i++)
+    for (int i = 0; i < iCount && i < iMaxShown; i++)
       {
       CString strIP,
               strPort;
@@ -1823,7 +1941,7 @@ void CChatSocket::Process_Peek_list			    	(const CString strMessage)
                   "======================  =========================  =====");
       }
   
-    for (int i = 0; i < iCount; i++)
+    for (int i = 0; i < iCount && i < iMaxShown; i++)
       {
       CString strIP,
               strPort,
@@ -1845,6 +1963,9 @@ void CChatSocket::Process_Peek_list			    	(const CString strMessage)
 
     }  // end of MudMaster
 
+  if (iCount > iMaxShown)
+    m_pDoc->ChatNote (eChatPeekList,
+                TFormat ("[Peek list truncated, exceeds %i lines]", iMaxShown));
 
   } // end of CChatSocket::Process_Peek_list	
 
@@ -1864,12 +1985,38 @@ void CChatSocket::Process_Snoop					      (const CString strMessage)
     }
 
   if (m_bCanSnoop)
-    {   
-    if (!m_pDoc->m_bAutoAllowSnooping &&  // don't bother if they don't mind
-          ::UMessageBox (
+    {
+    // One question at a time: OnReceive runs inside the box's message loop,
+    // and a second CHAT_SNOOP there asked again, nested.
+    if (m_bSnoopPending)
+      return;
+
+    bool bPermitted = true;
+    if (!m_pDoc->m_bAutoAllowSnooping)  // don't bother if they don't mind
+      {
+      // The socket is kept while we ask, and checked when the box closes: the
+      // box had no guard, so a peer that hung up while it was up was closed by
+      // FD_CLOSE and deleted by the reaper (WM_TIMER is delivered inside the
+      // box), and this went on with a freed socket and returned into
+      // OnReceive's loop with one.  The other prompts were guarded in
+      // de8e8c72; this one was missed.
+      struct PendingSnoop
+        {
+        explicit PendingSnoop (bool & b) : m_b (b) { m_b = true; }
+        ~PendingSnoop () { m_b = false; }
+        bool & m_b;
+        } pending (m_bSnoopPending);
+      ModalGuard guard (this);
+      bPermitted = ::UMessageBox (
           TFormat ("%s wishes to start snooping you.\n\nPermit it?",
                    (LPCTSTR) m_strRemoteUserName),
-        MB_YESNO) != IDYES)
+        MB_YESNO) == IDYES;
+      }
+
+    if (m_bDeleteMe)
+      return;     // they hung up while we were asking
+
+    if (!bPermitted)
       {
       // tell them our rejection
       SendChatMessage (CHAT_MESSAGE, 
@@ -1903,6 +2050,24 @@ void CChatSocket::Process_Snoop					      (const CString strMessage)
 
 void CChatSocket::Process_Snoop_data				  (const CString strMessage)
   {
+  // Snoop data is the peer's text like any other, and was the one kind shown
+  // past every control the user has over that: straight to AnsiNote, so it
+  // ignored "ignore", the world's byte and line limits on a chat message,
+  // "ignore chat colours" and ON_PLUGIN_CHAT_DISPLAY (whose documented
+  // message type 15, eChatSnoopData, was never sent).
+  if (m_bIgnore)
+    return;
+
+  // undocumented feature - first 4 digits are foreground/background colours
+  const bool bColours = strMessage.GetLength () >= 4 && IsNumber (strMessage.Left (4));
+  CString strText = bColours ? strMessage.Mid (4) : strMessage;
+
+  if (!m_pDoc->ChatDisplayFilter (eChatSnoopData, strText))
+    return;   // a plugin took it
+
+  if (m_pDoc->m_bIgnoreChatColours)
+    strText = ::StripAnsi (strText);
+
   // save old colours - because we switch to the chat colour below
   bool bOldNotesInRGB = m_pDoc->m_bNotesInRGB;
   COLORREF iOldNoteColourFore = m_pDoc->m_iNoteColourFore;
@@ -1910,8 +2075,7 @@ void CChatSocket::Process_Snoop_data				  (const CString strMessage)
 
   m_pDoc->ColourTell ("springgreen", "black", ">");
 
-  // undocumented feature - first 4 digits are foreground/background colours
-  if (strMessage.GetLength () >= 4 && IsNumber (strMessage.Left (4)))
+  if (bColours && !m_pDoc->m_bIgnoreChatColours)
     {
     int iFore = atoi (strMessage.Left (2));
     int iBack = atoi (strMessage.Mid (2, 2));
@@ -1924,11 +2088,9 @@ void CChatSocket::Process_Snoop_data				  (const CString strMessage)
     // background colour should be 0 to 7
     if (iBack >= 0 && iBack <= 7)
       m_pDoc->SetNoteColourBack (m_pDoc->m_normalcolour [iBack]);
-    m_pDoc->AnsiNote (strMessage.Mid (4));
     }
-  else
-    // must be as documented - whole message is the text
-    m_pDoc->AnsiNote (strMessage);
+
+  m_pDoc->AnsiNote (strText);
 
   // put the colours back
   if (bOldNotesInRGB)

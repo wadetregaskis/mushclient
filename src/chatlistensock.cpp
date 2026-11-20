@@ -75,7 +75,9 @@ int SockAddrLen = sizeof peer;
   for (POSITION pos = pDoc->m_ChatList.GetHeadPosition (); pos; )
     {
     CChatSocket * pOther = pDoc->m_ChatList.GetNext (pos);
-    if (pOther->m_bDeleteMe)
+    // One inside a prompt of its own still holds its slot even when closed:
+    // the socket and its box are both still there until the box is answered.
+    if (pOther->m_bDeleteMe && pOther->m_iInModal == 0)
       continue;
     iSessions++;
     if (pOther->m_bIncoming && pOther->m_iChatStatus == eChatAwaitingConnectionRequest)

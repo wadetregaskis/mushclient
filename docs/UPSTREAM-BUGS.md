@@ -133,6 +133,16 @@ patches upstream, not as a claim that this tree fixed it.
 | 116 | A cancelled host-name lookup's result buffer is freed (or reused) straight after `WSACancelAsyncRequest`, which under Wine is a stub: the worker thread then writes the `hostent` into freed memory | this commit | doc.cpp `LookupHostName` / `OnConnectionDisconnect` (here `pal/win_transport.cpp`) |
 | 117 | A zChat stamp collision broadcasts the new stamp as decimal text instead of the 4-byte form, and to MudMaster peers as well (the filter tested this socket's type, not the peer's) | this commit | chatsock.cpp `CChatSocket::Process_Stamp` |
 | 118 | The world's first line, if it wraps, reaches triggers without its first row: the walk back to the start of a line steps past the head of the buffer even when it ran off it, and before that stops at the head's missing LOG_LINE mark. The same walk in Shift+double-click, Find's highlight and backwards Find misplaces the first line too | this commit | ProcessPreviousLine.cpp, mushview.cpp, sendvw.cpp, OtherTypes.h `PROMPT_GROUPING_MASK` |
+| 119 | The "wishes to start snooping you" box holds no reference to its socket: a peer that hangs up while it is up is deleted by the reaper inside the box's message loop, and the code goes on with the freed socket; a second snoop request inside the box asks again | this commit | chatsock.cpp `CChatSocket::Process_Snoop` |
+| 120 | Incoming chat accept prompts stack without limit (each runs a message loop in which the next caller asks), the silent-caller timeout closes a caller whose box is up, and a caller that re-handshakes under its own prompt changes the name, dialect and address the user is accepting | this commit | chatsock.cpp `CChatSocket::OnReceive`; chatlistensock.cpp `OnAccept`; timers.cpp `CheckTimers` |
+| 121 | Snoop data is displayed straight through `AnsiNote`, past "ignore", the world's byte and line limits, "ignore chat colours" and `ON_PLUGIN_CHAT_DISPLAY`; an ignored peer's name changes, file refusals, bare ping responses and peek lists are shown, and a peek list escapes the line limit | this commit | chatsock.cpp `Process_Snoop_data`, `Process_Name_change`, `Process_File_deny`, `Process_Ping_response`, `Process_Peek_list` |
+| 122 | `world.ChatSendFile` while the peer's own file offer is being asked about opens a file the offer's "yes" then replaces with its own, leaking the first `CFile` (open); and "auto-allow files" saves any number of files of any size unasked | this commit | methods_chat.cpp `CMUSHclientDoc::ChatSendFile`; chatsock.cpp `Process_File_start` |
+| 123 | `IsNumber` and the XML parser hand plain (signed) `char`s to `isdigit`, `isxdigit`, `isalpha`, `isalnum`, `isspace` and `toupper`: undefined behaviour, and a debug-CRT assertion, for any byte above 127 -- which a chat peer's snoop data or file size, or any world file, can supply | this commit | xmlparse.cpp `IsNumber`, `GetName`, `ReplaceEntities`, `Get_XML_Entity`, the number readers; xml_load_world.cpp, xml_serialize.cpp |
+| 124 | The XML parser has no limit on element nesting (it recurses per element and frees the tree recursively, so 100,000 nested elements overflow the stack) or on entity expansion (each entity is expanded in full where it is defined: a few hundred bytes of nested definitions expand to gigabytes) | this commit | xmlparse.cpp `CXMLparser::ProcessNode`, `ReplaceEntities`; xmlparse.h `~CXMLelement` |
+| 125 | A plugin that includes itself, or include files inside a plugin that include each other, recurse until the stack overflows: only a world's own includes are checked for repeats | this commit | xml_load_world.cpp `Load_One_Include_XML`, `Load_World_XML` |
+| 126 | An `<include>` name is opened as written: `\\host\share\...` makes Windows connect to the host and offer it the user's credentials just by loading the world, and `\\.\pipe\...`, `\\.\COM1`, `NUL` open devices; a world's script and log file names may be devices too | this commit | xml_load_world.cpp `Load_One_Include_XML`, `Load_World_Single_Line_Alpha_Options_XML` |
+| 127 | `IsArchiveXML` converts a UTF-16 file's first 498 bytes into a 500-byte buffer: text that needs more as UTF-8 fails the conversion, which leaves the buffer unterminated, and `strlen` reads past it | this commit | xml_serialize.cpp `IsArchiveXML` |
+| 128 | `utils.xmlread` builds its tables three Lua stack slots a level without checking the stack (a C function is promised 20), so a document nested a few levels deep can write past the end of Lua's stack | this commit | lua_utils.cpp `xmlOuputNode` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -3618,3 +3628,189 @@ on a group's rows after the grouping.
 `PROMPT_GROUPING_MASK` also ignores `LOG_LINE` and `BOOKMARK`, marks on a row rather than kinds
 of line. `TriggerR5.TheFirstLineInTheBufferWrappedIsWhole` pins it; it was seen to fail with
 the walk fixed and the mask not.
+
+## 119 — The snoop prompt's socket can be freed while the prompt is up
+
+`chatsock.cpp` `CChatSocket::Process_Snoop`.
+
+"*Name* wishes to start snooping you. Permit it?" is a modal box, and a modal box
+runs a message loop: FD_CLOSE arrives, `OnClose` marks the socket for deletion,
+and WM_TIMER runs the reaper, which deletes it. When the box closed the code set
+`m_bHeIsSnooping` and sent its answer through the freed socket, then returned
+into `OnReceive`'s loop, which read `m_outstanding_input` from it. A second
+`CHAT_SNOOP` arriving inside the box asked again, nested. The other chat prompts
+(accept the call, the file, the file picker) were given a guard in October
+(`m_iInModal`, which the reaper respects); this one was missed.
+
+**Fix:** the same guard, a check after the box for a peer that hung up, and a
+second snoop request while one is being asked about is ignored.
+`ChatHardening.ASnoopPromptKeepsItsSocketWhenThePeerHangsUpUnderIt` closes the
+socket and runs the reaper from inside the box.
+
+## 120 — Incoming chat accept prompts stack, and a caller can change under its own
+
+`chatsock.cpp` `CChatSocket::OnReceive` (now `ProcessConnectionRequest`);
+`chatlistensock.cpp` `OnAccept`; `timers.cpp` `CheckTimers`.
+
+Three ways the "Incoming chat call ... Accept it?" box could be abused:
+
+- **They stacked.** Each box runs a message loop in which the next caller's
+  request arrives and asks again, so callers could stack boxes without limit.
+  The listener's cap on unidentified callers did not hold them back: a caller
+  whose box is up has identified itself.
+- **The silent-caller timeout closed a caller whose box was up**, freeing its
+  slot under the cap while the box stayed, so the cap could be walked past one
+  minute at a time.
+- **A caller could re-handshake under its own prompt.** `OnReceive` parsed the
+  new packet -- name, dialect, file block size, call-back address -- before it
+  checked whether this socket was already being asked about, so the user said
+  yes to "Fred" on MudMaster and accepted whatever came second.
+
+**Fix:** one accept prompt at a time across the program (a second caller is told
+no and can call again); a caller whose box is up keeps its slot and is not timed
+out; and nothing a caller sends while its box is up is parsed.
+`ChatHardening.OnlyOneAcceptPromptIsUpAtATime`,
+`ChatHardening.ACallerCannotRehandshakeUnderItsOwnAcceptPrompt`.
+
+## 121 — Snoop data and other peer text get past "ignore" and the display limits
+
+`chatsock.cpp` `Process_Snoop_data`, `Process_Name_change`, `Process_File_deny`,
+`Process_Ping_response`, `Process_Peek_list`.
+
+`ChatNote` is where a chat message meets the user's controls over it: the
+world's byte and line limits, "ignore chat colours", and `ON_PLUGIN_CHAT_DISPLAY`.
+Snoop data -- the peer's whole session, as fast as they like -- went straight to
+`AnsiNote` and skipped all of them, and skipped "ignore" too; message type 15,
+`eChatSnoopData`, is documented for `ON_PLUGIN_CHAT_DISPLAY` and was never sent.
+For an ignored peer a name change, the text of a file refusal, an unsolicited
+ping response and a peek list were still shown, and a peek list, shown a
+connection to a note, was never held to the line limit.
+
+**Fix:** `ChatNote`'s limits and plugin callback are `ChatDisplayFilter` now,
+which snoop data goes through (as type 15) before its own display; "ignore
+chat colours" applies to it; an ignored peer's text is not shown (a new name is
+still recorded); a peek list lists at most the line limit's connections.
+`ChatHardening.AnIgnoredPeersTextIsNotShownAndSnoopDataHasTheLimits`.
+
+## 122 — `ChatSendFile` during a file offer leaks a file; auto-allow has no limits
+
+`methods_chat.cpp` `CMUSHclientDoc::ChatSendFile`; `chatsock.cpp`
+`Process_File_start`.
+
+`ChatSendFile` refused only while a transfer was running. While the peer's own
+offer was being asked about it opened the file to send and set `m_pFile`; the
+offer's "yes" then put the received file's `CFile` over it, and the first leaked,
+still open. Separately, "auto-allow files" with a save folder took any number of
+files, each up to the protocol's 2 GB, from anyone allowed to send them, and when
+`name (2)` to `name (999)` were all taken it wrote over `name (999)`.
+
+**Fix:** `ChatSendFile` refuses while an offer is being asked about, and the
+offer re-checks after its box. Files are saved unasked up to 100 MB each, 100 a
+session and 1 GB a session; past that the offer is asked about, as without
+auto-allow, so a big file that was meant still gets through. A name with no
+free number is refused. `ChatHardening.ChatSendFileWaitsForAnOfferBeingAskedAbout`,
+`ChatHardening.AutoSavedFilesAreLimitedAndNeverOverwriteTheLastName`.
+
+## 123 — Signed `char`s handed to the `<ctype.h>` functions
+
+`xmlparse.cpp` `IsNumber`, `GetName`, `ReplaceEntities`, `Get_XML_Entity`, the
+number readers; `xml_load_world.cpp` (world and plugin IDs); `xml_serialize.cpp`
+`IsArchiveXML`.
+
+`isdigit (*p)` with `p` a `const char *` passes a negative value for any byte
+above 127, which is undefined behaviour and asserts in the debug CRT. Reached
+from a chat peer (snoop data's colour prefix, a file offer's size, both through
+`IsNumber`) and from any world or plugin file. Every call now takes
+`(unsigned char)`, which is what the release CRT's table already gave for
+these bytes, so nothing that loaded before loads differently.
+`ChatHardening.IsNumberTakesBytesAbove127`.
+
+## 124 — XML nesting and entity expansion have no limits
+
+`xmlparse.cpp` `CXMLparser::ProcessNode`, `ReplaceEntities`; `xmlparse.h`
+`~CXMLelement`.
+
+`ProcessNode` recurses once per element and `~CXMLelement` frees the tree the
+same way, so a file of 100,000 nested `<a>` -- 700 KB -- overflows the stack,
+loading a world or a plugin or in `utils.xmlread`. And each entity is expanded
+in full where it is defined, so ten definitions each naming the one before ten
+times (the "billion laughs") expand a few hundred bytes to gigabytes.
+
+**Fix:** elements nest at most 512 deep (the deepest file found among the
+bundled plugins, the world files and Quow's Discworld plugins is 4), and entity
+references may add at most twice the file's size or 16 MB, whichever is more;
+past either, the load fails with a message saying which. The destructor frees
+the tree in a loop. `XmlHardening.DeepNestingIsAClearErrorNotAStackOverflow`,
+`XmlHardening.AnEntityBombIsRefusedBeforeItIsBuilt`.
+
+## 125 — A plugin that includes itself overflows the stack
+
+`xml_load_world.cpp` `Load_One_Include_XML`, `Load_World_XML`.
+
+"Has already been included" was checked only for a world's own includes (`if
+(!bPlugin && !m_CurrentPlugin)`). Inside a plugin nothing was tracked, so a
+plugin naming itself in an `<include>`, or two include files naming each other,
+loaded each other until the stack ran out.
+
+**Fix:** every file being loaded is on a stack (`m_vLoadingFiles`), and a file
+that appears twice in the chain from the outermost file down is refused,
+"includes itself"; files nest at most 32 deep. A file that two siblings both
+include is unaffected. `XmlHardening.APluginThatIncludesItselfIsAWarningNotAStackOverflow`,
+`XmlHardening.IncludesNestedPastTheCapAreRefused`.
+
+## 126 — Include names open network shares and devices
+
+`xml_load_world.cpp` `Load_One_Include_XML` (`CheckIncludeName`),
+`Load_World_Single_Line_Alpha_Options_XML`.
+
+An `<include name="...">` was opened as written. `\\host\share\x.xml` makes
+Windows connect to that host and offer it the user's NTLM credentials, so a
+world file passed around could have the client sign in to a stranger's server
+just by being opened; `\\.\pipe\x`, `\\.\COM1`, `\\?\...` and `NUL` open
+devices.
+
+**Fix**, chosen to keep real setups loading:
+
+- device paths (`\\.\`, `\\?\`, `\??\`) and device names (as the include's last
+  component, after the `$` names and folders are applied) are refused;
+- a UNC path is allowed only on a share the client already uses: the one the
+  world file, the file doing the including, the plugins folder, the worlds
+  folder or the program is on. A world kept on a NAS beside its plugins loads
+  as before; a share named only in the file is refused, with a message saying
+  to copy the file to a local folder;
+- local absolute paths and `..` stay allowed: people keep plugins in folders of
+  their own, and a local file tells no one anything.
+
+A world's `script_filename` and `auto_log_file_name` may not be device paths or
+names either. UNC names are left alone there: scripts and logs on a NAS are real
+setups, and a world file is not inert data anyway (its triggers and aliases can
+run script). `XmlHardening.IncludeNamesThatAreDevicesOrStrangersSharesAreRefused`,
+`XmlHardening.AnIncludeOfNulIsRefusedWhenTheWorldLoads`,
+`XmlHardening.AWorldsScriptAndLogFilesMayNotBeDevices`.
+
+## 127 — `IsArchiveXML` reads past an unterminated buffer
+
+`xml_serialize.cpp` `IsArchiveXML` (the Windows arm).
+
+A UTF-16 file's first 498 bytes -- up to 249 characters -- were converted to
+UTF-8 into a 500-byte buffer that was never cleared. Characters outside ASCII
+take two or three bytes, so a file with enough of them near its start failed the
+conversion, which writes no terminator, and the `strlen` that followed read past
+the buffer.
+
+**Fix:** the buffer is zeroed and big enough for all of them.
+`XmlHardening.IsArchiveXMLReadsAUtf16FileFullOfNonAscii`.
+
+## 128 — `utils.xmlread` can write past the end of Lua's stack
+
+`lua_utils.cpp` `xmlOuputNode`.
+
+Each level of the document pushes three values (the node's table, the `"nodes"`
+key and the children's table) and recurses, with no `lua_checkstack`. A C
+function is promised only `LUA_MINSTACK` (20) slots, so a document nested a few
+levels deep could write past the end of the stack -- heap corruption from a
+script parsing XML it was handed.
+
+**Fix:** `luaL_checkstack` at each level; with the parser's depth cap it always
+has room. `XmlHardening.UtilsXmlreadHandlesDeepDocuments` reads a document
+400 deep.

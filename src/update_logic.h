@@ -23,6 +23,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <vector>
@@ -88,6 +89,8 @@ struct ThisCopy
   bool        portable = false;      // Windows: the zip rather than the installer
   bool        discworld = false;     // the Discworld edition (a file packaging leaves: kEditionMarker)
   bool        systemManaged = false; // a .deb, or anywhere it can't write: not ours to replace
+  bool        foreignFolder = false; // macOS, Linux: the folder it's in isn't recognisably its
+                                     // own (LooksLikeOurFolder), so isn't replaced
   };
 
 // Beside the executable (in Resources on macOS) in the Discworld edition's packages.
@@ -113,6 +116,10 @@ bool VerifySignature (const std::string & message, const std::string & signature
 
 bool HashFile (const std::string & path, std::string * hexOut, std::string * error);
 
+// The same, of a file already open (read to its end), or of bytes in memory.
+bool HashOpenFile (FILE * file, std::string * hexOut, std::string * error);
+bool HashBytes (const void * data, size_t size, std::string * hexOut);
+
 // The hash the signed text gives for this file.  Fails unless its first line is
 // "MUSHclient <version>" for this version, and it names the file exactly.
 bool ManifestHashFor (const std::string & manifest, const std::string & version,
@@ -128,7 +135,10 @@ bool VerifyDownload (const std::string & path, const std::string & fileName, con
 // Every file of a .zip into destDir, which it makes.  Stored or deflated entries only,
 // with their checksums tested.  If everything is under one top-level folder, that is
 // left off.  An entry that would land outside destDir is refused, and so is the zip.
-bool ExtractZip (const std::string & zipPath, const std::string & destDir, std::string * error);
+// With expectedSha256, the bytes it read must have that hash: the copy in memory is the
+// one unpacked, so the file can't be changed between being checked and being used.
+bool ExtractZip (const std::string & zipPath, const std::string & destDir, std::string * error,
+                 const std::string & expectedSha256 = std::string ());
 
 // In a portable copy the user's own files live among the program's.  True for a path
 // (relative, with either slash) that belongs to the user, which an update adds if it
@@ -145,5 +155,19 @@ bool SwapInFiles (const std::string & stageDir, const std::string & installDir, 
 // At startup: removes what the last swap left, if it left anything.  (A file still in
 // use stays until next time.)
 void CleanUpAfterSwap (const std::string & installDir);
+
+// ---------------- replacing a whole folder (macOS, Linux) ----------------
+
+// The port replaces the folder it's in, and removes the old one: so that folder must be
+// one an update made, and not somewhere a copy of the program was put (~/bin).  On macOS
+// a .app with Contents/Info.plist and Contents/MacOS; on Linux, a folder with the
+// tarball's MUSHclient, mushclient.sh and mushclient_dialogs.rc.
+bool LooksLikeOurFolder (const std::string & folder, Platform platform);
+
+// After a Linux copy's folder has been replaced: what the user added to the old one and
+// the new one doesn't have is moved across, and their own files (IsUserDataPath) are kept
+// in place of the package's, as the Windows portable swap does.  False, and why, if
+// something couldn't be moved, and then the old folder still has it.
+bool CarryOverUserFiles (const std::string & oldFolder, const std::string & newFolder, std::string * error);
 
 } // namespace update

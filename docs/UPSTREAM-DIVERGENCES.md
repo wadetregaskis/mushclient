@@ -1570,9 +1570,12 @@ anyway, the copy taken before it is what the backups are for.
 while it asked and told you.
 
 **Now:** core, with a worker asking GitHub 30 seconds after starting and about daily after
-that.  A new version puts a clickable pane in the status bar.  The Update dialog shows
-what's new since this version, and installs only on a click, only with a good signature
-(Ed25519, over a list of SHA-256 hashes) from the key in `src/update_key.h`.
+that (an hour after a check that failed).  A new version puts a clickable pane in the status
+bar.  The Update dialog shows what's new since this version, and installs only on a click,
+only with a good signature (Ed25519, over a list of SHA-256 hashes) from the key in
+`src/update_key.h`, and only what it checked: the zip it unpacks and the installer it starts
+are hashed again as they are used.  If the newest release has nothing for this copy, it
+offers the newest that has, and says so.
 
 The plugin keeps its ID and its `version_check` alias, which now asks the client to check.
 It no longer does anything by itself.
@@ -1584,9 +1587,15 @@ It no longer does anything by itself.
 - A `.deb`, or any copy it can't replace, goes to the release page.
 - In a portable copy an update leaves everything under `worlds\` as it is, except to add what
   isn't there, so a bundled plugin the copy already has stays at its old version.
+- The port replaces the whole folder the program is in, so only one that looks like the
+  package's (a `.app`; or the tarball's `mushclient/`, with `mushclient.sh` and
+  `mushclient_dialogs.rc`), and never `$HOME` or `/`.  A copy anywhere else goes to the
+  release page.  On Linux what was added to the old folder moves into the new one, and the
+  user's own files are kept, as in a Windows portable copy.
 
-**Verification:** `tests/test_update.cpp`, with the network faked.  A real release and real
-elevation haven't been tried.
+**Verification:** `tests/test_update.cpp`, with the network faked, and
+`tests/win/test_https_get.cpp` against a TLS server of the test's own.  A real release and
+real elevation haven't been tried.
 
 ## 36 — Output is read to a screen reader, and two speech plugins are replaced
 

@@ -39,14 +39,24 @@ pcre2_code * program;
   re->m_program = program;
   re->m_iExecutionError = 0; // no error now
 
-  // the prefilter: a literal any match must contain
-  char literal [32];
-  const int iLiteral = mc_pcre_required_literal (exp, options, literal, sizeof literal);
-  if (iLiteral > 0)
+  // the prefilter: literals of which any match must contain one
+  char literals [16 * 32];
+  int lengths [16];
+  const int iLiterals = mc_pcre_required_literals (exp, options, literals, sizeof literals,
+                                                   lengths, 16);
+  re->m_bRequiredCaseless = (options & PCRE_CASELESS) != 0;
+  for (int i = 0, at = 0; i < iLiterals; at += lengths [i++])
     {
-    re->m_sRequired.assign (literal, iLiteral);
-    re->m_bRequiredCaseless = (options & PCRE_CASELESS) != 0;
-    re->m_iRequiredAnchor = mc_pcre_literal_anchor (literal, iLiteral, re->m_bRequiredCaseless);
+    re->m_vRequired.push_back (string (literals + at, lengths [i]));
+    re->m_vRequiredAnchor.push_back (
+        mc_pcre_literal_anchor (literals + at, lengths [i], re->m_bRequiredCaseless));
+    }
+  if (iLiterals > 1)
+    {
+    uint32_t type = 0, unit = 0;
+    if (pcre2_pattern_info (program, PCRE2_INFO_LASTCODETYPE, &type) == 0 && type == 1 &&
+        pcre2_pattern_info (program, PCRE2_INFO_LASTCODEUNIT, &unit) == 0 && unit < 256)
+      re->m_iLastCodeUnit = (int) unit;
     }
   re->m_bUTF8 = (options & PCRE_UTF8) != 0;
 
@@ -108,8 +118,8 @@ int count;
   LARGE_INTEGER start, finish;
 
   /*
-  The prefilter.  If the subject lacks a literal that every match must contain,
-  the pattern cannot match, and running it would say NOMATCH: so say it without
+  The prefilter.  If the subject lacks a literal that every match must contain
+  (or all of a set, one of which every match must contain), the pattern cannot match, and running it would say NOMATCH: so say it without
   running it.  That is all a plugin can see, provided running it could not have
   said something else first, so the prefilter stands aside where it could: a bad
   start offset, no match data, and in UTF-8 mode a subject with anything but
@@ -122,18 +132,22 @@ int count;
   pattern is timed every time, as before.
   */
 
-  if (!prog->m_sRequired.empty () &&
+  if (!prog->m_vRequired.empty () &&
       prog->m_match != NULL &&
-      start_offset >= 0 && start_offset <= length)
+      start_offset >= 0 && start_offset <= length &&
+      (prog->m_iLastCodeUnit < 0 ||
+       memchr (string, prog->m_iLastCodeUnit, length) != NULL))
     {
     const bool bSample = bTimed &&
         (prog->m_iMatchAttempts & ((1 << PREFILTER_TIME_SHIFT) - 1)) == 0;
     if (bSample)
       QueryPerformanceCounter (&start);
-    if (!mc_pcre_has_literal (string, length,
-                              prog->m_sRequired.data (), prog->m_sRequired.size (),
-                              prog->m_bRequiredCaseless, prog->m_iRequiredAnchor) &&
-        (!prog->m_bUTF8 || AllAscii (string, length)))
+    bool bAny = false;
+    for (size_t i = 0; !bAny && i < prog->m_vRequired.size (); i++)
+      bAny = mc_pcre_has_literal (string, length,
+                                  prog->m_vRequired [i].data (), prog->m_vRequired [i].size (),
+                                  prog->m_bRequiredCaseless, prog->m_vRequiredAnchor [i]) != 0;
+    if (!bAny && (!prog->m_bUTF8 || AllAscii (string, length)))
       {
       if (bSample)
         {

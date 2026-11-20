@@ -143,6 +143,13 @@ int mc_pcre_match_jit (const pcre2_code * code, pcre2_match_data ** md,
    tools/trigger_bench, which checks it against every pattern we know of. */
 int mc_pcre_required_literal (const char * pattern, int options, char * out, int size);
 
+/* The same, allowing for a set of literals of which a match must contain one at
+   least (from an alternation, each of whose branches has its own): how many
+   there are (0 if none could be found for certain, or they don't fit), their
+   texts one after another in out, and their lengths in lengths [0 .. max). */
+int mc_pcre_required_literals (const char * pattern, int options,
+                               char * out, int size, int * lengths, int max);
+
 /* Which byte of a literal to look for first: the one least likely to be in a
    line of text.  Worked out once, with the literal. */
 int mc_pcre_literal_anchor (const char * literal, size_t n, int caseless);

@@ -775,6 +775,8 @@ TEST(RegexpPrefilter, TheLiteralIsALongestRunEveryMatchHas) {
         { "\\x{41}BC",                                   0, "BC" },
         { "(?<n>x)\\k<n>abcd",                           0, "abcd" },
         { "(x)\\g{-1}abcd",                              0, "abcd" },
+        { "(?P<n>ab)(?P=n)cdef",                         0, "cdef" },
+        { "(?P<n>ab)(?P>n)?cdef",                        0, "cdef" },
         { "\\p{Lu}abc",                                  0, "abc" },
         { "\\babc\\b",                                   0, "abc" },
         { "ABC",                                         I, "abc" },  // caseless: lower case
@@ -808,6 +810,48 @@ TEST(RegexpPrefilter, TheLiteralIsALongestRunEveryMatchHas) {
                   std::string(c.pattern) + " -> " + RequiredLiteral(c.pattern, c.options));
 }
 
+// An alternation whose every branch has a literal gives the set of them, any one
+// of which a match must contain.
+static std::string RequiredLiterals(const char* pattern, int options = 0) {
+    char out[16 * 32];
+    int lengths[16];
+    const int n = mc_pcre_required_literals(pattern, options, out, sizeof out, lengths, 16);
+    std::string r;
+    for (int i = 0, at = 0; i < n; at += lengths[i++])
+        r += (i ? "|" : "") + std::string(out + at, lengths[i]);
+    return r;
+}
+
+TEST(RegexpPrefilter, AnAlternationGivesASetOfLiterals) {
+    const struct { const char* pattern; const char* literals; } cases[] = {
+        { "abc|def",                                      "abc|def" },
+        { "^(?:> )?(?>Exploiting your confusion, |Catching you by surprise, )x",
+                                                          "Exploiting your confusion, |Catching you by surprise, " },
+        { "(?:ab|cd)ef",                                  "ef" },        // a single literal is cheaper
+        { "(?:abcd|efgh)x",                               "abcd|efgh" }, // longer than x
+        { "abcde(?:fg|hi)",                               "abcde" },     // four or more: alone
+        { "abc|d.e",                                      "abc|d" },     // each branch its best
+        { "abc|\\d+",                                     "" },          // a branch with none
+        { "(?:abc|xyz)?def",                              "def" },       // an optional group is no use
+        { "(?=abc|xyz)def",                               "def" },
+        { "(a(?:bc|de)f|gh)i",                            "bc|de|gh" },  // nested: a branch's best
+        { "a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q",           "" },          // more than sixteen
+    };
+    for (auto& c : cases)
+        EXPECT_EQ(std::string(c.pattern) + " -> " + c.literals,
+                  std::string(c.pattern) + " -> " + RequiredLiterals(c.pattern));
+}
+
+// A pattern prefiltered on a set: no match unless one of them is there.
+TEST(RegexpPrefilter, ASetSkipsOnlyWhenNoneIsThere) {
+    Regexp r("^(?:> )?(?>Exploiting your confusion|Catching you by surprise), (.+)$");
+    ASSERT_EQ(2u, r->m_vRequired.size());
+    EXPECT_EQ(0, regexec(r.get(), "The rat bites you."));
+    EXPECT_EQ(1, regexec(r.get(), "> Catching you by surprise, the rat bites."));
+    EXPECT_EQ(1, regexec(r.get(), "Exploiting your confusion, the rat bites."));
+    EXPECT_EQ(3, r->m_iMatchAttempts);
+}
+
 TEST(RegexpPrefilter, TheSearchFindsTheLiteralWhereverItIs) {
     const char* lit = "arcane";
     for (int anchor = 0; anchor < 6; anchor++) {
@@ -833,7 +877,7 @@ TEST(RegexpPrefilter, TheSearchFindsTheLiteralWhereverItIs) {
 // match, the attempt counted, the last match's text kept.
 TEST(RegexpPrefilter, ASkippedAttemptIsCountedAsANoMatch) {
     Regexp r("^You have (\\d+) items$");
-    ASSERT_FALSE(r->m_sRequired.empty());
+    ASSERT_FALSE(r->m_vRequired.empty());
     EXPECT_EQ(1, regexec(r.get(), "You have 3 items"));
     EXPECT_EQ(std::string("3"), r->GetWildcard(1));
     const long attempts = r->m_iMatchAttempts;
@@ -849,7 +893,7 @@ TEST(RegexpPrefilter, ASkippedAttemptIsCountedAsANoMatch) {
 // the prefilter stands aside for anything not plain ASCII.
 TEST(RegexpPrefilter, BadUtf8IsStillAnErrorInUtf8Mode) {
     Regexp r("abc", PCRE_UTF8);
-    ASSERT_FALSE(r->m_sRequired.empty());
+    ASSERT_FALSE(r->m_vRequired.empty());
     EXPECT_EQ(0, regexec(r.get(), "plain ascii"));      // skipped: no error possible
     EXPECT_EQ(0, r->m_iExecutionError);
     EXPECT_EQ(0, regexec_erroring(r.get(), "bad \xFF byte"));

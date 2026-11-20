@@ -3,7 +3,7 @@
 The trigger path's regular expressions, headless: PCRE2 and the client's own
 `src/mc_pcre.c`, built with `/O2` into one program, with no GUI and no client.
 
-- `verify` is the proof for the required-literal prefilter (`mc_pcre_required_literal`,
+- `verify` is the proof for the required-literal prefilter (`mc_pcre_required_literals`,
   used by `regexec`): every pattern against every subject, and wherever the prefilter
   would skip a pattern, the pattern must not match, with `PCRE_NOTEMPTY` and without.
   A `MISSED` line is a trigger the prefilter would make miss a line, silently. There

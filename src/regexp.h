@@ -63,12 +63,18 @@ class t_regexp
   // line.  Copied into m_vOffsets only on a successful match, so the NOMATCH path
   // still leaves m_vOffsets untouched.
   pcre2_match_data * m_match;
-  // A literal every match must contain (mc_pcre_required_literal), found when
-  // the pattern is compiled: a subject without it is a NOMATCH without running
-  // the pattern at all.  Empty if there is none we can be sure of.
-  string m_sRequired;
-  int m_iRequiredAnchor = 0;    // mc_pcre_literal_anchor
+  // Literals of which every match must contain one (usually there is just one;
+  // an alternation can give several: mc_pcre_required_literals), found when
+  // the pattern is compiled: a subject with none of them is a NOMATCH without
+  // running the pattern at all.  Empty if there are none we can be sure of.
+  vector<string> m_vRequired;
+  vector<int> m_vRequiredAnchor;    // mc_pcre_literal_anchor, for each
   bool m_bRequiredCaseless = false;
+  // With a set: PCRE2's own "last code unit every match has" (or -1).  Where the
+  // subject lacks it, PCRE2 rejects the subject faster than the set can be
+  // searched, so the pattern is simply run.  (A choice of the cheaper way only:
+  // the answer is PCRE2's either way.)
+  int m_iLastCodeUnit = -1;
   bool m_bUTF8 = false;
   int m_iJitOnly;        // mc_pcre_is_jit_only: -1 until asked
   int m_iCaptureCount;   // -1 until first computed from the compiled program

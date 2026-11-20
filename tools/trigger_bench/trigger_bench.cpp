@@ -2,7 +2,7 @@
 //
 //   trigger_bench verify <patterns> <subjects>
 //     Every pattern against every subject: wherever the required-literal prefilter
-//     (mc_pcre_required_literal / mc_pcre_has_literal) would skip a pattern, the
+//     (mc_pcre_required_literals / mc_pcre_has_literal) would skip a pattern, the
 //     pattern must not match, with PCRE_NOTEMPTY and without.  Any line saying
 //     MISSED is a trigger that the prefilter would have made miss a line.  The
 //     literal search is also checked against a plain one (SEARCH WRONG).
@@ -37,9 +37,25 @@ struct Pattern
   pcre2_code * code = nullptr;
   pcre2_match_data * md = nullptr;
   int jit_only = 0;
-  char literal [64];
-  int literal_length = 0;
-  int anchor = 0;
+  int last_unit = -1;     // regexec's m_iLastCodeUnit (sets only)
+  std::vector<std::string> lits;     // any of which a match must contain
+  std::vector<int> anchors;
+  bool caseless () const { return (options & PCRE_CASELESS) != 0; }
+  // the prefilter's search: is any of the literals there?
+  bool has (const char * s, size_t n) const
+    {
+    for (size_t i = 0; i < lits.size (); i++)
+      if (mc_pcre_has_literal (s, n, lits [i].data (), lits [i].size (), caseless (), anchors [i]))
+        return true;
+    return lits.empty ();
+    }
+  std::string shown () const
+    {
+    std::string r;
+    for (auto & l : lits)
+      r += (r.empty () ? "" : "|") + l;
+    return r;
+    }
   double cost = 0;
   long matches = 0, skipped = 0;
   };
@@ -119,13 +135,25 @@ static void compile_all (std::vector<Pattern> & pats)
       }
     p.md = pcre2_match_data_create_from_pattern (p.code, NULL);
     p.jit_only = mc_pcre_is_jit_only (p.code);
-    p.literal_length = mc_pcre_required_literal (p.text.c_str (), p.options, p.literal, sizeof p.literal);
-    if (p.literal_length)
-      p.anchor = mc_pcre_literal_anchor (p.literal, p.literal_length, (p.options & PCRE_CASELESS) != 0);
+    char buf [16 * 32];
+    int lengths [16];
+    const int n = mc_pcre_required_literals (p.text.c_str (), p.options, buf, sizeof buf, lengths, getenv ("TB_MAX_LITERALS") ? atoi (getenv ("TB_MAX_LITERALS")) : 16);
+    for (int i = 0, at = 0; i < n; at += lengths [i++])
+      {
+      p.lits.push_back (std::string (buf + at, lengths [i]));
+      p.anchors.push_back (mc_pcre_literal_anchor (buf + at, lengths [i], p.caseless ()));
+      }
+    if (n > 1)
+      {
+      uint32_t type = 0, unit = 0;
+      if (pcre2_pattern_info (p.code, PCRE2_INFO_LASTCODETYPE, &type) == 0 && type == 1 &&
+          pcre2_pattern_info (p.code, PCRE2_INFO_LASTCODEUNIT, &unit) == 0 && unit < 256)
+        p.last_unit = (int) unit;
+      }
     }
   int with = 0;
   for (auto & p : pats)
-    if (p.code && p.literal_length)
+    if (p.code && !p.lits.empty ())
       with++;
   printf ("patterns: %zu, %d did not compile, %d have a required literal\n", pats.size (), bad, with);
   }
@@ -181,14 +209,16 @@ static int verify (const char * pfile, const char * sfile)
       {
       // regexec's rule: the literal is missing, and in UTF-8 mode the subject is ASCII
       const bool caseless = (p.options & PCRE_CASELESS) != 0;
-      const bool has = !p.literal_length ||
-          mc_pcre_has_literal (s.data (), s.size (), p.literal, p.literal_length, caseless, p.anchor);
-      if (p.literal_length && has != naive_has (s, p.literal, p.literal_length, caseless))
+      const bool has = p.has (s.data (), s.size ());
+      bool naive = p.lits.empty ();
+      for (auto & l : p.lits)
+        naive = naive || naive_has (s, l.data (), (int) l.size (), caseless);
+      if (has != naive)
         {
         search_wrong++;
         if (search_wrong < 20)
-          printf ("SEARCH WRONG: literal [%.*s] anchor %d caseless %d subject [%s]\n",
-                  p.literal_length, p.literal, p.anchor, caseless, s.c_str ());
+          printf ("SEARCH WRONG: literals [%s] caseless %d subject [%s]\n",
+                  p.shown ().c_str (), caseless, s.c_str ());
         }
       const bool skip = !has && (!(p.options & PCRE_UTF8) || all_ascii (s));
       for (int o = 0; o < 2; o++)
@@ -204,8 +234,8 @@ static int verify (const char * pfile, const char * sfile)
           {
           missed++;
           if (missed < 50)
-            printf ("MISSED: pattern [%s] options %d literal [%.*s] subject [%s]\n", p.text.c_str (),
-                    p.options, p.literal_length, p.literal, s.c_str ());
+            printf ("MISSED: pattern [%s] options %d literals [%s] subject [%s]\n", p.text.c_str (),
+                    p.options, p.shown ().c_str (), s.c_str ());
           }
         else if (rc != PCRE_ERROR_NOMATCH)
           {
@@ -244,6 +274,17 @@ static int timing (const char * pfile, const char * sfile, int passes)
   compile_all (pats);
   pats.erase (std::remove_if (pats.begin (), pats.end (), [] (const Pattern & p) { return !p.code; }), pats.end ());
   printf ("enabled patterns: %zu, subjects: %zu, passes: %d\n", pats.size (), subs.size (), passes);
+  {
+  int sets = 0, with_unit = 0;
+  for (auto & p : pats)
+    if (p.lits.size () > 1)
+      {
+      sets++;
+      if (p.last_unit >= 0)
+        with_unit++;
+      }
+  printf ("with a set of literals: %d, of which PCRE2 has a last code unit for %d\n", sets, with_unit);
+  }
 
   // the cost of a clock read
   {
@@ -274,8 +315,7 @@ static int timing (const char * pfile, const char * sfile, int passes)
             if (clock)
               QueryPerformanceCounter (&t0);
             int rc;
-            if (prefilter && p.literal_length &&
-                !mc_pcre_has_literal (str, len, p.literal, p.literal_length, (p.options & PCRE_CASELESS) != 0, p.anchor))
+            if (prefilter && (p.last_unit < 0 || memchr (str, p.last_unit, len)) && !p.has (str, len))
               rc = PCRE_ERROR_NOMATCH;
             else
               rc = run (p, str, len, PCRE_NOTEMPTY);
@@ -302,8 +342,7 @@ static int timing (const char * pfile, const char * sfile, int passes)
           p.matches++;
     p.cost = (now () - a) / passes / subs.size () * 1e9;
     for (auto & s : subs)
-      if (p.literal_length && !mc_pcre_has_literal (s.data (), s.size (), p.literal, p.literal_length,
-                                                    (p.options & PCRE_CASELESS) != 0, p.anchor))
+      if (!p.has (s.data (), s.size ()))
         p.skipped++;
     }
   std::vector<Pattern *> order;
@@ -316,13 +355,13 @@ static int timing (const char * pfile, const char * sfile, int passes)
   std::sort (order.begin (), order.end (), [] (Pattern * a, Pattern * b) { return a->cost > b->cost; });
   printf ("sum of the patterns' own costs: %.2f us a line; the dearest:\n", total / 1000);
   for (size_t i = 0; i < order.size () && i < 25; i++)
-    printf ("%8.0f ns  %3ld%% skipped  lit [%.*s]  %.100s\n", order [i]->cost,
-            order [i]->skipped * 100 / (long) subs.size (), order [i]->literal_length, order [i]->literal,
+    printf ("%8.0f ns  %3ld%% skipped  lit [%.60s]  %.100s\n", order [i]->cost,
+            order [i]->skipped * 100 / (long) subs.size (), order [i]->shown ().c_str (),
             order [i]->text.c_str ());
   long nolit = 0;
   double nolit_cost = 0;
   for (auto & p : pats)
-    if (!p.literal_length)
+    if (p.lits.empty ())
       {
       nolit++;
       nolit_cost += p.cost;
@@ -330,7 +369,7 @@ static int timing (const char * pfile, const char * sfile, int passes)
   printf ("without a literal: %ld patterns, %.2f us a line; e.g.\n", nolit, nolit_cost / 1000);
   int shown = 0;
   for (auto * p : order)
-    if (!p->literal_length && shown++ < 15)
+    if (p->lits.empty () && shown++ < 15)
       printf ("%8.0f ns  %.120s\n", p->cost, p->text.c_str ());
   return 0;
   }

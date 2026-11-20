@@ -626,7 +626,12 @@ pcre2_code * mc_pcre_compile (const char * pattern, int options,
      alternation of its own), must be in every match.  A quantifier takes the
      character before it out of the run; anything else that isn't a plain
      character (a class, a dot, an escape like \d, an anchor, a group) ends it.
-   - A sequence with a | at its own level has no required literal.
+   - A sequence with a | at its own level has no one required literal, but if
+     every branch has one, one of those must be there: a set of literals, any
+     of which will do.  A required group holding such a sequence gives the set.
+     Of all that a sequence must contain, the most telling is kept: one literal
+     of four or more characters if there is one, otherwise whichever literal or
+     set has the longest shortest literal.
    - Option settings like (?i), verbs like (*ACCEPT), conditions, recursion,
      callouts, \Q..\E, extended mode, and a brace that isn't a plain {n}, {n,}
      or {n,m}: no literal at all.
@@ -636,12 +641,20 @@ pcre2_code * mc_pcre_compile (const char * pattern, int options,
      outside ASCII is taken at all, so a quantifier on one is always seen. */
 
 #define MC_LITERAL_RUN 32
+#define MC_LITERAL_ALTS 16
 
 typedef struct
   {
   char text [MC_LITERAL_RUN];
   int length;
   } lit_run_t;
+
+/* Any one of alt [0 .. n) must be in a match; n == 0: nothing is known. */
+typedef struct
+  {
+  lit_run_t alt [MC_LITERAL_ALTS];
+  int n;
+  } lit_set_t;
 
 typedef struct
   {
@@ -650,10 +663,50 @@ typedef struct
   int bad;               /* something not understood: no literal at all */
   } lit_scan_t;
 
-static void lit_keep (lit_run_t * best, lit_run_t * run)
+static int lit_shortest (const lit_set_t * a)
   {
-  if (run->length > best->length)
-    *best = *run;
+  int i, m = MC_LITERAL_RUN + 1;
+  for (i = 0; i < a->n; i++)
+    if (a->alt [i].length < m)
+      m = a->alt [i].length;
+  return m;
+  }
+
+/* Is a more telling than b? */
+static int lit_better (const lit_set_t * a, const lit_set_t * b)
+  {
+  int good_a, good_b, short_a, short_b;
+  if (a->n == 0)
+    return 0;
+  if (b->n == 0)
+    return 1;
+  good_a = a->n == 1 && a->alt [0].length >= 4;
+  good_b = b->n == 1 && b->alt [0].length >= 4;
+  if (good_a != good_b)
+    return good_a;
+  short_a = lit_shortest (a);
+  short_b = lit_shortest (b);
+  if (short_a != short_b)
+    return short_a > short_b;
+  return a->n < b->n;
+  }
+
+static void lit_keep_set (lit_set_t * best, const lit_set_t * candidate)
+  {
+  if (lit_better (candidate, best))
+    *best = *candidate;
+  }
+
+/* A run of plain characters, ended: a candidate of its own. */
+static void lit_keep (lit_set_t * best, lit_run_t * run)
+  {
+  if (run->length > 0)
+    {
+    lit_set_t one;
+    one.n = 1;
+    one.alt [0] = *run;
+    lit_keep_set (best, &one);
+    }
   run->length = 0;
   }
 
@@ -834,17 +887,33 @@ static void lit_class (lit_scan_t * s)
   s->p = p + 1;
   }
 
-static void lit_sequence (lit_scan_t * s, lit_run_t * best, int depth);
+/* A branch of an alternation, ended: what it must contain joins the set, any of
+   which must be in a match.  A branch with nothing, or too many in all, and the
+   alternation has nothing to say. */
+static void lit_add_branch (lit_set_t * any, lit_set_t * branch, int * failed)
+  {
+  int i;
+  if (branch->n == 0 || any->n + branch->n > MC_LITERAL_ALTS)
+    *failed = 1;
+  if (!*failed)
+    for (i = 0; i < branch->n; i++)
+      any->alt [any->n++] = branch->alt [i];
+  else
+    any->n = 0;
+  branch->n = 0;
+  }
+
+static void lit_sequence (lit_scan_t * s, lit_set_t * best, int depth);
 
 /* A group, at its '('.  Its literal counts only if the group must be matched,
    once, as it stands. */
-static void lit_group (lit_scan_t * s, lit_run_t * best, int depth)
+static void lit_group (lit_scan_t * s, lit_set_t * best, int depth)
   {
   const char * p = s->p + 1;
   int required = 1;
-  lit_run_t inner;
+  lit_set_t inner;
 
-  if (depth > 50 || *p == '*')    /* (*ACCEPT) and every other verb */
+  if (depth > 20 || *p == '*')    /* (*ACCEPT) and every other verb */
     {
     s->bad = 1;
     return;
@@ -864,6 +933,16 @@ static void lit_group (lit_scan_t * s, lit_run_t * best, int depth)
       p += 2;
       required = 0;
       }
+    else if (*p == 'P' && (p [1] == '=' || p [1] == '>'))
+      {
+      /* (?P=name), a back reference, and (?P>name), a call: no literal of their
+         own, but nothing to stop one around them */
+      s->p = p + 2;
+      lit_skip_name (s, ')');
+      if (!s->bad)
+        lit_quantifier (s);
+      return;
+      }
     else if (*p == '<' || *p == '\'' || (*p == 'P' && p [1] == '<'))
       {
       const char close = *p == '\'' ? '\'' : '>';
@@ -875,7 +954,7 @@ static void lit_group (lit_scan_t * s, lit_run_t * best, int depth)
       }
     else
       {
-      /* (?i) (?#...) (?(...)) (?R) (?1) (?&name) (?P=name) (?C) (?|...) ... */
+      /* (?i) (?#...) (?(...)) (?R) (?1) (?&name) (?C) (?|...) ... */
       s->bad = 1;
       return;
       }
@@ -893,16 +972,19 @@ static void lit_group (lit_scan_t * s, lit_run_t * best, int depth)
   if (lit_quantifier (s))
     required = 0;
   if (required)
-    lit_keep (best, &inner);
+    lit_keep_set (best, &inner);
   }
 
 /* A sequence of items, to an unmatched ')' or the end. */
-static void lit_sequence (lit_scan_t * s, lit_run_t * best, int depth)
+static void lit_sequence (lit_scan_t * s, lit_set_t * best, int depth)
   {
-  lit_run_t run, mine;
-  int alternation = 0;
+  lit_run_t run;
+  lit_set_t mine;              /* the best of this branch */
+  lit_set_t any;               /* with alternation: one from each branch */
+  int alternation = 0, failed = 0;
   run.length = 0;
-  mine.length = 0;
+  mine.n = 0;
+  any.n = 0;
 
   while (!s->bad && *s->p != '\0' && *s->p != ')')
     {
@@ -913,7 +995,8 @@ static void lit_sequence (lit_scan_t * s, lit_run_t * best, int depth)
       {
       case '|':
         alternation = 1;
-        run.length = 0;
+        lit_keep (&mine, &run);
+        lit_add_branch (&any, &mine, &failed);
         s->p++;
         continue;
       case '(':
@@ -970,31 +1053,53 @@ static void lit_sequence (lit_scan_t * s, lit_run_t * best, int depth)
 
   lit_keep (&mine, &run);
   if (alternation)
-    mine.length = 0;
-  *best = mine;
+    {
+    lit_add_branch (&any, &mine, &failed);
+    *best = any;
+    }
+  else
+    *best = mine;
   }
 
-int mc_pcre_required_literal (const char * pattern, int options, char * out, int size)
+int mc_pcre_required_literals (const char * pattern, int options,
+                               char * out, int size, int * lengths, int max)
   {
   lit_scan_t s;
-  lit_run_t best;
+  lit_set_t best;
+  int i, used = 0;
   const int understood = PCRE_CASELESS | PCRE_MULTILINE | PCRE_DOTALL | PCRE_UTF8 |
                          PCRE_ANCHORED | PCRE_DOLLAR_ENDONLY | PCRE_UNGREEDY |
                          PCRE_NO_AUTO_CAPTURE | PCRE_DUPNAMES;
 
-  if (pattern == NULL || (options & ~understood) != 0 || size < 1)
+  if (pattern == NULL || (options & ~understood) != 0 || size < 1 || max < 1)
     return 0;
   s.p = pattern;
   s.caseless = (options & PCRE_CASELESS) != 0;
   s.utf = (options & PCRE_UTF8) != 0;
   s.bad = 0;
   lit_sequence (&s, &best, 0);
-  if (s.bad || *s.p != '\0' || best.length == 0)
+  if (s.bad || *s.p != '\0' || best.n == 0)
     return 0;                    /* a stray ')' is an error anyway */
-  if (best.length > size)
-    best.length = size;
-  memcpy (out, best.text, best.length);
-  return best.length;
+  if (best.n > max)
+    return 0;
+  for (i = 0; i < best.n; i++)
+    {
+    /* every one, whole, or none: a set short of one would skip lines it matches */
+    if (best.alt [i].length == 0 || used + best.alt [i].length > size)
+      return 0;
+    memcpy (out + used, best.alt [i].text, best.alt [i].length);
+    used += best.alt [i].length;
+    lengths [i] = best.alt [i].length;
+    }
+  return best.n;
+  }
+
+int mc_pcre_required_literal (const char * pattern, int options, char * out, int size)
+  {
+  int length = 0;
+  if (mc_pcre_required_literals (pattern, options, out, size, &length, 1) != 1)
+    return 0;
+  return length;
   }
 
 /* Fold ASCII upper case to lower. */

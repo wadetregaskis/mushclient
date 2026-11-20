@@ -315,7 +315,10 @@ Behaviour a plugin author may notice, against the 32-bit client:
 - An integer beyond 32 bits passed to a string parameter arrives as its exact
   digits (Python, Ruby), not as a rounded double.
 - Python finds a per-user `site-packages` (install the matching python.org
-  Python and `pip install --user`); the package has no `python.exe`.
+  Python and `pip install --user`); the package has no `python.exe`.  That is
+  where packages belong: the installer replaces the bundled `python\`,
+  `lib\ruby\` and `tcl8.6\` folders whole on an upgrade, and removes them on
+  uninstalling, so anything added inside them goes with them.
 - Python's default text encoding, for a plain `open ()`, stays the ANSI code page.
   Python 3.15 changed its default to UTF-8 (PEP 686); `py_engine.cpp` keeps the old
   one on Windows, unless `PYTHONUTF8` is set, so that a plugin's existing text files

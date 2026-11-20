@@ -515,15 +515,9 @@ public:
                 // find what the command is
                 CmdBoxGetText (pmyView->GetEditCtrl (), pmyView->GetDocument (), strCommand);
 
-                // save the echo flag
-                bool bSaveNoEcho = m_pDoc->m_bNoEcho;
-                m_pDoc->m_bNoEcho = false;  // make sure we save it
-
-                // remember it
-                pmyView->AddToCommandHistory(strCommand);
-
-                // restore the command
-                m_pDoc->m_bNoEcho = bSaveNoEcho;
+                // remember it, even with echo off (upstream's rule); but then not
+                // in the file, as it may be a password
+                pmyView->AddToCommandHistory(strCommand, true);
 
                 pmyView->GetEditCtrl().SetSel(0, -1);          // select all
                 CmdBoxReplaceSel (pmyView->GetEditCtrl (), pmyView->GetDocument (), "", TRUE);   // blank it out
@@ -589,21 +583,8 @@ public:
             {
                 CSendView* pmyView = (CSendView*)pView;
 
-                if (strlen(text) > 0 &&
-                    strcmp(text, pmyView->m_last_command) != 0)
-                {
-                    if (pmyView->m_inputcount >= m_pDoc->m_nHistoryLines)
-                    {
-                        pmyView->m_msgList.RemoveHead();   // keep max of "m_nHistoryLines" previous commands
-                        pmyView->m_HistoryFindInfo.m_nCurrentLine--;     // adjust for a "find again"
-                        if (pmyView->m_HistoryFindInfo.m_nCurrentLine < 0)
-                            pmyView->m_HistoryFindInfo.m_nCurrentLine = 0;
-                    }   // end of buffer full
-                    else
-                        pmyView->m_inputcount++;
-                    pmyView->m_msgList.AddTail(text);
-                    pmyView->m_last_command = text;
-                } // end of different from last one
+                // in memory only if echo is off (CSendView::RememberCommand)
+                pmyView->RememberCommand(text);
 
                 break;
             }	  // end of being a CSendView
@@ -622,14 +603,7 @@ public:
                 CSendView* pmyView = (CSendView*)pView;
 
                 // OK, do it ...
-                pmyView->m_msgList.RemoveAll();
-                pmyView->m_HistoryPosition = NULL;
-                pmyView->m_inputcount = 0;
-                pmyView->m_HistoryFindInfo.m_pFindPosition = NULL;
-                pmyView->m_HistoryFindInfo.m_nCurrentLine = 0;
-                pmyView->m_HistoryFindInfo.m_bAgain = FALSE;
-                pmyView->m_strPartialCommand.Empty();
-                pmyView->m_last_command.Empty();
+                pmyView->ForgetCommandHistory();
             }
         }
     }

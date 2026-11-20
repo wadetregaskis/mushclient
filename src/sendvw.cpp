@@ -1246,16 +1246,13 @@ void CSendView::LoadCommandHistory ()
     }
   m_inputcount = (int) m_msgList.GetCount ();
   if (!m_msgList.IsEmpty ())
-    {
     m_last_command = m_msgList.GetTail ();
-    m_strHistorySaved = m_last_command;
-    }
-  m_iHistorySavedCount = m_inputcount;
+  m_iHistorySavedChanges = m_iHistoryChanges;
   }   // end of CSendView::LoadCommandHistory
 
 
 // Every so often while playing, in case of a crash, and at the end.  Only if it has
-// changed, which a new last command or a different count shows.
+// changed since it was last saved.
 void CSendView::SaveCommandHistoryIfChanged (const bool bClosing)
   {
   const time_t tNow = time (NULL);
@@ -1268,21 +1265,36 @@ void CSendView::SaveCommandHistoryIfChanged (const bool bClosing)
   if (strPath.IsEmpty ())
     return;
 
+  // Window > New Window gives a world a second command box, with a history of its own,
+  // and one file can't hold both.  The world's first one saves; closing, the last.
+  int iSendViews = 0;
+  bool bFirst = false;
+  for (POSITION pos = pDoc->GetFirstViewPosition (); pos; )
+    {
+    CView * pView = pDoc->GetNextView (pos);
+    if (pView->IsKindOf (RUNTIME_CLASS (CSendView)))
+      {
+      if (iSendViews == 0)
+        bFirst = pView == this;
+      iSendViews++;
+      }
+    }
+  if (bClosing ? iSendViews > 1 : !bFirst)
+    return;
+
   // With nowhere to come back to, or the option off, there should be no file at all.
   if (!pDoc->m_bSaveScrollback || (bClosing && pDoc->GetPathName ().IsEmpty ()))
     {
     remove (strPath);
-    m_iHistorySavedCount = -1;
+    m_iHistorySavedChanges = -1;
     return;
     }
 
-  const int iCount = (int) m_msgList.GetCount ();
-  const CString strLast = iCount ? m_msgList.GetTail () : CString ();
-  if (iCount == m_iHistorySavedCount && strLast == m_strHistorySaved)
+  if (m_iHistoryChanges == m_iHistorySavedChanges)
     return;
 
   std::vector<std::string> commands;
-  commands.reserve ((size_t) iCount);
+  commands.reserve ((size_t) m_msgList.GetCount ());
   for (POSITION pos = m_msgList.GetHeadPosition (); pos; )
     {
     const char * command = m_msgList.GetNext (pos);
@@ -1291,10 +1303,7 @@ void CSendView::SaveCommandHistoryIfChanged (const bool bClosing)
     }
 
   if (command_history::Save ((const char *) strPath, commands))
-    {
-    m_iHistorySavedCount = iCount;
-    m_strHistorySaved = strLast;
-    }
+    m_iHistorySavedChanges = m_iHistoryChanges;
   }   // end of CSendView::SaveCommandHistoryIfChanged
 
 void CSendView::OnContextMenu(CWnd*, CPoint point)
@@ -1406,26 +1415,7 @@ CString strCurrent;
   // preserve what we are about to delete, if requested to do so
 
   if (pDoc->m_bSaveDeletedCommand)
-    {
-    CString str = GetText (GetEditCtrl());
-
-  // do not record null commands, or ones identical to the previous one
-
-    if (!str.IsEmpty () && str != m_last_command)
-      {
-      if (m_inputcount >= pDoc->m_nHistoryLines)
-        {
-        m_msgList.RemoveHead ();   // keep max of "m_nHistoryLines" previous commands
-        m_HistoryFindInfo.m_nCurrentLine--;     // adjust for a "find again"
-        if (m_HistoryFindInfo.m_nCurrentLine < 0)
-          m_HistoryFindInfo.m_nCurrentLine = 0;
-        }
-      else
-        m_inputcount++;
-      m_msgList.AddTail (str);
-      m_last_command = str;
-      }  // end command different
-    }     // end if save deleted command
+    RememberCommand (GetText (GetEditCtrl()));
 
   return false;
   }
@@ -1695,26 +1685,7 @@ ASSERT_VALID(pDoc);
     // preserve what we are about to delete, if requested to do so
 
     if (pDoc->m_bSaveDeletedCommand)
-      {
-      CString str = GetText (GetEditCtrl());
-
-    // do not record null commands, or ones identical to the previous one
-
-      if (!str.IsEmpty () && str != m_last_command)
-        {
-        if (m_inputcount >= pDoc->m_nHistoryLines)
-          {
-          m_msgList.RemoveHead ();   // keep max of "m_nHistoryLines" previous commands
-          m_HistoryFindInfo.m_nCurrentLine--;     // adjust for a "find again"
-          if (m_HistoryFindInfo.m_nCurrentLine < 0)
-            m_HistoryFindInfo.m_nCurrentLine = 0;
-          }
-        else
-          m_inputcount++;
-        m_msgList.AddTail (str);
-        m_last_command = str;
-        }
-      }
+      RememberCommand (GetText (GetEditCtrl()));
 
   	CmdBoxSetText (GetEditCtrl (), GetDocument (), "");
     OnChange ();
@@ -2070,15 +2041,7 @@ void CSendView::OnDisplayClearCommandHistory()
                     return;
 
   // OK, do it ...
-	m_msgList.RemoveAll ();
-  m_HistoryPosition = NULL;
-  m_inputcount = 0;
-  m_HistoryFindInfo.m_pFindPosition = NULL;
-  m_HistoryFindInfo.m_nCurrentLine = 0;
-  m_HistoryFindInfo.m_bAgain = FALSE;  
-  m_strPartialCommand.Empty ();
-  m_last_command.Empty ();
-  
+  ForgetCommandHistory ();
   }
 
 void CSendView::OnUpdateDisplayClearCommandHistory(CCmdUI* pCmdUI) 
@@ -2289,40 +2252,66 @@ ASSERT_VALID(pDoc);
 }   // end of CSendView::OnEditCtrlZ
 
 
-void CSendView::AddToCommandHistory (const CString & strCommand)
+void CSendView::AddToCommandHistory (const CString & strCommand, const bool bEvenWithEchoOff)
   {
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
 
 // do not record null commands, or ones identical to the previous one
-// also do not record if the server has suppressed echoes
+// also do not record if the server has suppressed echoes (unless asked to anyway:
+// world.PushCommand, and always_record_command_history)
 
-  if (!strCommand.IsEmpty () && 
-      strCommand != m_last_command &&
-      !(pDoc->m_bNoEcho && !pDoc->m_bAlwaysRecordCommandHistory)) 
-    {
-    if (m_inputcount >= pDoc->m_nHistoryLines)
-      {
-      m_msgList.RemoveHead ();   // keep max of "m_nHistoryLines" previous commands
-      m_HistoryFindInfo.m_nCurrentLine--;     // adjust for a "find again"
-      if (m_HistoryFindInfo.m_nCurrentLine < 0)
-        m_HistoryFindInfo.m_nCurrentLine = 0;
-      }
-    else
-      m_inputcount++;
-    m_msgList.AddTail (strCommand);
-    m_last_command = strCommand;
-    // always_record_command_history keeps it for the up arrow, but it may be a password:
-    // it goes no further than memory (see SaveCommandHistoryIfChanged)
-    if (pDoc->m_bNoEcho)
-      m_commandsNotSaved.insert ((const char *) strCommand);
-    }
+  if (!(pDoc->m_bNoEcho && !pDoc->m_bAlwaysRecordCommandHistory && !bEvenWithEchoOff))
+    RememberCommand (strCommand);
 
   // history starts at bottom of list again - especially as we may have discarded lines
   m_HistoryPosition = NULL;
   m_iHistoryStatus = eAtBottom;
 
-  } // end of  CSendView::AddToCommandHistory 
+  } // end of  CSendView::AddToCommandHistory
+
+
+// Every way into the up arrow's list comes through here: typing, world.PushCommand,
+// world.AddToCommandHistory, and the saving of a command thrown away by Escape.  No
+// empty command, and not the one before again.
+void CSendView::RememberCommand (const CString & strCommand)
+  {
+  CMUSHclientDoc* pDoc = GetDocument();
+
+  if (strCommand.IsEmpty () || strCommand == m_last_command)
+    return;
+
+  if (m_inputcount >= pDoc->m_nHistoryLines)
+    {
+    m_msgList.RemoveHead ();   // keep max of "m_nHistoryLines" previous commands
+    m_HistoryFindInfo.m_nCurrentLine--;     // adjust for a "find again"
+    if (m_HistoryFindInfo.m_nCurrentLine < 0)
+      m_HistoryFindInfo.m_nCurrentLine = 0;
+    }
+  else
+    m_inputcount++;
+  m_msgList.AddTail (strCommand);
+  m_last_command = strCommand;
+  m_iHistoryChanges++;
+  // Kept for the up arrow, but with echo off it may be a password: it goes no further
+  // than memory (see SaveCommandHistoryIfChanged).
+  if (pDoc->m_bNoEcho)
+    m_commandsNotSaved.insert ((const char *) strCommand);
+  } // end of CSendView::RememberCommand
+
+
+void CSendView::ForgetCommandHistory ()
+  {
+  m_msgList.RemoveAll ();
+  m_HistoryPosition = NULL;
+  m_inputcount = 0;
+  m_HistoryFindInfo.m_pFindPosition = NULL;
+  m_HistoryFindInfo.m_nCurrentLine = 0;
+  m_HistoryFindInfo.m_bAgain = FALSE;
+  m_strPartialCommand.Empty ();
+  m_last_command.Empty ();
+  m_iHistoryChanges++;
+  } // end of CSendView::ForgetCommandHistory
 
 void CSendView::OnRepeatLastWord()
 {

@@ -36,6 +36,7 @@ CLine::CLine (const long nLineNumber,
   m_iCharCount = 0;   // stays in step with len (see CLine::m_iCharCount)
   m_iPreambleOffset = 0;
   m_iMXPLineTag = 0;
+  m_bNotSaved = false;
   m_theTime = CTime::GetCurrentTime();
   QueryPerformanceCounter (&m_lineHighPerformanceTime);
   m_nLineNumber = nLineNumber;
@@ -90,6 +91,8 @@ CLine::CLine (const long nLineNumber,
   len = iLength;
   m_iCharCount = iCharCount;
   m_iPreambleOffset = iPreambleOffset;
+  m_iMXPLineTag = 0;      // not saved: MXP's idea of the line was last session's
+  m_bNotSaved = false;
   m_theTime = theTime;
   m_lineHighPerformanceTime.QuadPart = iHighPerformanceTime;
   m_nLineNumber = nLineNumber;

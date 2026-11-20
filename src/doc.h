@@ -2298,6 +2298,15 @@ public:
 
   // Where this world's file is.  Empty if it has no world ID to name it by.
   CString ScrollbackFilePath (void) const;
+  // The same without ".mcsb".  Decided once, the first time it's asked (see the
+  // comment at it for how): a world renamed by Save As keeps the files it started with
+  // until it is closed.
+  CString ScrollbackFileBase (void) const;
+  mutable CString m_strScrollbackBase;
+  mutable CString m_strScrollbackBaseForID;   // what m_strWorldID was when it was decided
+  // The ID the world file has, when loading had to change it (m_bWorldIDIsNew); empty
+  // if the file has none.
+  CString m_strWorldIDInFile;
   // SetUpOutputWindow, at the very start, with the buffer empty.  Puts the saved
   // lines into it directly, so triggers and plugins don't see them.  True if any came back.
   bool RestoreSavedScrollback (void);

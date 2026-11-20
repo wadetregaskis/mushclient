@@ -1057,9 +1057,22 @@ bool CMUSHclientDoc::ProcessOneAliasSequence (const CString strCurrentLine,
     if (bEchoAlias &&     // not already done
         alias_item->bEchoAlias)  // alias wants to be echoed
       {
-      DisplayMsg (strCurrentLine + ENDLINE, 
-                  strCurrentLine.GetLength () + strlen (ENDLINE), 
+      const long iFirstEchoed = m_pCurrentLine ? m_pCurrentLine->m_nLineNumber : m_total_lines + 1;
+      DisplayMsg (strCurrentLine + ENDLINE,
+                  strCurrentLine.GetLength () + strlen (ENDLINE),
                   USER_INPUT | (LoggingInput () ? LOG_LINE : 0));
+      // Typed with echo off, it may be a password.  It's drawn, as ever, but it must
+      // not go on to the saved output buffer (doc_scrollback_shared.cpp).
+      if (m_bNoEcho)
+        for (POSITION pos = m_LineList.GetTailPosition (); pos; )
+          {
+          CLine * pLine = m_LineList.GetPrev (pos);
+          if (pLine->m_nLineNumber < iFirstEchoed)
+            break;
+          // Not the line now in progress, which is for whatever comes next.
+          if (pLine != m_pCurrentLine && (pLine->flags & USER_INPUT))
+            pLine->m_bNotSaved = true;
+          }
       bEchoAlias = false;   // don't echo the same line twice
       // and log the command the actually typed
       if (LoggingInput ())

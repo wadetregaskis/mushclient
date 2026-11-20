@@ -360,6 +360,8 @@ class CLine : public CObject
   unsigned char m_iMXPLineTag;  // MXP line tag: 10 room name, 11 description, 12 exits,
                                 // 13 room number, 14 prompt, 19 welcome, 20-99 the
                                 // server's own; 0 if none.  GetLineInfo (line, 14)
+  bool m_bNotSaved;             // never to go in the saved output buffer: typed with echo
+                                // off, and so maybe a password (see evaluate.cpp)
 
   CLine (const long nLineNumber,
          const unsigned int nWrapColumn,
@@ -386,7 +388,8 @@ class CLine : public CObject
   // and for test fixtures on every platform — several of them want a blank
   // line to hang a document off without inventing a wrap column and a palette.
   CLine() : hard_return(false), flags(0), len(0), text(nullptr),
-            iMemoryAllocated(0), m_nLineNumber(0), m_iPreambleOffset(0), m_iMXPLineTag(0)
+            iMemoryAllocated(0), m_nLineNumber(0), m_iPreambleOffset(0), m_iMXPLineTag(0),
+            m_bNotSaved(false)
   { m_lineHighPerformanceTime.QuadPart = 0; }
 #endif
   ~CLine ();    // destructor

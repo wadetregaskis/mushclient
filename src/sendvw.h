@@ -81,14 +81,18 @@ public:
 
   void NotifyPluginCommandChanged ();
 
-  void AddToCommandHistory (const CString & strCommand);
+  // bEvenWithEchoOff: world.PushCommand's, which keeps it regardless, as upstream does;
+  // but in memory only, like anything else kept with echo off.
+  void AddToCommandHistory (const CString & strCommand, const bool bEvenWithEchoOff = false);
+  void RememberCommand (const CString & strCommand);
+  void ForgetCommandHistory ();
 
   // Between sessions (command_history_store.h).
   void LoadCommandHistory ();
   void SaveCommandHistoryIfChanged (const bool bClosing);
-  int     m_iHistorySavedCount = 0;
-  CString m_strHistorySaved;
-  std::set<std::string> m_commandsNotSaved;   // typed with echo off
+  long    m_iHistoryChanges = 0;        // every change to m_msgList counts one
+  long    m_iHistorySavedChanges = 0;   // ... and this many were saved
+  std::set<std::string> m_commandsNotSaved;   // kept with echo off
   time_t  m_tHistoryChecked = 0;
 
   void AdjustCommandWindowSize (void);

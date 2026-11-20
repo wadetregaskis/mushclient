@@ -14,7 +14,10 @@
 // It only ever grows by appending, so the worst a torn write can do is lose the last
 // record, which fails its checksum and is ignored and then cut off.  A bad block
 // further back (a flipped bit) costs that block and no more, because the record
-// header says where the next one starts and has a checksum of its own.
+// header says where the next one starts and has a checksum of its own.  A damaged
+// header doesn't say, so the loader looks for the next good one, and only if there
+// is none is it a torn tail to be cut off.  A record that replaces others (a merged
+// block) does so only if its own payload is good.
 //
 // Loading is one sequential read of the whole file, then every block inflated and
 // parsed on as many threads as are useful: nothing seeks, which is what a spinning
@@ -159,8 +162,11 @@ struct LoadResult
   std::vector<std::unique_ptr<DecodedBlock>> blocks;
   size_t firstLineInFirstBlock = 0;
   size_t lineCount = 0;
-  size_t badBlocks = 0;       // skipped because they failed their checksum
+  size_t badBlocks = 0;       // skipped because they failed their checksum, or their
+                              // record header was damaged
   bool   tornTail = false;    // the file ended in something unreadable
+  bool   outOfMemory = false; // fewer lines came back than there are, for want of it:
+                              // the file still has them
   uint64_t fileSize = 0;
   // For the Writer: every live block in the file, and how much of the file to keep.
   std::vector<BlockInfo> liveBlocks;
@@ -235,6 +241,9 @@ class Writer
   void MergeTail ();
   void MaybeReclaim ();
   bool Rewrite (int64_t keepFrom, bool bExact);
+  bool Reopen ();
+  void Hold (Op && op);
+  bool CatchUp ();
   void Fail (const std::string & why);
 
   const std::string m_path;
@@ -244,8 +253,13 @@ class Writer
   uint64_t m_end = 0;             // everything before here is good
   uint64_t m_live = 0;            // bytes of the file that are live blocks
   int64_t  m_liveFrom = 0;
-  bool     m_bReclaimFailed = false;
+  size_t   m_reclaimRetryIn = 0;      // chances to skip, after a rewrite failed
   std::vector<BlockInfo> m_blocks;
+
+  // Asked for while the file couldn't be opened again after a rewrite.  Worker only.
+  std::deque<Op> m_held;
+  size_t   m_heldBytes = 0;
+  bool     m_bHeldTooMuch = false;    // so much was held that some was let go
 
   // Blocks written this session that are still small, with their bytes, for merging
   // into one.  Worker only.

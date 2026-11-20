@@ -5,7 +5,8 @@
 // What gets saved: every finished line, in the order it appeared, with its styles
 // and everything else that can be seen through GetLineInfo, as it looked after the
 // triggers had finished with it.  Not the banner a session starts with, or the line
-// marking where the restored text ends, because the next session prints its own.
+// marking where the restored text ends, because the next session prints its own.  Not
+// a line marked m_bNotSaved: what an alias echoed of a command typed with echo off.
 //
 // What comes back differently, on purpose:
 //
@@ -31,6 +32,8 @@
 #include "scrollback_store.h"
 
 #include <atomic>
+#include <cctype>
+#include <cstdio>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -74,45 +77,162 @@ class CScrollbackSession
   bool   bUtf8 = false;
   time_t lastFlush = 0;
   long   liveFrom = 0;          // what the writer was last told about the buffer's head
-  bool   bReportedError = false;
+  std::string strReportedError;   // the last trouble put in the window
   bool   bRenumbered = false;
   };
 
 
+namespace {
+
+// An ID is hexadecimal when we make it, but a world file can say anything.
+CString SafeForAFileName (const CString & strID)
+  {
+  CString strSafe;
+  for (int i = 0; i < strID.GetLength (); i++)
+    {
+    const char c = strID [i];
+    if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '_')
+      strSafe += c;
+    }
+  return strSafe;
+  }
+
+// FNV-1a, as world_backups.cpp has it: "a/x.mcl" and "A\x.mcl" are one world file.
+unsigned long PathHash (const CString & strPath)
+  {
+  unsigned long hash = 2166136261u;
+  for (int i = 0; i < strPath.GetLength (); i++)
+    {
+    const char c = strPath [i];
+    hash ^= (unsigned char) (c == '\\' ? '/' : tolower ((unsigned char) c));
+    hash = (hash * 16777619u) & 0xFFFFFFFFu;
+    }
+  return hash;
+  }
+
+bool SamePath (const CString & a, const CString & b)
+  {
+#ifdef _WIN32
+  CString strA (a), strB (b);
+  strA.Replace ('/', '\\');
+  strB.Replace ('/', '\\');
+  return strA.CompareNoCase (strB) == 0;
+#else
+  return a == b;
+#endif
+  }
+
+bool FileExists (const CString & strPath)
+  {
+  if (FILE * f = fopen (strPath, "rb"))
+    {
+    fclose (f);
+    return true;
+    }
+  return false;
+  }
+
+// The world file a world's files were kept for: one line, the path.
+CString ReadOwner (const CString & strPath)
+  {
+  CString strOwner;
+  if (FILE * f = fopen (strPath, "rb"))
+    {
+    char buffer [4096];
+    const size_t n = fread (buffer, 1, sizeof buffer - 1, f);
+    fclose (f);
+    buffer [n] = 0;
+    strOwner = buffer;
+    strOwner.TrimRight ("\r\n");
+    }
+  return strOwner;
+  }
+
+} // anonymous namespace
+
+
+// Which files are this world's.  They are named by its ID, which a world file says,
+// and a copy of a world file says the same: an alt's world made by Save As or by
+// copying the file would otherwise be given the original's output and command history,
+// and the two would overwrite each other's.  So <id>.owner says which world file the
+// files under <id> are for.  A world file that isn't that one gets w-<hash of its
+// path> instead, unless the owner has gone (it was renamed or moved, so this is it).
+// The first world to come along with the ID takes it, which is how files from before
+// there was an owner are found again.
+//
+// A world file with no ID gets a new one each time it's opened until it is saved: its
+// files are named by its path meanwhile, and taken over by the ID when it has one.  One
+// whose ID had to be changed, because another open world had it, goes by the ID in the
+// file, which makes it a copy of that other world, as it no doubt is.
+CString CMUSHclientDoc::ScrollbackFileBase (void) const
+  {
+  if (!m_strScrollbackBase.IsEmpty () && m_strScrollbackBaseForID == m_strWorldID)
+    return m_strScrollbackBase;
+
+  CString strFolder (working_dir);
+#ifdef _WIN32
+  strFolder += "scrollback\\";
+#else
+  strFolder += "scrollback/";
+#endif
+
+  const CString strWorld = GetPathName ();
+  const CString strID = SafeForAFileName (m_bWorldIDIsNew ? m_strWorldIDInFile : m_strWorldID);
+  CString strBase;
+  if (strWorld.IsEmpty ())
+    {
+    // Never saved: nothing can find these again, and closing deletes them, unless it
+    // is saved by then, in which case the next session takes them up.
+    const CString strNewID = SafeForAFileName (m_strWorldID);
+    if (strNewID.IsEmpty ())
+      return CString ();
+    strBase = strFolder + strNewID;
+    }
+  else
+    {
+    CString strByPath;
+    strByPath.Format ("%sw-%08lx", (LPCTSTR) strFolder, PathHash (strWorld));
+    if (strID.IsEmpty ())
+      strBase = strByPath;
+    else
+      {
+      strBase = strFolder + strID;
+      const CString strOwnerFile = strBase + ".owner";
+      const CString strOwner = ReadOwner (strOwnerFile);
+      if (!strOwner.IsEmpty () && !SamePath (strOwner, strWorld) && FileExists (strOwner))
+        strBase = strByPath;      // a copy of that world
+      else
+        {
+        if (m_bSaveScrollback && (strOwner.IsEmpty () || !SamePath (strOwner, strWorld)))
+          scrollback::WriteFileAtomically ((const char *) strOwnerFile, (LPCTSTR) strWorld,
+                                           (size_t) strWorld.GetLength ());
+        // What was kept for it by path, before its ID stuck.
+        if (!FileExists (strBase + ".mcsb") && !FileExists (strBase + ".history"))
+          {
+          rename (strByPath + ".mcsb", strBase + ".mcsb");
+          rename (strByPath + ".history", strBase + ".history");
+          }
+        }
+      }
+    }
+
+  m_strScrollbackBase = strBase;
+  m_strScrollbackBaseForID = m_strWorldID;
+  return strBase;
+  } // end of CMUSHclientDoc::ScrollbackFileBase
+
+
 CString CMUSHclientDoc::ScrollbackFilePath (void) const
   {
-  // An ID is hexadecimal when we make it, but a world file can say anything.
-  CString strID;
-  for (int i = 0; i < m_strWorldID.GetLength (); i++)
-    {
-    const char c = m_strWorldID [i];
-    if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '_')
-      strID += c;
-    }
-  if (strID.IsEmpty ())
-    return CString ();
-
-  CString strPath (working_dir);
-#ifdef _WIN32
-  strPath += "scrollback\\";
-#else
-  strPath += "scrollback/";
-#endif
-  strPath += strID;
-  strPath += ".mcsb";
-  return strPath;
+  const CString strBase = ScrollbackFileBase ();
+  return strBase.IsEmpty () ? strBase : strBase + ".mcsb";
   }
 
 
 CString CMUSHclientDoc::CommandHistoryFilePath (void) const
   {
-  CString strPath = ScrollbackFilePath ();
-  if (!strPath.IsEmpty ())
-    {
-    strPath = strPath.Left (strPath.GetLength () - 5);    // ".mcsb"
-    strPath += ".history";
-    }
-  return strPath;
+  const CString strBase = ScrollbackFileBase ();
+  return strBase.IsEmpty () ? strBase : strBase + ".history";
   } // end of CMUSHclientDoc::CommandHistoryFilePath
 
 
@@ -160,7 +280,18 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
   const LONGLONG iStartedHP = m_whenWorldStartedHighPrecision.QuadPart;
   const LONGLONG iFrequency = App.m_iCounterFrequency;
 
-  bool bRenumber = !load.blocks.empty () && load.blocks.back ()->lines.back ().number > kRenumberAbove;
+  // The newest line number in the file, whether or not it comes back: this session's
+  // go on from there, or they'd be taken for replacements of the saved ones.
+  long iFileLast = 0;
+  if (!load.liveBlocks.empty ())
+    {
+    const scrollback::BlockInfo & newest = load.liveBlocks.back ();
+    iFileLast = (long) (newest.cutFrom ? newest.cutFrom - 1 : newest.last);
+    }
+  if (!load.blocks.empty () && (long) load.blocks.back ()->lines.back ().number > iFileLast)
+    iFileLast = (long) load.blocks.back ()->lines.back ().number;
+
+  bool bRenumber = iFileLast > kRenumberAbove;
   long iNextNumber = 1;
   std::vector<long> firstNumbers (iBlocks);
   for (size_t b = 0; b < iBlocks; b++)
@@ -169,6 +300,7 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
     iNextNumber += (long) load.blocks [b]->lines.size () - (b == 0 ? (long) load.firstLineInFirstBlock : 0);
     }
 
+  std::vector<char> failed (iBlocks, 0);
   std::atomic<size_t> next (0);
   auto buildBlocks = [&] ()
     {
@@ -180,35 +312,45 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
       const scrollback::DecodedBlock & block = *load.blocks [b];
       const size_t iFirst = b == 0 ? load.firstLineInFirstBlock : 0;
       std::vector<CLine *> & lines = built [b];
-      lines.reserve (block.lines.size () - iFirst);
-      long iNumber = firstNumbers [b];
-      for (size_t i = iFirst; i < block.lines.size (); i++)
+      // Out of memory (a huge buffer in a 32-bit process) must not leave this thread
+      // as an exception, which would end the client, and would every time the world
+      // was opened.  The block is given up, and with it everything older.
+      try
         {
-        const scrollback::Line & line = block.lines [i];
-        CLine * pLine = new CLine (bRenumber ? iNumber++ : (long) line.number,
-                                   CTime ((time_t) line.time),
-                                   iStartedHP + (LONGLONG) (line.time - tStarted) * iFrequency,
-                                   (unsigned char) (line.flags & ~LOG_LINE),
-                                   line.hardReturn,
-                                   line.charCount,
-                                   (short) line.preamble,
-                                   block.text + line.textOffset,
-                                   (int) line.length);
-        for (uint32_t s = 0; s < line.styleCount; s++)
+        lines.reserve (block.lines.size () - iFirst);
+        long iNumber = firstNumbers [b];
+        for (size_t i = iFirst; i < block.lines.size (); i++)
           {
-          const scrollback::Style & saved = block.styles [line.firstStyle + s];
-          CStyle * pStyle = new CStyle;
-          pStyle->iLength = (unsigned short) saved.length;
-          pStyle->iFlags = (unsigned short) saved.flags;
-          pStyle->iForeColour = saved.fore;
-          pStyle->iBackColour = saved.back;
-          if (!ActionSurvivesRestore (saved.flags))
-            pStyle->iFlags &= ~ACTIONTYPE;
-          else if (saved.action >= 0)
-            actions [b].push_back (PendingAction { pStyle, &block.actions [(size_t) saved.action] });
-          pLine->styleList.AddTail (pStyle);
+          const scrollback::Line & line = block.lines [i];
+          CLine * pLine = new CLine (bRenumber ? iNumber++ : (long) line.number,
+                                     CTime ((time_t) line.time),
+                                     iStartedHP + (LONGLONG) (line.time - tStarted) * iFrequency,
+                                     (unsigned char) (line.flags & ~LOG_LINE),
+                                     line.hardReturn,
+                                     line.charCount,
+                                     (short) line.preamble,
+                                     block.text + line.textOffset,
+                                     (int) line.length);
+          lines.push_back (pLine);    // can't throw: reserved
+          for (uint32_t s = 0; s < line.styleCount; s++)
+            {
+            const scrollback::Style & saved = block.styles [line.firstStyle + s];
+            CStyle * pStyle = new CStyle;
+            pStyle->iLength = (unsigned short) saved.length;
+            pStyle->iFlags = (unsigned short) saved.flags;
+            pStyle->iForeColour = saved.fore;
+            pStyle->iBackColour = saved.back;
+            if (!ActionSurvivesRestore (saved.flags))
+              pStyle->iFlags &= ~ACTIONTYPE;
+            pLine->styleList.AddTail (pStyle);
+            if (ActionSurvivesRestore (saved.flags) && saved.action >= 0)
+              actions [b].push_back (PendingAction { pStyle, &block.actions [(size_t) saved.action] });
+            }
           }
-        lines.push_back (pLine);
+        }
+      catch (...)
+        {
+        failed [b] = 1;
         }
       }
     };
@@ -217,11 +359,32 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
   if (iBlocks < iThreads)
     iThreads = iBlocks > 0 ? (unsigned) iBlocks : 1;
   std::vector<std::thread> pool;
-  for (unsigned t = 1; t < iThreads; t++)
-    pool.emplace_back (buildBlocks);
+  try
+    {
+    for (unsigned t = 1; t < iThreads; t++)
+      pool.emplace_back (buildBlocks);
+    }
+  catch (...)
+    {
+    }     // fewer threads, then
   buildBlocks ();
   for (std::thread & t : pool)
     t.join ();
+
+  // A block that didn't fit in memory, and everything before it, goes: what comes back
+  // is the newest lines, without a gap.  The file keeps them all.
+  for (size_t b = iBlocks; b > 0; b--)
+    if (failed [b - 1])
+      {
+      for (size_t gone = 0; gone < b; gone++)
+        {
+        for (CLine * pLine : built [gone])
+          delete pLine;
+        built [gone].clear ();
+        actions [gone].clear ();
+        }
+      break;
+      }
 
   // Actions are the document's, and shared between styles.
   for (const std::vector<PendingAction> & blockActions : actions)
@@ -249,6 +412,8 @@ bool CMUSHclientDoc::RestoreSavedScrollback (void)
     }
   else
     m_LinePositions.Reset (m_LineList.GetHeadPosition ());
+  if (!bRenumber && iFileLast > m_total_lines)
+    m_total_lines = iFileLast;
 
   // And carry on writing.  A second copy of the client with this world open means no
   // writer: what it restored is still worth seeing, but it can't save.
@@ -369,6 +534,7 @@ void CMUSHclientDoc::FlushSavedScrollback (const bool bClosing)
     const CAction * pLastAction = NULL;
     int32_t iLastAction = -1;
     size_t iTotal = 0;
+    long iThrough = session.savedThrough;    // the last line dealt with, saved or not
 
     auto handOver = [&] ()
       {
@@ -384,6 +550,16 @@ void CMUSHclientDoc::FlushSavedScrollback (const bool bClosing)
       {
       const POSITION here = pos;
       const CLine * pLine = m_LineList.GetNext (pos);
+
+      // Drawn, but typed with echo off.  Its number is simply missing from the file.
+      if (pLine->m_bNotSaved)
+        {
+        iThrough = pLine->m_nLineNumber;
+        iTotal++;
+        if (here == posLast || (!bClosing && iTotal >= kMaxLinesPerTick))
+          break;
+        continue;
+        }
 
       builder.AddLine (pLine->m_nLineNumber, pLine->m_theTime.GetTime (), pLine->flags, pLine->hard_return,
                        pLine->m_iCharCount, pLine->m_iPreambleOffset, pLine->text, (size_t) pLine->len);
@@ -409,6 +585,7 @@ void CMUSHclientDoc::FlushSavedScrollback (const bool bClosing)
         }
 
       iTotal++;
+      iThrough = pLine->m_nLineNumber;
       if (builder.LineCount () >= scrollback::kBlockLines)
         handOver ();
       if (here == posLast || (!bClosing && iTotal >= kMaxLinesPerTick))
@@ -417,6 +594,8 @@ void CMUSHclientDoc::FlushSavedScrollback (const bool bClosing)
 
     if (builder.LineCount () > 0)
       handOver ();
+    if (iThrough > session.savedThrough)
+      session.savedThrough = iThrough;
     }
 
   // What the buffer no longer holds needn't stay in the file.
@@ -442,15 +621,16 @@ void CMUSHclientDoc::FlushSavedScrollback (const bool bClosing)
     return;
     }
 
-  // No dialog from here, ever: this is a timer.  Once, in the window.
-  if (!session.bReportedError)
+  // No dialog from here, ever: this is a timer.  In the window, once for each new
+  // trouble, and once when it's over (the worker tries again by itself).
+  const std::string strError = session.writer->LastError ();
+  if (strError != session.strReportedError)
     {
-    const std::string strError = session.writer->LastError ();
     if (!strError.empty ())
-      {
-      session.bReportedError = true;
-      Note (TFormat ("Saved output buffer: %s", strError.c_str ()));
-      }
+      Note (TFormat ("Saved output buffer: %s.", strError.c_str ()));
+    else
+      Note (Translate ("Saved output buffer: saving again."));
+    session.strReportedError = strError;
     }
   } // end of CMUSHclientDoc::FlushSavedScrollback
 

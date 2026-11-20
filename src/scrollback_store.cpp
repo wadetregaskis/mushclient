@@ -48,6 +48,9 @@ const size_t   kSmallBlockLines = kBlockLines / 2;  // smaller than this is wort
 const size_t   kMergeAfterBlocks = 32;              // ... once there are this many in a row
 const size_t   kMaxSmallBlocks = 256;               // reclaim if more than this pile up
 const uint64_t kMinDeadBytes = 1024 * 1024;         // don't rewrite the file for less
+const size_t   kReclaimRetryAfter = 30;             // chances to let go by after a failure
+const size_t   kMaxHeldOps = 1000;                  // while the file can't be opened again
+const size_t   kMaxHeldBytes = 64 * 1024 * 1024;
 
 void Put32 (std::vector<uint8_t> & out, uint32_t v)
   {
@@ -457,6 +460,28 @@ bool ParseRecordHeader (const uint8_t * p, size_t available, RecordHeader & h)
   return h.compressedSize <= available - kRecordHeaderSize && h.rawSize <= kMaxRawSize;
   }
 
+// The next good record header at or after `from`, or 0 if there isn't one.  A header
+// is its magic number and then a checksum of its own, so text that happens to contain
+// the magic number won't pass for one.
+size_t FindRecordHeader (const uint8_t * file, size_t size, size_t from)
+  {
+  const uint8_t magic [4] = { (uint8_t) kRecordMagic, (uint8_t) (kRecordMagic >> 8),
+                              (uint8_t) (kRecordMagic >> 16), (uint8_t) (kRecordMagic >> 24) };
+  for (size_t at = from; at + kRecordHeaderSize <= size; at++)
+    {
+    const uint8_t * p = (const uint8_t *) memchr (file + at, magic [0], size - at);
+    if (!p)
+      return 0;
+    at = (size_t) (p - file);
+    if (at + kRecordHeaderSize > size)
+      return 0;
+    RecordHeader h;
+    if (memcmp (p, magic, sizeof magic) == 0 && ParseRecordHeader (p, size - at, h))
+      return at;
+    }
+  return 0;
+  }
+
 // The logical effect of "forget every line numbered >= number".
 void ApplyTruncate (std::vector<BlockInfo> & blocks, int64_t number)
   {
@@ -718,7 +743,30 @@ void ApplyToBlock (const BlockInfo & info, DecodedBlock & block)
 
 // ---------------- loading ----------------
 
+namespace {
+
+LoadResult LoadFile (const std::string & path, bool bUtf8, size_t maxLines, unsigned threads);
+
+} // anonymous namespace
+
 LoadResult Load (const std::string & path, bool bUtf8, size_t maxLines, unsigned threads)
+  {
+  try
+    {
+    return LoadFile (path, bUtf8, maxLines, threads);
+    }
+  catch (...)     // no memory even for the file: leave it be, and carry on without
+    {
+    LoadResult result;
+    result.status = LoadStatus::CouldNotRead;
+    result.outOfMemory = true;
+    return result;
+    }
+  }
+
+namespace {
+
+LoadResult LoadFile (const std::string & path, bool bUtf8, size_t maxLines, unsigned threads)
   {
   LoadResult result;
 
@@ -763,16 +811,40 @@ LoadResult Load (const std::string & path, bool bUtf8, size_t maxLines, unsigned
     RecordHeader h;
     if (!ParseRecordHeader (file.data () + at, file.size () - at, h))
       {
-      result.tornTail = true;
-      break;
+      // A torn last record, or damage in the middle.  Only another good header can
+      // tell them apart: if there is one further on, what lies between is lost and
+      // the rest stands, and must not be cut off as a torn tail would be.
+      const size_t next = FindRecordHeader (file.data (), file.size (), at + 1);
+      if (next == 0)
+        {
+        result.tornTail = true;
+        break;
+        }
+      result.badBlocks++;
+      at = next;
+      continue;
       }
     const size_t recordSize = kRecordHeaderSize + h.compressedSize;
     switch (h.kind)
       {
       case kRecordLines:
         {
-        if (h.replaceFrom)
-          ApplyTruncate (blocks, h.replaceFrom);
+        // A block replaces whatever it overlaps: a merged block says so, and a block
+        // whose numbers go back over earlier ones can only follow a TRUNCATE record
+        // that has been lost.  Either way, only if its own lines are there to replace
+        // them with: a header that made it to the disk without its payload must not
+        // cost the blocks it was to replace.
+        const int64_t replaceFrom = h.replaceFrom ? h.replaceFrom
+                                  : (!blocks.empty () && blocks.back ().last >= h.first) ? h.first : 0;
+        if (replaceFrom)
+          {
+          if (Crc (file.data () + at + kRecordHeaderSize, h.compressedSize) != h.payloadCrc)
+            {
+            result.badBlocks++;
+            break;
+            }
+          ApplyTruncate (blocks, replaceFrom);
+          }
         BlockInfo info;
         info.offset = at;
         info.recordSize = recordSize;
@@ -798,57 +870,109 @@ LoadResult Load (const std::string & path, bool bUtf8, size_t maxLines, unsigned
 
   // Only the newest blocks are needed if there are more lines than the buffer holds.
   // A block with lines cut off counts for nothing here, so this can't stop short.
-  size_t firstNeeded = blocks.size ();
-  size_t lines = 0;
-  while (firstNeeded > 0 && (maxLines == 0 || lines < maxLines))
-    {
-    firstNeeded--;
-    if (!blocks [firstNeeded].cutFrom)
-      lines += blocks [firstNeeded].lineCount;
-    }
-
-  // Inflate and parse.  Blocks are independent, so this is plain parallel work.
-  const size_t count = blocks.size () - firstNeeded;
-  std::vector<std::unique_ptr<DecodedBlock>> decoded (count);
-  std::atomic<size_t> next (0);
-  auto worker = [&] ()
-    {
-    for (;;)
-      {
-      const size_t i = next.fetch_add (1);
-      if (i >= count)
-        return;
-      const BlockInfo & info = blocks [firstNeeded + i];
-      std::unique_ptr<DecodedBlock> block (new DecodedBlock);
-      if (InflateAndDecode (file.data () + info.offset, (size_t) info.recordSize, *block))
-        {
-        ApplyToBlock (info, *block);
-        decoded [i] = std::move (block);
-        }
-      }
-    };
-
+  // A block that turns out to be damaged doesn't count either, so then older ones are
+  // fetched in its place, until there are enough lines or no more blocks.
+  enum State : uint8_t { kNotTried, kGood, kBad, kNoMemory };
+  std::vector<State> state (blocks.size (), kNotTried);
+  std::vector<std::unique_ptr<DecodedBlock>> decoded (blocks.size ());
   if (threads == 0)
     threads = (std::min) ((std::max) (std::thread::hardware_concurrency (), 1u), 8u);
-  threads = (unsigned) (std::min) ((size_t) threads, (std::max) (count, (size_t) 1));
-  std::vector<std::thread> pool;
-  for (unsigned t = 1; t < threads; t++)
-    pool.emplace_back (worker);
-  worker ();
-  for (std::thread & t : pool)
-    t.join ();
+
+  size_t firstNeeded = blocks.size ();
+  size_t lines = 0;
+  for (;;)
+    {
+    const size_t end = firstNeeded;
+    while (firstNeeded > 0 && (maxLines == 0 || lines < maxLines))
+      {
+      firstNeeded--;
+      if (!blocks [firstNeeded].cutFrom)
+        lines += blocks [firstNeeded].lineCount;
+      }
+    if (firstNeeded == end)
+      break;
+
+    // Inflate and parse.  Blocks are independent, so this is plain parallel work.
+    const size_t count = end - firstNeeded;
+    std::atomic<size_t> next (0);
+    auto worker = [&] ()
+      {
+      for (;;)
+        {
+        const size_t i = firstNeeded + next.fetch_add (1);
+        if (i >= end)
+          return;
+        const BlockInfo & info = blocks [i];
+        // Out of memory (a huge file in a 32-bit process) costs blocks, and not the
+        // client: an exception leaving a thread would end the process.
+        try
+          {
+          std::unique_ptr<DecodedBlock> block (new DecodedBlock);
+          if (InflateAndDecode (file.data () + info.offset, (size_t) info.recordSize, *block))
+            {
+            ApplyToBlock (info, *block);
+            decoded [i] = std::move (block);
+            state [i] = kGood;
+            }
+          else
+            state [i] = kBad;
+          }
+        catch (...)
+          {
+          decoded [i].reset ();
+          state [i] = kNoMemory;
+          }
+        }
+      };
+    const unsigned nThreads = (unsigned) (std::min) ((size_t) threads, count);
+    std::vector<std::thread> pool;
+    try
+      {
+      for (unsigned t = 1; t < nThreads; t++)
+        pool.emplace_back (worker);
+      }
+    catch (...)
+      {
+      }     // fewer threads, then
+    worker ();
+    for (std::thread & t : pool)
+      t.join ();
+
+    bool bShort = false;
+    for (size_t i = firstNeeded; i < end; i++)
+      if (state [i] != kGood && !blocks [i].cutFrom)
+        {
+        lines -= blocks [i].lineCount;
+        bShort |= state [i] == kBad;
+        }
+    // Short of memory is not a reason to try for more of it.
+    if (!bShort || maxLines == 0)
+      break;
+    }
+
+  // What came back stops at the newest block that couldn't be held in memory, so that
+  // there is no gap in it.  The rest of the file is kept: it's not damaged.
+  size_t firstKept = firstNeeded;
+  for (size_t i = blocks.size (); i > firstNeeded; i--)
+    if (state [i - 1] == kNoMemory)
+      {
+      firstKept = i;
+      result.outOfMemory = true;
+      break;
+      }
 
   // Bad blocks go from the Writer's list as well, so a rewrite won't trip over them.
-  std::vector<BlockInfo> good (blocks.begin (), blocks.begin () + (ptrdiff_t) firstNeeded);
-  for (size_t i = 0; i < count; i++)
+  std::vector<BlockInfo> good;
+  good.reserve (blocks.size ());
+  for (size_t i = 0; i < blocks.size (); i++)
     {
-    if (!decoded [i])
+    if (state [i] == kBad)
       {
       result.badBlocks++;
       continue;
       }
-    good.push_back (blocks [firstNeeded + i]);
-    if (!decoded [i]->lines.empty ())
+    good.push_back (blocks [i]);
+    if (i >= firstKept && decoded [i] && !decoded [i]->lines.empty ())
       {
       result.lineCount += decoded [i]->lines.size ();
       result.blocks.push_back (std::move (decoded [i]));
@@ -875,6 +999,8 @@ LoadResult Load (const std::string & path, bool bUtf8, size_t maxLines, unsigned
   result.status = LoadStatus::Loaded;
   return result;
   }
+
+} // anonymous namespace
 
 // ---------------- writing ----------------
 
@@ -988,8 +1114,10 @@ void Writer::Close (bool bDeleteFile)
   if (m_thread.joinable ())
     m_thread.join ();
   CloseFile ();
+  const bool bWasOpen = m_bOpen;
   m_bOpen = false;
-  if (bDeleteFile)
+  // Only a file this had: one that couldn't be opened may be another copy's.
+  if (bDeleteFile && bWasOpen)
     DeleteTheFile (m_path);
   }
 
@@ -1017,7 +1145,18 @@ void Writer::Run ()
         m_idle.notify_all ();
       m_wake.wait (lock, [this] { return m_bStop || !m_queue.empty (); });
       if (m_queue.empty ())
-        return;       // stopping, and everything asked for is done
+        {
+        // Stopping, and everything asked for is done, or held: one last try at that.
+        lock.unlock ();
+        try
+          {
+          CatchUp ();
+          }
+        catch (...)
+          {
+          }
+        return;
+        }
       op = std::move (m_queue.front ());
       m_queue.pop_front ();
       m_bBusy = true;
@@ -1025,8 +1164,10 @@ void Writer::Run ()
 
     try
       {
-      if (m_file)
+      if (CatchUp ())
         Do (op);
+      else
+        Hold (std::move (op));
       }
     catch (...)     // out of memory, most likely: losing a block beats losing the client
       {
@@ -1189,13 +1330,14 @@ void Writer::MergeTail ()
   BlockInfo info;
   if (WriteRecord (kRecordLines, &raw, (uint32_t) lines, first, last, first, &info))
     {
-    for (size_t i = 0; i < m_tail.size () && !m_blocks.empty (); i++)
-      {
-      m_live -= m_blocks.back ().recordSize;
-      m_blocks.pop_back ();
-      }
+    // What it replaces is decided by line number, as Load decides it, and not by
+    // counting blocks off the end: the list need not still hold one block per small
+    // block written (a rewrite merges them), and counting would take older ones too.
+    ApplyTruncate (m_blocks, first);
     m_blocks.push_back (info);
-    m_live += info.recordSize;
+    m_live = 0;
+    for (const BlockInfo & b : m_blocks)
+      m_live += b.recordSize;
     }
   m_tail.clear ();
   m_tailLines = 0;
@@ -1203,8 +1345,21 @@ void Writer::MergeTail ()
 
 void Writer::MaybeReclaim ()
   {
-  if (m_bReclaimFailed)
+  // A disk too full to rewrite on is not going to get better for trying every time a
+  // block is saved, but it may well get better: try again after a while.
+  if (m_reclaimRetryIn > 0)
+    {
+    m_reclaimRetryIn--;
     return;
+    }
+  // Closing.  Space can as well be reclaimed next session, and a rewrite of a big file
+  // now would hold up the close, which waits for this thread.  (An explicit DropBefore
+  // still happens: that is about taking text out of the file, not about space.)
+    {
+    std::lock_guard<std::mutex> lock (m_mutex);
+    if (m_bStop)
+      return;
+    }
   uint64_t live = 0;
   size_t nSmall = 0;
   for (const BlockInfo & b : m_blocks)
@@ -1216,9 +1371,8 @@ void Writer::MaybeReclaim ()
       }
   const uint64_t dead = m_end - kFileHeaderSize - live;
   if ((dead > kMinDeadBytes && dead > live) || nSmall > kMaxSmallBlocks)
-    // A disk too full to rewrite on is not going to get better for trying every
-    // time a block is saved.
-    m_bReclaimFailed = !Rewrite (m_liveFrom, false);
+    if (!Rewrite (m_liveFrom, false))
+      m_reclaimRetryIn = kReclaimRetryAfter;
   }
 
 // Writes the live blocks to a new file and renames it over this one.  Blocks that
@@ -1341,22 +1495,87 @@ bool Writer::Rewrite (int64_t keepFrom, bool bExact)
   // On Windows a file can't be renamed over while we hold it.
   CloseFile ();
   const bool bRenamed = RenameOver (temp, m_path);
-  m_file = FileOpen (m_path, false);
   if (!bRenamed)
     {
     DeleteTheFile (temp);
     Fail ("could not replace the saved output buffer");
-    return false;
     }
-  if (!m_file)
+  else
     {
-    Fail ("could not reopen the saved output buffer");
-    return false;
+    // It's the new file from here on, whether or not it can be opened again at once:
+    // what is known about the old one would be wrong about it.
+    m_blocks.swap (written);
+    m_end = end;
+    m_live = end - header.size ();
+    // The small blocks waiting to be merged are in what was just written, merged or
+    // not; merging them again would be replacing lines that aren't theirs to replace.
+    m_tail.clear ();
+    m_tailLines = 0;
     }
+  m_file = FileOpen (m_path, false);
+  if (!m_file)
+    Fail ("could not open the saved output buffer again, so it is not being saved for now");
+  return bRenamed && m_file;
+  }
 
-  m_blocks.swap (written);
-  m_end = end;
-  m_live = end - header.size ();
+// After a rewrite that couldn't open the file again (something else had it for a
+// moment, say).  Until this works, nothing is written.
+bool Writer::Reopen ()
+  {
+  if (m_file)
+    return true;
+  m_file = FileOpen (m_path, false);
+  if (!m_file)
+    return false;
+  // Anything that got there meanwhile is cut off, as a torn tail would be.
+  FileTruncate (m_file, m_end);
+  Fail ("");
+  return true;
+  }
+
+// While the file is shut, what is asked for waits, up to a point.
+void Writer::Hold (Op && op)
+  {
+  if (m_bHeldTooMuch)
+    return;
+  if (op.kind == Op::ClearAll)
+    {
+    m_held.clear ();      // nothing before a clear matters
+    m_heldBytes = 0;
+    }
+  m_heldBytes += op.block.size ();
+  m_held.push_back (std::move (op));
+  if (m_held.size () > kMaxHeldOps || m_heldBytes > kMaxHeldBytes)
+    {
+    m_held.clear ();
+    m_heldBytes = 0;
+    m_bHeldTooMuch = true;
+    }
+  }
+
+// False if the file is still shut.  Otherwise, whatever waited has been done.
+bool Writer::CatchUp ()
+  {
+  if (!Reopen ())
+    return false;
+  if (m_bHeldTooMuch)
+    {
+    // Too much to keep: start again, rather than leave a gap, or keep text that
+    // something since asked to be cleared.
+    m_bHeldTooMuch = false;
+    Op clear;
+    clear.kind = Op::ClearAll;
+    clear.bUtf8 = m_bUtf8;
+    Do (clear);
+    Fail ("some of the output buffer could not be saved");
+    }
+  while (!m_held.empty ())
+    {
+    Op held = std::move (m_held.front ());
+    m_held.pop_front ();
+    m_heldBytes -= held.block.size ();
+    Do (held);
+    }
   return true;
   }
 

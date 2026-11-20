@@ -1004,6 +1004,8 @@ void CMUSHclientDoc::Load_General_XML (CXMLelement & parent,
     CAttribute * pIDAttribute = NULL;
     if (!pWorldElement->AttributeMap.Lookup ("id", pIDAttribute))
       m_bWorldIDIsNew = true;
+    else
+      m_strWorldIDInFile = m_strWorldID;    // if it has to change below, this is it
 
     // check world ID is unique  (maybe they duplicated a disk file)  
     for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos != NULL; )

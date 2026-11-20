@@ -21,6 +21,15 @@
 #include "variant_test_helpers.h"
 #include "scripting/errors.h"
 #include "flags.h"
+#include "pal/itransport.h"
+#include "fake_transport.h"
+#include "command_history_store.h"
+#ifdef _WIN32
+#include "sendvw.h"
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 using namespace scrollback;
 
@@ -80,6 +89,25 @@ void AppendBlock (Writer & w, int64_t first, size_t count)
   int64_t last;
   std::vector<uint8_t> block = MakeBlock (first, count, &last);
   w.AppendLines (std::move (block), count, first, last);
+  }
+
+// A block of lines that compress badly, so that a megabyte of dead space turns up
+// after a few of them.
+void AppendNoiseBlock (Writer & w, int64_t first, size_t count, unsigned & seed)
+  {
+  BlockBuilder builder;
+  for (size_t i = 0; i < count; i++)
+    {
+    std::string text;
+    for (int c = 0; c < 80; c++)
+      {
+      seed = seed * 1103515245 + 12345;
+      text += (char) (32 + (seed >> 16) % 90);
+      }
+    builder.AddLine (first + (int64_t) i, 1000, 0, true, 80, 0, text.data (), text.size ());
+    }
+  const int64_t last = builder.LastNumber ();
+  w.AppendLines (builder.Finish (), count, first, last);
   }
 
 // The numbers of every line that came back, in order.
@@ -328,13 +356,61 @@ TEST (ScrollbackStore, ACorruptBlockCostsOnlyThatBlock)
   expected.insert (expected.end (), last.begin (), last.end ());
   EXPECT_TRUE (Numbers (r) == expected);
 
-  // A damaged record HEADER can't be stepped over: from there on it is a torn tail.
+  // A damaged record HEADER doesn't say where the next record starts, but the next
+  // good header can be found, and what follows it is not a torn tail.
   std::vector<uint8_t> file2 = ReadAll (path);
   file2 [(size_t) middle.offset + 3] ^= 0x40;
   WriteAll (path, file2);
   r = Load (path, false, 0);
+  EXPECT_FALSE (r.tornTail);
+  EXPECT_EQ (1u, r.badBlocks);
+  EXPECT_TRUE (Numbers (r) == expected);
+
+  // ... and a session carrying on from it keeps what is after the damage, which it
+  // would cut off if it took it for a torn tail.
+  {
+  Writer w (path, false, r);
+  ASSERT_TRUE (w.IsOpen ());
+  AppendBlock (w, 9001, 10);
+  }
+  r = Load (path, false, 0);
+  const std::vector<int64_t> more = Range (9001, 9010);
+  expected.insert (expected.end (), more.begin (), more.end ());
+  EXPECT_TRUE (Numbers (r) == expected);
+
+  // The same damage in the header of the LAST record is a torn tail, as ever.
+  std::vector<uint8_t> file3 = ReadAll (path);
+  r = Load (path, false, 0);
+  file3 [(size_t) r.liveBlocks.back ().offset + 3] ^= 0x40;
+  WriteAll (path, file3);
+  r = Load (path, false, 0);
   EXPECT_TRUE (r.tornTail);
-  EXPECT_TRUE (Numbers (r) == Range (1, 3000));
+  EXPECT_TRUE (Numbers (r).back () == 9000);
+  remove (path.c_str ());
+  }
+
+// Blocks within the newest maxLines that fail their checksum are made up for by older
+// ones, so that a damaged block doesn't make the buffer come back short.
+TEST (ScrollbackStore, ADamagedNewBlockIsMadeUpForByOlderOnes)
+  {
+  const std::string path = TempFile ("shortrestore");
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  AppendBlock (w, 1, 3000);
+  AppendBlock (w, 3001, 3000);
+  AppendBlock (w, 6001, 3000);
+  }
+  std::vector<uint8_t> file = ReadAll (path);
+  const BlockInfo newest = Load (path, false, 0).liveBlocks [2];
+  file [(size_t) (newest.offset + newest.recordSize / 2)] ^= 0x40;
+  WriteAll (path, file);
+
+  LoadResult r = Load (path, false, 5000);
+  EXPECT_EQ (1u, r.badBlocks);
+  EXPECT_EQ (5000u, r.lineCount);
+  EXPECT_TRUE (Numbers (r) == Range (1001, 6000));
+  EXPECT_EQ (2u, r.liveBlocks.size ());
   remove (path.c_str ());
   }
 
@@ -480,6 +556,41 @@ TEST (ScrollbackStore, ATornMergeLeavesTheSmallBlocks)
   remove (path.c_str ());
   }
 
+// The power going can also leave a record's header on the disk and not its payload
+// (the file grew, and what should be in it is zeros).  The header is good, and says it
+// replaces the little blocks: it mustn't, when its own lines aren't there.
+TEST (ScrollbackStore, AMergedBlockWithoutItsPayloadLeavesTheSmallBlocks)
+  {
+  const std::string path = TempFile ("zeromerge");
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  for (int i = 0; i < 32; i++)      // the 32nd triggers the merge
+    AppendBlock (w, 1 + i * 3, 3);
+  }
+  std::vector<uint8_t> file = ReadAll (path);
+  const LoadResult merged = Load (path, false, 0);
+  ASSERT_EQ (1u, merged.liveBlocks.size ());
+  const BlockInfo m = merged.liveBlocks [0];
+  ASSERT_EQ ((size_t) (m.offset + m.recordSize), file.size ());   // it's the last record
+  std::fill (file.begin () + (ptrdiff_t) (m.offset + 52), file.end (), (uint8_t) 0);
+  WriteAll (path, file);
+
+  LoadResult r = Load (path, false, 0);
+  EXPECT_FALSE (r.tornTail);
+  EXPECT_EQ (1u, r.badBlocks);
+  EXPECT_TRUE (Numbers (r) == Range (1, 96));
+  EXPECT_EQ (32u, r.liveBlocks.size ());
+
+  // And carrying on from there loses nothing.
+  {
+  Writer w (path, false, r);
+  AppendBlock (w, 97, 3);
+  }
+  EXPECT_TRUE (Numbers (Load (path, false, 0)) == Range (1, 99));
+  remove (path.c_str ());
+  }
+
 TEST (ScrollbackStore, DeadSpaceIsReclaimed)
   {
   const std::string path = TempFile ("reclaim");
@@ -517,6 +628,83 @@ TEST (ScrollbackStore, DeadSpaceIsReclaimed)
   remove (path.c_str ());
   }
 
+// Reclaiming rewrites the file, merging small blocks as it goes, while there are small
+// blocks waiting to be merged.  The merge that comes later must replace only those, and
+// not the blocks before them, which the rewrite has left fewer of.
+TEST (ScrollbackStore, AReclaimBetweenSmallBlocksLosesNothing)
+  {
+  const std::string path = TempFile ("reclaimmerge");
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  unsigned seed = 777;
+  for (int b = 0; b < 10; b++)
+    AppendNoiseBlock (w, 1 + b * 3000, 3000, seed);      // 1 to 30000
+  for (int i = 0; i < 5; i++)
+    AppendBlock (w, 30001 + i * 3, 3);                  // waiting to be merged
+  w.Flush ();
+  const size_t before = ReadAll (path).size ();
+
+  // The buffer's head moves on, so most of the file is dead, and it is rewritten.
+  w.SetLiveFrom (24001);
+  w.Flush ();
+  ASSERT_LT (ReadAll (path).size (), before / 2);
+
+  // More small blocks, enough for the merge.
+  for (int i = 5; i < 41; i++)
+    AppendBlock (w, 30001 + i * 3, 3);                  // to 30123
+  // And another rewrite, which writes what the writer thinks the file holds.
+  w.DropBefore (24001);
+  w.Flush ();
+  EXPECT_EQ (std::string (), w.LastError ());
+  }
+  LoadResult r = Load (path, false, 0);
+  EXPECT_EQ (0u, r.badBlocks);
+  EXPECT_TRUE (Numbers (r) == Range (24001, 30123));
+  remove (path.c_str ());
+  }
+
+// A rewrite that fails (here, because something is in the way of its temporary file)
+// is tried again later, and not never.
+TEST (ScrollbackStore, AFailedReclaimIsTriedAgain)
+  {
+  const std::string path = TempFile ("reclaimretry");
+  const std::string temp = path + ".tmp";
+  {
+  LoadResult nothing;
+  Writer w (path, false, nothing);
+  unsigned seed = 4242;
+  for (int b = 0; b < 10; b++)
+    AppendNoiseBlock (w, 1 + b * 3000, 3000, seed);
+  w.Flush ();
+  const size_t before = ReadAll (path).size ();
+
+#ifdef _WIN32
+  ASSERT_TRUE (CreateDirectoryA (temp.c_str (), NULL) != 0);
+#else
+  ASSERT_EQ (0, mkdir (temp.c_str (), 0700));
+#endif
+  w.SetLiveFrom (27001);
+  w.Flush ();
+  EXPECT_TRUE (w.LastError () != std::string ());
+  EXPECT_EQ (before, ReadAll (path).size ());
+
+#ifdef _WIN32
+  RemoveDirectoryA (temp.c_str ());
+#else
+  rmdir (temp.c_str ());
+#endif
+  // Not straight away: a disk that's full stays full for a while.  But soon.
+  for (int i = 0; i < 31; i++)
+    w.SetLiveFrom (27001);
+  w.Flush ();
+  EXPECT_LT (ReadAll (path).size (), before / 2);
+  }
+  LoadResult r = Load (path, false, 0);
+  EXPECT_TRUE (Numbers (r) == Range (27001, 30000));
+  remove (path.c_str ());
+  }
+
 TEST (ScrollbackStore, OneWriterAtATime)
   {
   const std::string path = TempFile ("exclusive");
@@ -526,6 +714,10 @@ TEST (ScrollbackStore, OneWriterAtATime)
   Writer second (path, false, Load (path, false, 0));
   EXPECT_FALSE (second.IsOpen ());
   AppendBlock (first, 1, 3);
+  first.Flush ();
+  // One that couldn't have the file doesn't delete it from under the one that has.
+  second.Close (true);
+  EXPECT_EQ (3u, Load (path, false, 0).lineCount);
   first.Close (true);
   EXPECT_TRUE (Load (path, false, 0).status == LoadStatus::NoFile);
   }
@@ -574,7 +766,8 @@ struct SessionFixture
   CMUSHclientDoc doc;
 
   explicit SessionFixture (const char * id, const long maxLines = 5000, const bool bUtf8 = false,
-                           const bool bStart = true, const bool bNamed = true)
+                           const bool bStart = true, const bool bNamed = true,
+                           const char * worldFile = "a saved world.mcl")
     {
     // The test host's constructor seeds a first line for documents that never get a
     // view.  Back to the state SetUpOutputWindow starts from.
@@ -587,7 +780,7 @@ struct SessionFixture
     doc.m_LinePositions.Reset (doc.m_LineList.GetHeadPosition ());
     doc.m_strWorldID = id;
     if (bNamed)
-      doc.SetPathName ("a saved world.mcl", FALSE);   // so that its file is kept
+      doc.SetPathName (worldFile, FALSE);   // so that its file is kept
     doc.m_maxlines = maxLines;
     doc.m_wrap = FALSE;
     doc.m_nWrapColumn = 1000;
@@ -620,6 +813,9 @@ void Forget (const char * id)
   doc.m_strWorldID = id;
   remove ((const char *) doc.ScrollbackFilePath ());
   remove ((const char *) (doc.ScrollbackFilePath () + ".tmp"));
+  remove ((const char *) doc.CommandHistoryFilePath ());
+  const CString strPath = doc.ScrollbackFilePath ();
+  remove ((const char *) (strPath.Left (strPath.GetLength () - 5) + ".owner"));
   }
 
 } // anonymous namespace
@@ -1173,6 +1369,298 @@ TEST (SavedScrollback, ChangingUtf8LosesTheOldTextAndNothingElse)
   s.End ();
   Forget (id);
   }
+
+// A restored line has no MXP line tag: GetLineInfo (n, 14) is 0, and not whatever the
+// heap had there.
+TEST (SavedScrollback, ARestoredLineHasNoMxpTag)
+  {
+  const char * id = "testmxptag";
+  Forget (id);
+  {
+  SessionFixture s (id);
+  FeedLine (s.doc, "a line");
+  s.End ();
+  }
+  SessionFixture s (id);
+  ASSERT_TRUE (std::string ("a line") == s.Text (1));
+  VARIANT v = s.doc.GetLineInfo (1, 14);
+  EXPECT_EQ (0, (int) v.iVal);
+  EXPECT_EQ (0, (int) s.doc.m_LineList.GetHead ()->m_iMXPLineTag);
+  s.End ();
+  Forget (id);
+  }
+
+// An alias that echoes what was typed draws it even with echo off (upstream's way), and
+// so a password matching one is on the screen.  It must not also go to the file.
+TEST (SavedScrollback, WhatAnAliasEchoesWithEchoOffIsNotSaved)
+  {
+  const char * id = "testnoecho";
+  Forget (id);
+  std::string path;
+  {
+  SessionFixture s (id);
+  path = (const char *) s.doc.ScrollbackFilePath ();
+  s.doc.m_enable_aliases = TRUE;
+  s.doc.m_display_my_input = TRUE;
+  s.doc.m_iConnectPhase = eConnectConnectedToMud;
+  s.doc.m_pTransport = new RecordingTransport ();
+  CAlias * a = new CAlias ();
+  a->name = "pw *";
+  a->contents = "connect %1";
+  a->bEnabled = TRUE;
+  a->bRegexp = false;
+  a->bEchoAlias = TRUE;
+  a->iSendTo = eSendToWorld;
+  a->iSequence = DEFAULT_ALIAS_SEQUENCE;
+  a->strLabel = "pw";
+  a->regexp = regcomp (ConvertToRegularExpression (a->name, true, true), 0);
+  s.doc.GetAliasMap ().SetAt (a->strLabel, a);
+  s.doc.GetAliasArray ().Add (a);
+  s.doc.GetAliasRevMap () [a] = "pw *";
+
+  FeedLine (s.doc, "Password:");
+  bool bOmit = false;
+  s.doc.m_bNoEcho = true;
+  s.doc.EvaluateCommand (CString ("pw hunter3"), true, bOmit, false);
+  s.doc.m_bNoEcho = false;
+  s.doc.EvaluateCommand (CString ("pw publicword"), true, bOmit, false);   // the control
+  FeedLine (s.doc, "Welcome.");
+  EXPECT_EQ (2L, a->nMatched);
+
+  // Both on the screen.
+  bool bShown = false;
+  for (POSITION pos = s.doc.m_LineList.GetHeadPosition (); pos; )
+    {
+    const CLine * p = s.doc.m_LineList.GetNext (pos);
+    if (std::string (p->text, p->len).find ("hunter3") != std::string::npos)
+      bShown = true;
+    }
+  EXPECT_TRUE (bShown);
+  s.End ();
+  }
+
+  LoadResult r = Load (path, false, 0);
+  std::string all;
+  for (const auto & block : r.blocks)
+    all += std::string (block->text, block->textSize) + "|";
+  EXPECT_TRUE (all.find ("hunter3") == std::string::npos);
+  EXPECT_TRUE (all.find ("publicword") != std::string::npos);
+  EXPECT_TRUE (all.find ("Password:") != std::string::npos);
+  EXPECT_TRUE (all.find ("Welcome.") != std::string::npos);
+
+  // And it comes back without a hole that matters.
+  SessionFixture s (id);
+  EXPECT_TRUE (std::string ("Password:") == s.Text (1));
+  s.End ();
+  Forget (id);
+  }
+
+namespace {
+
+// A real file, since whether a world file is still there is what decides some of this.
+std::string MakeWorldFile (const char * name)
+  {
+  const char * dir = getenv ("TEMP");
+  if (!dir)
+    dir = "/tmp";
+  const std::string path = std::string (dir) + "/mc_scrollback_" + name + ".mcl";
+  if (FILE * f = fopen (path.c_str (), "wb"))
+    {
+    fputs ("<world/>", f);
+    fclose (f);
+    }
+  return path;
+  }
+
+void RemoveSaved (const std::string & scrollbackPath)
+  {
+  const std::string base = scrollbackPath.substr (0, scrollbackPath.size () - 5);
+  for (const char * ext : { ".mcsb", ".history", ".owner", ".mcsb.tmp" })
+    remove ((base + ext).c_str ());
+  }
+
+} // anonymous namespace
+
+// A world file copied (for an alt, say) has the same ID as the original.  Each has its
+// own output and history all the same; and a world file that has been moved finds its
+// own again.
+TEST (SavedScrollback, ACopiedWorldFileHasFilesOfItsOwn)
+  {
+  const char * id = "testclone";
+  Forget (id);
+  const std::string original = MakeWorldFile ("original");
+  const std::string copy = MakeWorldFile ("copy");
+  const std::string moved = MakeWorldFile ("moved");
+  std::string copyFile;
+  {
+  SessionFixture s (id, 5000, false, true, true, original.c_str ());
+  FeedLine (s.doc, "the original's");
+  s.End ();
+  }
+  {
+  SessionFixture s (id, 5000, false, true, true, copy.c_str ());
+  EXPECT_EQ (1L, s.Count ());       // nothing of the original's
+  copyFile = (const char *) s.doc.ScrollbackFilePath ();
+  FeedLine (s.doc, "the copy's");
+  s.End ();
+  }
+  {
+  SessionFixture s (id, 5000, false, true, true, original.c_str ());
+  EXPECT_TRUE (std::string ("the original's") == s.Text (1));
+  EXPECT_EQ (3L, s.Count ());
+  EXPECT_TRUE (s.doc.CommandHistoryFilePath () != (copyFile.substr (0, copyFile.size () - 5) + ".history").c_str ());
+  s.End ();
+  }
+  {
+  SessionFixture s (id, 5000, false, true, true, copy.c_str ());
+  EXPECT_TRUE (std::string ("the copy's") == s.Text (1));
+  EXPECT_EQ (3L, s.Count ());
+  s.End ();
+  }
+
+  // The original moves: the world file at the new place is it.
+  remove (original.c_str ());
+  {
+  SessionFixture s (id, 5000, false, true, true, moved.c_str ());
+  EXPECT_TRUE (std::string ("the original's") == s.Text (1));
+  s.End ();
+  }
+  // ... and is the owner from now on: the copy still has its own.
+  {
+  SessionFixture s (id, 5000, false, true, true, copy.c_str ());
+  EXPECT_TRUE (std::string ("the copy's") == s.Text (1));
+  s.End ();
+  }
+
+  RemoveSaved (copyFile);
+  remove (copy.c_str ());
+  remove (moved.c_str ());
+  Forget (id);
+  }
+
+// A world file with no ID is given a new one every time it is opened, until it is
+// saved.  Its output is found again meanwhile, and when the ID sticks.
+TEST (SavedScrollback, AWorldWithANewIDEachTimeFindsItsOutput)
+  {
+  const std::string world = MakeWorldFile ("noid");
+  std::string byPath;
+  for (const char * id : { "testnewid1", "testnewid2", "testnewid3" })
+    Forget (id);
+  {
+  SessionFixture s ("testnewid1", 5000, false, false, true, world.c_str ());
+  s.doc.m_bWorldIDIsNew = true;
+  s.doc.StartOutputBuffer ();
+  byPath = (const char *) s.doc.ScrollbackFilePath ();
+  EXPECT_TRUE (byPath.find ("testnewid1") == std::string::npos);
+  FeedLine (s.doc, "kept by the world file's path");
+  s.End ();
+  }
+  {
+  SessionFixture s ("testnewid2", 5000, false, false, true, world.c_str ());
+  s.doc.m_bWorldIDIsNew = true;
+  s.doc.StartOutputBuffer ();
+  EXPECT_TRUE (std::string ("kept by the world file's path") == s.Text (1));
+  s.End ();
+  }
+  // Saved with this one at last: it takes them over.
+  {
+  SessionFixture s ("testnewid3", 5000, false, true, true, world.c_str ());
+  EXPECT_TRUE (std::string ("kept by the world file's path") == s.Text (1));
+  EXPECT_TRUE (std::string ((const char *) s.doc.ScrollbackFilePath ()).find ("testnewid3") != std::string::npos);
+  s.End ();
+  }
+  EXPECT_TRUE (Load (byPath, false, 0).status == LoadStatus::NoFile);
+  RemoveSaved (byPath);
+  remove (world.c_str ());
+  Forget ("testnewid3");
+  }
+
+#ifdef _WIN32
+
+// The command box's history, on Windows (the port's is in wx_world_child.cpp).
+namespace {
+
+struct SendViewFixture
+  {
+  CMUSHclientDoc * doc;
+  CSendView *      view;
+  std::string      path;
+
+  explicit SendViewFixture (const char * id)
+    {
+    Forget (id);
+    doc = new CMUSHclientDoc;
+    doc->m_strWorldID = id;
+    doc->SetPathName ("a saved world.mcl", FALSE);
+    doc->m_nHistoryLines = 3;
+    view = (CSendView *) RUNTIME_CLASS (CSendView)->CreateObject ();
+    doc->AddView (view);
+    path = (const char *) doc->CommandHistoryFilePath ();
+    }
+  ~SendViewFixture ()
+    {
+    // As in tests/win/test_win_worldview.cpp: the document first, which leaves the
+    // view alone, then the view.
+    delete doc;
+    delete (CObject *) view;
+    }
+  std::vector<std::string> Saved ()
+    {
+    std::vector<std::string> got;
+    command_history::Load (path, got);
+    return got;
+    }
+  };
+
+} // anonymous namespace
+
+// Nothing kept while echo is off reaches the file, whichever way it was kept.
+TEST (SavedCommandHistory, NothingKeptWithEchoOffIsSaved)
+  {
+  SendViewFixture f ("testhistecho");
+  f.doc->m_nHistoryLines = 20;
+  f.view->AddToCommandHistory ("north");
+  f.doc->m_bNoEcho = true;
+  f.view->AddToCommandHistory ("typed");               // not kept at all
+  f.view->AddToCommandHistory ("pushed", true);        // world.PushCommand: kept, in memory
+  f.view->RememberCommand ("escaped");                 // Escape, saving what it threw away
+  f.doc->m_bAlwaysRecordCommandHistory = TRUE;
+  f.view->AddToCommandHistory ("always");
+  f.doc->m_bNoEcho = false;
+  f.view->AddToCommandHistory ("south");
+  EXPECT_EQ (5L, (long) f.view->m_msgList.GetCount ());
+
+  f.view->SaveCommandHistoryIfChanged (true);
+  const std::vector<std::string> saved = f.Saved ();
+  ASSERT_EQ (2u, saved.size ());
+  EXPECT_EQ (std::string ("north"), saved [0]);
+  EXPECT_EQ (std::string ("south"), saved [1]);
+  remove (f.path.c_str ());
+  }
+
+// A change that leaves the count and the last command as they were is still a change.
+TEST (SavedCommandHistory, EveryChangeIsSaved)
+  {
+  SendViewFixture f ("testhistchange");
+  for (const char * c : { "a", "b", "c" })
+    f.view->AddToCommandHistory (c);
+  f.view->SaveCommandHistoryIfChanged (true);
+  EXPECT_TRUE (f.Saved () == std::vector<std::string> ({ "a", "b", "c" }));
+
+  // Three at most: "x" pushes "a" out, then "c" pushes "b" out.  Three, ending in "c".
+  f.view->AddToCommandHistory ("x");
+  f.view->AddToCommandHistory ("c");
+  f.view->SaveCommandHistoryIfChanged (true);
+  EXPECT_TRUE (f.Saved () == std::vector<std::string> ({ "c", "x", "c" }));
+
+  // Clearing is a change too.
+  f.view->ForgetCommandHistory ();
+  f.view->SaveCommandHistoryIfChanged (true);
+  EXPECT_TRUE (f.Saved ().empty ());
+  remove (f.path.c_str ());
+  }
+
+#endif // _WIN32
 
 // ---------------- how long it all takes ----------------
 

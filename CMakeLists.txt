@@ -782,6 +782,10 @@ if(NOT WIN32)
         src/platform/wx_mfc_hooks_storage.cpp
         src/scriptingoptions.cpp
         src/globalregistryoptions.cpp
+        src/appearance.cpp
+        src/unicode_width.cpp
+        src/dpi.cpp
+        src/dwrite_text.cpp
         src/xml/xmlparse.cpp
         src/exceptions.cpp
         src/xml/xml_save_world.cpp
@@ -1229,6 +1233,7 @@ if(NOT WIN32)
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.
             src/platform/wx_toolbar.cpp
+            src/platform/wx_appearance.cpp
             src/platform/wx_notepad.cpp
             src/platform/wx_update.cpp      # the update dialog and badge
             # In-app conformance harness for the notepad windows

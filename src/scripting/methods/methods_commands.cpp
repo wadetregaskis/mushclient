@@ -440,7 +440,7 @@ long CMUSHclientDoc::SetCommandWindowHeight(short Height)
   // back into the same eBadParameter here.  The wx arm pins the command bar
   // instead (there is no splitter to drive), and refuses a height too short to
   // show the line being typed -- it has no sash to drag back.
-  if (!EmitCommandWindowHeight (Height))
+  if (!EmitCommandWindowHeight (ToPhysical (Height)))
     return eBadParameter;
 
 	return eOK;

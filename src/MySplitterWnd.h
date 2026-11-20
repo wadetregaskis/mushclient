@@ -12,6 +12,12 @@
 
 class CMySplitterWnd : public CSplitterWnd
 {
+public:
+#ifdef _WIN32
+	virtual void OnDrawSplitter(CDC* pDC, ESplitType nType, const CRect& rect) override;
+	// Bigger bars for a bigger display.  MFC's own numbers stay at 96 dpi.
+	void ScaleBars (const int iDpi);
+#endif
 // Construction
 public:
 	CMySplitterWnd();

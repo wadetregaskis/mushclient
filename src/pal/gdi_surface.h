@@ -80,7 +80,11 @@ private:
     struct Font {
         CFont*   font = nullptr;     // adapter-owned CFont (was CMiniWindow::m_Fonts)
         FontSpec spec;
+        bool     raster = false;     // a bitmap font, which can't be drawn any larger
     };
+    template <typename CHAR_TYPE>
+    int DrawScaledText(CDC* dc, Font* f, Point pt, Colour colour, const Rect* clip,
+                       UINT eto, const RECT* prc, const CHAR_TYPE* text, int n);
     Surf* surf(SurfaceId id);
     Font* font(FontId id);
     CDC*  measureDc();               // lazily-created screen-compatible DC for

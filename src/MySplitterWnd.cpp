@@ -6,6 +6,7 @@
 #include "doc.h"
 
 #include "MySplitterWnd.h"
+#include "appearance.h"
 #include "childfrm.h"
 #include "mushview.h"
 #include "sendvw.h"
@@ -36,7 +37,39 @@ BEGIN_MESSAGE_MAP(CMySplitterWnd, CSplitterWnd)
 END_MESSAGE_MAP()
 
 
-/////////////////////////////////////////////////////////////////////////////
+#ifdef _WIN32
+void CMySplitterWnd::ScaleBars (const int iDpi)
+{
+  if (iDpi == 96)
+    return;
+  m_cxSplitter = ::MulDiv (m_cxSplitter, iDpi, 96);
+  m_cySplitter = ::MulDiv (m_cySplitter, iDpi, 96);
+  m_cxSplitterGap = ::MulDiv (m_cxSplitterGap, iDpi, 96);
+  m_cySplitterGap = ::MulDiv (m_cySplitterGap, iDpi, 96);
+}
+
+// The base class's bars and borders come from the light palette MFC cached at startup.
+void CMySplitterWnd::OnDrawSplitter(CDC* pDC, ESplitType nType, const CRect& rect)
+{
+  if (!Appearance_IsDark () || pDC == NULL)
+    {
+    CSplitterWnd::OnDrawSplitter (pDC, nType, rect);
+    return;
+    }
+
+  if (nType == splitBorder)
+    {
+    pDC->Draw3dRect (rect, Appearance_EdgeColour (), Appearance_EdgeColour ());
+    CRect rectInner (rect);
+    rectInner.DeflateRect (1, 1);
+    pDC->Draw3dRect (rectInner, Appearance_FaceColour (), Appearance_FaceColour ());
+    }
+  else
+    pDC->FillSolidRect (rect, Appearance_FaceColour ());
+}
+#endif
+
+///////////////////////////////////////////////////////////////////////////
 // CMySplitterWnd message handlers
 
 void CMySplitterWnd::OnLButtonUp(UINT nFlags, CPoint point) 
@@ -77,7 +110,7 @@ void CMySplitterWnd::OnLButtonUp(UINT nFlags, CPoint point)
       } // end of ctrl key held down
 
     if (!(m_pDoc->m_mush_name.IsEmpty ()))
-      App.db_write_int ("worlds", (LPCTSTR) CFormat ("%s:%s", (LPCTSTR) m_pDoc->m_mush_name, "Bottom Height"), cyCur);
+      App.db_write_int ("worlds", (LPCTSTR) CFormat ("%s:%s", (LPCTSTR) m_pDoc->m_mush_name, "Bottom Height"), m_pDoc->ToLogical (cyCur));
 
 //    TRACE1 ("Bottom height (saved) = %i\n", cyCur);
 

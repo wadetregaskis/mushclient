@@ -2,6 +2,7 @@
 //
 
 #include "stdafx.h"
+#include "../../appearance.h"
 #include "../../MUSHclient.h"
 #include "GlobalPrefsSheet.h"
 #include "GlobalPrefs.h"
@@ -432,6 +433,7 @@ CGlobalPrefsP2::CGlobalPrefsP2() : CPropertyPage(CGlobalPrefsP2::IDD)
 	m_bTriggerRemoveCheck = FALSE;
 	m_iWindowTabsStyle = -1;
 	m_bFlatToolbars = FALSE;
+	m_iAppearance = -1;
 	m_bErrorNotificationToOutputWindow = FALSE;
 	//}}AFX_DATA_INIT
 }
@@ -466,6 +468,7 @@ void CGlobalPrefsP2::DoDataExchange(CDataExchange* pDX)
 	DDX_Check(pDX, IDC_REMOVE_CHECK, m_bTriggerRemoveCheck);
 	DDX_CBIndex(pDX, IDC_TABS, m_iWindowTabsStyle);
 	DDX_Check(pDX, IDC_FLAT_TOOLBARS, m_bFlatToolbars);
+	DDX_CBIndex(pDX, IDC_APPEARANCE, m_iAppearance);
 	DDX_Check(pDX, IDC_NOTIFY_TO_OUTPUT, m_bErrorNotificationToOutputWindow);
 	DDX_MinMaxString(pDX, IDC_LOCALE, m_strLocale);
 	DDV_MinMaxString(pDX, m_strLocale, 2, 3);
@@ -1300,6 +1303,7 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   propSheet.m_Page2.m_strWordDelimitersDblClick       =  pApp->m_strWordDelimitersDblClick;
   propSheet.m_Page2.m_bAutoExpand                     =  pApp->m_bAutoExpand;
   propSheet.m_Page2.m_bFlatToolbars                   =  pApp->m_bFlatToolbars;
+  propSheet.m_Page2.m_iAppearance                     =  pApp->m_iAppearance;
   propSheet.m_Page2.m_bColourGradient                 =  pApp->m_bColourGradient;
   propSheet.m_Page2.m_bBleedBackground                =  pApp->m_bBleedBackground;
   propSheet.m_Page2.m_bFixedFontForEditing            =  pApp->m_bFixedFontForEditing;
@@ -1429,6 +1433,8 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   pApp->m_strWordDelimitersDblClick       =  propSheet.m_Page2.m_strWordDelimitersDblClick         ;
   pApp->m_bAutoExpand                     =  propSheet.m_Page2.m_bAutoExpand         ;
   pApp->m_bFlatToolbars                   =  propSheet.m_Page2.m_bFlatToolbars         ;
+  // no selection (a bad value in the database) comes back as -1
+  pApp->m_iAppearance                     =  propSheet.m_Page2.m_iAppearance < 0 ? APPEARANCE_SYSTEM : propSheet.m_Page2.m_iAppearance;
   pApp->m_bColourGradient                 =  propSheet.m_Page2.m_bColourGradient;
   pApp->m_bBleedBackground                =  propSheet.m_Page2.m_bBleedBackground;
   pApp->m_bFixedFontForEditing            =  propSheet.m_Page2.m_bFixedFontForEditing;
@@ -1545,8 +1551,14 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   if (App.m_iActivityButtonBarStyle >= NUMITEMS (ActivityToolBarResourceNames))
     App.m_iActivityButtonBarStyle = 0;
 
+#ifdef _WIN32
+  Frame.m_wndActivityToolBar.UseBitmap (ActivityToolBarResourceNames [App.m_iActivityButtonBarStyle]);
+#else
   Frame.m_wndActivityToolBar.LoadBitmap (ActivityToolBarResourceNames [App.m_iActivityButtonBarStyle]);
+#endif
   Frame.m_wndActivityToolBar.Invalidate ();  // redraw it
+
+  Appearance_SetPreference (App.m_iAppearance);
 
    // now update all views in all documents in case they changed the bleed characteristic
   for (POSITION docPos = App.m_pWorldDocTemplate->GetFirstDocPosition();

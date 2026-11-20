@@ -116,6 +116,9 @@ int RunCharLen(const SOutputRun& run);
 // is what keeps "how long is this line" from drifting between the selection,
 // the hit-test, the wrap cache and the API.
 int LineCharLen(const SOutputLine& line);
+// The same line in cells: a CJK character or an emoji takes two, a combining mark none.
+// Columns are still characters everywhere; cells are only where they land on the screen.
+int LineCellLen(const SOutputLine& line);
 
 // ── Decode instrumentation ───────────────────────────────────────────────────
 // Two counters, read by the selftest only, that pin the COMPLEXITY of the
@@ -1007,6 +1010,10 @@ private:
 
     // Number of visual rows occupied by logical line lineIdx at m_wrapCols.
     int WrapCount(int lineIdx) const;
+    // A line's character columns against its screen columns.  CellToChar lands on the
+    // start of a cluster (or, with bNearest, on whichever edge of it is closer).
+    int CharToCell(int lineIdx, int charCol) const;
+    int CellToChar(int lineIdx, int cellCol, bool bNearest) const;
 
     // Convert a visual row index to its logical line index (binary search).
     int VisualRowToLogical(int vr) const;

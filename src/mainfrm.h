@@ -28,6 +28,15 @@ public:
 	void EraseNonClient();
 	virtual void DoPaint(CDC* pDC);
 
+#ifdef _WIN32
+	// What its image comes from: the bitmap, recoloured for dark mode and rescaled
+	// for the display, once LoadToolBar or LoadBitmap has set the toolbar up.
+	void UseBitmap (UINT iBitmapId);
+	void RefreshImages ();
+	UINT m_iBitmapId = 0;
+	int m_iSizedForDpi = 96;
+#endif
+
 protected:
 
 	//{{AFX_MSG(CMyToolBar)
@@ -43,6 +52,13 @@ class CMainFrame : public CMDIFrameWnd
 	DECLARE_DYNAMIC(CMainFrame)
 public:
 	CMainFrame();
+#ifdef _WIN32
+	void AppearanceChanged ();
+	void ColourInfoBar (const bool bChanged);
+	void DpiChanged ();
+	int m_iDpi = 96;
+	bool m_bInfoBackgroundSet = false;    // a plugin has chosen one
+#endif
 
 	BOOL OnDynamicTipText(UINT id, NMHDR* pNMHDR, LRESULT* pResult);
 
@@ -194,6 +210,9 @@ protected:
 	afx_msg void OnViewResetToolbars();
 	afx_msg void OnHelpMudlists();
 	afx_msg void OnSize(UINT nType, int cx, int cy);
+#ifdef _WIN32
+	afx_msg void OnSettingChange(UINT uFlags, LPCTSTR lpszSection);
+#endif
 	afx_msg void OnActivate(UINT nState, CWnd* pWndOther, BOOL bMinimized);
 	afx_msg void OnDisplayStopsoundplaying();
 	afx_msg void OnUpdateDisplayStopsoundplaying(CCmdUI* pCmdUI);
@@ -224,6 +243,9 @@ protected:
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	//}}AFX_MSG
   afx_msg LRESULT OnMCINotify(WPARAM, LPARAM);
+#ifdef _WIN32
+  afx_msg LRESULT OnDpiChanged(WPARAM, LPARAM);
+#endif
 	afx_msg void OnF1Test();
 	afx_msg void OnUpdateInfoBar(CCmdUI* pCmdUI);
   afx_msg void OnTrayMenu(UINT nID);    

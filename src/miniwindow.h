@@ -89,6 +89,8 @@ class CMiniWindow
   private:
 
     CDC * pdc;                // our offscreen device context
+    int m_iBackingDpi;        // of its physical pixels; plugins always work at 96 (dpi.h)
+    void ApplyBackingScale ();
     // The bitmap pdc started with, selected back before m_Bitmap is deleted.
     // Windows keeps its handle: the CBitmap MFC's SelectObject returns for it
     // is a temporary, which MFC deletes at its next idle-time cleanup.
@@ -116,6 +118,10 @@ class CMiniWindow
 
 
   public:
+    // The dpi of the display it is shown on.  Set before Create; Rescale moves a live one.
+    void SetBackingDpi (const int iDpi) { m_iBackingDpi = iDpi; }
+    void Rescale (const int iDpi);
+
     CMiniWindow ();   // constructor
 
     ~CMiniWindow ();  // destructor

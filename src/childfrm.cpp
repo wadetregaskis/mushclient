@@ -57,6 +57,9 @@ BOOL CChildFrame::OnCreateClient( LPCREATESTRUCT lpcs,
 
 
   m_wndSplitter.m_pDoc = m_pDoc;
+#ifdef _WIN32
+  m_wndSplitter.ScaleBars (m_pDoc->m_iDpi);
+#endif
 
 #ifdef USE_EXTRA_PANE
   if (m_wndSplitter.CreateStatic(this,3,1))
@@ -151,17 +154,18 @@ void CChildFrame::FixUpSplitterBar (void)
    int iDefaultHeight = (15 * 2) + 9;
 
    if (m_pDoc)
-     iDefaultHeight = (m_pDoc->m_InputFontHeight * 2) + 9;   // 2 lines plus 7 pixels for add, below
+     iDefaultHeight = (m_pDoc->m_InputFontHeight * 2) + m_pDoc->ToPhysical (9);   // 2 lines plus 7 pixels for add, below
 
 	CRect rectInside;
 	m_wndSplitter.GetClientRect(rectInside);
-	rectInside.InflateRect(-9, -9); // allow for borders and splitter bar
+	rectInside.InflateRect(m_pDoc->ToPhysical (-9), m_pDoc->ToPhysical (-9)); // allow for borders and splitter bar
 
    cyCurTop = App.db_get_int("worlds", (LPCTSTR) CFormat ("%s:%s", (LPCTSTR) m_pDoc->m_mush_name, "Top Height"), 20);
 
    // if this world is existing, take command height from registry
    if (!(m_pDoc->m_mush_name.IsEmpty ()))
-     cyCurBottom = App.db_get_int("worlds", (LPCTSTR) CFormat ("%s:%s", (LPCTSTR) m_pDoc->m_mush_name, "Bottom Height"), iDefaultHeight);
+     // kept in 96-dpi pixels, so that it comes back the same size on any display
+     cyCurBottom = m_pDoc->ToPhysical (App.db_get_int("worlds", (LPCTSTR) CFormat ("%s:%s", (LPCTSTR) m_pDoc->m_mush_name, "Bottom Height"), m_pDoc->ToLogical (iDefaultHeight)));
    else
      // otherwise, allow for a 2-line command area
     cyCurBottom = iDefaultHeight;
@@ -180,19 +184,19 @@ void CChildFrame::FixUpSplitterBar (void)
    // can be.
 
    int iRoom = rectInside.bottom - rectInside.top - cyCurBottom 
-        + 7;    // 7 pixels for the splitter bar
+        + m_pDoc->ToPhysical (7);    // 7 pixels for the splitter bar
 
    cyCurTop = iRoom;
 
    // however, don't make ridiculously tiny
-   if (cyCurTop < 20)
-     cyCurTop = 20;
+   if (cyCurTop < m_pDoc->ToPhysical (20))
+     cyCurTop = m_pDoc->ToPhysical (20);
 
    // set the info for the top view
-   m_wndSplitter.SetRowInfo (OUTPUT_PANE, cyCurTop, 20);
+   m_wndSplitter.SetRowInfo (OUTPUT_PANE, cyCurTop, m_pDoc->ToPhysical (20));
 
    // set the info for the bottom view
-   m_wndSplitter.SetRowInfo (COMMAND_PANE, cyCurBottom, 9);
+   m_wndSplitter.SetRowInfo (COMMAND_PANE, cyCurBottom, m_pDoc->ToPhysical (9));
 
    // recalculate it all
    m_wndSplitter.RecalcLayout ();

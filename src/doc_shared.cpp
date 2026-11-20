@@ -3084,16 +3084,32 @@ void CMUSHclientDoc::StartNewLine_KeepPreviousStyle (const int flags)
 // The wrap-column width of a line's stored bytes, computed from scratch.  Used
 // to (re)seed CLine::m_iCharCount when len is set directly; the per-character
 // AddToLine path maintains that cache incrementally instead of calling this.
+// For Unicode it is in cells (unicode_width.h): an ideograph or an emoji is two, and
+// a combining mark none.  A plugin's view of a line is still bytes: this is only about
+// where the line breaks.
 static int RawLineLengthInChars (const CLine * pLine, const bool bUTF_8)
   {
   if (!bUTF_8)
     return pLine->len;
 
-  return MultiByteToWideChar (CP_UTF8, 0, pLine->text, pLine->len, NULL, 0);
+  return unicode::Utf8Cells (pLine->text, pLine->len);
+  }
+
+// The cluster tracker has lost its place (a new line, a split, a line cleared): walk
+// what is on the line now.
+static void ResyncWrapTracker (unicode::ClusterTracker & tracker, const CLine * pLine)
+  {
+  tracker.Reset ();
+  for (int i = 0; i < pLine->len; )
+    {
+    unsigned int iCodePoint;
+    i += unicode::DecodeUtf8 (pLine->text + i, pLine->len - i, iCodePoint);
+    tracker.Add (iCodePoint);
+    }
   }
 
 // the width of the current line, as the wrap column counts it: for Unicode
-// that is characters, not stored bytes.  O(1) -- reads the maintained cache
+// that is cells, not stored bytes.  O(1) -- reads the maintained cache
 // rather than rescanning the whole line on every character (the O(len^2) trap).
 static int LineLengthInChars (const CLine * pLine, const bool bUTF_8)
   {
@@ -3115,7 +3131,7 @@ int saved_count;
   for (p = lpszText; *p; p++)
     {
     c = *p;
-    // for Unicode the width of the line is characters, not stored bytes
+    // for Unicode the width of the line is cells, not stored bytes
     int iLineLength = LineLengthInChars (m_pCurrentLine, m_bUTF_8);
 
 /*
@@ -3135,13 +3151,64 @@ Unicode range              UTF-8 bytes
     int bNewCharacter = true;    // normally each character is a new one
 
     // but UTF-8 characters which have the high-order 2 bits == 80 are not
-    if (m_bUTF_8 && ((c & 0xC0) == 0x80))
-       bNewCharacter = false;
+    //
+    // And nor is anything that joins the grapheme cluster before it: "e" and its accent
+    // stay together on one line, as do the parts of a flag or a family emoji.  iCells is
+    // what this byte adds to the line's width.  Plain ASCII takes the first branch and
+    // goes no further: this runs for every character of everything that arrives.
+    int iCells = 1;
+    if (m_bUTF_8)
+      {
+      if ((c & 0xC0) == 0x80)
+        {
+        bNewCharacter = false;
+        iCells = 0;
+        }
+      else if (c >= 0x80 || !m_bWrapTrackerPlainAscii
+               || m_pWrapTrackerLine != m_pCurrentLine || m_iWrapTrackerLen != m_pCurrentLine->len)
+        {
+        if (m_pWrapTrackerLine != m_pCurrentLine || m_iWrapTrackerLen != m_pCurrentLine->len)
+          ResyncWrapTracker (m_WrapTracker, m_pCurrentLine);
+        else if (m_bWrapTrackerPlainAscii)
+          {
+          // it hasn't seen the ASCII since it last looked, and needs only the last of it
+          m_WrapTracker.Reset ();
+          if (m_pCurrentLine->len > 0)
+            m_WrapTracker.Add ((unsigned char) m_pCurrentLine->text [m_pCurrentLine->len - 1]);
+          }
+
+        // AddToLine's text is NUL-terminated, so a sequence cut short just decodes as bad
+        unsigned int iCodePoint;
+        unicode::DecodeUtf8 (p, 4, iCodePoint);
+        bNewCharacter = m_WrapTracker.Add (iCodePoint);
+        iCells = m_WrapTracker.iDelta;
+        m_bWrapTrackerPlainAscii = c < 0x80;
+        }
+      }
+
+    // Four bytes a column isn't enough for marks and joined emoji, which take room in
+    // the buffer and none on the screen.  Give it more, rather than breaking a line that
+    // isn't full, up to a limit: there's no end to the marks a server can send.
+    if (m_bUTF_8 && m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated &&
+        (!bNewCharacter || iLineLength + iCells <= m_nWrapColumn) &&
+        m_pCurrentLine->iMemoryAllocated < m_nWrapColumn * 64)
+      {
+      const int iNewSize = m_pCurrentLine->iMemoryAllocated * 2;
+#ifdef USE_REALLOC
+      m_pCurrentLine->text = (char *) realloc (m_pCurrentLine->text, iNewSize);
+#else
+      char * pNewText = new char [iNewSize];
+      memcpy (pNewText, m_pCurrentLine->text, m_pCurrentLine->len);
+      delete [] m_pCurrentLine->text;
+      m_pCurrentLine->text = pNewText;
+#endif
+      m_pCurrentLine->iMemoryAllocated = iNewSize;
+      }
 
   // in the Unicode case we are allocating 4 bytes per character so we shouldn't
   // overshoot the allocated memory, but just in case, we test that we don't
 
-    if (((iLineLength >= m_nWrapColumn) && bNewCharacter) ||  // usual case
+    if (((iLineLength + iCells > m_nWrapColumn) && bNewCharacter && iLineLength > 0) ||  // usual case
         (m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated))  // emergency bail-out
       {
 
@@ -3194,7 +3261,8 @@ Unicode range              UTF-8 bytes
         } // end of checking for a space, Big5 or GB2132 break point
 
       if (last_space < 0 ||   // if no break point found, break anyway at end of line
-        (m_pCurrentLine->len - last_space) >= m_nWrapColumn)
+        (m_bUTF_8 ? unicode::Utf8Cells (m_pCurrentLine->text + last_space, m_pCurrentLine->len - last_space) + (iCells > 1 ? iCells : 1)
+                  : m_pCurrentLine->len - last_space + 1) > m_nWrapColumn)
           StartNewLine_KeepPreviousStyle (flags);
       else
         {
@@ -3298,12 +3366,9 @@ Unicode range              UTF-8 bytes
     // add character to line
     m_pCurrentLine->text [m_pCurrentLine->len] = c;
     m_pCurrentLine->len++;    // line has one more character
-    if (bNewCharacter)        // keep the width cache in step with len
-      {
-      m_pCurrentLine->m_iCharCount++;
-      if (sizeof (wchar_t) == 2 && m_bUTF_8 && (c & 0xF8) == 0xF0)
-        m_pCurrentLine->m_iCharCount++;   // 4-byte UTF-8 = a UTF-16 surrogate pair
-      }
+    m_pCurrentLine->m_iCharCount += iCells;   // keep the width cache in step with len
+    m_pWrapTrackerLine = m_pCurrentLine;
+    m_iWrapTrackerLen = m_pCurrentLine->len;
 //BUG    m_pCurrentLine->flags = flags;  // ensure we retain existing flags
 
     // style spans one more character now
@@ -5137,7 +5202,7 @@ int CMUSHclientDoc::WrapColumnForCharWidth (int iAveCharWidth) const
   if (iWidth <= 0)
     return 0;      // no measured output window — caller keeps its figure
 
-  return ClampWrapColumn ((iWidth - m_iPixelOffset) / iAveCharWidth);
+  return ClampWrapColumn ((iWidth - PixelOffset ()) / iAveCharWidth);
   }
 
 // ── OutputFontCharWidth ─────────────────────────────────────────────────────
@@ -5292,7 +5357,7 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
 
       pmyView->GetTextRect (&r);
 
-      WORD height = (r.bottom - r.top - m_iPixelOffset) / m_FontHeight;
+      WORD height = (r.bottom - r.top - PixelOffset ()) / m_FontHeight;
 
       // now tell them our size
       unsigned char p [13];   // IAC SB NAWS + up to 8 escaped payload bytes + IAC SE

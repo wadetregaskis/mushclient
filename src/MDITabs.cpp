@@ -20,6 +20,7 @@ Hinweis: 2001 by Christian Rodemeyer
 #include "doc.h"
 #include "childfrm.h"
 #include "textchildfrm.h"
+#include "dpi.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -63,8 +64,9 @@ afx_msg LRESULT CMDITabs::OnSizeParent(WPARAM, LPARAM lParam)
     {  
     AFX_SIZEPARENTPARAMS* pParams = reinterpret_cast<AFX_SIZEPARENTPARAMS*>(lParam);
     
-    const int height = 26 + (m_bImages ? 1 : 0);
-    const int offset = 2;
+    const int iDpi = Dpi_ForWindow (m_hWnd);
+    const int height = ::MulDiv (26 + (m_bImages ? 1 : 0), iDpi, 96);
+    const int offset = ::MulDiv (2, iDpi, 96);
     
     m_height = height + offset;
     m_width  = pParams->rect.right - pParams->rect.left;

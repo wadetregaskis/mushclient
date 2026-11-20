@@ -22,6 +22,7 @@
 #include <climits>
 #include <memory>
 #include "platform/wx_toolbar.h"
+#include "appearance.h"
 
 // Defined in wx_mfc_impl.cpp (see the same forward declaration in
 // wx_activity.cpp): raise + activate a world's frame.  Declared rather than
@@ -254,6 +255,21 @@ wxBitmap TileBitmap (const wxImage& strip, int index)
     if (x + kTileW > strip.GetWidth()) return wxBitmap();
 
     wxImage tile = strip.GetSubImage(wxRect(x, 0, kTileW, kTileH));
+
+    // Black outlines on a dark bar can't be seen.  Done when the strip is cut, so a
+    // bar built before the system changes keeps its old colours until it is rebuilt.
+    if (Appearance_IsDark())
+        for (int py = 0; py < kTileH; py++)
+            for (int px = 0; px < kTileW; px++)
+            {
+                const unsigned char r = tile.GetRed(px, py);
+                const unsigned char g = tile.GetGreen(px, py);
+                const unsigned char b = tile.GetBlue(px, py);
+                if (r == kKeyR && g == kKeyG && b == kKeyB)
+                    continue;
+                const unsigned long out = Appearance_ToolbarPixelForDark(r | (g << 8) | (b << 16));
+                tile.SetRGB(px, py, out & 0xFF, (out >> 8) & 0xFF, (out >> 16) & 0xFF);
+            }
 
 #if wxCHECK_VERSION(3, 1, 0)
     tile = tile.Scale(kTileW * 2, kTileH * 2, wxIMAGE_QUALITY_NEAREST);

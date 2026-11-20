@@ -2,6 +2,7 @@
 //
 
 #include "stdafx.h"
+#include "dpi.h"
 #include "MUSHclient.h"
 #include "mainfrm.h"
 
@@ -247,6 +248,15 @@ int i;
   for (i = 0; i < NUMITEMS (m_font); i++)  
     m_font [i] = NULL;
   m_input_font = NULL;
+  m_iDpi = 96;
+#ifdef _WIN32
+  m_iDpi = Dpi_ForSystem ();    // a view on another monitor will say so
+#endif
+  m_iRasterScale = 1;
+  m_bRasterOutputFont = false;
+  m_pWrapTrackerLine = NULL;
+  m_iWrapTrackerLen = 0;
+  m_bWrapTrackerPlainAscii = true;
   m_FontHeight = 0;
   m_FontWidth = 0;
   m_InputFontHeight = 0;

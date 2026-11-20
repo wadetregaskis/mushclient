@@ -135,6 +135,10 @@ public:
         // test window).
         wxDisableAsserts();
 
+        // before InitInstance reads the preference and calls Appearance_Init
+        extern void WxAppearance_Install();
+        WxAppearance_Install();
+
         // Before any control exists: opt this application out of "add full stop
         // with double-space".  It is the one macOS substitution with no
         // per-view switch, and in a MUD client the inserted period is SENT.

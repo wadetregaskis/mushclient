@@ -45,6 +45,14 @@
         </application>
     </compatibility>
 
+    <!-- Per-monitor v2: src/dpi.h says what that means here. -->
+    <asmv3:application>
+        <asmv3:windowsSettings>
+            <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+            <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+        </asmv3:windowsSettings>
+    </asmv3:application>
+
     <!-- Enable Common Controls v6 for visual styles -->
     <dependency>
         <dependentAssembly>

@@ -123,6 +123,7 @@ long CMUSHclientDoc::WindowCreate(LPCTSTR Name,
   else
     pMiniWindow = it->second;
 
+  pMiniWindow->SetBackingDpi (m_iDpi);
   pMiniWindow->Create (Left, Top, Width, Height,
                        Position, Flags, 
                        BackgroundColour);

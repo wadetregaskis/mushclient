@@ -344,6 +344,26 @@
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="src\appearance.cpp">
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\appearance_win.cpp">
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\unicode_width.cpp">
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\dpi.cpp">
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\dwrite_text.cpp">
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="src\globalregistryoptions.cpp">
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Debug|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="&apos;$(Configuration)|$(Platform)&apos;==&apos;Release|Win32&apos;">%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -1671,9 +1691,11 @@
     <ClCompile Include="tests\win\test_win_a11y_pane.cpp" />
     <ClCompile Include="tests\win\test_user_data.cpp" />
     <ClCompile Include="tests\win\test_spell_engine.cpp" />
+    <ClCompile Include="tests\win\test_hidpi_win.cpp" />
     <ClCompile Include="tests\test_accelerators.cpp" />
     <ClCompile Include="tests\test_aliases.cpp" />
     <ClCompile Include="tests\test_ansi.cpp" />
+    <ClCompile Include="tests\test_appearance.cpp" />
     <ClCompile Include="tests\test_autosave.cpp" />
     <ClCompile Include="tests\test_bundled_files.cpp" />
     <ClCompile Include="tests\test_chat_protocol.cpp" />
@@ -1704,6 +1726,8 @@
     <ClCompile Include="tests\test_telnet.cpp" />
     <ClCompile Include="tests\test_timers.cpp" />
     <ClCompile Include="tests\test_triggers.cpp" />
+    <ClCompile Include="tests\test_unicode.cpp" />
+    <ClCompile Include="tests\test_unicode_wrap.cpp" />
     <ClCompile Include="tests\test_update.cpp" />
     <ClCompile Include="tests\test_utilities.cpp" />
     <ClCompile Include="tests\test_world_load.cpp" />

@@ -9,6 +9,7 @@
 //
 #include "stdafx.h"
 #include "StatLink.h"
+#include "appearance.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -76,7 +77,12 @@ HBRUSH CStaticLink::CtlColor(CDC* pDC, UINT nCtlColor)
 
 		// use underline font and visited/unvisited colors
 		pDC->SelectObject(&m_font);
+#ifdef _WIN32
+		// the classic link blue can't be read on a dark dialog
+		pDC->SetTextColor(Appearance_IsDark () ? Appearance_LinkColour () : m_color);
+#else
 		pDC->SetTextColor(m_color);
+#endif
 		pDC->SetBkMode(TRANSPARENT);
 
 		// return hollow brush to preserve parent background color

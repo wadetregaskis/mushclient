@@ -28,6 +28,7 @@
 #include "xml/xmlparse.h"
 #include "paneline.h"
 #include "miniwindow.h"
+#include "unicode_width.h"
 #include "plugins.h"
 #include "version.h"
 
@@ -829,6 +830,25 @@ public:
   unsigned short m_bLineInformation;
   unsigned short m_bStartPaused;
 
+
+  // What the display is, for this world's windows (dpi.h).  What plugins see is 96 dpi,
+  // permanently; the view works in real pixels.  96 and 1 on the port, whose own canvas
+  // does the scaling, so that all of these conversions are the identity there.
+  // Where wrapping has got to in the current line's grapheme clusters (AddToLine).
+  unicode::ClusterTracker m_WrapTracker;
+  const CLine * m_pWrapTrackerLine;
+  int m_iWrapTrackerLen;
+  bool m_bWrapTrackerPlainAscii;   // nothing but ASCII since the tracker last looked
+
+  int m_iDpi;
+  int m_iRasterScale;    // how many times over to draw a bitmap font: see ChangeFont
+  bool m_bRasterOutputFont;   // FixedSys and the like, which only GDI can draw
+  int ToPhysical (const int iLogical) const { return m_iDpi == 96 ? iLogical : MulDiv (iLogical, m_iDpi, 96); }
+  int ToLogical (const int iPhysical) const { return m_iDpi == 96 ? iPhysical : MulDiv (iPhysical, 96, m_iDpi); }
+  int PixelOffset () const { return ToPhysical (m_iPixelOffset); }
+#ifdef _WIN32
+  void SetDpi (const int iDpi);
+#endif
 
   LONG    m_font_height;               
   CString m_font_name;   

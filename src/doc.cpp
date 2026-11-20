@@ -2,6 +2,7 @@
 //
 
 #include "stdafx.h"
+#include "dpi.h"
 #include "MUSHclient.h"
 #ifdef _WIN32
 #include <process.h>
@@ -1195,7 +1196,32 @@ int i;
 
   dc.CreateCompatibleDC (NULL);
 
-  for (i = 0; i < NUMITEMS (m_font); i++)  
+  // The size to ask for.  Aware of the display, that's the real pixels, except for a
+  // bitmap font: FixedSys answers the same height at any size, so it would just be
+  // small.  That is asked for at its own size and drawn blown up (display_text).
+  int iFontDpi = dc.GetDeviceCaps (LOGPIXELSY);
+  m_iRasterScale = 1;
+#ifdef _WIN32
+  iFontDpi = m_iDpi;
+  m_bRasterOutputFont = false;
+    {
+    CFont probe;
+    probe.CreateFont (-MulDiv (nHeight ? nHeight : 10, iFontDpi, 72), 0, 0, 0, nWeight, 0, 0, 0,
+                      iFontCharset, 0, 0, 0, MUSHCLIENT_FONT_FAMILY, lpszFacename);
+    CFont * pOldFont = dc.SelectObject (&probe);
+    TEXTMETRIC tmProbe;
+    dc.GetTextMetrics (&tmProbe);
+    dc.SelectObject (pOldFont);
+    if ((tmProbe.tmPitchAndFamily & (TMPF_VECTOR | TMPF_TRUETYPE)) == 0)
+      {
+      m_bRasterOutputFont = true;
+      m_iRasterScale = Dpi_RasterFactor (iFontDpi);
+      iFontDpi = 96;
+      }
+    }
+#endif
+
+  for (i = 0; i < NUMITEMS (m_font); i++)
     {
      m_font [i] = new CFont;    // create new font
 
@@ -1212,7 +1238,7 @@ int i;
 
     
      // if height is zero, default to 10 so it doesn't look stupid
-     int lfHeight = -MulDiv(nHeight ? nHeight : 10, dc.GetDeviceCaps(LOGPIXELSY), 72);
+     int lfHeight = -MulDiv(nHeight ? nHeight : 10, iFontDpi, 72);
 
      m_font [i]->CreateFont(lfHeight, // int nHeight, 
 				    0, // int nWidth, 
@@ -1239,11 +1265,11 @@ int i;
     dc.GetTextMetrics(&tm);
 
     if (iLineSpacing)
-      m_FontHeight = iLineSpacing;    // override
+      m_FontHeight = ToPhysical (iLineSpacing);    // override
     else
-      m_FontHeight = tm.tmHeight; 
+      m_FontHeight = tm.tmHeight * m_iRasterScale;
 
-    m_FontWidth = tm.tmAveCharWidth;
+    m_FontWidth = tm.tmAveCharWidth * m_iRasterScale;
 
 #ifndef _WIN32
     // Non-Windows: there is no CMUSHView to re-size — the visible output pane
@@ -1299,6 +1325,34 @@ int i;
 
 } // end of CMUSHclientDoc::ChangeFont
 
+#ifdef _WIN32
+// This world's window is on a monitor of a different scale from where it was.
+void CMUSHclientDoc::SetDpi (const int iDpi)
+  {
+  if (iDpi == m_iDpi || iDpi <= 0)
+    return;
+
+  m_iDpi = iDpi;
+
+  ChangeFont (m_font_height, m_font_name, m_font_weight, m_font_charset,
+              m_bShowBold, m_bShowItalic, m_bShowUnderline, m_iLineSpacing);
+
+  ChangeInputFont (m_input_font_height, m_input_font_name, m_input_font_weight,
+                   m_input_font_charset, m_input_font_italic);
+
+  // Miniwindows are stretched to the new backing, and sharpen when next drawn.
+  for (MiniWindowMapIterator it = m_MiniWindows.begin (); it != m_MiniWindows.end (); ++it)
+    if (it->second)
+      it->second->Rescale (iDpi);
+
+  CChildFrame * pFrame = GetChildFrame ();
+  if (pFrame)
+    pFrame->FixUpSplitterBar ();
+
+  UpdateAllViews (NULL);
+  }
+#endif
+
 void CMUSHclientDoc::ChangeInputFont (const int nHeight, 
                             const char * lpszFacename,
                             const int nWeight, 
@@ -1321,7 +1375,30 @@ CDC dc;
 
 dc.CreateCompatibleDC (NULL);
 
-   int lfHeight = -MulDiv(nHeight ? nHeight : 10, dc.GetDeviceCaps(LOGPIXELSY), 72);
+   int iInputDpi = dc.GetDeviceCaps(LOGPIXELSY);
+#ifdef _WIN32
+   iInputDpi = m_iDpi;
+#endif
+   int lfHeight = -MulDiv(nHeight ? nHeight : 10, iInputDpi, 72);
+
+#ifdef _WIN32
+   // An edit control can't draw a bitmap font any larger than it comes, and from 150%
+   // FixedSys is too small to type in comfortably.  Consolas here, for as long as the
+   // display needs it: the world's setting isn't touched, and the output window keeps
+   // the real face, blown up.
+   if (iInputDpi >= 144)
+     {
+     CFont probe;
+     probe.CreateFont (lfHeight, 0, 0, 0, nWeight, bItalic, 0, 0, iCharset, 0, 0, 0,
+                       MUSHCLIENT_FONT_FAMILY, lpszFacename);
+     CFont * pOldFont = dc.SelectObject (&probe);
+     TEXTMETRIC tmProbe;
+     dc.GetTextMetrics (&tmProbe);
+     dc.SelectObject (pOldFont);
+     if ((tmProbe.tmPitchAndFamily & (TMPF_VECTOR | TMPF_TRUETYPE)) == 0)
+       lpszFacename = "Consolas";
+     }
+#endif
 
    m_input_font->CreateFont(lfHeight, // int nHeight, 
 				  0, // int nWidth, 

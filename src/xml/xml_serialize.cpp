@@ -104,9 +104,10 @@ bool IsArchiveXML (CArchive& ar)
   // auto-detect XML files
 
   char buf [500],     // should be even number of bytes in case Unicode
-       buf2 [500];
+       buf2 [500 * 2];    // as UTF-8: up to 3 bytes for each 2 of UTF-16
 
   memset (buf, 0, sizeof (buf));
+  memset (buf2, 0, sizeof (buf2));
   ar.GetFile ()->Read (buf, sizeof (buf) - 2);   // allow for Unicode 00 00
   ar.GetFile ()->SeekToBegin ();  // back to start for further serialisation
 
@@ -114,7 +115,20 @@ bool IsArchiveXML (CArchive& ar)
   if ((unsigned char) buf [0] == 0xFF &&
       (unsigned char) buf [1] == 0xFE)
 #ifdef _WIN32
-    WideCharToMultiByte (CP_UTF8, 0, (LPCWSTR) &buf [2], -1, buf2, sizeof buf2, NULL, NULL);
+    {
+    // The 249 UTF-16 units read can need up to 747 bytes of UTF-8, and buf2
+    // was 500: a file with enough non-ASCII text near its start failed the
+    // conversion, which leaves buf2 unterminated, and the strlen below ran off
+    // the end of it.  buf2 is big enough for all of them now, zeroed, and its
+    // last byte is never written.
+    LPCWSTR pWide = (LPCWSTR) &buf [2];
+    int nWide = 0;
+    while (nWide < (int) (sizeof buf - 2) / 2 && pWide [nWide] != 0)
+      nWide++;
+    if (nWide > 0 &&
+        WideCharToMultiByte (CP_UTF8, 0, pWide, nWide, buf2, sizeof buf2 - 1, NULL, NULL) == 0)
+      buf2 [0] = 0;     // not convertible: not XML
+    }
 #else
     {
     // wchar_t is 4 bytes off-Windows: casting the UTF-16LE byte stream to
@@ -142,7 +156,7 @@ bool IsArchiveXML (CArchive& ar)
   char * p = buf2;
 
   // skip leading whitespace
-  while (isspace (*p))
+  while (isspace ((unsigned char) *p))
     p++;
 
   // can't see them squeezing much into less than 15 chars

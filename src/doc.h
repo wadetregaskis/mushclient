@@ -1601,6 +1601,23 @@ public:
   bool m_bShowingMapperStatus;  // if set, don't change status line for 5 seconds
   CStringList m_strIncludeFileList;         // list of root level include files
   CStringList m_strCurrentIncludeFileList;  // list of current tree of include files
+  // The files being loaded right now, outermost first: Load_World_XML pushes
+  // its own on entry.  Every file, plugins and their includes too -- the list
+  // above is kept only for a world's own includes, so a plugin that included
+  // itself recursed until the stack overflowed.
+  std::vector<CString> m_vLoadingFiles;
+  // Load warnings made before the output window exists, shown in one box when
+  // the outermost load finishes (LoadError) rather than a box apiece.
+  CString m_strDeferredLoadErrors;
+  CString m_strDeferredLoadErrorsFile;     // the file the last one is in
+  int     m_iDeferredLoadErrors = 0;       // all of them, shown or not
+  int     m_iDeferredLoadErrorsShown = 0;  // the ones in the box text
+  void ShowDeferredLoadErrors (void);
+  // Throws when an <include name="..."> is a device or a stranger's share.
+  void CheckIncludeName (const CString & strName);
+  // ChatNote's limits (bytes, lines) and its ON_PLUGIN_CHAT_DISPLAY: false when a
+  // plugin has taken the message.  Shared with chat text shown other ways.
+  bool ChatDisplayFilter (short NoteType, CString & strMessage);
 
   CNumericConfigurationArray m_NumericConfiguration;
   CAlphaConfigurationArray m_AlphaConfiguration;

@@ -105,9 +105,18 @@ inline unsigned int ApplyDefaultMessageBoxIcon(unsigned int nType)
 // (Utilities.cpp) does not go near it, it builds its own UTF-16 box and calls
 // ::MessageBoxW.  Off Windows both funnel into UMessageBox, which is why one
 // hook is enough there and two are needed here.
+// A test can stand in for the user: set this and every box comes to it, to
+// answer as it likes -- and to do what a user's wait allows, since a real box
+// runs a message loop in which sockets, timers and the rest keep running (the
+// chat tests close a socket and run the reaper "inside" a box).  Null: the
+// headless answer below.  Inline, so the one pointer serves every TU.
+inline int (*g_pfnMcTestMessageBox)(const char* text, unsigned int nType) = nullptr;
+
 inline int McTestMessageBox(const char* text, unsigned int nType,
                             const char* caption)
 {
+    if (g_pfnMcTestMessageBox)
+        return g_pfnMcTestMessageBox(text ? text : "", nType);
     fprintf(stderr, "MUSHclient [%s]: %s\n",
             caption ? caption : "MUSHclient", text ? text : "");
     fflush(stderr);   // interleave correctly with the test suite's own stdout

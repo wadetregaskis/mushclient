@@ -72,6 +72,12 @@ static void xmlOuputNode (lua_State *L, CXMLelement & node)
   {
   POSITION pos;
 
+  // Three slots a level (this node's table, "nodes" and its table), and a C
+  // function is promised only LUA_MINSTACK (20): six levels of nesting wrote
+  // past the end of Lua's stack.  The parser caps the depth (MAX_XML_DEPTH),
+  // so this always has room; it errors cleanly if it ever did not.
+  luaL_checkstack (L, 6, "XML nested too deeply");
+
   lua_newtable(L);    // table of this node
 
   MakeTableItem (L, "name", node.strName);    // node name, eg. <trigger>

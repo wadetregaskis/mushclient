@@ -699,6 +699,9 @@ static int utils_showdebugstatus(lua_State* L)
 
 static void xmlOutputElement(lua_State* L, CXMLelement& node)
 {
+    // Two slots a level, and a C function is promised only LUA_MINSTACK (20):
+    // see lua_utils.cpp's xmlOuputNode.  MAX_XML_DEPTH keeps this in reach.
+    luaL_checkstack(L, 4, "XML nested too deeply");
     lua_newtable(L);
 
     lua_pushstring(L, (const char*)node.strName);

@@ -13,6 +13,15 @@
 #include "../genprint.h"
 #include "../mainfrm.h"
 #include "../dialogs/ProgDlg.h"
+#include "../pal/path_safety.h"
+
+// Files loading files: a world, its plugins, their includes.  Real ones go
+// three or four deep; this is the most (Load_World_XML).
+#define MAX_INCLUDE_DEPTH 32
+
+// Load warnings named in the one box shown at the end of a load (LoadError);
+// all of them go to the output window.
+#define MAX_LOAD_ERRORS_IN_BOX 10
 
 /*
 
@@ -352,6 +361,18 @@ CPlugin * pCurrentPlugin = m_CurrentPlugin;
 
 iErrorCount = 0;
 
+// This file is being loaded (m_vLoadingFiles) for as long as this runs, however
+// it ends.  The outermost load is the one that shows the warnings collected
+// along the way (LoadError).
+struct LoadingFile
+  {
+  CMUSHclientDoc * m_pDoc;
+  LoadingFile (CMUSHclientDoc * pDoc, const CString & strPath) : m_pDoc (pDoc)
+    { m_pDoc->m_vLoadingFiles.push_back (strPath); }
+  ~LoadingFile ()
+    { m_pDoc->m_vLoadingFiles.pop_back (); }
+  } loading (this, ar.GetFile ()->GetFilePath ());
+
 #if TIMER_TEST
 LARGE_INTEGER start, 
               finish;
@@ -369,6 +390,28 @@ LONGLONG iCounterFrequency = large_int_frequency.QuadPart;
       strFileName = CLIPBOARD_NAME;
 
     iLineLastItemFound = 0;
+
+    // A file that includes itself, however indirectly, and includes nested
+    // past reason.  Only a world's own includes were checked ("has already
+    // been included", Load_One_Include_XML), so a plugin that included itself
+    // -- or two that included each other -- recursed until the stack
+    // overflowed.  This sees every file: worlds, plugins, their includes.
+    // (A file two siblings both include is fine: only the chain from the
+    // outermost file down to this one is compared.)
+    {
+    const CString strPath = ar.GetFile ()->GetFilePath ();
+    if (!strPath.IsEmpty ())
+      for (size_t i = 0; i + 1 < m_vLoadingFiles.size (); i++)
+#ifdef _WIN32
+        if (m_vLoadingFiles [i].CompareNoCase (strPath) == 0)
+#else
+        if (m_vLoadingFiles [i] == strPath)
+#endif
+          ThrowErrorException ("File \"%s\" includes itself", (LPCTSTR) strPath);
+    if (m_vLoadingFiles.size () > (size_t) MAX_INCLUDE_DEPTH)
+      ThrowErrorException ("Include files nested too deeply (more than %i levels)",
+                           MAX_INCLUDE_DEPTH);
+    }
 
 #if TIMER_TEST
     START_TIMING;
@@ -608,11 +651,40 @@ LONGLONG iCounterFrequency = large_int_frequency.QuadPart;
     if (iLineLastItemFound == 0)
       iLineLastItemFound = parser.m_xmlLine;
     HandleLoadException ("Cannot load", e);
+    if (m_vLoadingFiles.size () == 1)
+      ShowDeferredLoadErrors ();    // the outermost load: one box for them all
     AfxThrowArchiveException (CArchiveException::badSchema);
     }
 
+  if (m_vLoadingFiles.size () == 1)
+    ShowDeferredLoadErrors ();      // the outermost load: one box for them all
+
   return count;
   } // end of CMUSHclientDoc::Load_World_XML
+
+// The load warnings LoadError collected, in one box.  Upstream showed a box per
+// warning before the output window existed, so a world with a few dozen stale
+// attributes (a plugin written for a later version, say) meant clicking OK a
+// few dozen times before it opened.  Now one box names the first few, says how
+// many more there were, and all of them are in the output window as notes.
+void CMUSHclientDoc::ShowDeferredLoadErrors (void)
+  {
+  if (m_iDeferredLoadErrors == 0)
+    return;
+
+  CString strText = m_strDeferredLoadErrors;
+  if (m_iDeferredLoadErrors > m_iDeferredLoadErrorsShown)
+    strText += TFormat ("\n... and %i more (all of them are in the output window).",
+                        m_iDeferredLoadErrors - m_iDeferredLoadErrorsShown);
+
+  // reset first: the box runs a message loop, and a load inside it starts afresh
+  m_strDeferredLoadErrors.Empty ();
+  m_strDeferredLoadErrorsFile.Empty ();
+  m_iDeferredLoadErrors = 0;
+  m_iDeferredLoadErrorsShown = 0;
+
+  ::AfxMessageBox (strText);
+  } // end of CMUSHclientDoc::ShowDeferredLoadErrors
 
 void CMUSHclientDoc::LoadError (const char * sType, const char * sMessage, UINT iLine)
   {
@@ -644,16 +716,35 @@ void CMUSHclientDoc::LoadError (const char * sType, const char * sMessage, UINT 
     // plugin it includes, so "Line 18: Error parsing script" cannot be
     // traced.  The note below carries the file in its [WARNING] title; the
     // box gets the same context here.
-    ::AfxMessageBox (TFormat ("Error loading %s\n\n%s",
-                              (LPCTSTR) strFileName, (LPCTSTR) str));
-#ifndef _WIN32
-    // ...but the port's AfxMessageBox (platform/mfc_ui.h) is a stderr stub, so
-    // on this side the box shows nothing at all.  Queue the detail as a note
-    // as well; Tell defers notes made before the output buffer exists, so it
-    // appears once the world window is up.  Costs Windows nothing -- this arm
-    // is not compiled there.
+    //
+    // Divergence 39: one box per LOAD, not per warning (ShowDeferredLoadErrors,
+    // called when the outermost Load_World_XML finishes).  Each warning used
+    // to be a box of its own -- a world with forty stale attributes was forty
+    // OKs.  The box names the first MAX_LOAD_ERRORS_IN_BOX, under the file
+    // each is in, and how many more there were.
+    if (m_iDeferredLoadErrors < MAX_LOAD_ERRORS_IN_BOX)
+      {
+      if (m_iDeferredLoadErrors == 0 || strFileName != m_strDeferredLoadErrorsFile)
+        {
+        if (m_iDeferredLoadErrors > 0)
+          m_strDeferredLoadErrors += "\n";
+        m_strDeferredLoadErrors += TFormat ("Error loading %s\n\n", (LPCTSTR) strFileName);
+        m_strDeferredLoadErrorsFile = strFileName;
+        }
+      m_strDeferredLoadErrors += str;
+      m_iDeferredLoadErrorsShown++;
+      }
+    m_iDeferredLoadErrors++;
+
+    // Queue the detail as a note as well, so ALL of them can be read once the
+    // world window is up (Tell defers notes made before the output buffer
+    // exists).  The port always did this, its AfxMessageBox being a stderr
+    // stub; Windows does too now that its box may not list them all.
     ColourNote (SCRIPTERRORCONTEXTFORECOLOUR, SCRIPTERRORBACKCOLOUR, str);
-#endif
+
+    // Not inside a load (no outermost one to show them at the end): now.
+    if (m_vLoadingFiles.empty ())
+      ShowDeferredLoadErrors ();
     }
   else
     ColourNote (SCRIPTERRORCONTEXTFORECOLOUR, SCRIPTERRORBACKCOLOUR, str);
@@ -828,7 +919,59 @@ POSITION lpos;
 
   } // end of CMUSHclientDoc::Load_Includes_XML
 
-void CMUSHclientDoc::Load_One_Include_XML (CXMLelement & node, 
+// An include's name as the file wrote it: refused if it is a device path, or a
+// network one the user's own setup does not account for.
+//
+// Opening \\host\share\x makes Windows connect to that host and offer it the
+// user's NTLM credentials, so a world or plugin file passed around could have
+// the client sign in to a stranger's server just by being opened; \\.\ and
+// \\?\ name pipes, serial ports and raw devices.  Neither was checked.
+//
+// The policy, chosen to keep real setups loading:
+//   * device paths (\\.\, \\?\, \??\) and device names (NUL, COM1, ...): never.
+//   * UNC paths: only on a share the client already uses -- the one the world
+//     file, the file doing the including, the plugins folder, the worlds folder
+//     or the program itself is on.  A world kept on a NAS beside its plugins
+//     loads as it did; a share named only in the file is refused.
+//   * local absolute paths and ".." stay allowed: people keep plugins in
+//     folders of their own, and a local file reveals nothing to anyone.
+// The check is of the name as written; what $PLUGINSDEFAULTDIR, $WORLDDIR and
+// the rest expand to is the user's own configuration.
+void CMUSHclientDoc::CheckIncludeName (const CString & strName)
+  {
+  const std::string sName ((LPCTSTR) strName);
+
+  if (pal::IsDeviceNamespacePath (sName))
+    ThrowErrorException ("Include file \"%s\" refused: it names a device, not a file",
+                         (LPCTSTR) strName);
+
+  if (!pal::IsUncPath (sName))
+    return;
+
+  const std::string sShare = pal::UncShareRoot (sName);
+  if (!sShare.empty ())
+    {
+    std::vector<CString> places;
+    places.push_back (GetPathName ());
+    places.insert (places.end (), m_vLoadingFiles.begin (), m_vLoadingFiles.end ());
+    places.push_back (CString (Make_Absolute_Path (App.m_strPluginsDirectory)));
+    places.push_back (CString (Make_Absolute_Path (App.m_strDefaultWorldFileDirectory)));
+    places.push_back (ExtractDirectory (App.m_strMUSHclientFileName));
+    if (m_CurrentPlugin)
+      places.push_back (m_CurrentPlugin->m_strSource);
+
+    for (const CString & strPlace : places)
+      if (pal::UncShareRoot (std::string ((LPCTSTR) strPlace)) == sShare)
+        return;     // a share this client already uses
+    }
+
+  ThrowErrorException ("Include file \"%s\" refused: it is on another computer, and "
+                       "opening it would send that computer your Windows sign-in. "
+                       "Copy it to a local folder (or to the share the world is on).",
+                       (LPCTSTR) strName);
+  } // end of CMUSHclientDoc::CheckIncludeName
+
+void CMUSHclientDoc::Load_One_Include_XML (CXMLelement & node,
                                      const unsigned long iMask,
                                      const unsigned long iFlags,
                                      const bool bPlugins,  // only if plugin="y"
@@ -899,6 +1042,14 @@ bool bPlugin;
     // do plugins and non-plugins at different times
     if (bPlugin == bPlugins)
       {
+      CheckIncludeName (strOriginalName);   // no network or device paths
+
+      // ...and whatever the $-names and the folders made of it, not a device
+      if (pal::IsDeviceNamespacePath (std::string ((LPCTSTR) strFileName)) ||
+          pal::IsWindowsDeviceName (pal::LastPathComponent (std::string ((LPCTSTR) strFileName))))
+        ThrowErrorException ("Include file \"%s\" names a device, not a file",
+                             (LPCTSTR) strOriginalName);
+
       if (!bPlugin && !m_CurrentPlugin)
         {
         // don't include it twice
@@ -1163,12 +1314,28 @@ void CMUSHclientDoc::Load_World_Single_Line_Alpha_Options_XML (CXMLelement & par
             // make sure hex characters
             const char * p = strValue;
             for ( ; *p ; p++)
-              if (!isxdigit (*p))
+              if (!isxdigit ((unsigned char) *p))
                ThrowErrorException ("World \"id\" field must be %i hex characters",
                                     PLUGIN_UNIQUE_ID_LENGTH);
 
             strValue.MakeLower ();
             }   // end of world ID
+
+          // The two options that are a file the client opens by itself: not a
+          // device (\\.\pipe\x, \\?\..., NUL, COM1).  UNC names are left alone
+          // here -- logs and scripts kept on a NAS are real setups, and a
+          // world file is not inert data anyway: its triggers and aliases can
+          // run script.  (Includes are held to more: CheckIncludeName.)
+          if (strcmp (AlphaOptionsTable [i].pName, "script_filename") == 0 ||
+              strcmp (AlphaOptionsTable [i].pName, "auto_log_file_name") == 0)
+            {
+            const std::string sPath ((LPCTSTR) strValue);
+            if (pal::IsDeviceNamespacePath (sPath) ||
+                (!sPath.empty () &&
+                 pal::IsWindowsDeviceName (pal::LastPathComponent (sPath))))
+              ThrowErrorException ("\"%s\" names a device, not a file",
+                                   (LPCTSTR) strValue);
+            }
 
       // found it - set value
           SetAlphaOptionItem (i, strValue, true, (iFlags & LOAD_INCLUDE) != 0);
@@ -2542,7 +2709,7 @@ void CMUSHclientDoc::Load_Plugin_XML (CXMLelement & parent)
       // make sure hex characters
       const char * p = m_CurrentPlugin->m_strID;
       for ( ; *p ; p++)
-        if (!isxdigit (*p))
+        if (!isxdigit ((unsigned char) *p))
          ThrowErrorException ("Plugin \"id\" field must be %i hex characters",
                               PLUGIN_UNIQUE_ID_LENGTH);
 

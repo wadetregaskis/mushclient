@@ -9,6 +9,19 @@
 #define MAX_XML_DOCUMENT_SIZE (100 * 1024 * 1024)   // max XML file length - 100 MB
 #define MAX_XML_NAME_LENGTH 255        // max name of element (eg. <trigger> )
 
+// Elements may nest this deep.  ProcessNode recurses once per level (and the
+// tree's readers -- utils.xmlread among them -- do too), so 100,000 nested
+// <a> overflowed the stack.  The deepest real file found was 4 levels (world
+// files, the bundled plugins, Quow's Discworld plugins); 512 is far past any.
+#define MAX_XML_DEPTH 512
+
+// What entity references may add to a document, in all: max(this, twice the
+// file).  Each entity is expanded in full where it is defined, so ten
+// definitions each naming the last ten times (the "billion laughs") came to
+// gigabytes from a few hundred bytes.  Real files use the five standard
+// entities, each of which makes the text shorter, and a few short custom ones.
+#define MIN_XML_ENTITY_EXPANSION (16 * 1024 * 1024)
+
 class CXMLelement;
 
 class CAttribute : public CObject
@@ -54,13 +67,25 @@ class CXMLelement : public CObject
     bEmpty = false;
     bUsed = false;
     iLine = 1;
-    AttributeMap.InitHashTable (127);
+    // The same 127 buckets (so attributes come back in the same order), but
+    // allocated by the first SetAt: most elements have no attributes, and
+    // every one of them used to allocate the table anyway -- about 1 KB each
+    // on x64, most of a large plugin's parse tree.
+    AttributeMap.InitHashTable (127, FALSE);
     };    // constructor
 
-  // destructor deletes attributes and children
+  // destructor deletes attributes and children -- without recursing: each
+  // child's own children are moved onto the list first, so a deep tree is
+  // freed in a loop rather than one stack frame per level.
   ~CXMLelement () 
     { 
-    DELETE_LIST (ChildrenList); 
+    while (!ChildrenList.IsEmpty ())
+      {
+      CXMLelement * pChild = ChildrenList.RemoveHead ();
+      while (!pChild->ChildrenList.IsEmpty ())
+        ChildrenList.AddTail (pChild->ChildrenList.RemoveHead ());
+      delete pChild;      // childless now: its destructor does not recurse
+      }
     DELETE_MAP  (AttributeMap, CAttribute);
     };  // destructor
 
@@ -73,6 +98,9 @@ class CXMLparser : public CObject
   CString m_strxmlBuffer;   // buffer for parsing
   UINT m_xmlLength;  // size of XML buffer
   UINT m_xmlPos;     // where we are in the buffer
+  int  m_iDepth;     // elements open at m_xmlPos (MAX_XML_DEPTH)
+  double m_fEntityBytes;      // bytes entity references have added so far
+  double m_fMaxEntityBytes;   // ...and the most they may (MIN_XML_ENTITY_EXPANSION)
 
   void SkipComments (const bool bAndSpaces);
   void SkipSpaces (void);
@@ -102,6 +130,9 @@ class CXMLparser : public CObject
     m_xmlLine = 1;  // first line is line 1
     m_xmlPos = 0;   // start at start of buffer
     m_xmlLength = 0;
+    m_iDepth = 0;
+    m_fEntityBytes = 0;
+    m_fMaxEntityBytes = MIN_XML_ENTITY_EXPANSION;
 
     }; // end of constructor
 

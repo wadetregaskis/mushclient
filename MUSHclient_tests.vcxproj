@@ -1681,6 +1681,7 @@
     <ClCompile Include="tests\win\all_tests.cpp" />
     <ClCompile Include="tests\win\test_prefs_pages.cpp" />
     <ClCompile Include="tests\win\test_gap_coverage.cpp" />
+    <ClCompile Include="tests\win\test_chat_xml_hardening.cpp" />
     <ClCompile Include="tests\win\test_notepad_win.cpp" />
     <ClCompile Include="tests\win\test_menu_rules_win.cpp" />
     <ClCompile Include="tests\win\test_win_transport.cpp" />

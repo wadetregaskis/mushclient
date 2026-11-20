@@ -407,6 +407,44 @@ void CMUSHclientDoc::ChatNote(short NoteType, LPCTSTR Message)
   if (strMessage.GetLength () >= 1 && strMessage.Right (1) == '\n')
     strMessage = strMessage.Left (strMessage.GetLength () - 1);
 
+  if (!ChatDisplayFilter (NoteType, strMessage))
+    return;   // false means plugin handled it
+
+
+// save old colours - because we switch to the chat colour below
+bool bOldNotesInRGB = m_bNotesInRGB;
+COLORREF iOldNoteColourFore = m_iNoteColourFore;
+COLORREF iOldNoteColourBack = m_iNoteColourBack;
+
+  if (m_cChatForegroundColour == m_cChatBackgroundColour)
+    NoteColourRGB (RGB (255, 0, 0), RGB (0, 0, 0));
+  else
+    NoteColourRGB (m_cChatForegroundColour, m_cChatBackgroundColour);
+
+  // get rid of unwanted incoming colour codes
+  if (m_bIgnoreChatColours)
+    strMessage = ::StripAnsi (strMessage);
+
+  AnsiNote (m_strChatMessagePrefix + strMessage);
+
+  // put the colours back
+  if (bOldNotesInRGB)
+    {
+    m_iNoteColourFore = iOldNoteColourFore;
+    m_iNoteColourBack = iOldNoteColourBack;
+    }
+  else
+    m_bNotesInRGB = false;
+
+}  // end of  CMUSHclientDoc::ChatNote
+
+// The world's limits on a chat message's size (m_iMaxChatBytesPerMessage,
+// m_iMaxChatLinesPerMessage), then ON_PLUGIN_CHAT_DISPLAY.  ChatNote's, split
+// out so that chat text displayed some other way -- snoop data, which keeps
+// its own colours -- is held to the same limits and seen by the same plugins.
+bool CMUSHclientDoc::ChatDisplayFilter (short NoteType, CString & strMessage)
+{
+
   // check message is not too long for what we accept - bytes
 
   if (m_iMaxChatBytesPerMessage > 0)
@@ -449,40 +487,13 @@ void CMUSHclientDoc::ChatNote(short NoteType, LPCTSTR Message)
             (int) m_iMaxChatLinesPerMessage);
     }   // end of line count check wanted
 
-  if (!SendToAllPluginCallbacks (ON_PLUGIN_CHAT_DISPLAY, 
-                                NoteType,     // message number
-                                string (strMessage),    // message text
-                                false,
-                                true))  // stop on false response
-    return;   // false means plugin handled it 
+  return SendToAllPluginCallbacks (ON_PLUGIN_CHAT_DISPLAY,
+                                   NoteType,     // message number
+                                   string (strMessage),    // message text
+                                   false,
+                                   true) != FALSE;  // stop on false response
 
-
-// save old colours - because we switch to the chat colour below
-bool bOldNotesInRGB = m_bNotesInRGB;
-COLORREF iOldNoteColourFore = m_iNoteColourFore;
-COLORREF iOldNoteColourBack = m_iNoteColourBack;
-
-  if (m_cChatForegroundColour == m_cChatBackgroundColour) 
-    NoteColourRGB (RGB (255, 0, 0), RGB (0, 0, 0));
-  else
-    NoteColourRGB (m_cChatForegroundColour, m_cChatBackgroundColour);
-
-  // get rid of unwanted incoming colour codes
-  if (m_bIgnoreChatColours)
-    strMessage = ::StripAnsi (strMessage);
-  
-  AnsiNote (m_strChatMessagePrefix + strMessage);
-
-  // put the colours back
-  if (bOldNotesInRGB)
-    {
-    m_iNoteColourFore = iOldNoteColourFore;
-    m_iNoteColourBack = iOldNoteColourBack;
-    }
-  else  
-    m_bNotesInRGB = false;
-
-}  // end of  CMUSHclientDoc::ChatNote
+}  // end of  CMUSHclientDoc::ChatDisplayFilter
 
 long CMUSHclientDoc::ChatAcceptCalls(short Port) 
 {
@@ -1179,6 +1190,16 @@ long CMUSHclientDoc::ChatSendFile(long ID, LPCTSTR FileName)
     return eAlreadyTransferringFile;
     }
 
+  // ...and nor while they are offering us one that the user is being asked
+  // about: that question's yes then put its own CFile over the one opened
+  // below, which leaked, still open.
+  if (pSocket->m_bFileOfferPending)
+    {
+    ChatNote (eChatFile, TFormat ("Already being offered a file by %s",
+                (LPCTSTR) pSocket->m_strRemoteUserName));
+    return eAlreadyTransferringFile;
+    }
+
   CString strName = FileName;
 
   // if no file name, put up standard file dialog
@@ -1205,7 +1226,8 @@ long CMUSHclientDoc::ChatSendFile(long ID, LPCTSTR FileName)
 		  return eFileNotFound;
 
     // they may have hung up while the user was choosing
-    if (pSocket->m_bDeleteMe || pSocket->m_bDoingFileTransfer)
+    if (pSocket->m_bDeleteMe || pSocket->m_bDoingFileTransfer ||
+        pSocket->m_bFileOfferPending)
       {
       ChatNote (eChatFile, TFormat ("Chat ID %i is no longer available to send to.", (int) ID));
       return eChatIDNotFound;

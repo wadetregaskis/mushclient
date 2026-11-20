@@ -859,7 +859,11 @@ int __cdecl BudgetHook (int type, void * pvData, size_t size, int blockType, lon
         return FALSE;
       g_liveLines++;
       }
-    if (g_rawBudget.load () >= 0 && std::find (g_rawSizes.begin (), g_rawSizes.end (), size) != g_rawSizes.end ())
+    // A block's buffer is its raw size and a little: the string's spare byte and rounding,
+    // and on x86 and x64 the 47 bytes MSVC's allocator adds to align a big allocation.
+    if (g_rawBudget.load () >= 0 &&
+        std::any_of (g_rawSizes.begin (), g_rawSizes.end (),
+                     [size] (size_t raw) { return size >= raw && size <= raw + 96; }))
       {
       if (g_rawMade.load () >= g_rawBudget.load ())
         return FALSE;

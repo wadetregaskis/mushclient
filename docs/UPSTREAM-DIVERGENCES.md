@@ -1519,10 +1519,33 @@ would have seen before the world closed, with these differences:
   the rest of it.
 
 Nothing typed while the server has echo off reaches either file, since it may be a password.
-`always_record_command_history` still keeps such a line for the up arrow, in memory only.
+`always_record_command_history`, `world.PushCommand` and saving a command that Escape throws
+away still keep such a line for the up arrow on Windows, as upstream does, in memory only;
+the port, whose history has no such distinction, doesn't keep it at all, and
+`world.AddToCommandHistory` with echo off is refused there for the same reason.  An alias
+that echoes the typed line draws it on the screen even with echo off, as upstream does, but
+that line is left out of the saved output.
+
+The files are named by the world's ID, which a copy of the world file shares, so
+`<world id>.owner` says which world file they belong to.  A different world file with that
+ID (a copy made for an alt, by Save As or in Explorer) gets `w-<hash of its path>.mcsb` and
+`.history` of its own, unless the owner is no longer there: then it was moved or renamed,
+and takes them over.  A world file with no ID, which is given a new one each time it opens
+until it is saved, uses the path name meanwhile, and the files go over to the ID once the
+world has been saved with one.  Files from before there was an owner go to the first world
+to open with that ID.  A world renamed by Save As keeps writing where it started until it
+is closed.
+
+The command history is saved every 30 seconds if it has changed, and on close, on both
+platforms.  With Window > New Window, a world has two command boxes, each with a history of
+its own: the first one's is saved, or, when one is closed, the other's.
 
 **File format:** see the head of `scrollback_store.h`.  A file saved with the world's UTF-8
-option the other way round isn't used; a file from a later version is left alone.
+option the other way round isn't used; a file from a later version is left alone.  A block
+that is damaged costs that block, and older ones are restored in its place if the buffer
+has room; damage in a record's header costs only that record, and doesn't stop the rest
+being read or cut it off.  If there isn't the memory to restore it all, the newest lines
+come back and the file keeps the rest.
 
 **Why:** the owner asked for it, up to the full size of the buffer, unlimited included, and
 for reopening to be quick on a slow disk.  1,000,000 lines of styled text take 19 MB and
@@ -1547,7 +1570,11 @@ and another try in five minutes, and closing the world still asks.
 Before a world file is overwritten, a copy goes to `backups/<name>-<hash>/` in the data
 folder, at the first save of a session and then hourly, if it differs from the newest.  Kept:
 the newest 5, the newest 10 at least an hour apart, and the newest of each of the last 7
-days.  File > World Backups opens the folder.  To go back, open one and Save As.
+days, by the local calendar.  File > World Backups opens the folder.  To go back, open one
+and Save As.  A copy is named by when it was taken (`20261031-235959.mcl`, with `-2` added
+if the clocks going back make that name come round twice); anything else in the folder is
+the user's, and is never pruned.  An automatic save waits while a dialog is up, on either
+platform.
 
 `on_world_save` and `OnPluginWorldSave` run for an automatic save as for any other, since
 something keeping state in world variables needs them to.  So a plugin that notes each

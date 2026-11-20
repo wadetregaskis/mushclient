@@ -349,7 +349,8 @@ class CLine : public CObject
   // per-character full UTF-8 rescan (which made AddToLine O(len^2) per line).
   // For a single-byte line it equals len; only consulted for UTF-8.
   int m_iCharCount;
-  char * text;          // allocated as necessary and then resized
+  char * text;          // allocated as necessary and then resized (SetCapacity)
+  void SetCapacity (const int nBytes);  // resize text, never below len; Line.cpp
   CStyleList styleList; // list of styles applying to text, see above
   CTime m_theTime;      // time this line arrived
   LARGE_INTEGER m_lineHighPerformanceTime;  

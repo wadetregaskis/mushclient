@@ -126,6 +126,36 @@ CLine::~CLine ()
 
   }
 
+// Resize the text buffer to nBytes, never below len (or 1), keeping the text and
+// keeping iMemoryAllocated true.  Every site that reallocates a line's text goes
+// through here: AddToLine's one guard against writing past the end of the buffer is
+// `len >= iMemoryAllocated`, so a size recorded wrongly is a heap overflow waiting
+// for the next byte (docs/UPSTREAM-BUGS.md #100).
+void CLine::SetCapacity (const int nBytes)
+  {
+  int iNewSize = nBytes;
+  if (iNewSize < len)
+    iNewSize = len;
+  if (iNewSize < 1)
+    iNewSize = 1;
+  if (iNewSize == iMemoryAllocated && text)
+    return;
+
+#ifdef USE_REALLOC
+  char * pNewText = (char *) realloc (text, iNewSize);
+  if (!pNewText)
+    throw std::bad_alloc();
+  text = pNewText;
+#else
+  char * pNewText = new char [iNewSize];
+  if (len > 0)
+    memcpy (pNewText, text, len);
+  delete [] text;
+  text = pNewText;
+#endif
+  iMemoryAllocated = iNewSize;
+  }   // end of CLine::SetCapacity
+
 // for tracking down style allocation errors
 
 CStyle * GetNewStyle (const char * filename, const long linenumber)

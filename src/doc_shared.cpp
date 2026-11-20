@@ -3116,6 +3116,22 @@ static int LineLengthInChars (const CLine * pLine, const bool bUTF_8)
   return bUTF_8 ? pLine->m_iCharCount : pLine->len;
   }   // end of LineLengthInChars
 
+// Where a UTF-8 sequence that the last bytes of pText leave unfinished starts, or -1
+// if they finish one (or are not UTF-8 at all).  A lead byte says how long its
+// sequence is, so only the last three bytes need looking at.
+static int Utf8IncompleteTail (const char * pText, const int iLength)
+  {
+  for (int i = iLength - 1; i >= 0 && i >= iLength - 3; i--)
+    {
+    const unsigned char c = (unsigned char) pText [i];
+    if ((c & 0xC0) == 0x80)
+      continue;   // a continuation byte: keep looking for its lead
+    const int iWant = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    return iLength - i < iWant ? i : -1;
+    }
+  return -1;
+  }   // end of Utf8IncompleteTail
+
 // called from DisplayMsg to actually add to the current line
 // and also from the MXP routines to put stuff there
 void CMUSHclientDoc::AddToLine (LPCTSTR lpszText, const int flags)
@@ -3191,19 +3207,9 @@ Unicode range              UTF-8 bytes
     // isn't full, up to a limit: there's no end to the marks a server can send.
     if (m_bUTF_8 && m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated &&
         (!bNewCharacter || iLineLength + iCells <= m_nWrapColumn) &&
-        m_pCurrentLine->iMemoryAllocated < m_nWrapColumn * 64)
-      {
-      const int iNewSize = m_pCurrentLine->iMemoryAllocated * 2;
-#ifdef USE_REALLOC
-      m_pCurrentLine->text = (char *) realloc (m_pCurrentLine->text, iNewSize);
-#else
-      char * pNewText = new char [iNewSize];
-      memcpy (pNewText, m_pCurrentLine->text, m_pCurrentLine->len);
-      delete [] m_pCurrentLine->text;
-      m_pCurrentLine->text = pNewText;
-#endif
-      m_pCurrentLine->iMemoryAllocated = iNewSize;
-      }
+        m_pCurrentLine->iMemoryAllocated < m_nWrapColumn * 64 &&
+        m_pCurrentLine->iMemoryAllocated > 0)   // (a placeholder line with no buffer: start a real one)
+      m_pCurrentLine->SetCapacity (m_pCurrentLine->iMemoryAllocated * 2);
 
   // in the Unicode case we are allocating 4 bytes per character so we shouldn't
   // overshoot the allocated memory, but just in case, we test that we don't
@@ -3260,9 +3266,25 @@ Unicode range              UTF-8 bytes
 
         } // end of checking for a space, Big5 or GB2132 break point
 
-      if (last_space < 0 ||   // if no break point found, break anyway at end of line
+      bool bNoBreakPoint = last_space < 0 ||
         (m_bUTF_8 ? unicode::Utf8Cells (m_pCurrentLine->text + last_space, m_pCurrentLine->len - last_space) + (iCells > 1 ? iCells : 1)
-                  : m_pCurrentLine->len - last_space + 1) > m_nWrapColumn)
+                  : m_pCurrentLine->len - last_space + 1) > m_nWrapColumn;
+
+      // Only the emergency bail-out (a line full of marks, at the limit) can get here
+      // on a byte in the middle of a UTF-8 sequence.  Breaking the line there would
+      // split the character in two, so the start of the sequence goes over with it.
+      if (bNoBreakPoint && m_bUTF_8 && (c & 0xC0) == 0x80)
+        {
+        const int iLead = Utf8IncompleteTail (m_pCurrentLine->text, m_pCurrentLine->len);
+        if (iLead > 0)
+          {
+          last_space = iLead;
+          bSplitAtSpace = false;
+          bNoBreakPoint = false;
+          }
+        }
+
+      if (bNoBreakPoint)
           StartNewLine_KeepPreviousStyle (flags);
       else
         {
@@ -3303,7 +3325,14 @@ Unicode range              UTF-8 bytes
           pStyle = m_pCurrentLine->styleList.GetTail ();
           DELETESTYLE (pStyle);
           m_pCurrentLine->styleList.RemoveTail ();
-        
+
+          // The new line has room for four bytes a column, and what moves over can be
+          // far more: the wrap counts cells, and a word of letters each carrying a
+          // dozen combining marks is a few cells and hundreds of bytes.  Size it by
+          // the bytes, with room for the byte about to be added.
+          if (saved_count >= m_pCurrentLine->iMemoryAllocated)
+            m_pCurrentLine->SetCapacity (saved_count * 2);
+
           memcpy (m_pCurrentLine->text, (LPCTSTR) strText, saved_count);
           m_pCurrentLine->len = saved_count;
           m_pCurrentLine->m_iCharCount =
@@ -3362,6 +3391,13 @@ Unicode range              UTF-8 bytes
       }   // end of line being full
 
     ASSERT (m_pCurrentLine->text);
+
+    // Whatever the wrapping above did, the byte goes inside the buffer.  It should
+    // never need this; it is here because a mistake here is a heap overflow that any
+    // server can drive.
+    ASSERT (m_pCurrentLine->len < m_pCurrentLine->iMemoryAllocated);
+    if (m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated)
+      m_pCurrentLine->SetCapacity (m_pCurrentLine->len + 16);
 
     // add character to line
     m_pCurrentLine->text [m_pCurrentLine->len] = c;

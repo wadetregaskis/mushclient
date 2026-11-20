@@ -615,7 +615,7 @@ struct FakeUiThread
     {
     return [this] (std::function<void ()> f)
       {
-      std::lock_guard<std::mutex> lock (mutex);
+      std::lock_guard<std::mutex> lock (this->mutex);   // this->: in a lambda, plain "mutex" names the type
       if (bRefuse)
         return false;
       queue.push_back (std::move (f));
@@ -1121,7 +1121,7 @@ struct HeldDownloader
       for (int i = 0; i < 2000; i++)
         {
           {
-          std::lock_guard<std::mutex> lock (mutex);
+          std::lock_guard<std::mutex> lock (this->mutex);   // this->: in a lambda, plain "mutex" names the type
           if (bGo)
             break;
           }
@@ -1237,7 +1237,7 @@ struct HeldFetcher
       for (int i = 0; i < 2000; i++)
         {
           {
-          std::lock_guard<std::mutex> lock (mutex);
+          std::lock_guard<std::mutex> lock (this->mutex);   // this->: in a lambda, plain "mutex" names the type
           bFailing = bFail;
           if (bGo)
             break;

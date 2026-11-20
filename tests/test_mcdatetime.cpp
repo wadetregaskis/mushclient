@@ -3,6 +3,7 @@
 
 #include "mc_test.h"
 #include <set>
+#include <cmath>
 #include <ctime>
 #include "stdafx.h"
 #include "mcdatetime.h"
@@ -92,10 +93,13 @@ TEST(CmcDateTimeTest, GetTimeNowHasSubSecondPrecision) {
     EXPECT_TRUE(seen.size() > 5);   // truncation gives 1-2
 
     // ...and the elapsed time is a real fraction, not a whole number of
-    // seconds.  ~200 ms of sleeping: more than zero, well under one second.
+    // seconds.  ~200 ms of sleeping asked for, but Windows rounds each sleep up
+    // to its tick and a loaded or emulated machine stretches it further: past a
+    // second once, under x64 emulation.  So: more than zero, and not whole.
     const double elapsedSecs = (t1.m_dt - t0.m_dt) * kSecsInDay;
     EXPECT_TRUE(elapsedSecs > 0.05);
-    EXPECT_TRUE(elapsedSecs < 1.0);
+    EXPECT_TRUE(fabs(elapsedSecs - floor(elapsedSecs + 0.5)) > 0.0005);
+    EXPECT_TRUE(elapsedSecs < 30.0);
 }
 
 TEST(CmcDateTimeTest, CopyConstruct) {

@@ -51,7 +51,7 @@ bool IsPlainName (const std::string & name)
   if (name.empty () || name.size () > 64)
     return false;
   for (const unsigned char c : name)
-    if (!isalnum (c) && c != '_' && c != '-')
+    if (!proto::IsAsciiAlnum (c) && c != '_' && c != '-')
       return false;
   return true;
   }
@@ -221,11 +221,14 @@ bool Proto_MxpLineComplete (CMUSHclientDoc & doc, const CString & strLine, POSIT
   state.lineTag = 0;
   state.bLineTagFromEscape = false;
 
-  // every segment of a wrapped line, for GetLineInfo
+  // every segment of a wrapped line, for GetLineInfo, and nothing after it: a plugin's
+  // OnPluginLineReceived has run, and the notes it wrote are not the server's line
   for (POSITION pos = firstLine; pos; )
     {
     CLine * pLine = doc.m_LineList.GetNext (pos);
     pLine->m_iMXPLineTag = (unsigned char) tag;
+    if (pLine->hard_return)
+      break;
     }
 
   bool bOmit = false;
@@ -374,11 +377,27 @@ void Proto_MxpNoteExpiringLink (CMUSHclientDoc & doc)
   if (state.openExpire.empty () || !doc.m_pCurrentLine)
     return;
 
+  const long line = doc.m_pCurrentLine->m_nLineNumber;
   const auto it = state.expireOldest.find (state.openExpire);
   if (it != state.expireOldest.end ())
-    it->second = (std::min) (it->second, doc.m_pCurrentLine->m_nLineNumber);
-  else if (state.expireOldest.size () < kMaxExpireNames)
-    state.expireOldest [state.openExpire] = doc.m_pCurrentLine->m_nLineNumber;
+    {
+    it->second.oldest = (std::min) (it->second.oldest, line);
+    it->second.newest = (std::max) (it->second.newest, line);
+    return;
+    }
+
+  // Full: the name used longest ago goes, and its links stay for good, rather than the
+  // new one, which is far more likely to be expired soon.  A server making names up
+  // for ever cannot make the list longer, or the walk back in Proto_MxpExpire.
+  if (state.expireOldest.size () >= kMaxExpireNames)
+    {
+    auto stalest = state.expireOldest.begin ();
+    for (auto other = state.expireOldest.begin (); other != state.expireOldest.end (); ++other)
+      if (other->second.newest < stalest->second.newest)
+        stalest = other;
+    state.expireOldest.erase (stalest);
+    }
+  state.expireOldest [state.openExpire] = CProtocolState::ExpireLines { line, line };
   }
 
 // <EXPIRE name> kills that name's links, <EXPIRE> every link with a name.  Walking back
@@ -392,8 +411,8 @@ void Proto_MxpExpire (CMUSHclientDoc & doc, const CString & strName)
   if (strName.IsEmpty ())
     {
     for (const auto & item : state.expireOldest)
-      if (oldest < 0 || item.second < oldest)
-        oldest = item.second;
+      if (oldest < 0 || item.second.oldest < oldest)
+        oldest = item.second.oldest;
     state.expireOldest.clear ();
     }
   else
@@ -401,7 +420,7 @@ void Proto_MxpExpire (CMUSHclientDoc & doc, const CString & strName)
     const auto it = state.expireOldest.find ((const char *) strName);
     if (it != state.expireOldest.end ())
       {
-      oldest = it->second;
+      oldest = it->second.oldest;
       state.expireOldest.erase (it);
       }
     }
@@ -469,6 +488,39 @@ void Proto_MxpBinding (CMUSHclientDoc & doc, const bool bGauge, const std::strin
   pBinding->caption = caption;
   pBinding->colour = colour;
   state.bBindingsDirty = true;
+  }
+
+bool Proto_MxpEntityFits (CMUSHclientDoc & doc, const CString & strName, const size_t length)
+  {
+  const char * pWhy = NULL;
+
+  CString strOld;
+  const bool bExists = doc.m_CustomEntityMap.Lookup (strName, strOld) != 0;
+
+  if (length > proto::kMxpMaxEntityValue)
+    pWhy = "it would be longer than 16 KB";
+  else if (!bExists && (size_t) doc.m_CustomEntityMap.GetCount () >= proto::kMxpMaxEntities)
+    pWhy = "there are 1024 entities already";
+  else if (length > (size_t) strOld.GetLength ())
+    {
+    // At most 1024 of them, and only when one grows, so adding them up is cheap.
+    size_t total = 0;
+    for (POSITION pos = doc.m_CustomEntityMap.GetStartPosition (); pos; )
+      {
+      CString strKey, strValue;
+      doc.m_CustomEntityMap.GetNextAssoc (pos, strKey, strValue);
+      total += (size_t) strValue.GetLength ();
+      }
+    if (total - (size_t) strOld.GetLength () + length > proto::kMxpMaxEntityTotal)
+      pWhy = "all the entities together would be more than 1 MB";
+    }
+
+  if (!pWhy)
+    return true;
+
+  doc.MXP_error (DBG_ERROR, errMXP_InvalidDefinition,
+                 CFormat ("MXP entity &%s; not changed: %s", (LPCTSTR) strName, pWhy));
+  return false;
   }
 
 void Proto_MxpEntityChanged (CMUSHclientDoc & doc)
@@ -740,7 +792,16 @@ void Proto_MxpDivertByte (CMUSHclientDoc & doc, const unsigned char c)
   pFrame->Put (&ch, 1, fore, back);
   }
 
-static void PaintFrame (CMUSHclientDoc & doc, CMxpFrame & frame)
+// A server chooses what frames hold, and a cell of a new colour each is a run each:
+// eight frames of 200 rows of 256 would be some 400,000 calls to draw text and fill
+// rectangles, at the end of every packet.  So frames are painted no more than a few
+// times a second (what is left waits for Proto_Tick), and a paint draws no more than
+// kMaxRunsPerPaint runs.  Past that, the rest of each row is drawn in the colour it
+// starts with: the text is all there, and only a server doing this sees the difference.
+static const uint64_t kFramePaintIntervalMs = 250;
+static const size_t kMaxRunsPerPaint = 2048;
+
+static void PaintFrame (CMUSHclientDoc & doc, CMxpFrame & frame, size_t & runsLeft)
   {
   frame.bDirty = false;
 
@@ -782,8 +843,12 @@ static void PaintFrame (CMUSHclientDoc & doc, CMxpFrame & frame)
       {
       size_t end = start;
       std::string run;
-      while (end < cells.size () && cells [end].fore == cells [start].fore &&
-             cells [end].back == cells [start].back)
+      const bool bMerge = runsLeft == 0;     // out of runs: the rest of the row is one
+      if (runsLeft)
+        runsLeft--;
+      doc.m_pProto->framePaintRuns++;
+      while (end < cells.size () && (bMerge || (cells [end].fore == cells [start].fore &&
+                                                cells [end].back == cells [start].back)))
         run += cells [end++].ch;
       const long width = doc.WindowTextWidth (window.c_str (), "f", run.c_str (), doc.m_bUTF_8);
       if (cells [start].back != RGB (0, 0, 0))
@@ -802,19 +867,27 @@ void Proto_MxpPaint (CMUSHclientDoc & doc)
   {
   CProtocolState & state = *doc.m_pProto;
 
-  if (!state.bBindingsDirty && !state.bFramesDirty)
+  const uint64_t now = state.Now ();
+  const bool bFramesDue = state.bFramesDirty &&
+                          (state.lastFramePaint == 0 || now < state.lastFramePaint ||
+                           now - state.lastFramePaint >= kFramePaintIntervalMs);
+
+  if (!state.bBindingsDirty && !bFramesDue)
     return;
 
+  // the bindings window is a line for each of at most 32, and cheap: it keeps up
   if (state.bBindingsDirty)
     PaintBindings (doc);
 
-  if (state.bFramesDirty)
+  if (bFramesDue)
     {
     state.bFramesDirty = false;
+    state.lastFramePaint = now;
+    size_t runsLeft = kMaxRunsPerPaint;
     if (doc.m_bMXPWindows)
       for (auto & item : state.frames)
         if (item.second->bDirty)
-          PaintFrame (doc, *item.second);
+          PaintFrame (doc, *item.second, runsLeft);
     }
 
   doc.Redraw ();
@@ -937,13 +1010,16 @@ void Proto_MxpRelocate (CMUSHclientDoc & doc, const std::string & host, const st
     return;
     }
 
+  // The link is for this offer and no other: a later one replaces it, and a link left
+  // in the output from before goes nowhere instead of to whatever came last.
   state.relocateHost = host;
   state.relocatePort = iPort;
+  state.relocateOffer++;
 
   CProtocolNote note;
   note.text = (const char *) CFormat ("This server wants you to reconnect to %s, port %i.",
                                       host.c_str (), iPort);
-  note.action = Proto_ActionLink ("relocate", "");
+  note.action = Proto_ActionLink ("relocate", std::to_string (state.relocateOffer));
   note.linkText = CFormat ("Go to %s:%i (your password will not be sent)", host.c_str (), iPort).GetString ();
   Proto_Note (doc, note);
   }

@@ -83,6 +83,10 @@ bool Proto_RunAction (CMUSHclientDoc & doc, const CString & verb, const CString 
     const int port = atoi (arg);
     if (port < 1 || port > 65535)
       return true;
+    // A port the server we were sent to offered is no port of the world's own host.
+    // (Proto_HandleMssp does not offer one then, but a note from before can be clicked.)
+    if (state.bRelocated)
+      return true;
     doc.m_bUseSSL = true;
     doc.m_port = (unsigned short) port;
     doc.SetModifiedFlag (TRUE);
@@ -112,14 +116,22 @@ bool Proto_RunAction (CMUSHclientDoc & doc, const CString & verb, const CString 
 
   if (verb == "relocate")
     {
-    // The link says only that it is the offer on the table; what was offered is here.
-    if (state.relocateHost.empty ())
+    // The link carries the number of its offer, and what was offered is here.  A link
+    // from an earlier offer, or from an earlier connection, does nothing: its note said
+    // where it would go, and that is no longer where this would.
+    if (state.relocateHost.empty () || atoi (arg) != state.relocateOffer)
+      {
+      Proto_Note (doc, "That offer to reconnect elsewhere is no longer open.");
+      Proto_FlushNotes (doc);
       return true;
-    state.relocateOriginalServer = (const char *) doc.m_server;
-    state.relocateOriginalPort = doc.m_port;
-    doc.m_server = state.relocateHost.c_str ();
-    doc.m_port = (unsigned short) state.relocatePort;
+      }
+
+    // Where it goes is kept here, for this connection only.  The world's own address
+    // is not touched: it is what gets saved, by autosave too, and what the next launch
+    // would log in to with the player's name and password.
     state.bRelocated = true;
+    state.relocatedHost = state.relocateHost;
+    state.relocatedPort = (unsigned short) state.relocatePort;
     Proto_Note (doc, CFormat ("Connecting to %s, port %i. Your password will not be sent there.",
                               state.relocateHost.c_str (), state.relocatePort).GetString ());
     Proto_FlushNotes (doc);
@@ -132,6 +144,49 @@ bool Proto_RunAction (CMUSHclientDoc & doc, const CString & verb, const CString 
     }
 
   return false;
+  }
+
+// ---------------------------------------------------------------- where to connect
+
+CString Proto_ConnectHost (CMUSHclientDoc & doc)
+  {
+  const CProtocolState & state = *doc.m_pProto;
+  if (state.bRelocated && !state.relocatedHost.empty ())
+    return state.relocatedHost.c_str ();
+  return doc.m_server;
+  }
+
+unsigned short Proto_ConnectPort (CMUSHclientDoc & doc)
+  {
+  const CProtocolState & state = *doc.m_pProto;
+  if (state.bRelocated && state.relocatedPort)
+    return state.relocatedPort;
+  return doc.m_port;
+  }
+
+static void EndRelocation (CMUSHclientDoc & doc)
+  {
+  CProtocolState & state = *doc.m_pProto;
+  if (!state.bRelocated)
+    return;
+  state.bRelocated = false;
+  state.relocatedHost.clear ();
+  state.relocatedPort = 0;
+  doc.ForgetMudAddresses ();     // what was looked up was the other host's
+  }
+
+void Proto_ConnectStarting (CMUSHclientDoc & doc)
+  {
+  CProtocolState & state = *doc.m_pProto;
+  if (state.bRelocateConnecting)
+    {
+    // The addresses kept are the world's own host's, from the last connection.
+    doc.ForgetMudAddresses ();
+    return;
+    }
+  // Any other connection -- the player's, a reconnection after a drop, a script's --
+  // goes home.  So does one after a relocation that never connected.
+  EndRelocation (doc);
   }
 
 // ---------------------------------------------------------------- the guard
@@ -250,6 +305,11 @@ void Proto_HandleNewEnviron (CMUSHclientDoc & doc)
 void Proto_HandleMssp (CMUSHclientDoc & doc)
   {
   CProtocolState & state = *doc.m_pProto;
+
+  // Only if we said DO: a server cannot have this read without asking.  And not on a
+  // connection a relocation made, whose ports are another host's.
+  if (!doc.m_bClient_sent_IAC_DO [proto::kTelOptMssp] || state.bRelocated)
+    return;
 
   if (!doc.m_bMsspTlsHint || doc.m_bUseSSL || doc.m_bSSL_Connected || state.bTlsOffered)
     return;
@@ -376,8 +436,15 @@ static void OscGiveBack (CMUSHclientDoc & doc)
   const std::string payload = state.osc;
   state.osc.clear ();
   const size_t sep = payload.find (';', 2);
-  if (sep != std::string::npos && sep + 1 < payload.size () && doc.m_pCurrentLine)
-    doc.AddToLine (payload.c_str () + sep + 1, 0);
+  if (sep == std::string::npos || sep + 1 >= payload.size () || !doc.m_pCurrentLine)
+    return;
+  // These bytes did not go through the display loop's UTF-8 check, so they go through
+  // the same repair here: a line holds only valid UTF-8 in a UTF-8 world.
+  const std::string text = payload.substr (sep + 1);
+  if (doc.m_bUTF_8)
+    doc.AddToLine (proto::RepairUtf8 (text).c_str (), 0);
+  else
+    doc.AddToLine (text.c_str (), 0);
   }
 
 static void OscFinished (CMUSHclientDoc & doc)
@@ -475,15 +542,18 @@ void Proto_Tick (CMUSHclientDoc & doc)
   if (state.reconnectAfterClose && doc.m_iConnectPhase == eConnectNotConnected)
     {
     state.reconnectAfterClose = false;
+    state.bRelocateConnecting = state.bRelocated;
     doc.ConnectSocket ();
+    state.bRelocateConnecting = false;
     }
 
   Proto_MspTick (doc);
+  Proto_MxpPaint (doc);      // frames that waited, to keep to a few paints a second
   Proto_FlushNotes (doc);
   }
 
-// The connection is gone.  A world that moved at a server's word goes back to the
-// address the player gave it, unless it is moving now.
+// The connection is gone.  A world that moved at a server's word goes back to its own
+// address, unless it is moving now.
 void Proto_ConnectionClosed (CMUSHclientDoc & doc)
   {
   CProtocolState & state = *doc.m_pProto;
@@ -491,10 +561,6 @@ void Proto_ConnectionClosed (CMUSHclientDoc & doc)
   Proto_MspStopAll (doc);
   state.bLinkOpen = false;
 
-  if (state.bRelocated && !state.reconnectAfterClose)
-    {
-    state.bRelocated = false;
-    doc.m_server = state.relocateOriginalServer.c_str ();
-    doc.m_port = state.relocateOriginalPort;
-    }
+  if (!state.reconnectAfterClose)
+    EndRelocation (doc);
   }

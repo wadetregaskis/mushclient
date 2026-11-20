@@ -230,6 +230,7 @@ COLORREF       iBackColour = pStyle->iBackColour;
          const bool bMusic = iAction == MXP_ACTION_MUSIC;
          proto::MspTrigger trigger;
          trigger.bMusic = bMusic;
+         trigger.bMayDownload = true;     // a secure tag: the server's, not a player's
          trigger.name = (LPCTSTR) GetArgument (ArgumentList, "fname", 1, false);
          const CString strV = GetArgument (ArgumentList, "v", 2, false);
          const CString strL = GetArgument (ArgumentList, "l", 3, false);

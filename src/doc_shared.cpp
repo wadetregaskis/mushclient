@@ -449,7 +449,7 @@ void CMUSHclientDoc::SendProxyConnectSequence (void)
   // port in network order
   const bool bIPv6 = m_sockAddr.isIPv6 ();
   const int iAddressLength = bIPv6 ? 16 : 4;
-  const unsigned short port = htons ((u_short) m_port);   // MUD port
+  const unsigned short port = htons ((u_short) Proto_ConnectPort (*this));   // MUD port
   unsigned char socks_address [4 + 16 + sizeof port] = { 5, 1, 0, (unsigned char) (bIPv6 ? 4 : 1) };
   int socks_address_length = 4;  // ie. the 4 bytes above
   // address
@@ -1330,10 +1330,16 @@ CString str;
 
   if (m_port <= 0)
     {
-    UMessageBox (TFormat ("Cannot connect to \"%s\", port number not specified", 
+    UMessageBox (TFormat ("Cannot connect to \"%s\", port number not specified",
                     (const char *) m_mush_name));
 		  return FALSE;
     }
+
+  // MXP RELOCATE: this is the world's own address unless this connection is the one the
+  // player clicked a relocation link for (protocols_telnet.cpp).  m_server and m_port
+  // themselves never change for it.
+  Proto_ConnectStarting (*this);
+  const CString strConnectHost = Proto_ConnectHost (*this);
 
   switch (m_iSocksProcessing)
     {
@@ -1374,8 +1380,8 @@ CString str;
   m_iOutputPacketCount = 0;
   m_iUTF8ErrorCount = 0;
 
-  str = TFormat ("Connecting to %s, port %d", 
-              (const char *) m_mush_name, m_port);
+  str = TFormat ("Connecting to %s, port %d",
+              (const char *) m_mush_name, Proto_ConnectPort (*this));
 #ifdef _WIN32
   Frame.SetStatusMessageNow (str);
 #else
@@ -1401,11 +1407,11 @@ CString str;
     {
     pal::NetAddress address;
 
-	  if (!pal::ParseNumericAddress (m_server, address))
+	  if (!pal::ParseNumericAddress (strConnectHost, address))
 	   {
       m_iConnectPhase = eConnectMudNameLookup;
 
-      if (LookupHostName (m_server))
+      if (LookupHostName (strConnectHost))
         return FALSE;
 
       return TRUE;    // we are waiting for host name lookup to finish
@@ -1719,7 +1725,7 @@ void CMUSHclientDoc::StartSSLHandshake (void)
   if (m_pTransport)
     {
     pal::TlsParams params;
-    params.serverName = (const char *) m_server;
+    params.serverName = (const char *) Proto_ConnectHost (*this);    // a relocation's host
     params.allowInvalidCert = m_bSSLAllowInvalidCert;
     m_pTransport->startTls (params);
     }
@@ -1893,7 +1899,7 @@ BOOL connected = nErrorCode == 0;
         case eConnectConnectingToMud:      
           strMsg += ": ";
           strMsg += pal::FormatAddress (m_sockAddr).c_str ();
-          strMsg += CFormat (", port %d", m_port);
+          strMsg += CFormat (", port %d", Proto_ConnectPort (*this));
           break; 
         case eConnectConnectingToProxy:    
           strMsg += ": ";
@@ -1971,7 +1977,7 @@ BOOL connected = nErrorCode == 0;
     // on Win32 unsigned int is the same 4 bytes this always sent.  Always
     // IPv4: InitiateConnection refuses an IPv6-only MUD through SOCKS 4.
     unsigned int address = m_sockAddr.ipv4 ();  // MUD address
-    unsigned short port = htons ((u_short) m_port);   // MUD port
+    unsigned short port = htons ((u_short) Proto_ConnectPort (*this));   // MUD port
     unsigned char socks_address [3 + 255 + sizeof address + sizeof port] = { 4, 1 };
     int socks_address_length = 2;  // ie. the 2 bytes above
     // port
@@ -2163,7 +2169,7 @@ void CMUSHclientDoc::LookupHostNameComplete (const std::vector<pal::NetAddress> 
       {
       CString strWhich = (phase == eConnectProxyNameLookup)
                          ? m_strProxyServerName
-                         : m_server;
+                         : Proto_ConnectHost (*this);
       CString strMsg = TFormat ("Unable to resolve host name for \"%s\"",
                                 (LPCTSTR) strWhich);
       // Upstream appended the platform code (`, code = %i (%s)`), and losing it
@@ -2403,7 +2409,7 @@ void CMUSHclientDoc::StartConnectAttempt ()
   // Last, and nothing after it: a local failure is reported from inside
   // connect (), and can end this attempt or start the next before it returns.
   pTransport->connect (address,
-                       (unsigned short) (bMud ? m_port : m_iProxyServerPort),
+                       (unsigned short) (bMud ? Proto_ConnectPort (*this) : m_iProxyServerPort),
                        options);
   } // end of CMUSHclientDoc::StartConnectAttempt
 
@@ -2558,7 +2564,7 @@ void CMUSHclientDoc::OnTlsEstablished (const char * version, const char * cipher
     // user already opted to proceed despite the failure — connect, but warn
     CString strMsg;
     strMsg.Format ("--- WARNING: proceeding with UNVERIFIED TLS certificate for \"%s\": %s ---",
-                   (LPCTSTR) m_server, verifyFailure);
+                   (LPCTSTR) Proto_ConnectHost (*this), verifyFailure);
     Note (strMsg);
     }
 
@@ -2587,7 +2593,7 @@ void CMUSHclientDoc::OnTlsFailed (bool bCertFailure, const char * reason)
     // anyway" — still over TLS, but accepting this unverifiable certificate
     // for the session (m_bSSLAllowInvalidCert) — and reconnects.
     strMsg.Format ("--- TLS certificate for \"%s\" could NOT be verified: %s ---",
-                   (LPCTSTR) m_server, reason);
+                   (LPCTSTR) Proto_ConnectHost (*this), reason);
   else
     strMsg.Format ("--- TLS handshake failed: %s ---", reason);
   Note (strMsg);
@@ -2595,9 +2601,17 @@ void CMUSHclientDoc::OnTlsFailed (bool bCertFailure, const char * reason)
   // save error for deferred prompt
   m_strSSLLastError = reason;
 
+  // A host an MXP RELOCATE sent us to: the prompt's answers change this world's own
+  // settings (TLS off, or any certificate) and reconnect to its own host, which is not
+  // the host that failed.  So no prompt, and the world is as it was.
+  const bool bRelocated = m_pProto->bRelocated;
+
   // the adapter has already torn the TLS session down; this closes the
   // transport and runs the disconnect bookkeeping
   OnConnectionDisconnect ();
+
+  if (bRelocated)
+    return;
 
   // defer the prompt via PostMessage so we're not inside a transport event
   Frame.PostMessage (WM_USER_SSL_FALLBACK_PROMPT, (WPARAM) this,

@@ -529,15 +529,26 @@ void CMUSHclientDoc::MXP_Entity (CString strName, CString strTag)
        strFixedValue += *p;   // just add ordinary characters to list
     } // end of processing the value
 
-  // ADD and REMOVE treat the entity as a list, and what they leave is its value
+  // ADD and REMOVE treat the entity as a list, and what they leave is its value.  The
+  // length is checked before ADD builds anything, since a list that may not grow is
+  // the case to make cheap: a server repeating ADD at the limit costs a lookup each.
   if (bAdd || bRemove)
     {
     CString strOld;
     m_CustomEntityMap.Lookup (strName, strOld);
+    if (bAdd)
+      {
+      const size_t grown = (size_t) strOld.GetLength () + (strOld.IsEmpty () ? 0 : 1) +
+                           (size_t) strFixedValue.GetLength ();
+      if (!Proto_MxpEntityFits (*this, strName, grown))
+        return;
+      }
     const std::string list = bAdd ? proto::EntityListAdd ((LPCTSTR) strOld, (LPCTSTR) strFixedValue)
                                   : proto::EntityListRemove ((LPCTSTR) strOld, (LPCTSTR) strFixedValue);
     strFixedValue = list.c_str ();
     }
+  else if (!bDelete && !Proto_MxpEntityFits (*this, strName, (size_t) strFixedValue.GetLength ()))
+    return;
 
   // add entity to map
   m_CustomEntityMap.SetAt (strName, strFixedValue);

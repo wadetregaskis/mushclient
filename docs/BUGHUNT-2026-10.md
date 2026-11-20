@@ -180,6 +180,10 @@ Quow set, before and after:
 | slowest Cow Bar trigger, 30,000 attempts | 0.198 s | 0.036 s |
 | all 752 plugin triggers' matching | 8.2 s | 3.3 s |
 
+*Later (November 2026):* a required-literal prefilter in front of the JIT, and
+other changes on the plugin path, took these lines several times faster again;
+see `docs/PERFORMANCE-2026-11.md`.
+
 The JIT also removes a crash. The interpreter recurses on the machine stack
 about once per repeat of a group, so one long line against a pattern such as
 `^(?:a|b)*c$` overflowed the stack. In the client, a 20,001-character line

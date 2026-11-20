@@ -47,3 +47,6 @@ powershell -File tools\trigger_bench\build_and_run.ps1 -Work $env:TEMP\trigger_b
 
 `-Mode verify` or `-Mode time` runs one half; `-Passes N` sets how many times `time`
 goes over the lines.
+
+`TB_MAX_LITERALS=1` in the environment limits the prefilter to single literals (no
+sets from alternations), for comparing the two.

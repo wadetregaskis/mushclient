@@ -1668,12 +1668,19 @@ toolbars, tabs, status bar and dialogs follow it; what the user's colours paint 
 
 **High dpi.** The client is per-monitor v2 aware. Plugins still work in 96-dpi coordinates, on every
 platform, permanently: miniwindow sizes and rectangles, mouse positions, text rectangles, `GetInfo`
-font and client sizes (212-215, 240, 241, 280, 281), the scroll position, `SetCommandWindowHeight`,
+font, client, toolbar and frame sizes (212-215, 240, 241, 249-264, 280, 281), the text rectangle
+(290-293), the scroll position (296, and `OnPluginDrawOutputWindow`'s), `SetCommandWindowHeight`,
 `GetDeviceCaps` (`LOGPIXELSX`, `LOGPIXELSY`, `HORZRES`, `VERTRES`) and `GetSystemMetrics` all convert
 at the edge, and what a font measures in a miniwindow is exactly what it measures at 96 dpi.
 Miniwindows are drawn with real pixels underneath. What's different from a 96-dpi client:
 `WindowGetPixel` samples the first real pixel of the logical pixel, and an image is scaled when drawn.
-Bitmap fonts are drawn blown up by a whole number. The command box can't do that, so from 150% it shows
+Window positions (`GetMainWindowPosition`, `GetWorldWindowPosition` and the `Move` calls) are real
+pixels, as Windows has them: a place on a desktop of monitors at different scales has no 96-dpi
+equivalent. Saved window positions are kept in real pixels with the dpi they were saved at; one saved
+by 5.x is read as 96-dpi pixels and scaled up, so nothing comes back smaller.
+Bitmap fonts are drawn blown up by a whole number. In a UTF-8 world, what a bitmap font has (as GDI
+reports it: FixedSys has the euro and smart quotes, and no Cyrillic) is drawn in it, and what it
+hasn't is drawn in Consolas through DirectWrite. The command box can't do that, so from 150% it shows
 Consolas in place of a bitmap font, without touching the world's setting. `src/dpi.h` has the model.
 `world.Debug ("dpi 144")` and `MUSHCLIENT_TEST_DPI` exercise a scale the monitor isn't at.
 
@@ -1687,6 +1694,10 @@ everything else stays GDI. Non-UTF-8 worlds are unchanged.
 live tail in a strip below (Global Preferences > General > "Show new output when scrolled back", on by
 default; drag the bar to resize it). The view no longer unfreezes itself when the top of the buffer
 goes while this is on. The scroll position and everything else a plugin can read mean what they did.
+Pausing at the end isn't being scrolled back: the strip waits until the view moves, so new output
+doesn't cover what was on the screen. Page Up and Page Down step by what can be seen above the strip.
+The strip's text is over what is under the rest of the text: the background colour, the background
+image and miniwindows drawn underneath.
 
 ## 38 — Triggers skip a pattern whose required text isn't in the line
 

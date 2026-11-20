@@ -72,6 +72,7 @@
 #include "childfrm.h"  // CChildFrame + m_wndSplitter (setCommandWindowHeight,
                         //   setOutputWidthPixels)
 #include "mainfrm.h"
+#include "dpi.h"
 #include "winplace.h"   // CWindowPlacement — outputRect/mainRect GetWindowPlacement
 
 #include "pal/win_worldview.h"
@@ -1018,9 +1019,13 @@ public:
         if (!frame())
             return Rect{0, 0, 0, 0};
 
+        // In 96-dpi pixels, as every size a plugin sees is (dpi.h), and as
+        // GetInfo 252 and the other toolbar widths already were.
         RECT rect;
         frame()->GetClientRect(&rect);
-        return Rect{ 0, 0, (int) rect.right, (int) rect.bottom };
+        const int iDpi = Dpi_ForWindow (frame()->m_hWnd);
+        return Rect{ 0, 0, ::MulDiv ((int) rect.right, 96, iDpi),
+                     ::MulDiv ((int) rect.bottom, 96, iDpi) };
     }
 
     // There is a window to measure exactly when the main frame has one.
@@ -1044,10 +1049,14 @@ public:
         {
             CView* pView = m_pDoc->GetNextView(pos);
 
+            // x and y are m_lastMousePosition, which is already the 96-dpi
+            // point plugins see; Mouse_Move_MiniWindow takes the view's real
+            // pixels and converts them, so they go back to real pixels first
+            // (CMUSHView::LogicalPoint undoes ToPhysical exactly).
             if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
                 ((CMUSHView*)pView)->Mouse_Move_MiniWindow (m_pDoc,
-                                                            CPoint((int) x,
-                                                                   (int) y));
+                                                            CPoint(m_pDoc->ToPhysical ((int) x),
+                                                                   m_pDoc->ToPhysical ((int) y)));
         } // end of looping through views
     }
 

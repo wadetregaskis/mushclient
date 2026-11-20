@@ -16,7 +16,10 @@ public:
 #ifdef _WIN32
 	virtual void OnDrawSplitter(CDC* pDC, ESplitType nType, const CRect& rect) override;
 	// Bigger bars for a bigger display.  MFC's own numbers stay at 96 dpi.
+	// Called again when the window moves to a monitor at another scale.
 	void ScaleBars (const int iDpi);
+	int m_iBarsDpi;          // what they are scaled to now; 0 before the first call
+	int m_iBaseBars [4];     // MFC's, at 96 dpi
 #endif
 // Construction
 public:

@@ -32,6 +32,7 @@ CWindowPlacement::CWindowPlacement()
    memset (static_cast <WINDOWPLACEMENT *> (this), 0, sizeof (WINDOWPLACEMENT));
    // Note: "length" is inherited from WINDOWPLACEMENT
    length = sizeof(WINDOWPLACEMENT);
+   m_iSavedDpi = 0;
 }
 
 CWindowPlacement::~CWindowPlacement()
@@ -54,6 +55,19 @@ BOOL CWindowPlacement::Restore(LPCSTR lpKeyName,
       return FALSE;
 #endif
    GetProfileWP(lpKeyName);
+
+#ifdef _WIN32
+   // scaled for where it's going (ScaleSaved)
+   {
+     const bool bInsideFrame = pWnd->m_hWnd && (pWnd->GetStyle () & WS_CHILD) != 0;
+     HWND hwndParent = bInsideFrame ? ::GetParent (pWnd->m_hWnd) : NULL;
+     int iNowDpi = 0;   // (no window: as saved)
+     if (pWnd->m_hWnd)
+       iNowDpi = bInsideFrame ? Dpi_ActualForWindow (hwndParent ? hwndParent : pWnd->m_hWnd)
+                              : Dpi_ActualForRect (rcNormalPosition);
+     ScaleSaved (rcNormalPosition, m_iSavedDpi, iNowDpi, Dpi_ActualForWindow (NULL), bInsideFrame);
+   }
+#endif
 
    // Only restore if window intersets the screen.
    //
@@ -104,8 +118,59 @@ BOOL CWindowPlacement::Restore(LPCSTR lpKeyName,
       return FALSE;
 
    pWnd->SetWindowPlacement(this);  // set placement
+
+#ifdef _WIN32
+   // A window put on a monitor at another scale from the one it was made on is told
+   // so (WM_DPICHANGED) and resizes itself by the ratio, which would scale a size
+   // already right for that monitor a second time.  Now it is on the monitor, put it
+   // where it belongs once more: the second time the scale doesn't change.
+   if (pWnd->m_hWnd && !(pWnd->GetStyle () & WS_CHILD) && m_iSavedDpi > 0)
+     {
+     WINDOWPLACEMENT wpNow;
+     wpNow.length = sizeof wpNow;
+     pWnd->GetWindowPlacement (&wpNow);
+     if (!::EqualRect (&wpNow.rcNormalPosition, &rcNormalPosition))
+       pWnd->SetWindowPlacement (this);
+     }
+#endif
    return TRUE;
 }
+
+#ifdef _WIN32
+// Where a saved rectangle goes now (see GetProfileWP).  Saved by this version, it is
+// real pixels at iSavedDpi; a window inside the frame (a world, the activity list) is
+// placed in the frame's client area, which grows with the scale, so all of it scales
+// by iNowDpi / iSavedDpi.  A window on the desktop is placed on the screen, where a
+// position doesn't scale with anything (the monitors are where they are), so it stays
+// where it was and only its size scales.  Saved by 5.x or an older 6.00 (iSavedDpi 0)
+// it is in 96-dpi pixels, which is what a dpi-unaware client saw on its primary
+// monitor: all of it scales by the system dpi, as before.
+void CWindowPlacement::ScaleSaved (RECT & rc, const int iSavedDpi, const int iNowDpi,
+                                   const int iSystemDpi, const bool bInsideFrame)
+  {
+  if (iSavedDpi <= 0)
+    {
+    rc.left   = ::MulDiv (rc.left, iSystemDpi, 96);
+    rc.right  = ::MulDiv (rc.right, iSystemDpi, 96);
+    rc.top    = ::MulDiv (rc.top, iSystemDpi, 96);
+    rc.bottom = ::MulDiv (rc.bottom, iSystemDpi, 96);
+    return;
+    }
+
+  if (iNowDpi == iSavedDpi || iNowDpi <= 0)
+    return;
+
+  const int iWidth  = ::MulDiv (rc.right - rc.left, iNowDpi, iSavedDpi);
+  const int iHeight = ::MulDiv (rc.bottom - rc.top, iNowDpi, iSavedDpi);
+  if (bInsideFrame)
+    {
+    rc.left = ::MulDiv (rc.left, iNowDpi, iSavedDpi);
+    rc.top  = ::MulDiv (rc.top, iNowDpi, iSavedDpi);
+    }
+  rc.right  = rc.left + iWidth;
+  rc.bottom = rc.top + iHeight;
+  }
+#endif
 
 //////////////////
 // Get window placement from profile.
@@ -123,27 +188,28 @@ void CWindowPlacement::GetProfileWP(LPCSTR lpKeyName)
   RECT& rc = rcNormalPosition;  // because I hate typing
 
 #ifdef _WIN32
-  // What's stored is in 96-dpi pixels (below), so the defaults have to be too.
-  const int iDpi = Dpi_ForSystem ();
-  rc.left   = ::MulDiv (rc.left, 96, iDpi);
-  rc.right  = ::MulDiv (rc.right, 96, iDpi);
-  rc.top    = ::MulDiv (rc.top, 96, iDpi);
-  rc.bottom = ::MulDiv (rc.bottom, 96, iDpi);
+  // Saved by this version: real pixels, and the dpi of the window when it was saved
+  // (Save).  Saved by 5.x, or a 6.00 before that: 96-dpi pixels, and no dpi.  Either
+  // way Restore scales it for where it's going (ScaleSaved); this only reads it.
+  m_iSavedDpi = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.dpi"), 0);
+
+  // The defaults (the window's own placement, for a key never saved) are real pixels:
+  // for the old form, in which ScaleSaved will scale them up again, they have to be
+  // 96-dpi ones.
+  const int iSystemDpi = Dpi_ActualForWindow (NULL);
+  if (m_iSavedDpi <= 0)
+    {
+    rc.left   = ::MulDiv (rc.left, 96, iSystemDpi);
+    rc.right  = ::MulDiv (rc.right, 96, iSystemDpi);
+    rc.top    = ::MulDiv (rc.top, 96, iSystemDpi);
+    rc.bottom = ::MulDiv (rc.bottom, 96, iSystemDpi);
+    }
 #endif
 
   rc.left   = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.left"),   rc.left);
   rc.right  = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.right"),  rc.right);
   rc.top    = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.top"),    rc.top);
   rc.bottom = App.db_get_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.bottom"), rc.bottom);
-
-#ifdef _WIN32
-  // Kept in 96-dpi pixels, which is what a dpi-unaware 5.x or 6.0 saved too.  Asked for
-  // on another monitor, it gets WM_DPICHANGED and comes right.
-  rc.left   = ::MulDiv (rc.left, iDpi, 96);
-  rc.right  = ::MulDiv (rc.right, iDpi, 96);
-  rc.top    = ::MulDiv (rc.top, iDpi, 96);
-  rc.bottom = ::MulDiv (rc.bottom, iDpi, 96);
-#endif
 
 }
 
@@ -154,15 +220,14 @@ void CWindowPlacement::Save(LPCSTR lpKeyName, CWnd* pWnd)
    pWnd->GetWindowPlacement(this);
 
    // don't save if minimized, it doesn't work properly
-   if (showCmd != SW_SHOWMINIMIZED)
-     #ifdef _WIN32
-   {
-   const int iDpi = Dpi_ForWindow (pWnd->m_hWnd);
-   rcNormalPosition.left   = ::MulDiv (rcNormalPosition.left, 96, iDpi);
-   rcNormalPosition.right  = ::MulDiv (rcNormalPosition.right, 96, iDpi);
-   rcNormalPosition.top    = ::MulDiv (rcNormalPosition.top, 96, iDpi);
-   rcNormalPosition.bottom = ::MulDiv (rcNormalPosition.bottom, 96, iDpi);
-   }
+   if (showCmd == SW_SHOWMINIMIZED)
+     return;
+
+#ifdef _WIN32
+   // Real pixels, as Windows has them, and the dpi they are at: Restore scales from
+   // that to wherever the window goes (ScaleSaved).  The real dpi, not the one
+   // world.Debug ("dpi N") pretends, which doesn't move or resize any window.
+   m_iSavedDpi = Dpi_ActualForWindow (pWnd->m_hWnd);
 #endif
    WriteProfileWP(lpKeyName);
 }
@@ -189,6 +254,11 @@ void CWindowPlacement::WriteProfileWP(LPCSTR lpKeyName)
     App.db_write_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.right"),  rcNormalPosition.right);
     App.db_write_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.top"),    rcNormalPosition.top);
     App.db_write_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.bottom"), rcNormalPosition.bottom);
+#ifdef _WIN32
+    // what the rectangle's pixels are (GetProfileWP); 5.x ignores it
+    if (m_iSavedDpi > 0)
+      App.db_write_int ("worlds", (LPCTSTR) CFormat ("%s:%s", lpKeyName, "wp.dpi"), m_iSavedDpi);
+#endif
 
     App.db_execute ("COMMIT", true);
 

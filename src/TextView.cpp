@@ -14,6 +14,7 @@ Copyright (C) 2000 Nick Gammon.
 #include "sendvw.h"
 #include "mainfrm.h"
 #include "doc.h"
+#include "dpi.h"
 
 #if defined(_MSC_VER) && _MSC_VER < 1400    // doesn't work with Visual Studio 6
   #include <../src/afximpl.h>
@@ -791,7 +792,14 @@ void CTextView::SetTheFont (void)
 
   dc.CreateCompatibleDC (NULL);
 
-   int lfHeight = -MulDiv(pDoc->m_iFontSize, dc.GetDeviceCaps(LOGPIXELSY), 72);
+   // the dpi of the monitor the notepad is on (dpi.h), which is the system's at 96 or
+   // before it has a window; CMainFrame::DpiChanged comes back here when it moves
+   int iFontDpi = dc.GetDeviceCaps(LOGPIXELSY);
+#ifdef _WIN32
+   if (m_hWnd)
+     iFontDpi = Dpi_ForWindow (m_hWnd);
+#endif
+   int lfHeight = -MulDiv(pDoc->m_iFontSize, iFontDpi, 72);
 
    DWORD iCharSet = DEFAULT_CHARSET;
    CString strFont = pDoc->m_strFontName;
@@ -799,7 +807,7 @@ void CTextView::SetTheFont (void)
      {
      strFont = App.m_strFixedPitchFont;
      iCharSet = pDoc->m_iFontCharset;
-     lfHeight = -MulDiv(App.m_iFixedPitchFontSize, dc.GetDeviceCaps(LOGPIXELSY), 72);
+     lfHeight = -MulDiv(App.m_iFixedPitchFontSize, iFontDpi, 72);
      }
 
    m_font->CreateFont(lfHeight, // int nHeight, 

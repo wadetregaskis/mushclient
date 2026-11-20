@@ -9,6 +9,8 @@
 #include "doc.h"
 #include "miniwindow.h"
 #include "dpi.h"
+#include "mushview.h"
+#include "winplace.h"
 
 #include <string>
 #include <vector>
@@ -237,4 +239,166 @@ TEST(HiDpiTest, RasterFactorIsWhole) {
   EXPECT_EQ(2, Dpi_RasterFactor (144));    // 150%
   EXPECT_EQ(2, Dpi_RasterFactor (192));
   EXPECT_EQ(3, Dpi_RasterFactor (288));
+}
+
+// ---------------------------------------------------------------------------------------
+// The mouse, in plugin pixels.  Logical pixel L is drawn from ToPhysical (L) up to
+// ToPhysical (L + 1); a real pixel in there is in L, all of it.
+
+TEST(HiDpiTest, EveryRealPixelOfALogicalOneHitsIt) {
+  for (int iDpi : { 96, 120, 144, 168, 192, 216, 240, 288 }) {
+    CMUSHclientDoc doc;
+    doc.m_iDpi = iDpi;
+    int iWrong = 0;
+    for (int L = -20; L < 400; L++)
+      for (int p = doc.ToPhysical (L); p < doc.ToPhysical (L + 1); p++)
+        if (CMUSHView::LogicalPoint (&doc, CPoint (p, p)) != CPoint (L, L))
+          iWrong++;
+    EXPECT_EQ(0, iWrong);
+  }
+}
+
+// WM_MOUSELEAVE sends (-1, -1), and plugins see the mouse go: rounded, at 225% and above
+// it came out as (0, 0), on the edge of every window at the top left.
+TEST(HiDpiTest, TheMouseLeavingStaysOutsideAtEveryScale) {
+  for (int iDpi : { 96, 120, 144, 192, 216, 240, 288, 384 }) {
+    CMUSHclientDoc doc;
+    doc.m_iDpi = iDpi;
+    EXPECT_EQ(CPoint (-1, -1), CMUSHView::LogicalPoint (&doc, CPoint (-1, -1)));
+  }
+}
+
+// What WindowAddHotspot re-tests with is m_lastMousePosition, already in plugin pixels;
+// the Windows view adapter takes it back to real ones for the view, which converts it
+// again.  The round trip must come back where it started.
+TEST(HiDpiTest, APluginPointToRealPixelsAndBackIsItself) {
+  for (int iDpi : { 96, 120, 144, 192, 216, 288 }) {
+    CMUSHclientDoc doc;
+    doc.m_iDpi = iDpi;
+    for (int v : { -1, 0, 1, 2, 3, 7, 33, 99, 500 })
+      EXPECT_EQ(CPoint (v, v), CMUSHView::LogicalPoint (&doc, CPoint (doc.ToPhysical (v), doc.ToPhysical (v))));
+  }
+}
+
+TEST(HiDpiTest, DebugDpiIsKeptToASaneRange) {
+  Dpi_SetOverride (1);
+  EXPECT_EQ(48, Dpi_ForSystem ());
+  Dpi_SetOverride (100000);
+  EXPECT_EQ(960, Dpi_ForSystem ());
+  Dpi_SetOverride (-5);
+  EXPECT_FALSE(Dpi_Overridden ());
+  Dpi_SetOverride (144);
+  EXPECT_EQ(144, Dpi_ForSystem ());
+  Dpi_SetOverride (0);
+  EXPECT_FALSE(Dpi_Overridden ());
+}
+
+// ---------------------------------------------------------------------------------------
+// Window positions (winplace.cpp): real pixels and the dpi they were saved at, scaled
+// for where they're going.  Positions on the desktop don't scale; inside the frame they do.
+
+TEST(WindowPlacementDpi, ASavedRectangleIsScaledForWhereItGoes) {
+  RECT rc;
+
+  // 5.x, or a 6.00 before this: 96-dpi pixels, all scaled by the system dpi, as before
+  rc = { 10, 20, 110, 220 };
+  CWindowPlacement::ScaleSaved (rc, 0, 192, 144, false);
+  EXPECT_EQ(15, (int) rc.left);
+  EXPECT_EQ(30, (int) rc.top);
+  EXPECT_EQ(165, (int) rc.right);
+  EXPECT_EQ(330, (int) rc.bottom);
+
+  // saved where it's going: exactly as saved
+  rc = { 1000, 20, 1300, 420 };
+  CWindowPlacement::ScaleSaved (rc, 144, 144, 96, false);
+  EXPECT_EQ(1000, (int) rc.left);
+  EXPECT_EQ(1300, (int) rc.right);
+  EXPECT_EQ(420, (int) rc.bottom);
+
+  // on the desktop, to a monitor at another scale: same place, its size for that scale
+  rc = { 2000, 100, 2300, 500 };
+  CWindowPlacement::ScaleSaved (rc, 96, 192, 96, false);
+  EXPECT_EQ(2000, (int) rc.left);
+  EXPECT_EQ(100, (int) rc.top);
+  EXPECT_EQ(2600, (int) rc.right);
+  EXPECT_EQ(900, (int) rc.bottom);
+
+  // inside the frame, which has grown with the scale: all of it
+  rc = { 30, 40, 330, 240 };
+  CWindowPlacement::ScaleSaved (rc, 96, 144, 96, true);
+  EXPECT_EQ(45, (int) rc.left);
+  EXPECT_EQ(60, (int) rc.top);
+  EXPECT_EQ(495, (int) rc.right);
+  EXPECT_EQ(360, (int) rc.bottom);
+}
+
+namespace {
+
+// App's database, swapped for an empty one in memory for the length of a test.
+struct ScratchPrefs
+  {
+  sqlite3 * saved;
+  ScratchPrefs () : saved (App.db)
+    {
+    App.db = NULL;
+    sqlite3_open (":memory:", &App.db);
+    sqlite3_exec (App.db, "CREATE TABLE worlds (name VARCHAR(50) NOT NULL PRIMARY KEY, value TEXT NOT NULL );", NULL, NULL, NULL);
+    }
+  ~ScratchPrefs ()
+    {
+    sqlite3_close (App.db);
+    App.db = saved;
+    }
+  };
+
+}  // end of anonymous namespace
+
+TEST(WindowPlacementDpi, AMinimisedWindowIsNotSaved) {
+  ScratchPrefs prefs;
+  HWND hwnd = ::CreateWindowA ("STATIC", "", WS_POPUP | WS_MINIMIZE, 50, 60, 300, 200, NULL, NULL, NULL, NULL);
+  ASSERT_TRUE(hwnd != NULL);
+  CWnd wnd;
+  wnd.Attach (hwnd);
+
+  WINDOWPLACEMENT wpNow;
+  wpNow.length = sizeof wpNow;
+  ::GetWindowPlacement (hwnd, &wpNow);
+  EXPECT_EQ((UINT) SW_SHOWMINIMIZED, wpNow.showCmd);
+
+  CWindowPlacement wp;
+  wp.Save ("Minimised Test", &wnd);
+  EXPECT_EQ(-999, App.db_get_int ("worlds", "Minimised Test:wp.left", -999));
+  EXPECT_EQ(-999, App.db_get_int ("worlds", "Minimised Test:wp.showCmd", -999));
+
+  wnd.Detach ();
+  ::DestroyWindow (hwnd);
+}
+
+TEST(WindowPlacementDpi, AWindowIsSavedInRealPixelsWithItsDpi) {
+  ScratchPrefs prefs;
+  HWND hwnd = ::CreateWindowA ("STATIC", "", WS_POPUP, 50, 60, 300, 200, NULL, NULL, NULL, NULL);
+  ASSERT_TRUE(hwnd != NULL);
+  CWnd wnd;
+  wnd.Attach (hwnd);
+
+  CWindowPlacement wp;
+  wp.Save ("Placed Test", &wnd);
+  EXPECT_EQ(Dpi_ActualForWindow (hwnd), App.db_get_int ("worlds", "Placed Test:wp.dpi", 0));
+  EXPECT_EQ(50, App.db_get_int ("worlds", "Placed Test:wp.left", 0));
+  EXPECT_EQ(350, App.db_get_int ("worlds", "Placed Test:wp.right", 0));
+
+  CWindowPlacement back;
+  back.GetProfileWP ("Placed Test");
+  EXPECT_EQ(Dpi_ActualForWindow (hwnd), back.m_iSavedDpi);
+  EXPECT_EQ(60, (int) back.rcNormalPosition.top);
+  EXPECT_EQ(260, (int) back.rcNormalPosition.bottom);
+
+  // and one saved by 5.x has no dpi
+  App.db_write_int ("worlds", "Old Test:wp.left", 5);
+  CWindowPlacement old;
+  old.GetProfileWP ("Old Test");
+  EXPECT_EQ(0, old.m_iSavedDpi);
+
+  wnd.Detach ();
+  ::DestroyWindow (hwnd);
 }

@@ -1613,3 +1613,32 @@ plugin or a world file can see:
 **Verification:** `tests/test_speech_router.cpp`, `tests/win/test_win_a11y_pane.cpp`,
 `tests/check_dialog_labels.py`; NVDA 2026.3 in the client, from its log.  JAWS, Narrator and a
 braille display haven't been tried, and no blind player has used it yet.
+
+## 37 — Dark chrome, per-monitor dpi, cells, and a live tail when scrolled back
+
+**Appearance.** Global Preferences > General > Appearance: System, Light or Dark. The frame, menus,
+toolbars, tabs, status bar and dialogs follow it; what the user's colours paint doesn't change.
+`world.GetSysColor` on Windows still answers the light palette, so plugins look as they did.
+`src/appearance_win.cpp` says how, including which parts are undocumented Windows.
+
+**High dpi.** The client is per-monitor v2 aware. Plugins still work in 96-dpi coordinates, on every
+platform, permanently: miniwindow sizes and rectangles, mouse positions, text rectangles, `GetInfo`
+font and client sizes (212-215, 240, 241, 280, 281), the scroll position, `SetCommandWindowHeight`,
+`GetDeviceCaps` (`LOGPIXELSX`, `LOGPIXELSY`, `HORZRES`, `VERTRES`) and `GetSystemMetrics` all convert
+at the edge, and what a font measures in a miniwindow is exactly what it measures at 96 dpi.
+Miniwindows are drawn with real pixels underneath. What's different from a 96-dpi client:
+`WindowGetPixel` samples the first real pixel of the logical pixel, and an image is scaled when drawn.
+Bitmap fonts are drawn blown up by a whole number. The command box can't do that, so from 150% it shows
+Consolas in place of a bitmap font, without touching the world's setting. `src/dpi.h` has the model.
+`world.Debug ("dpi 144")` and `MUSHCLIENT_TEST_DPI` exercise a scale the monitor isn't at.
+
+**Wrapping** in a UTF-8 world counts cells (`src/unicode_width.h`): a CJK character or an emoji is two,
+a combining mark none, and a grapheme cluster isn't split. 5.x counted UTF-16 units, so wide text wrapped
+at twice the width of the window. `GetLineInfo` code 2, `CStyle::iLength` and selection columns are
+still bytes. Selections snap to clusters. Emoji and text needing shaping go through DirectWrite;
+everything else stays GDI. Non-UTF-8 worlds are unchanged.
+
+**Scrollback.** Scrolling back with Auto Pause on, or pausing while scrolled back, shows history above and the
+live tail in a strip below (Global Preferences > General > "Show new output when scrolled back", on by
+default; drag the bar to resize it). The view no longer unfreezes itself when the top of the buffer
+goes while this is on. The scroll position and everything else a plugin can read mean what they did.

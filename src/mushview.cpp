@@ -297,6 +297,8 @@ CMUSHView::CMUSHView()
   m_old_selend_col = 0;
 
   m_freeze = FALSE;
+  m_bSplitSelecting = false;
+  m_bSplitDragging = false;
   m_bAtBufferEnd = false;
   m_last_line_drawn = 0;
   m_last_line = 0;
@@ -1351,6 +1353,9 @@ double fadeSteps = pDoc->m_FadeOutputSeconds;
 
 double opacity;  // for fading lines
 
+  // History, and then, if it's showing, the live tail: the same drawing both times.
+  const auto DrawTextLines = [&] ()
+  {
   for (line = startline; line < endline && pos; line++)
     {
 
@@ -1747,6 +1752,39 @@ double opacity;  // for fading lines
     previousLineTime = pLine->m_theTime.GetTime ();
 
     }   // end of doing each line
+  };  // end of DrawTextLines
+
+  DrawTextLines ();
+
+  if (IsSplit ())
+    {
+    const CRect rectStrip = SplitStripRect ();
+
+    // the bar across the top of it, then its own background
+    CRgn rgnStrip;
+    rgnStrip.CreateRectRgn (rectStrip.left, rectStrip.top, rectStrip.right, rectStrip.bottom);
+    pDC->SelectClipRgn (&rgnStrip);
+    pDC->FillRect (&rectStrip, &backbr);
+
+    const int iBar = pDoc->ToPhysical (2);
+    CRect rectBar (rectStrip.left, rectStrip.top, rectStrip.right, rectStrip.top + iBar);
+    pDC->FillSolidRect (&rectBar, RGB (128, 128, 128));
+
+    // the tail, as though the view were at the bottom
+    const CPoint ptSavedScroll = m_scroll_position;
+    m_scroll_position.y = SplitTailScroll ();
+    startline = (m_scroll_position.y - pDoc->PixelOffset () + (rectStrip.top + iBar - TextRectangle.top)) / pDoc->m_FontHeight;
+    if (startline < 0)
+      startline = 0;
+    endline = lastline;
+    pos = pDoc->GetLinePosition (startline);
+    previousLineHPtime.QuadPart = 0;
+    previousLineTime = 0;
+
+    DrawTextLines ();
+
+    m_scroll_position = ptSavedScroll;
+    }
 
 // make sure count (and title) is reset once we look at the view
 
@@ -1795,6 +1833,63 @@ double opacity;  // for fading lines
 
 }   // end CMUSHView::OnDraw
 
+
+// A strip only makes sense while the view is frozen and not at the end, and in a window
+// with room for it.  Frozen is the existing idea: scrolling back with "Auto Pause" on, or
+// Pause.  Without Auto Pause the view jumps back on new output and there's nothing to split.
+bool CMUSHView::IsSplit ()
+  {
+  if (!App.m_bSplitScrollback || !m_freeze)
+    return false;
+
+  CMUSHclientDoc* pDoc = GetDocument();
+
+  if (!pDoc->m_FontHeight)
+    return false;
+
+  // at the end there is nothing below it to show
+  if (m_scroll_position.y >= m_ScrollbarSizeTotal.cy - m_ScrollbarSizePage.cy)
+    return false;
+
+  return GetOutputWindowHeight () >= pDoc->m_FontHeight * 8;
+  }
+
+CRect CMUSHView::SplitStripRect ()
+  {
+  CMUSHclientDoc* pDoc = GetDocument();
+  const CRect rectText = GetTextRectangle ();
+
+  // a whole number of lines, from the bottom up, and the bar
+  int iRows = ::MulDiv (rectText.Height (), App.m_iSplitScrollbackPercent, 100) / pDoc->m_FontHeight;
+  iRows = MAX (2, iRows);
+
+  CRect rect (rectText);
+  rect.top = rect.bottom - iRows * pDoc->m_FontHeight - pDoc->ToPhysical (2);
+  return rect;
+  }
+
+long CMUSHView::SplitTailScroll ()
+  {
+  CMUSHclientDoc* pDoc = GetDocument();
+  const long iScroll = pDoc->GetLastLine () * pDoc->m_FontHeight - GetOutputWindowHeight ();
+  return iScroll < 0 ? 0 : iScroll;
+  }
+
+bool CMUSHView::PointInSplitStrip (const CPoint & point)
+  {
+  return IsSplit () && SplitStripRect ().PtInRect (point) != FALSE;
+  }
+
+bool CMUSHView::PointOnSplitBar (const CPoint & point)
+  {
+  if (!IsSplit ())
+    return false;
+  CMUSHclientDoc* pDoc = GetDocument();
+  const CRect rect = SplitStripRect ();
+  const int iSlop = pDoc->ToPhysical (3);
+  return point.x >= rect.left && point.x < rect.right &&
+         point.y >= rect.top - iSlop && point.y < rect.top + iSlop;
+  }
 
 void CMUSHView::OnInitialUpdate()
 {
@@ -2091,6 +2186,8 @@ int lastline;
 
   if (!m_freeze)
     OnTestEnd ();
+  else if (IsSplit ())
+    InvalidateRect (SplitStripRect (), FALSE);
 
 // if we are still on first screen (no scroll bars) invalidate whole view
 
@@ -2157,6 +2254,20 @@ int lastline;
 long lastx = 0;
 bool bOutside = true;
 long pixel;
+
+  // Where this point is depends on which part of the view it's in.  A drag belongs to
+  // wherever it began, so that a selection runs off the bottom of the history as it
+  // always has, rather than jumping to the far end of the buffer.
+  struct CScrollRestore
+    {
+    long & m_iValue;
+    const long m_iSaved;
+    CScrollRestore (long & iValue) : m_iValue (iValue), m_iSaved (iValue) {}
+    ~CScrollRestore () { m_iValue = m_iSaved; }
+    } scrollRestore (m_scroll_position.y);
+
+  if (IsSplit () && (MouseIsCaptured () ? m_bSplitSelecting : PointInSplitStrip (pt)))
+    m_scroll_position.y = SplitTailScroll ();
 
   dc.SelectObject(pDoc->m_font [0]);
 
@@ -2389,6 +2500,15 @@ int line,
   if (Mouse_Down_MiniWindow (pDoc, point, MW_MOUSE_LH))  // LH mouse, single click
     return;
 
+  if (PointOnSplitBar (point))
+    {
+    m_bSplitDragging = true;
+    SetCapture ();
+    return;
+    }
+
+  m_bSplitSelecting = PointInSplitStrip (point);
+
   // check for the rectangle, now we are past the miniwindow stuff
   CRect ClientRect = GetTextRectangle (true);
 
@@ -2607,6 +2727,14 @@ void CMUSHView::OnLButtonUp(UINT nFlags, CPoint point)
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
 
+  if (m_bSplitDragging)
+    {
+    m_bSplitDragging = false;
+    ReleaseCapture ();
+    App.db_write_int ("prefs", "SplitScrollbackPercent", App.m_iSplitScrollbackPercent);
+    return;
+    }
+
 int line,
     col;
 
@@ -2740,6 +2868,18 @@ int line,
   OnPrepareDC(&dc);
 
   dc.DPtoLP(&point);
+
+  if (m_bSplitDragging)
+    {
+    const CRect rectText = GetTextRectangle ();
+    if (rectText.Height () > 0)
+      {
+      int iPercent = ::MulDiv (rectText.bottom - point.y, 100, rectText.Height ());
+      App.m_iSplitScrollbackPercent = MAX (10, MIN (75, iPercent));
+      Invalidate ();
+      }
+    return;
+    }
 
   // if over miniwindow, don't keep going
   if (Mouse_Move_MiniWindow (pDoc, point))
@@ -2915,6 +3055,8 @@ RECT r;
 
 bool CMUSHView::get_selection (CRgn & rgn)
   {
+  if (IsSplit ())
+    Invalidate ();
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
 
@@ -3040,6 +3182,12 @@ ASSERT_VALID(pDoc);
   CPoint point;
   ::GetCursorPos(&point);
   ScreenToClient(&point);
+
+  if (PointOnSplitBar (point))
+    {
+    ::SetCursor (::LoadCursor (NULL, IDC_SIZENS));
+    return TRUE;
+    }
 
   // see if we moused over one of our miniwindows
 
@@ -3197,7 +3345,11 @@ if (m_freeze)
 
   if (orig_top.y < 0)
     {
-    m_freeze = FALSE;
+    // The lines at the top of the buffer have gone.  Without a strip, this is where
+    // the view catches up with the output.  With one, it can be read as it arrives
+    // anyway, so what's being read stays where it is.
+    if (!App.m_bSplitScrollback)
+      m_freeze = FALSE;
     orig_top.y = 0;
     }
 

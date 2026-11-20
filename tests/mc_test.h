@@ -673,6 +673,15 @@ long McTestAssertionsRaised();
             _CrtSetReportMode(rt_, _CRTDBG_MODE_FILE); \
             _CrtSetReportFile(rt_, _CRTDBG_FILE_STDERR); \
         } \
+        /* MUSHclient.rc brings the client's manifest, which is per-monitor aware.  The \
+           suite's pixel numbers are at 96 dpi on any machine: tests of other scales \
+           ask for them (test_hidpi_win.cpp).  -1 is DPI_AWARENESS_CONTEXT_UNAWARE. */ \
+        { \
+            typedef void * (WINAPI * SetThreadDpiContextFn_) (void *); \
+            SetThreadDpiContextFn_ pSetContext_ = (SetThreadDpiContextFn_) ::GetProcAddress ( \
+                ::GetModuleHandleA ("user32.dll"), "SetThreadDpiAwarenessContext"); \
+            if (pSetContext_) pSetContext_ ((void *) (INT_PTR) -1); \
+        } \
         if (!AfxWinInit(::GetModuleHandle(NULL), NULL, ::GetCommandLine(), 0)) \
             { fprintf(stderr, "FATAL: AfxWinInit failed\n"); return 2; } \
         if (!AfxOleInit()) \

@@ -114,6 +114,8 @@ CMUSHclientApp::CMUSHclientApp()
     m_bAutoConnectWorlds            = 1;
     m_bAutoExpand                  = 1;
     m_bFlatToolbars                = 1;
+    m_bSplitScrollback             = 1;
+    m_iSplitScrollbackPercent      = 25;
     m_bColourGradient              = 1;
     m_bConfirmBeforeClosingWorld   = 1;
     m_bConfirmBeforeSavingVariables = 1;

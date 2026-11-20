@@ -1566,6 +1566,9 @@ BEGIN
                     BS_AUTOCHECKBOX | WS_TABSTOP,140,63,68,10
     CONTROL         "F1, F6 are macros",IDC_F1_MACRO,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,140,73,70,10
+    CONTROL         "Show new output when scrolled back",
+                    IDC_SPLIT_SCROLLBACK,"Button",BS_AUTOCHECKBOX | 
+                    WS_TABSTOP,140,83,121,9
     GROUPBOX        "&Word delimiters",IDC_STATIC,6,127,183,46
     RTEXT           "Tab completion:",IDC_STATIC,13,141,52,8
     EDITTEXT        IDC_WORD_DELIMITERS,73,138,110,14,ES_AUTOHSCROLL

@@ -154,6 +154,17 @@ void GetTextRect (RECT * rect);
 
 void did_jump (void);
 
+// Scrolled back while output goes on: history above, the live tail in a strip below.
+// It's all drawn inside this one view, so that miniwindows are composed once.  None
+// of it is visible to plugins: the scroll position still means what it did.
+bool IsSplit ();                    // is the strip showing just now?
+CRect SplitStripRect ();            // where, in client coordinates
+long SplitTailScroll ();            // the scroll position that puts the last line at the bottom
+bool PointInSplitStrip (const CPoint & point);
+bool PointOnSplitBar (const CPoint & point);
+bool m_bSplitSelecting;             // the mouse went down in the strip: it's still its
+bool m_bSplitDragging;              // resizing the strip
+
 void doStart (void);
 void doEnd (void);
 void doPageup (void);

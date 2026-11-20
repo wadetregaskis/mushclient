@@ -1177,6 +1177,7 @@
 #define IDC_BLUE_SLIDER                 2843
 #define IDC_FLAT_TOOLBARS               2843
 #define IDC_APPEARANCE                  2950
+#define IDC_SPLIT_SCROLLBACK            2951
 #define IDC_LUA_NAME                    2845
 #define IDC_TRIGGER_TEXT                2847
 #define IDC_IS_ACTIVE                   2848

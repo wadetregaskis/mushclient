@@ -1692,6 +1692,7 @@
     <ClCompile Include="tests\win\test_user_data.cpp" />
     <ClCompile Include="tests\win\test_spell_engine.cpp" />
     <ClCompile Include="tests\win\test_hidpi_win.cpp" />
+    <ClCompile Include="tests\win\test_split_win.cpp" />
     <ClCompile Include="tests\test_accelerators.cpp" />
     <ClCompile Include="tests\test_aliases.cpp" />
     <ClCompile Include="tests\test_ansi.cpp" />

@@ -736,6 +736,8 @@ public:
     // (CMUSHView::OnDraw does this on Windows).  "Smoother scrolling": repaint
     // synchronously after appending instead of waiting for the next idle paint
     // (MFC: Invalidate(); if (App.m_bSmootherScrolling) UpdateWindow();).
+    // Scrolled back: the live tail in a strip at the bottom (Global Preferences).
+    void SetSplitScrollback(bool on, int percent) { m_splitScrollback = on; m_splitPercent = percent; Refresh(); }
     void SetBleedBackground(bool v) { if (v != m_bleedBackground) { m_bleedBackground = v; Refresh(false); } }
     void SetSmootherScrolling(bool v) { m_smootherScroll = v; }
     bool BleedBackground() const { return m_bleedBackground; }
@@ -1347,6 +1349,11 @@ private:
     bool        m_copySelToClip     = false;  // copy_selection_to_clipboard
     bool        m_autoCopyInHTML    = false;  // …and do it as HTML
     bool m_bleedBackground = false;   // App.m_bBleedBackground
+    bool m_splitScrollback = false;   // App.m_bSplitScrollback
+    int  m_splitPercent = 25;         // App.m_iSplitScrollbackPercent
+    // The strip, in pixels below the text area's top: false if it isn't showing.
+    bool SplitGeometry(int& stripTop, int& rows, long long& tailTopRow) const;
+    long long ClientYToVirtual(long long scrollPix, int clientY) const;
     bool m_smootherScroll  = false;   // App.m_bSmootherScrolling
     bool m_smoothScroll    = false;   // App.m_bSmoothScrolling ("very smooth")
     bool m_animatingScroll = false;   // re-entrancy guard for the animation

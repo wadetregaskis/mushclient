@@ -44,8 +44,9 @@
 class CJSEngine
   {
   public:
-  CMUSHclientDoc* doc = nullptr;
-  JSContext*      ctx = nullptr;
+  CMUSHclientDoc*      doc   = nullptr;
+  JSContext*           ctx   = nullptr;
+  CScriptEngine*       owner = nullptr;   // the engine: whose plugin its promise jobs run as
   };
 
 namespace {
@@ -244,8 +245,16 @@ JSValue throw_error (JSContext* ctx, const std::string& msg)
 
 // Invoke a world method on `m`'s document: the shared body of a call and of a
 // coercion (MC_DISP_F_INTROSPECT).
+// Is the script this context belongs to still open?  A promise job can outlive its
+// plugin -- it is queued, the plugin is unloaded, the job runs -- and then it must
+// not reach the world, as nothing it does would be the plugin's any more.  CloseJS
+// clears the context's opaque, and keeps the context itself until its jobs have run.
+bool script_open (JSContext* ctx) { return JS_GetContextOpaque (ctx) != nullptr; }
+
 JSValue invoke (JSContext* ctx, const MethodData* m, int argc, JSValueConst* argv, unsigned flags)
   {
+  if (!script_open (ctx))
+    return throw_error (ctx, "world." + m->name + ": the script that queued this has been closed");
   // The proxy holds a bare CMUSHclientDoc* (mc_dispatch.cpp drops the COM
   // reference GetWorld took), so a script that keeps what world.GetWorld()
   // returned and uses it after that world is closed must be told, not crash.
@@ -266,8 +275,7 @@ JSValue invoke (JSContext* ctx, const MethodData* m, int argc, JSValueConst* arg
     {
     MC_VariantClear (result);
     return throw_error (ctx, "world." + m->name + ": " +
-                        (rc == MC_DISP_UNKNOWN ? std::string ("unknown method")
-                         : MC_DispatchBadArgsMessage (m->name.c_str (), argc)));
+                        MC_DispatchErrorMessage (m->name.c_str (), argc, rc));
     }
 
   JSValue ret;
@@ -353,6 +361,8 @@ JSValue World_get (JSContext* ctx, JSValueConst obj, JSAtom atom, JSValueConst /
       {
       // A property is read off the doc's members directly, so it needs the
       // stale-proxy check as much as a method call does.
+      if (!script_open (ctx))
+        return throw_error (ctx, "world." + name + ": the script that queued this has been closed");
       if (!MC_DispatchDocIsLive (doc))
         return throw_error (ctx, "world." + name + ": that world has been closed");
       VARIANT v;
@@ -373,6 +383,8 @@ int World_set (JSContext* ctx, JSValueConst obj, JSAtom atom, JSValueConst value
   std::string name;
   if (atom_name (ctx, atom, name) && MC_DispatchHasProperty (name.c_str ()))
     {
+    if (!script_open (ctx))
+      { throw_error (ctx, "world." + name + ": the script that queued this has been closed"); return -1; }
     if (!MC_DispatchDocIsLive (doc))
       { throw_error (ctx, "world." + name + ": that world has been closed"); return -1; }
     VARIANT v;
@@ -409,11 +421,15 @@ JSValue make_world (JSContext* ctx, CMUSHclientDoc* doc)
 // and the UI thread has the default 1 MB, part of it already spent by the
 // message loop beneath every callback -- so half of it, leaving room for the
 // C++ frames of world calls between JavaScript ones.
+void track_rejection (JSContext* ctx, JSValueConst promise, JSValueConst reason,
+                      bool is_handled, void* opaque);
+
 void ensure_runtime ()
   {
   if (g_rt) return;
   g_rt = JS_NewRuntime ();
   JS_SetMaxStackSize (g_rt, 512 * 1024);
+  JS_SetHostPromiseRejectionTracker (g_rt, track_rejection, nullptr);
 
   static JSClassExoticMethods worldExotic = {};
   worldExotic.get_property = World_get;
@@ -433,24 +449,28 @@ void ensure_runtime ()
   JS_NewClass (g_rt, g_methodClassId, &md);
   }
 
+void run_jobs ();
+
 // Every host -> JavaScript entry: record the stack top at the outermost one
 // (so the budget above is measured from where JavaScript was entered, not
 // from wherever the runtime happened to be created), and run the promise jobs
 // a script queued once the outermost entry is done, as JavaScriptCore does
 // after each evaluation.
+//
+// The jobs run while that entry still COUNTS (g_depth is still 1), so a world call
+// in a job that re-enters JavaScript -- CallPlugin into a JavaScript plugin, say --
+// does not record a fresh stack top, deeper down the real stack, and get a whole
+// new budget there: a runaway recursion through jobs would then overflow the
+// thread's stack instead of throwing a RangeError.
 struct StackGuard
   {
   JSContext* ctx;
   explicit StackGuard (JSContext* c) : ctx (c) { if (g_depth++ == 0) JS_UpdateStackTop (g_rt); }
   ~StackGuard ()
     {
-    if (--g_depth == 0)
-      {
-      JSContext* jobCtx = nullptr;
-      while (JS_IsJobPending (g_rt))
-        if (JS_ExecutePendingJob (g_rt, &jobCtx) < 0 && jobCtx)
-          JS_FreeValue (jobCtx, JS_GetException (jobCtx));
-      }
+    if (g_depth == 1)
+      run_jobs ();
+    --g_depth;
     }
   };
 
@@ -516,10 +536,19 @@ JSValue resolve (JSContext* ctx, const char* dotted)
   return JS_UNDEFINED;
   }
 
+void report_value (CMUSHclientDoc* doc, JSContext* ctx, JSValue exc,
+                   const char* what, const char* proc, const char* prefix = "");
+
 void report_error (CMUSHclientDoc* doc, JSContext* ctx, const char* what, const char* proc)
   {
-  JSValue exc = JS_GetException (ctx);
-  std::string msg = js_to_bytes (ctx, exc);
+  report_value (doc, ctx, JS_GetException (ctx), what, proc);
+  }
+
+// An exception value (consumed), reported as a script error.
+void report_value (CMUSHclientDoc* doc, JSContext* ctx, JSValue exc,
+                   const char* what, const char* proc, const char* prefix)
+  {
+  std::string msg = prefix + js_to_bytes (ctx, exc);
   // The stack, when there is one: QuickJS's messages carry no line number of
   // their own, and "at f (Plugin:12)" is where a plugin author looks first.
   if (JS_IsObject (exc))
@@ -550,6 +579,118 @@ void report_error (CMUSHclientDoc* doc, JSContext* ctx, const char* what, const 
 // what a function with no explicit return yields).
 bool returned_a_value (JSValueConst v) { return !JS_IsUndefined (v) && !JS_IsNull (v); }
 
+// ── Promise jobs ────────────────────────────────────────────────────────────
+// One job queue serves every context, and is drained at the end of the outermost
+// entry into any of them -- so a job used to run as whichever plugin that entry was
+// for, and its world calls set THAT plugin's variables, and a job that threw was
+// freed in silence.  Each job now runs as the plugin its context belongs to (an
+// MCThreadCallScope, the same switch a thread's world call makes), and its error is
+// reported against that plugin.  A job of a script that has been closed runs with
+// no world at all (script_open) and its error is dropped, there being nobody left
+// to tell.
+//
+// A throw inside a .then handler, or an async function's, is not the job's error:
+// it rejects a promise, which is fine if something handles that.  A rejection still
+// unhandled when the queue has run dry is reported too, as a browser reports
+// "Uncaught (in promise)" -- otherwise a plugin's async code could fail with no word.
+struct Rejection { JSContext* ctx; JSValue promise; JSValue reason; };
+
+std::vector<Rejection>& rejections ()
+  {
+  static auto* r = new std::vector<Rejection>;
+  return *r;
+  }
+
+// Contexts CloseJS freed while jobs were queued for them, kept until those have run:
+// a job holds a bare pointer to its context.
+std::vector<JSContext*>& closed_contexts ()
+  {
+  static auto* c = new std::vector<JSContext*>;
+  return *c;
+  }
+
+void track_rejection (JSContext* ctx, JSValueConst promise, JSValueConst reason,
+                      bool is_handled, void* /*opaque*/)
+  {
+  std::vector<Rejection>& r = rejections ();
+  if (!is_handled)
+    {
+    r.push_back (Rejection { ctx, JS_DupValue (ctx, promise), JS_DupValue (ctx, reason) });
+    return;
+    }
+  for (auto it = r.begin (); it != r.end (); ++it)
+    if (JS_VALUE_GET_PTR (it->promise) == JS_VALUE_GET_PTR (promise))
+      {
+      JS_FreeValueRT (g_rt, it->promise);
+      JS_FreeValueRT (g_rt, it->reason);
+      r.erase (it);
+      return;
+      }
+  }
+
+void drop_rejections (JSContext* ctx)
+  {
+  std::vector<Rejection>& r = rejections ();
+  for (auto it = r.begin (); it != r.end (); )
+    if (it->ctx == ctx)
+      {
+      JS_FreeValueRT (g_rt, it->promise);
+      JS_FreeValueRT (g_rt, it->reason);
+      it = r.erase (it);
+      }
+    else
+      ++it;
+  }
+
+// The engine a context belongs to, if its script and its world are still open.
+CJSEngine* open_engine (JSContext* ctx)
+  {
+  CJSEngine* e = ctx ? (CJSEngine*) JS_GetContextOpaque (ctx) : nullptr;
+  return e && MC_DispatchDocIsLive (e->doc) ? e : nullptr;
+  }
+
+void run_jobs ()
+  {
+  for (;;)
+    {
+    while (JS_IsJobPending (g_rt))
+      {
+      CJSEngine* e = open_engine (JS_GetPendingJobContext (g_rt));
+      JSContext* ran = nullptr;
+      if (e)
+        {
+        MCThreadCallScope asItsPlugin (e->doc, e->owner);
+        CScriptEngine::Running running (e->owner);    // not to be unloaded under the job
+        if (JS_ExecutePendingJob (g_rt, &ran) < 0 && ran)
+          report_error (e->doc, ran, "Promise job", "");
+        }
+      else if (JS_ExecutePendingJob (g_rt, &ran) < 0 && ran)
+        JS_FreeValue (ran, JS_GetException (ran));
+      }
+
+    if (rejections ().empty ())
+      break;
+    // Reporting can run JavaScript (a reason's toString), which can queue more.
+    std::vector<Rejection> unhandled;
+    unhandled.swap (rejections ());
+    for (Rejection& r : unhandled)
+      {
+      if (CJSEngine* e = open_engine (r.ctx))
+        {
+        MCThreadCallScope asItsPlugin (e->doc, e->owner);
+        report_value (e->doc, r.ctx, JS_DupValue (r.ctx, r.reason),
+                      "Promise", "", "Uncaught (in promise): ");
+        }
+      JS_FreeValueRT (g_rt, r.promise);
+      JS_FreeValueRT (g_rt, r.reason);
+      }
+    }
+
+  for (JSContext* c : closed_contexts ())
+    JS_FreeContext (c);
+  closed_contexts ().clear ();
+  }
+
 } // anonymous namespace
 
 // ── CScriptEngine JavaScript methods ────────────────────────────────────────
@@ -557,8 +698,10 @@ void CScriptEngine::OpenJS ()
   {
   ensure_runtime ();
   CJSEngine* e = new CJSEngine ();
-  e->doc = m_pDoc;
-  e->ctx = JS_NewContext (g_rt);
+  e->doc   = m_pDoc;
+  e->owner = this;
+  e->ctx   = JS_NewContext (g_rt);
+  JS_SetContextOpaque (e->ctx, e);        // which engine a promise job belongs to
 
   // Per-context prototypes for the two classes.  The method prototype sits
   // on Function.prototype (so world.Note.call / .apply / .bind work) and
@@ -588,7 +731,17 @@ void CScriptEngine::OpenJS ()
 void CScriptEngine::CloseJS ()
   {
   if (!m_jsEngine) return;
-  if (m_jsEngine->ctx) JS_FreeContext (m_jsEngine->ctx);
+  if (JSContext* ctx = m_jsEngine->ctx)
+    {
+    JS_SetContextOpaque (ctx, nullptr);   // closed: its queued jobs get no world
+    drop_rejections (ctx);
+    // A queued job holds a bare pointer to its context, so with any queued the
+    // context waits for run_jobs to free it.
+    if (JS_IsJobPending (g_rt))
+      closed_contexts ().push_back (ctx);
+    else
+      JS_FreeContext (ctx);
+    }
   delete m_jsEngine;
   m_jsEngine = NULL;
   }

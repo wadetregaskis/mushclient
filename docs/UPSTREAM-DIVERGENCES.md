@@ -1640,15 +1640,21 @@ plugin or a world file can see:
   (`aedf0cb0be5bf045860d54b7`) loads as a small Lua plugin of the client's with the same
   functions, and the file is left alone.  Loading MushReader sets `speech_read_all`.
 - Send To: Speech is 15.  An older client refuses a world file that uses it.
-- While speech is in use, the words `tts`, `tts_note`, `tts_interrupt`, `tts_stop` and
-  `subst` are commands, Alt+Shift keys review output, Ctrl+Shift+F12 mutes, F6 goes to the pane
-  unless the world gave F6 a macro, and Enter silences speech.
+- While output is being read (a reader, *Speak output: Always*, or `speech_read_all`) or the
+  MushReader shim is loaded, the words `tts`, `tts_note`, `tts_interrupt`, `tts_stop` and
+  `subst` are commands, Alt+Shift keys review output, Ctrl+Shift+F12 mutes, and Enter silences
+  speech.  A world's or plugin's alias for one of those words, or accelerator on one of those
+  keys, wins.  F6 goes to the text pane wherever there is one, unless the world gave F6 a macro
+  or an accelerator.
+- LuaAudio's volume is linear, 0 to 100, and becomes PlaySound's dB as 20·log10; its handles are
+  its own sounds, not buffer numbers.
 
 **Why:** the owner asked for screen reader support built in, on every platform that can have it.
 
 **Verification:** `tests/test_speech_router.cpp`, `tests/win/test_win_a11y_pane.cpp`,
 `tests/check_dialog_labels.py`; NVDA 2026.3 in the client, from its log.  JAWS, Narrator and a
-braille display haven't been tried, and no blind player has used it yet.
+braille display haven't been tried, and no blind player has used it yet.  The macOS and Linux
+backends and the port's pane have never been compiled.
 
 ## 37 — Dark chrome, per-monitor dpi, cells, and a live tail when scrolled back
 

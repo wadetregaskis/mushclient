@@ -12,7 +12,9 @@
 //           (this builds for 0x0501).  NVDA ignores these when the app is not focused
 //           (nvaccess/nvda#16862), which is one reason it has its own backend.
 //
-// The system voice is SAPI, created the first time someone asks for it, and not before.
+// The system voice is SAPI, created the first time someone asks for it, and not before: naming
+// the voices, as the preferences do, reads SAPI's tokens and makes no voice.  ExitInstance calls
+// shutdown () to release the voice and JAWS's object while COM is still there.
 //
 // Everything runs on the main thread.  COM is initialised for it on first use.
 
@@ -31,6 +33,10 @@
 namespace pal {
 
 namespace {
+
+// LoadLibraryEx's, which a 0x0501 build does not see.
+const DWORD kSearchDllLoadDir = 0x00000100;    // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
+const DWORD kSearchSystem32   = 0x00000800;    // LOAD_LIBRARY_SEARCH_SYSTEM32
 
 std::wstring Wide (const char * utf8)
   {
@@ -87,8 +93,12 @@ class NvdaSpeech : public ISpeech
       if (m_bTried)
         return m_hDll != NULL;
       m_bTried = true;
-      // Beside the exe only: this is not a name to let the search path find.
-      m_hDll = LoadLibraryW ((ExeDirectory () + L"nvdaControllerClient.dll").c_str ());
+      // Beside the exe only: this is not a name to let the search path find, and nor are
+      // the DLLs it imports, which come from its own directory or System32.
+      const std::wstring path = ExeDirectory () + L"nvdaControllerClient.dll";
+      m_hDll = LoadLibraryExW (path.c_str (), NULL, kSearchDllLoadDir | kSearchSystem32);
+      if (!m_hDll && GetLastError () == ERROR_INVALID_PARAMETER)    // Windows 7 without KB2533623
+        m_hDll = LoadLibraryExW (path.c_str (), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
       if (!m_hDll)
         return false;
       m_testIfRunning = (NvdaNoArgs)     GetProcAddress (m_hDll, "nvdaController_testIfRunning");
@@ -128,15 +138,30 @@ class NvdaSpeech : public ISpeech
       {
       if (bFlush)
         m_cancelSpeech ();
+      m_bBusyKnown = false;
       return m_speakText (Wide (utf8).c_str ()) == 0;
       }
 
-    void stop () override { m_cancelSpeech (); }
+    void stop () override
+      {
+      m_bBusyKnown = false;
+      m_cancelSpeech ();
+      }
 
+    // A call into NVDA's process: while lines wait it is asked on every tick, so the answer
+    // is kept for a little while.  Saying something makes it stale.
     bool isBusy () override
       {
+      if (!m_bKnowsBusy)
+        return false;
+      const DWORD now = GetTickCount ();
+      if (m_bBusyKnown && now - m_iBusyAskedAt < kBusyCacheMs)
+        return m_bBusy;
       unsigned char speaking = 0;
-      return m_bKnowsBusy && m_isSpeaking (&speaking) == 0 && speaking;
+      m_bBusy = m_isSpeaking (&speaking) == 0 && speaking;
+      m_bBusyKnown = true;
+      m_iBusyAskedAt = now;
+      return m_bBusy;
       }
 
     void braille (const char * utf8) override
@@ -146,8 +171,13 @@ class NvdaSpeech : public ISpeech
       }
 
   private:
+    static const DWORD kBusyCacheMs = 150;
+
     bool m_bTried = false;
     bool m_bKnowsBusy = false;
+    bool m_bBusyKnown = false;
+    bool m_bBusy = false;
+    DWORD m_iBusyAskedAt = 0;
     HMODULE m_hDll = NULL;
     NvdaNoArgs m_testIfRunning = nullptr;
     NvdaNoArgs m_cancelSpeech = nullptr;
@@ -165,13 +195,18 @@ class JawsSpeech : public ISpeech
 
     bool Running ()
       {
-      if (!FindWindowW (L"JFWUI2", NULL))
+      const HWND hJaws = FindWindowW (L"JFWUI2", NULL);
+      if (!hJaws)
         {
         Release ();
         return false;
         }
+      // A JAWS restarted since the last look has a new window, and the old object is dead.
+      if (m_pApi && hJaws != m_hJaws)
+        Release ();
       if (m_pApi)
         return true;
+      m_hJaws = hJaws;
 
       EnsureCom ();
       CLSID clsid;
@@ -207,6 +242,9 @@ class JawsSpeech : public ISpeech
       const HRESULT hr = m_pApi->Invoke (m_idSay, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD,
                                          &params, NULL, NULL, NULL);
       SysFreeString (args [1].bstrVal);
+      // Its process gone: let it go, and the next look makes a new one if there is a JAWS.
+      if (FAILED (hr) && hr != DISP_E_EXCEPTION)
+        Release ();
       return SUCCEEDED (hr);
       }
 
@@ -218,14 +256,18 @@ class JawsSpeech : public ISpeech
       m_pApi->Invoke (m_idStop, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &params, NULL, NULL, NULL);
       }
 
-  private:
     void Release ()
       {
       if (m_pApi)
         m_pApi->Release ();
       m_pApi = nullptr;
+      m_hJaws = NULL;
       }
 
+    bool HoldsCom () const { return m_pApi != nullptr; }
+
+  private:
+    HWND m_hJaws = NULL;
     IDispatch * m_pApi = nullptr;
     DISPID m_idSay = DISPID_UNKNOWN;
     DISPID m_idStop = DISPID_UNKNOWN;
@@ -348,11 +390,18 @@ class UiaSpeech : public ISpeech
 class SapiSpeech : public ISpeech
   {
   public:
-    ~SapiSpeech () override
+    ~SapiSpeech () override { Release (); }
+
+    // Before COM goes.  Asked for again, it starts afresh.
+    void Release ()
       {
       if (m_pVoice)
         m_pVoice->Release ();
+      m_pVoice = nullptr;
+      m_bTried = false;
       }
+
+    bool HoldsCom () const { return m_pVoice != nullptr; }
 
     bool Load ()
       {
@@ -404,16 +453,7 @@ class SapiSpeech : public ISpeech
       m_pVoice->SetVolume ((USHORT) (volume < 0 ? 0 : volume > 100 ? 100 : volume));
       }
 
-    std::vector<std::string> voices () override
-      {
-      std::vector<std::string> names;
-      ForEachVoice ([&] (ISpObjectToken *, const std::string & name)
-        {
-        names.push_back (name);
-        return false;
-        });
-      return names;
-      }
+    std::vector<std::string> voices () override { return Installed (); }
 
     void setVoice (const char * sName) override
       {
@@ -432,9 +472,22 @@ class SapiSpeech : public ISpeech
         });
       }
 
-  private:
-    template <typename F> void ForEachVoice (F each)
+    // The installed voices, without making one: SAPI keeps them in the registry, as tokens.
+    static std::vector<std::string> Installed ()
       {
+      std::vector<std::string> names;
+      ForEachVoice ([&] (ISpObjectToken *, const std::string & name)
+        {
+        names.push_back (name);
+        return false;
+        });
+      return names;
+      }
+
+  private:
+    template <typename F> static void ForEachVoice (F each)
+      {
+      EnsureCom ();
       ISpObjectTokenCategory * pCategory = nullptr;
       if (FAILED (CoCreateInstance (__uuidof (SpObjectTokenCategory), NULL, CLSCTX_ALL,
                                     __uuidof (ISpObjectTokenCategory), (void **) &pCategory)))
@@ -491,6 +544,16 @@ class WinSpeechPlatform : public ISpeechPlatform
       return m_sapi.Load () ? &m_sapi : nullptr;
       }
 
+    std::vector<std::string> ownVoiceNames () override { return SapiSpeech::Installed (); }
+
+    void shutdown () override
+      {
+      m_jaws.Release ();
+      m_sapi.Release ();
+      }
+
+    bool HoldsCom () const { return m_jaws.HoldsCom () || m_sapi.HoldsCom (); }
+
   private:
     NvdaSpeech m_nvda;
     JawsSpeech m_jaws;
@@ -514,10 +577,21 @@ bool RaiseUiaNotification (HWND hWnd, const char * utf8, const int processing)
   return SUCCEEDED (hr);
   }
 
+namespace {
+WinSpeechPlatform * g_pWinPlatform = nullptr;
+}
+
 void InstallPlatformSpeech ()
   {
   static WinSpeechPlatform platform;
+  g_pWinPlatform = &platform;
   g_speechPlatform = &platform;
+  }
+
+// For tests: is a COM object of the speech backends' still held?
+bool WinSpeech_HoldsComForTest ()
+  {
+  return g_pWinPlatform && g_pWinPlatform->HoldsCom ();
   }
 
 }  // namespace pal

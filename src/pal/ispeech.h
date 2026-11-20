@@ -73,6 +73,18 @@ class ISpeechPlatform
     // The system's own voice, or NULL if there is none.  Only asked for when the
     // player wants speech and no reader can give it, so nothing is loaded otherwise.
     virtual ISpeech * ownVoice () = 0;
+
+    // The system voices' names, for the preferences: without loading a voice to ask, where
+    // the platform can.  The first is not the default; "" is.
+    virtual std::vector<std::string> ownVoiceNames ()
+      {
+      ISpeech * pVoice = ownVoice ();
+      return pVoice ? pVoice->voices () : std::vector<std::string> ();
+      }
+
+    // Let go of everything the backends hold, before the application shuts COM down.  Asked
+    // for again afterwards, they start afresh.
+    virtual void shutdown () {}
   };
 
 // The one for this platform, or NULL (the headless build, and the tests until they

@@ -11,6 +11,13 @@
 #include "flags.h"
 #include "scripting/errors.h"
 #include "fake_transport.h"
+#include "fake_worldview.h"
+
+extern "C" {
+#include "lua.h"
+#include "lauxlib.h"
+#include "lualib.h"
+}
 
 #include <cstdio>
 #include <cstring>
@@ -286,6 +293,35 @@ TEST (SpeechRouter, InterruptDropsWhatWasWaiting)
   ASSERT_EQ (1u, s.said.size ());
   EXPECT_STREQ ("now", s.said [0].c_str ());
   EXPECT_EQ (1, s.stops);
+}
+
+// An alert queued a moment before Enter, or before a script's interrupt, is still news.
+TEST (SpeechRouter, EnterAndInterruptKeepWhatIsUrgent)
+{
+  SpeechRouter r;
+  FakeSpeech s;
+  r.setBackend (&s);
+  r.line ("old", "output");
+  r.say ("you are being attacked", "trigger", SpeechPriority::Assertive, false);
+  r.commandEntered ();
+  r.tick (1000);
+  ASSERT_EQ (1u, s.said.size ());
+  EXPECT_STREQ ("you are being attacked", s.said [0].c_str ());
+  EXPECT_EQ (1, s.stops);
+  EXPECT_EQ ((uint64_t) 1, r.linesSkipped ());
+
+  r.line ("more old", "output");
+  r.say ("low health", "trigger", SpeechPriority::Assertive, false);
+  r.say ("now", "script", SpeechPriority::Normal, true);
+  r.tick (100000);
+  ASSERT_EQ (2u, s.said.size ());
+  EXPECT_STREQ ("low health\nnow", s.said [1].c_str ());
+
+  // whereas stopping is stopping
+  r.say ("urgent", "trigger", SpeechPriority::Assertive, false);
+  r.stop ();
+  r.tick (200000);
+  EXPECT_EQ (2u, s.said.size ());
 }
 
 TEST (SpeechRouter, SkipToLatestLeavesTheNewest)
@@ -1005,4 +1041,325 @@ TEST (SpeechDoc, ThereAreNoHotspotsUntilThereAre)
   EXPECT_STREQ ("No hotspots.|", w.said ().c_str ());
   EXPECT_EQ ((long) eNoSuchWindow, w.doc.ActivateHotspot ("nope", "nope"));
   EXPECT_EQ ((long) eNoSuchWindow, w.doc.WindowHotspotLabel ("nope", "nope", "x"));
+}
+
+// ---------------------------------------------------------------- who the keys and words belong to
+
+namespace {
+
+// The engine's side of a text pane, recorded.
+struct PaneView : FakeWorldView
+  {
+  bool shown = false;
+  bool focused = false;
+  std::vector<std::string> paneLines;
+  std::string reset;
+  void accessiblePaneShow (bool s) override { shown = s; }
+  void accessibleLine (const char * utf8) override { paneLines.push_back (utf8); }
+  void accessibleReset (const char * utf8) override { reset = utf8; paneLines.clear (); }
+  bool accessiblePaneFocused () const override { return focused; }
+  void accessibleFocusPane (bool pane) override { focused = pane; }
+  };
+
+// Puts a PaneView in the document's place for as long as it lives.
+struct WithPaneView
+  {
+  CMUSHclientDoc & doc;
+  pal::IWorldView * saved;
+  PaneView view;
+  explicit WithPaneView (CMUSHclientDoc & d) : doc (d), saved (d.m_pWorldView) { doc.m_pWorldView = &view; }
+  ~WithPaneView () { doc.m_pWorldView = saved; }
+  };
+
+}  // namespace
+
+// A text pane asked for always gets the output with no reader at all.  It used to be shown
+// and then never given a line.
+TEST (SpeechDoc, ThePaneSaidAlwaysGetsLinesWithNoReader)
+{
+  SpeechWorld w (false);
+  WithPaneView pane (w.doc);
+  App.m_iA11yTextPane = eTextPaneAlways;
+  w.tick ();
+  EXPECT_TRUE (pane.view.shown);
+  w.feed ("one\n");
+  w.feed ("two\n");
+  w.tick ();
+  EXPECT_STREQ ("one|two|", Joined (pane.view.paneLines).c_str ());
+  EXPECT_TRUE (w.platform.voice.said.empty ());
+  EXPECT_EQ (0, w.platform.ownVoiceAsked);
+
+  // F6 goes there, as the docs say; the review keys and the words do not wake up for it
+  EXPECT_TRUE (A11y_Key (w.doc, A11yKey::F6, 0, false, false, false));
+  EXPECT_TRUE (pane.view.focused);
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::Up, 0, false, true, true));
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::F12, 0, true, false, true));
+  EXPECT_FALSE (A11y_Command (w.doc, "tts"));
+  EXPECT_EQ (0, (int) w.doc.m_bSpeechMute);
+}
+
+// A script that speaks makes the state exist, and that is not the player using speech: Alt+Shift
+// and Ctrl+Shift+F12 and the word tts are still theirs.
+TEST (SpeechDoc, AScriptSpeakingDoesNotTakeKeysOrWords)
+{
+  SpeechWorld w (false);
+  w.doc.Speak ("hello", "", -1, FALSE);
+  w.doc.SpeechCategory ("tells", "cue", "ding.wav");
+  ASSERT_TRUE (w.doc.m_pA11y != nullptr);
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::Up, 0, false, true, true));
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::Character, 'L', false, true, true));
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::F12, 0, true, false, true));
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::F6, 0, false, false, false));
+  EXPECT_FALSE (A11y_Command (w.doc, "tts"));
+  EXPECT_FALSE (A11y_Command (w.doc, "subst list"));
+  EXPECT_EQ (0, (int) w.doc.m_bSpeechMute);
+
+  // Reading everything, with the system voice, is using speech
+  App.m_iSpeechMode = eSpeechAlways;
+  w.tick ();
+  EXPECT_TRUE (A11y_Key (w.doc, A11yKey::F12, 0, true, false, true));
+  EXPECT_EQ (1, (int) w.doc.m_bSpeechMute);
+  EXPECT_TRUE (A11y_Command (w.doc, "tts"));
+  EXPECT_EQ (0, (int) w.doc.m_bSpeechMute);
+}
+
+TEST (SpeechDoc, AnAcceleratorOnTheKeyIsTheWorlds)
+{
+  SpeechWorld w;
+  w.feed ("a line\n");
+  w.tick ();
+  // As AcceleratorTo files them, which on Windows needs a frame to put the table in
+  const auto bind = [&] (const char * sKey)
+    {
+    BYTE fVirt;
+    WORD key;
+    StringToKeyCode (sKey, fVirt, key);
+    w.doc.m_AcceleratorToCommandMap [((long) (fVirt | FNOINVERT)) << 16 | key] = 12000;
+    };
+  bind ("Alt+Shift+Up");
+  bind ("Alt+Shift+L");
+  bind ("Ctrl+Shift+F12");
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::Up, 0, false, true, true));
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::Character, 'L', false, true, true));
+  EXPECT_FALSE (A11y_Key (w.doc, A11yKey::F12, 0, true, false, true));
+  EXPECT_EQ (0, (int) w.doc.m_bSpeechMute);
+
+  // and the ones it left alone are still review's
+  EXPECT_TRUE (A11y_Key (w.doc, A11yKey::Down, 0, false, true, true));
+  EXPECT_TRUE (A11y_Key (w.doc, A11yKey::Character, 'W', false, true, true));
+
+  // Given back, it is review's again
+  BYTE fVirt;
+  WORD key;
+  StringToKeyCode ("Alt+Shift+Up", fVirt, key);
+  w.doc.m_AcceleratorToCommandMap.erase (((long) (fVirt | FNOINVERT)) << 16 | key);
+  EXPECT_TRUE (A11y_Key (w.doc, A11yKey::Up, 0, false, true, true));
+}
+
+TEST (SpeechDoc, AnAliasForTheWordIsTheWorlds)
+{
+  SpeechWorld w;
+  w.doc.m_enable_aliases = TRUE;
+  w.doc.m_display_my_input = FALSE;
+  w.doc.m_iConnectPhase = eConnectConnectedToMud;
+  w.doc.m_pTransport = new RecordingTransport ();    // the document's to delete
+  RecordingTransport * pTransport = static_cast<RecordingTransport *> (w.doc.m_pTransport);
+  bool bOmit = false;
+
+  // Nobody else's: the client's
+  w.doc.EvaluateCommand ("tts", true, bOmit, false);
+  EXPECT_EQ (1, (int) w.doc.m_bSpeechMute);
+  EXPECT_TRUE (pTransport->sent.empty ());
+  w.doc.EvaluateCommand ("tts", true, bOmit, false);
+  EXPECT_EQ (0, (int) w.doc.m_bSpeechMute);
+
+  // The world's own alias for it runs instead
+  EXPECT_EQ ((long) eOK, w.doc.AddAlias ("mine", "tts", "my own tts", eEnabled, ""));
+  w.doc.EvaluateCommand ("tts", true, bOmit, false);
+  EXPECT_EQ (0, (int) w.doc.m_bSpeechMute);
+  EXPECT_STREQ ("my own tts\r\n", pTransport->sent.c_str ());
+
+  // and a word no alias has is still the client's
+  w.doc.EvaluateCommand ("tts_stop", true, bOmit, false);
+  EXPECT_STREQ ("my own tts\r\n", pTransport->sent.c_str ());
+}
+
+// ---------------------------------------------------------------- smaller things
+
+// A soundpack sets its categories each time it loads: saying the same again is not a change.
+TEST (SpeechDoc, ACategorySetAsItWasLeavesTheWorldUnchanged)
+{
+  SpeechWorld w;
+  EXPECT_EQ ((long) eOK, w.doc.SpeechCategory ("tells", "cue", "ding.wav"));
+  EXPECT_TRUE (w.doc.IsModified () != FALSE);
+  w.doc.SetModifiedFlag (FALSE);
+
+  EXPECT_EQ ((long) eOK, w.doc.SpeechCategory ("tells", "cue", "ding.wav"));
+  EXPECT_EQ ((long) eOK, w.doc.SpeechCategory ("tells", "enabled", "1"));
+  EXPECT_EQ ((long) eOK, w.doc.SpeechCategory ("input", "enabled", "0"));
+  EXPECT_FALSE (w.doc.IsModified () != FALSE);
+
+  EXPECT_EQ ((long) eOK, w.doc.SpeechCategory ("tells", "cue", "dong.wav"));
+  EXPECT_TRUE (w.doc.IsModified () != FALSE);
+  EXPECT_TRUE (w.doc.m_strSpeechCategories.Find ("cue=dong.wav") >= 0);
+}
+
+// Review and the pane keep 5000 lines, so that is all a reader starting has to take in.
+TEST (SpeechDoc, AReaderStartingTakesInOnlyTheNewestLines)
+{
+  SpeechWorld w (false);
+  w.doc.m_maxlines = 0;      // unlimited scrollback
+  for (int i = 0; i < 6000; i++)
+    w.feed (("line " + std::to_string (i) + "\n").c_str ());
+
+  WithPaneView pane (w.doc);
+  App.m_iA11yTextPane = eTextPaneWithReader;
+  w.platform.bReader = true;
+  w.tick ();
+  const auto & history = w.doc.m_pA11y->router.history ();
+  ASSERT_EQ (5000u, history.size ());
+  EXPECT_STREQ ("line 1000", history.front ().text.c_str ());
+  EXPECT_STREQ ("line 5999", history.back ().text.c_str ());
+  EXPECT_TRUE (pane.view.reset.compare (0, 10, "line 1000\n") == 0);
+  EXPECT_TRUE (pane.view.reset.find ("line 999\n") == std::string::npos);
+  EXPECT_TRUE (w.platform.reader.said.empty ());     // none of it is news
+}
+
+// A line long enough to wrap, said as a prompt while it paused, is not said again when the
+// rest of it and its newline come.
+TEST (SpeechDoc, APausedLongLineIsNotSaidTwice)
+{
+  SpeechWorld w;
+  w.doc.m_wrap = TRUE;
+  w.doc.m_nWrapColumn = 20;
+  // Not the world's first line, which the engine assembles without its first row (see
+  // ProcessPreviousLine's backward scan when it reaches the head of the list)
+  w.feed ("Hello.\n");
+  w.tick ();
+  w.platform.reader.said.clear ();
+
+  w.feed ("The quick brown fox jumps over the lazy dog and keeps running ");
+  A11y_TickAt (w.doc, w.now + 10);
+  A11y_TickAt (w.doc, w.now + 500);
+  ASSERT_EQ (1u, w.platform.reader.said.size ());
+  EXPECT_STREQ ("The quick brown fox jumps over the lazy dog and keeps running ",
+                w.platform.reader.said [0].c_str ());
+
+  w.feed ("away.\n");
+  w.now += 5000;
+  A11y_TickAt (w.doc, w.now);
+  ASSERT_EQ (2u, w.platform.reader.said.size ());
+  EXPECT_STREQ ("away.", w.platform.reader.said [1].c_str ());
+}
+
+// ---------------------------------------------------------------- LuaAudio's shim, on its own
+
+namespace {
+
+// The shim's script in a bare Lua, with the world's sound functions faked: ten buffers that
+// anyone can use.
+struct LuaAudioScript
+  {
+  lua_State * L = luaL_newstate ();
+
+  LuaAudioScript ()
+    {
+    luaL_openlibs (L);
+    std::string xml;
+    A11y_ShadowPlugin ("<plugin id=\"aedf0cb0be5bf045860d54b7\">", xml);
+    const size_t start = xml.find ("<script><![CDATA[") + strlen ("<script><![CDATA[");
+    const size_t end = xml.find ("]]></script>", start);
+    ok = Run (
+      "buffers = {}\n"
+      "function PlaySound (b, file, loop, vol, pan)\n"
+      "  if file == '' then local s = buffers [b]; if s then s.vol = vol; s.pan = pan end; return 0 end\n"
+      "  buffers [b] = { file = file, status = loop and 2 or 1, vol = vol, pan = pan }\n"
+      "  return 0\n"
+      "end\n"
+      "function GetSoundStatus (b) local s = buffers [b]; return s and s.status or -1 end\n"
+      "function StopSound (b) if b == 0 then buffers = {} else buffers [b] = nil end; return 0 end\n"
+      "function DoAfterSpecial () end\n"
+      "function Note () end\n"
+      "function GetInfo () return '' end\n"
+      "sendto = { script = 12 }\n") &&
+      Run (xml.substr (start, end - start));
+    }
+  ~LuaAudioScript () { lua_close (L); }
+
+  bool Run (const std::string & code)
+    {
+    if (luaL_loadstring (L, code.c_str ()) != 0 || lua_pcall (L, 0, 0, 0) != 0)
+      {
+      fprintf (stderr, "  Lua: %s\n", lua_tostring (L, -1));
+      lua_pop (L, 1);
+      return false;
+      }
+    return true;
+    }
+
+  bool ok = false;
+  };
+
+}  // namespace
+
+// LuaAudio's volume is BASS's, linear, and PlaySound's is dB: half is -6, not -50.
+TEST (SpeechShim, LuaAudioVolumeIsLinearAndBecomesDecibels)
+{
+  LuaAudioScript s;
+  ASSERT_TRUE (s.ok);
+  EXPECT_TRUE (s.Run ("assert (_luaaudio_db (100) == 0)"));
+  EXPECT_TRUE (s.Run ("assert (_luaaudio_db (0) == -100)"));
+  EXPECT_TRUE (s.Run ("assert (math.abs (_luaaudio_db (50) + 6.0206) < 0.001)"));
+  EXPECT_TRUE (s.Run ("assert (math.abs (_luaaudio_db (10) + 20) < 0.001)"));
+  EXPECT_TRUE (s.Run ("assert (_luaaudio_db (150) == 0 and _luaaudio_db (-5) == -100)"));
+  // and through play, with the master volume as well
+  EXPECT_TRUE (s.Run ("local h = play ('a.wav', false, 0, 50)\n"
+                      "assert (h ~= 0)\n"
+                      "assert (math.abs (buffers [10].vol + 6.0206) < 0.001, buffers [10].vol)\n"
+                      "setvol (50, 0)\n"
+                      "assert (math.abs (buffers [10].vol + 12.041) < 0.001, buffers [10].vol)\n"
+                      "setvol (0, 0)\n"
+                      "assert (buffers [10].vol == -100)"));
+}
+
+// A handle is a sound of ours: it does not steal a buffer someone else is using, and stopping
+// it after it has ended does not stop someone else's sound in the same buffer.
+TEST (SpeechShim, LuaAudioHandlesAreItsOwnSounds)
+{
+  LuaAudioScript s;
+  ASSERT_TRUE (s.ok);
+  EXPECT_TRUE (s.Run (
+    // every buffer but one is someone else's
+    "for b = 1, 9 do buffers [b] = { file = 'msp' .. b, status = 1 } end\n"
+    "local a = play ('a.wav')\n"
+    "assert (a ~= 0 and buffers [10].file == 'a.wav')\n"
+    // all ten busy, ours a one-shot: ours gives way, theirs do not
+    "local b = play ('b.wav')\n"
+    "assert (b ~= 0 and b ~= a and buffers [10].file == 'b.wav')\n"
+    "for i = 1, 9 do assert (buffers [i].file == 'msp' .. i) end\n"
+    "assert (not isplaying (a) and isplaying (b))\n"
+    // a loop of ours does not give way either, so there is no room
+    "stop (b)\n"
+    "local c = play ('c.wav', true)\n"
+    "assert (c ~= 0)\n"
+    "assert (play ('d.wav') == 0)\n"
+    "for i = 1, 9 do assert (buffers [i].file == 'msp' .. i) end\n"
+    "assert (buffers [10].file == 'c.wav')\n"
+    // ours ends, and someone else takes the buffer: the old handle touches nothing
+    "stop (c)\n"
+    "buffers [10] = { file = 'x10', status = 1 }\n"
+    "buffers [5] = nil\n"
+    "local e = play ('e.wav')\n"
+    "assert (buffers [5].file == 'e.wav')\n"
+    "buffers [5].status = 0\n"
+    "assert (not isplaying (e))\n"
+    "buffers [5] = { file = 'theirs', status = 1 }\n"
+    "stop (e)\n"
+    "assert (buffers [5].file == 'theirs')\n"
+    // and stopping everything stops only ours
+    "buffers [10] = nil\n"
+    "local f = play ('f.wav')\n"
+    "stop (0)\n"
+    "for i = 1, 9 do assert (buffers [i] and buffers [i].file ~= 'f.wav') end\n"
+    "assert (buffers [10] == nil)\n"));
 }

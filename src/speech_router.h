@@ -149,8 +149,9 @@ class SpeechRouter
     // whole line arrives what has already been said is not said again.
     void prompt (const std::string & text);
 
-    // Something a script or trigger asked to have said.  Never dropped by the flood
-    // policy if its priority is Assertive.
+    // Something a script or trigger asked to have said.  If its priority is Assertive it is
+    // never dropped by the flood policy, by Enter or by another say's interrupt: only stop,
+    // skipToLatest, muting, and having no backend at all lose it.
     void say (const std::string & text, const std::string & category,
               pal::SpeechPriority priority, bool bInterrupt);
 
@@ -160,7 +161,7 @@ class SpeechRouter
     // Delivers what it can.  Call often, with a clock that does not go backwards.
     void tick (int64_t nowMs);
 
-    // The player pressed Enter: what is waiting is no longer news.
+    // The player pressed Enter: what is waiting is no longer news, unless it is Assertive.
     void commandEntered ();
     // Silence, and nothing waiting.
     void stop ();
@@ -205,6 +206,7 @@ class SpeechRouter
 
     void remember (const std::string & text, const std::string & category);
     void enqueue (const std::string & text, pal::SpeechPriority priority);
+    void dropWaitingButUrgent ();
     void applyFloodPolicy ();
     bool backendReady (int64_t nowMs);
     void deliver (const std::string & text, pal::SpeechPriority priority, bool bFlush, int64_t nowMs);

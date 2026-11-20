@@ -9,6 +9,10 @@
 #include "a11y.h"
 #include "pal/win_a11y_pane.h"
 #include "pal/ispeech.h"
+#include "pal/iworldview.h"
+#include "pal/win_worldview.h"
+#include "mushview.h"
+#include "sendvw.h"
 #include "dialogs/global_prefs/GlobalPrefs.h"
 #include "dialogs/global_prefs/GlobalPrefsSheet.h"
 
@@ -18,6 +22,8 @@
 #include <oleacc.h>
 #include <richedit.h>
 #include <string>
+
+namespace pal { bool WinSpeech_HoldsComForTest (); }    // pal/win_speech.cpp
 
 namespace {
 
@@ -221,9 +227,11 @@ TEST (WinA11yPane, AZeroSizeStaticNamesTheEditAfterIt)
 // The Accessibility page of Global Preferences, created for real from the real resource.
 TEST (WinA11yPrefs, ThePageCreatesAndRoundTrips)
 {
-  HMODULE hDll = LoadLibraryExW (L"..\WinRel-ARM64\locale\en.dll", NULL, LOAD_LIBRARY_AS_DATAFILE);
+  // (These were written with single backslashes, which C++ took for escapes: the test found no
+  // en.dll anywhere, and returned before it had tested anything.)
+  HMODULE hDll = LoadLibraryExW (L"..\\WinRel-ARM64\\locale\\en.dll", NULL, LOAD_LIBRARY_AS_DATAFILE);
   if (!hDll)
-    hDll = LoadLibraryExW (L"locale\en.dll", NULL, LOAD_LIBRARY_AS_DATAFILE);
+    hDll = LoadLibraryExW (L"locale\\en.dll", NULL, LOAD_LIBRARY_AS_DATAFILE);
   if (!hDll)
     return;    // only the x64 and Win32 runs that have no en.dll where this looks
   HINSTANCE hSaved = AfxGetResourceHandle ();
@@ -231,6 +239,11 @@ TEST (WinA11yPrefs, ThePageCreatesAndRoundTrips)
 
   CGlobalPrefsSheet sheet;
   EXPECT_EQ (13, sheet.GetPageCount ());
+
+  // Opening the page names the voices and does not make one
+  pal::ISpeechPlatform * pSavedPlatform = pal::g_speechPlatform;
+  pal::InstallPlatformSpeech ();
+  pal::g_speechPlatform->shutdown ();
 
   CGlobalPrefsP14 page;
   page.m_iSpeechMode = eSpeechAlways;
@@ -245,6 +258,7 @@ TEST (WinA11yPrefs, ThePageCreatesAndRoundTrips)
   if (bCreated)
     {
     EXPECT_EQ (eSpeechAlways, ((CComboBox *) page.GetDlgItem (IDC_SPEECH_MODE))->GetCurSel ());
+    EXPECT_FALSE (pal::WinSpeech_HoldsComForTest ());
     page.m_iVolume = 0;
     EXPECT_TRUE (page.UpdateData (TRUE) != FALSE);
     EXPECT_EQ (55, page.m_iVolume);
@@ -256,6 +270,7 @@ TEST (WinA11yPrefs, ThePageCreatesAndRoundTrips)
   DestroyWindow (hParent);
   AfxSetResourceHandle (hSaved);
   FreeLibrary (hDll);
+  pal::g_speechPlatform = pSavedPlatform;
 }
 
 
@@ -390,5 +405,163 @@ TEST (WinSapi, ItSpeaksAndItsVoicesAreThere)
   EXPECT_TRUE (pVoice->speak ("test", pal::SpeechPriority::Normal, false));
   (void) pVoice->isBusy ();
   pVoice->stop ();
+  pal::g_speechPlatform = pSaved;
+}
+
+// ---------------------------------------------------------------- lifetimes
+
+// SAPI's voice and JAWS's object were released by a static's destructor, after ExitInstance had
+// shut COM down.  shutdown () is ExitInstance letting them go first.
+TEST (WinSapi, ShutdownLetsGoOfComAndTheVoiceComesBack)
+{
+  pal::ISpeechPlatform * pSaved = pal::g_speechPlatform;
+  pal::InstallPlatformSpeech ();
+  pal::g_speechPlatform->shutdown ();
+  EXPECT_FALSE (pal::WinSpeech_HoldsComForTest ());
+
+  // Naming the voices, as the preferences do, makes none
+  (void) pal::g_speechPlatform->ownVoiceNames ();
+  EXPECT_FALSE (pal::WinSpeech_HoldsComForTest ());
+
+  if (pal::g_speechPlatform->ownVoice ())
+    {
+    EXPECT_TRUE (pal::WinSpeech_HoldsComForTest ());
+    pal::g_speechPlatform->shutdown ();
+    EXPECT_FALSE (pal::WinSpeech_HoldsComForTest ());
+    pal::g_speechPlatform->shutdown ();      // twice is fine
+    // asked for again, there is one again
+    pal::ISpeech * pVoice = pal::g_speechPlatform->ownVoice ();
+    EXPECT_TRUE (pVoice != nullptr);
+    if (pVoice)
+      pVoice->setVolume (0);
+    pal::g_speechPlatform->shutdown ();
+    }
+  pal::g_speechPlatform = pSaved;
+}
+
+// The pane is created by the world's view adapter, which is deleted with the document; the
+// pane went with nothing.
+TEST (WinA11yPane, TheWorldViewTakesItsPaneWithIt)
+{
+  struct ViewsOfOurOwn : CMUSHclientDoc
+    {
+    void add (CView * pView) { m_viewList.AddTail (pView); }
+    void clear () { m_viewList.RemoveAll (); }
+    };
+
+  ViewsOfOurOwn doc;
+  CMUSHView * pOutput = (CMUSHView *) RUNTIME_CLASS (CMUSHView)->CreateObject ();
+  CSendView * pCommand = (CSendView *) RUNTIME_CLASS (CSendView)->CreateObject ();
+  ASSERT_TRUE (pOutput != nullptr && pCommand != nullptr);
+  doc.add (pOutput);
+  doc.add (pCommand);
+
+  const int before = WinA11yPane_LiveCountForTest ();
+  pal::IWorldView * pView = pal::CreateWinWorldView (&doc);
+  pView->accessiblePaneShow (true);
+  EXPECT_EQ (before + 1, WinA11yPane_LiveCountForTest ());
+  delete pView;
+  EXPECT_EQ (before, WinA11yPane_LiveCountForTest ());
+
+  doc.clear ();
+  delete (CObject *) pOutput;
+  delete (CObject *) pCommand;
+}
+
+// ---------------------------------------------------------------- the Alt key
+
+namespace {
+
+struct ReaderPlatform : pal::ISpeechPlatform
+  {
+  struct Reader : pal::ISpeech
+    {
+    unsigned capabilities () const override { return pal::kSpeechScreenReader; }
+    const char * name () const override { return "Test"; }
+    bool speak (const char *, pal::SpeechPriority, bool) override { return true; }
+    void stop () override {}
+    } reader;
+  bool bReader = true;
+  pal::ISpeech * screenReader () override { return bReader ? &reader : nullptr; }
+  pal::ISpeech * ownVoice () override { return nullptr; }
+  };
+
+// Alt and Shift held, or not, as this thread's GetKeyState sees it.
+struct HeldKeys
+  {
+  BYTE saved [256];
+  explicit HeldKeys (const bool bAltShift)
+    {
+    GetKeyboardState (saved);
+    BYTE keys [256];
+    memcpy (keys, saved, sizeof keys);
+    const BYTE down = bAltShift ? 0x80 : 0;
+    keys [VK_MENU] = keys [VK_LMENU] = keys [VK_SHIFT] = keys [VK_LSHIFT] = down;
+    keys [VK_CONTROL] = keys [VK_LCONTROL] = keys [VK_RCONTROL] = 0;
+    SetKeyboardState (keys);
+    }
+  ~HeldKeys () { SetKeyboardState (saved); }
+  };
+
+MSG Key (const UINT message, const WPARAM vk)
+  {
+  MSG msg = {};
+  msg.message = message;
+  msg.wParam = vk;
+  msg.lParam = 1 | (message == WM_KEYUP || message == WM_SYSKEYUP ? (1u << 30) | (1u << 31) : 0);
+  return msg;
+  }
+
+}  // namespace
+
+// A review key with Alt never reaches DefWindowProc, which then takes the release of Alt for
+// Alt pressed alone and opens the menu bar.  So that release is eaten too, and only that one.
+TEST (WinA11yKeys, AltLetGoAfterAReviewKeyDoesNotOpenTheMenu)
+{
+  pal::ISpeechPlatform * pSaved = pal::g_speechPlatform;
+  ReaderPlatform platform;
+  pal::g_speechPlatform = &platform;
+  A11y_ResetForTest ();
+  const int iSavedMode = App.m_iSpeechMode, iSavedPane = App.m_iA11yTextPane;
+  App.m_iSpeechMode = eSpeechAuto;
+  App.m_iA11yTextPane = eTextPaneNever;
+  {
+  CMUSHclientDoc doc;
+  doc.m_bSpeechBackground = true;
+  A11y_TickAt (doc, 1000000);
+  ASSERT_TRUE (A11y_AutoReading ());
+
+  {
+  HeldKeys keys (true);
+  MSG down = Key (WM_SYSKEYDOWN, VK_UP);
+  EXPECT_TRUE (WinA11y_CommandBoxKey (&doc, &down));
+  MSG up = Key (WM_SYSKEYUP, VK_MENU);
+  EXPECT_TRUE (WinA11y_PreTranslate (&up));
+  EXPECT_FALSE (WinA11y_PreTranslate (&up));      // once
+  }
+
+  // A key that was not ours owes nothing
+  {
+  HeldKeys keys (true);
+  MSG down = Key (WM_SYSKEYDOWN, 'A');
+  EXPECT_FALSE (WinA11y_CommandBoxKey (&doc, &down));
+  MSG up = Key (WM_SYSKEYUP, VK_MENU);
+  EXPECT_FALSE (WinA11y_PreTranslate (&up));
+  }
+
+  // nor one pressed afresh after it
+  {
+  HeldKeys keys (true);
+  MSG down = Key (WM_SYSKEYDOWN, VK_DOWN);
+  EXPECT_TRUE (WinA11y_CommandBoxKey (&doc, &down));
+  MSG alt = Key (WM_SYSKEYDOWN, VK_MENU);
+  EXPECT_FALSE (WinA11y_PreTranslate (&alt));
+  MSG up = Key (WM_SYSKEYUP, VK_MENU);
+  EXPECT_FALSE (WinA11y_PreTranslate (&up));
+  }
+  }
+  App.m_iSpeechMode = iSavedMode;
+  App.m_iA11yTextPane = iSavedPane;
+  A11y_ResetForTest ();
   pal::g_speechPlatform = pSaved;
 }

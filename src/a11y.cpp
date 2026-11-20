@@ -25,6 +25,7 @@ namespace {
 
 const int kPollIntervalMs = 2000;     // how often to look for a screen reader
 const int kPromptQuietMs = 350;       // a partial line this quiet is a prompt
+const size_t kSeedLines = 5000;       // as many as review and the text pane keep
 
 // Which screen reader there is applies to the whole application, not to a world.
 struct AppSpeech
@@ -152,11 +153,27 @@ CA11yState & State (CMUSHclientDoc & doc)
 void WalkLines (CMUSHclientDoc & doc, const std::function<void (const std::string &, int)> & each,
                 const bool bButNotTheLastOne = false)
   {
+  // Only the newest kSeedLines: a scrollback can be far longer than anything kept here.
+  POSITION start = doc.m_LineList.GetHeadPosition ();
+  size_t iEnds = 0;
+  for (POSITION pos = doc.m_LineList.GetTailPosition (); pos; )
+    {
+    const POSITION here = pos;
+    const CLine * pLine = doc.m_LineList.GetPrev (pos);
+    if (pLine->hard_return && ++iEnds > kSeedLines)
+      {
+      // the row ending the line before the first of them: they start after it
+      start = here;
+      doc.m_LineList.GetNext (start);
+      break;
+      }
+    }
+
   std::string strLine;
   std::string strPrevious;
   int iPreviousFlags = 0;
   bool bHavePrevious = false;
-  for (POSITION pos = doc.m_LineList.GetHeadPosition (); pos; )
+  for (POSITION pos = start; pos; )
     {
     CLine * pLine = doc.m_LineList.GetNext (pos);
     if (pLine == doc.m_pCurrentLine && !pLine->hard_return)
@@ -174,6 +191,27 @@ void WalkLines (CMUSHclientDoc & doc, const std::function<void (const std::strin
     }
   if (bHavePrevious && !bButNotTheLastOne)
     each (strPrevious, iPreviousFlags);
+  }
+
+// The line still arriving, all of it: a long one has wrapped onto several rows, and only the
+// last is m_pCurrentLine.  Said as a prompt, it has to be what the whole line starts with, or
+// it is said again when the newline comes.
+std::string PartialLine (CMUSHclientDoc & doc)
+  {
+  if (doc.m_LineList.IsEmpty () || doc.m_LineList.GetTail () != doc.m_pCurrentLine)
+    return std::string (doc.m_pCurrentLine->text, doc.m_pCurrentLine->len);
+  std::vector<const CLine *> rows;
+  for (POSITION pos = doc.m_LineList.GetTailPosition (); pos && rows.size () < 1000; )
+    {
+    const CLine * pLine = doc.m_LineList.GetPrev (pos);
+    if (pLine->hard_return)
+      break;
+    rows.push_back (pLine);
+    }
+  std::string out;
+  for (auto it = rows.rbegin (); it != rows.rend (); ++it)
+    out.append ((*it)->text, (*it)->len);
+  return out;
   }
 
 const char * CategoryForFlags (const int iFlags)
@@ -230,8 +268,16 @@ void SaveCategories (CMUSHclientDoc & doc, CA11yState & state)
   {
   const std::string text = a11y::CategoriesToText (state.router.categories ());
   state.strAppliedCategories = text;
+  if (text == (const char *) doc.m_strSpeechCategories)
+    return;
   doc.m_strSpeechCategories = text.c_str ();
   doc.SetModifiedFlag (TRUE);
+  }
+
+bool SameSettings (const a11y::CategorySettings & a, const a11y::CategorySettings & b)
+  {
+  return a.enabled == b.enabled && a.priority == b.priority && a.cue == b.cue &&
+         a.cueVolume == b.cueVolume && a.cuePan == b.cuePan;
   }
 
 std::string SubstitutionsPath ()
@@ -331,6 +377,47 @@ bool PluginEnabled (CMUSHclientDoc & doc, const char * sID)
   {
   CPlugin * pPlugin = doc.GetPlugin (sID);
   return pPlugin && pPlugin->m_bEnabled;
+  }
+
+// The review keys and the commands are only there while output is being read, or for
+// someone who installed MushReader: a script that merely speaks, or a text pane wanted
+// always, does not take keys or words from the player.
+bool KeysLive (CMUSHclientDoc & doc)
+  {
+  return Reading (doc) || PluginEnabled (doc, kA11yMushReaderID);
+  }
+
+// Has the world or a plugin put something on this key with Accelerator?  Then it is theirs.
+bool WorldHasAccelerator (const CMUSHclientDoc & doc, const A11yKey key, const int ch,
+                          const bool bCtrl, const bool bAlt, const bool bShift)
+  {
+  if (doc.m_AcceleratorToCommandMap.empty ())
+    return false;
+  WORD vk = 0;
+  switch (key)
+    {
+    case A11yKey::Up:       vk = VK_UP;     break;
+    case A11yKey::Down:     vk = VK_DOWN;   break;
+    case A11yKey::Left:     vk = VK_LEFT;   break;
+    case A11yKey::Right:    vk = VK_RIGHT;  break;
+    case A11yKey::Home:     vk = VK_HOME;   break;
+    case A11yKey::End:      vk = VK_END;    break;
+    case A11yKey::PageUp:   vk = VK_PRIOR;  break;
+    case A11yKey::PageDown: vk = VK_NEXT;   break;
+    case A11yKey::Return:   vk = VK_RETURN; break;
+    case A11yKey::F6:       vk = VK_F6;     break;
+    case A11yKey::F12:      vk = VK_F12;    break;
+    case A11yKey::Character:
+      vk = ch == ',' ? 0xBC :     // VK_OEM_COMMA
+           ch == '.' ? 0xBE :     // VK_OEM_PERIOD
+                       (WORD) ch; // letters and digits are their own
+      break;
+    }
+  BYTE fVirt = FVIRTKEY | FNOINVERT;
+  if (bCtrl)  fVirt |= FCONTROL;
+  if (bAlt)   fVirt |= FALT;
+  if (bShift) fVirt |= FSHIFT;
+  return doc.m_AcceleratorToCommandMap.count (((long) fVirt) << 16 | vk) != 0;
   }
 
 void ToggleMute (CMUSHclientDoc & doc, CA11yState & state)
@@ -498,15 +585,25 @@ std::string A11y_ToUtf8 (const CMUSHclientDoc & doc, const char * sText)
 
 void A11y_Screendraw (CMUSHclientDoc & doc, const long iType, const char * sText)
   {
-  if (!Reading (doc))
+  const bool bReading = Reading (doc);
+  if (!bReading && !doc.m_pA11y)
     return;
 
+  // With nothing being read there can still be a pane (Always), or a history that review
+  // has already seeded and which should not get a gap.
   CA11yState & state = State (doc);
-  SeedRouter (doc, state, true);     // this line is in the list by now, and is about to be said
+  if (bReading)
+    SeedRouter (doc, state, true);     // this line is in the list by now, and is about to be said
+  if (!bReading && !state.bRouterSeeded && !state.bPaneShown)
+    return;
 
   const std::string text = A11y_ToUtf8 (doc, sText);
-  const bool bSpeak = (doc.IsWorldViewActive () || doc.m_bSpeechBackground) && !OtherSpeechPlugin (doc);
-  state.router.line (text, CategoryForFlags (iType), bSpeak);
+  if (state.bRouterSeeded)
+    {
+    const bool bSpeak = bReading && (doc.IsWorldViewActive () || doc.m_bSpeechBackground) &&
+                        !OtherSpeechPlugin (doc);
+    state.router.line (text, CategoryForFlags (iType), bSpeak);
+    }
   state.strPartial.clear ();
 
   if (state.bPaneShown && doc.m_pWorldView)
@@ -564,7 +661,7 @@ void A11y_TickAt (CMUSHclientDoc & doc, const long long now)
       !doc.m_pCurrentLine->hard_return &&
       (doc.IsWorldViewActive () || doc.m_bSpeechBackground))
     {
-    const std::string strPartial (doc.m_pCurrentLine->text, doc.m_pCurrentLine->len);
+    const std::string strPartial = PartialLine (doc);
     if (strPartial != state.strPartial)
       {
       state.strPartial = strPartial;
@@ -607,9 +704,9 @@ void A11y_SendToSpeech (CMUSHclientDoc & doc, const char * sText)
 
 bool A11y_Command (CMUSHclientDoc & doc, const char * sCommand)
   {
-  // Only for someone using speech: to anyone else these are words to send to the MUD.
-  const bool bShim = PluginEnabled (doc, kA11yMushReaderID);
-  if (!bShim && !g_app.bAutoReading && !doc.m_pA11y)
+  // Only for someone using speech: to anyone else these are words to send to the MUD.  An
+  // alias for one of them has already had its turn (EvaluateCommand), and won.
+  if (!KeysLive (doc))
     return false;
 
   const std::string command = Trim (sCommand);
@@ -655,11 +752,27 @@ bool A11y_Command (CMUSHclientDoc & doc, const char * sCommand)
 // ---------------------------------------------------------------- the keys
 
 // All Alt+Shift, which nothing else in the client uses, and only while reading, so that
-// nobody else loses anything.  Ctrl+Shift+F12 is what MushReader's shim uses to mute.
+// nobody else loses anything.  Ctrl+Shift+F12 is what MushReader's shim uses to mute.  A
+// key the world or a plugin has put an accelerator on is theirs.
 bool A11y_Key (CMUSHclientDoc & doc, const A11yKey key, const int ch,
                const bool bCtrl, const bool bAlt, const bool bShift)
   {
-  if (!doc.m_pA11y && !g_app.bAutoReading)
+  const bool bLive = KeysLive (doc);
+  const bool bPane = doc.m_pA11y && doc.m_pA11y->bPaneShown && doc.m_pWorldView;
+  if (!bLive && !bPane)
+    return false;
+  if (WorldHasAccelerator (doc, key, ch, bCtrl, bAlt, bShift))
+    return false;
+
+  // Between the command box and the text pane, wherever there is one.  F6 is a macro key,
+  // so that it is only this if the world has not given it a job.
+  if (key == A11yKey::F6 && !bCtrl && !bAlt && !bShift && bPane && doc.m_macros [MAC_F6].IsEmpty ())
+    {
+    doc.m_pWorldView->accessibleFocusPane (!doc.m_pWorldView->accessiblePaneFocused ());
+    return true;
+    }
+
+  if (!bLive)
     return false;
 
   CA11yState & state = State (doc);
@@ -669,15 +782,6 @@ bool A11y_Key (CMUSHclientDoc & doc, const A11yKey key, const int ch,
   if (bCtrl && bShift && !bAlt && key == A11yKey::F12)
     {
     ToggleMute (doc, state);
-    return true;
-    }
-
-  // Between the command box and the text pane.  F6 is a macro key, so that it is only
-  // this if the world has not given it a job.
-  if (key == A11yKey::F6 && !bCtrl && !bAlt && !bShift && state.bPaneShown && doc.m_pWorldView &&
-      doc.m_macros [MAC_F6].IsEmpty ())
-    {
-    doc.m_pWorldView->accessibleFocusPane (!doc.m_pWorldView->accessiblePaneFocused ());
     return true;
     }
 
@@ -846,6 +950,9 @@ long CMUSHclientDoc::SpeechCategory (LPCTSTR Name, LPCTSTR Option, LPCTSTR Value
     return eBadParameter;
 
   CA11yState & state = State (*this);
+  const auto existing = state.router.categories ().find (Name);
+  const a11y::CategorySettings before = existing == state.router.categories ().end () ?
+                                        a11y::CategorySettings () : existing->second;
   a11y::CategorySettings & settings = state.router.category (Name);
   const std::string option = Lower (Option);
   if (option == "enabled")
@@ -867,6 +974,9 @@ long CMUSHclientDoc::SpeechCategory (LPCTSTR Name, LPCTSTR Option, LPCTSTR Value
   else
     return eUnknownOption;
 
+  // A soundpack sets its categories every time it loads: the world has not changed.
+  if (existing != state.router.categories ().end () && SameSettings (before, settings))
+    return eOK;
   SaveCategories (*this, state);
   return eOK;
   }
@@ -895,9 +1005,8 @@ VARIANT CMUSHclientDoc::SpeechInfo (short InfoType)
     case 12:
       {
       std::string voices;
-      pal::ISpeech * pVoice = OwnVoice ();
-      if (pVoice)
-        for (const std::string & voice : pVoice->voices ())
+      if (pal::g_speechPlatform)
+        for (const std::string & voice : pal::g_speechPlatform->ownVoiceNames ())
           voices += (voices.empty () ? "" : "|") + voice;
       SetUpVariantString (vaResult, voices.c_str ());
       }

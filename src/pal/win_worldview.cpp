@@ -83,6 +83,14 @@ class CWinWorldView : public IWorldView {
 public:
     explicit CWinWorldView(CMUSHclientDoc* pDoc) : m_pDoc(pDoc) {}
 
+    // The text pane is ours.  Its window went with the frame; the object, and the RichEdit
+    // document interface it holds, go here.
+    ~CWinWorldView() override
+    {
+        if (m_pPane)
+            WinA11yPane_Destroy(m_pPane);
+    }
+
     // ── display (dormant until the display-family flip — see header) ──────
     void appendLine(SOutputLine&& /*line*/) override
     {

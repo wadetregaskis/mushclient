@@ -26,4 +26,7 @@ void WinA11yPane_Focus (CWinA11yPane * pPane, bool bPane);
 bool WinA11y_PreTranslate (MSG * pMsg);
 bool WinA11y_CommandBoxKey (CMUSHclientDoc * pDoc, const MSG * pMsg);
 
+// For tests: how many pane objects there are.
+int WinA11yPane_LiveCountForTest ();
+
 #endif // _WIN32

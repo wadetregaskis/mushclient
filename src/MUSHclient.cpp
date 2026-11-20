@@ -1404,6 +1404,9 @@ int CMUSHclientApp::ExitInstance()
   // The system spell checker is a COM object on Windows: released while COM
   // is still there, not by a static destructor after it has gone.
   SetSystemSpellEngine (NULL);
+  // So are SAPI's voice and JAWS's API, which the speech platform's static held on to.
+  if (pal::g_speechPlatform)
+    pal::g_speechPlatform->shutdown ();
 
   if (!bWine)
     CoUninitialize ();

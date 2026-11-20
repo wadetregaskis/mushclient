@@ -666,8 +666,7 @@ void SpeechRouter::say (const std::string & text, const std::string & category,
 
   if (bInterrupt)
     {
-    m_pending.clear ();
-    m_skipped = 0;
+    dropWaitingButUrgent ();
     m_stopRequested = true;
     }
   if (!IsBlank (text))
@@ -683,11 +682,22 @@ void SpeechRouter::sayNow (const std::string & text)
     deliver (text, pal::SpeechPriority::Assertive, true, m_now);
   }
 
+// What is waiting goes, except what is urgent: an alert that came in just before the player
+// pressed Enter, or interrupted, is still news.  Only stopping speech loses it.
+void SpeechRouter::dropWaitingButUrgent ()
+  {
+  std::deque<Pending> kept;
+  for (Pending & p : m_pending)
+    if (p.priority == pal::SpeechPriority::Assertive)
+      kept.push_back (std::move (p));
+  m_totalSkipped += m_pending.size () - kept.size ();
+  m_pending.swap (kept);
+  m_skipped = 0;
+  }
+
 void SpeechRouter::commandEntered ()
   {
-  m_totalSkipped += m_pending.size ();
-  m_pending.clear ();
-  m_skipped = 0;
+  dropWaitingButUrgent ();
   m_heldNew = 0;
   m_promptSpoken.clear ();
   m_review.goLive ();

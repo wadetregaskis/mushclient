@@ -99,11 +99,6 @@ const CSuppressInputLogging suppressInputLogging (*this, bOmitFromLog);
   if (input.IsEmpty ())
     return false;
 
-// tts, subst and so on, for someone using speech
-
-  if (!bTest && A11y_Command (*this, input))
-    return true;
-
 // ------------------------- SPEED WALKING ------------------------------
 
 // see if they are doing speed walking
@@ -207,6 +202,11 @@ const CSuppressInputLogging suppressInputLogging (*this, bOmitFromLog);
 
   if (AliasList.IsEmpty ())
     {
+    // tts, subst and so on, for someone using speech: after the aliases, so that a world's
+    // or a plugin's own alias for one of those words is the one that runs
+    if (!bTest && A11y_Command (*this, input))
+      return true;
+
     // let them know if they are foolishly trying to send to a closed connection
     if (CheckConnected ())
       return true;

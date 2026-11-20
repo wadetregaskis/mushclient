@@ -93,22 +93,56 @@ Commands: sound_toggle, volume_up, volume_down, vol, sound_close.
 <script><![CDATA[
 local have_ppi = pcall (require, "ppi")
 
--- Volume here is 0 to 100, and PlaySound's is a dB-like -100 to 0.
+-- Volume here is LuaAudio's: 0 to 100, and linear, as BASS's was.  PlaySound's is attenuation
+-- in dB, -100 to 0, which is what DirectSound and the port's engine both take.
 local master_volume = 100
 local master_pan = 0
 local enabled = true
-local loops = {}          -- file -> buffer, for OnPluginPlaySound's loop= and stop=
-local volumes = {}        -- buffer -> volume
-local pans = {}           -- buffer -> pan
 local generation = 0      -- what delayed things check, so that stop means stop
+
+-- A handle is a sound of ours, not a buffer: buffers are the world's, shared with MSP, the
+-- world's own sounds and other plugins.  A handle's sound that has ended is forgotten, so its
+-- buffer can be anyone's again and stopping the handle cannot stop someone else's sound.
+local sounds = {}         -- handle -> { buffer, volume, pan, looped }
+local owner = {}          -- buffer -> the handle playing in it
+local next_handle = 1
+local loops = {}          -- file -> handle, for OnPluginPlaySound's loop= and stop=
 
 local function num (x, default)
   return tonumber (x) or default
 end
 
 local function db (volume)
-  if volume < 0 then volume = 0 elseif volume > 100 then volume = 100 end
-  return volume * master_volume / 100 - 100
+  volume = math.max (0, math.min (100, num (volume, 100))) * master_volume / 100
+  if volume <= 0 then
+    return -100
+  end
+  return math.max (-100, 20 * math.log (volume / 100) / math.log (10))
+end
+_luaaudio_db = db
+
+-- The buffer a handle's sound is still playing in, or nil.
+local function live (handle)
+  local s = sounds [handle]
+  if not s then
+    return nil
+  end
+  if owner [s.buffer] == handle and GetSoundStatus (s.buffer) > 0 then
+    return s.buffer
+  end
+  sounds [handle] = nil
+  if owner [s.buffer] == handle then
+    owner [s.buffer] = nil
+  end
+  return nil
+end
+
+local function forget (handle)
+  local s = sounds [handle]
+  if s and owner [s.buffer] == handle then
+    owner [s.buffer] = nil
+  end
+  sounds [handle] = nil
 end
 
 local function exists (name)
@@ -134,13 +168,30 @@ local function playable (file)
   return file
 end
 
+-- From the top down, as MSP and PlaySound (0) take from the bottom.  With every buffer busy, the
+-- oldest of our own sounds that is not a loop gives way; nobody else's ever does.
 local function free_buffer ()
+  for handle in pairs (sounds) do
+    live (handle)
+  end
   for buffer = 10, 1, -1 do
-    if GetSoundStatus (buffer) <= 0 then
+    if not owner [buffer] and GetSoundStatus (buffer) <= 0 then
       return buffer
     end
   end
-  return 1
+  local oldest
+  for handle, s in pairs (sounds) do
+    if not s.looped and (not oldest or handle < oldest) then
+      oldest = handle
+    end
+  end
+  if not oldest then
+    return nil
+  end
+  local buffer = sounds [oldest].buffer
+  StopSound (buffer)
+  forget (oldest)
+  return buffer
 end
 
 function play (file, loop, pan, volume)
@@ -148,15 +199,20 @@ function play (file, loop, pan, volume)
     return 0
   end
   local buffer = free_buffer ()
+  if not buffer then
+    return 0
+  end
   pan = num (pan, master_pan)
   volume = num (volume, 100)
   local looped = loop ~= nil and loop ~= false and loop ~= 0 and loop ~= "0"
   if PlaySound (buffer, playable (tostring (file)), looped, db (volume), pan) ~= 0 then
     return 0
   end
-  volumes [buffer] = volume
-  pans [buffer] = pan
-  return buffer
+  local handle = next_handle
+  next_handle = next_handle + 1
+  sounds [handle] = { buffer = buffer, volume = volume, pan = pan, looped = looped }
+  owner [buffer] = handle
+  return handle
 end
 
 function playlooped (file)
@@ -185,74 +241,101 @@ function _luaaudio_fire (key)
   end
 end
 
-function stop (buffer)
-  buffer = num (buffer, 0)
-  if buffer == 0 then
+-- 0 is all of ours, and only ours.
+function stop (handle)
+  handle = num (handle, 0)
+  if handle == 0 then
     generation = generation + 1
     loops = {}
-  end
-  StopSound (buffer)
-end
-
-function isplaying (buffer)
-  return GetSoundStatus (num (buffer, 0)) > 0
-end
-
-function getvolume (buffer)
-  return volumes [num (buffer, 0)] or master_volume
-end
-
-local function apply (buffer)
-  local looping = GetSoundStatus (buffer) == 2
-  PlaySound (buffer, "", looping, db (volumes [buffer] or 100), pans [buffer] or 0)
-end
-
-local function each_buffer (buffer, f)
-  buffer = num (buffer, 0)
-  if buffer ~= 0 then
-    f (buffer)
+    for h in pairs (sounds) do
+      local buffer = live (h)
+      if buffer then
+        StopSound (buffer)
+      end
+    end
+    sounds = {}
+    owner = {}
     return
   end
-  for b = 1, 10 do
-    if GetSoundStatus (b) > 0 then
-      f (b)
+  local buffer = live (handle)
+  if buffer then
+    StopSound (buffer)
+  end
+  forget (handle)
+end
+
+function isplaying (handle)
+  handle = num (handle, 0)
+  if handle == 0 then
+    for h in pairs (sounds) do
+      if live (h) then
+        return true
+      end
     end
+    return false
+  end
+  return live (handle) ~= nil
+end
+
+function getvolume (handle)
+  local s = sounds [num (handle, 0)]
+  return s and s.volume or master_volume
+end
+
+local function apply (handle)
+  local buffer = live (handle)
+  if buffer then
+    local s = sounds [handle]
+    PlaySound (buffer, "", s.looped, db (s.volume), s.pan)
   end
 end
 
-function setvol (volume, buffer)
+local function each_sound (handle, f)
+  handle = num (handle, 0)
+  if handle ~= 0 then
+    if sounds [handle] then
+      f (handle)
+    end
+    return
+  end
+  for h in pairs (sounds) do
+    f (h)
+  end
+end
+
+function setvol (volume, handle)
   volume = num (volume, 100)
-  if num (buffer, 0) == 0 then
+  if num (handle, 0) == 0 then
     master_volume = math.max (0, math.min (100, volume))
-  else
-    volumes [num (buffer, 0)] = volume
+  elseif sounds [num (handle, 0)] then
+    sounds [num (handle, 0)].volume = volume
   end
-  each_buffer (buffer, apply)
+  each_sound (handle, apply)
 end
 
-function setpan (pan, buffer)
+function setpan (pan, handle)
   pan = num (pan, 0)
-  if num (buffer, 0) == 0 then
+  if num (handle, 0) == 0 then
     master_pan = pan
   end
-  each_buffer (buffer, function (b) pans [b] = pan; apply (b) end)
+  each_sound (handle, function (h) sounds [h].pan = pan; apply (h) end)
 end
 
-function setpitch (pitch, buffer)
+function setpitch (pitch, handle)
 end
-function slidepitch (pitch, buffer, ms)
+function slidepitch (pitch, handle, ms)
 end
 function freq (value)
 end
 
 -- Five steps is enough for the ear, and timers are what there is.
-local function slide (buffer, ms, get, set, target, after)
+local function slide (handle, ms, get, set, target, after)
   ms = num (ms, 1000)
-  local b = num (buffer, 0)
-  local from = get (b)
+  local h = num (handle, 0)
+  local from = get (h)
   _G._luaaudio_slides = _G._luaaudio_slides or {}
   local key = #_G._luaaudio_slides + 1
-  _G._luaaudio_slides [key] = { b = b, from = from, to = num (target, 0), set = set, step = 0, after = after,
+  _G._luaaudio_slides [key] = { h = h, from = from, to = num (target, 0), set = set, step = 0, after = after,
                                  generation = generation, each = math.max (ms / 5000, 0.1) }
   _luaaudio_slide_step (key)
 end
@@ -263,25 +346,25 @@ function _luaaudio_slide_step (key)
     return
   end
   s.step = s.step + 1
-  s.set (s.from + (s.to - s.from) * s.step / 5, s.b)
+  s.set (s.from + (s.to - s.from) * s.step / 5, s.h)
   if s.step >= 5 then
     _G._luaaudio_slides [key] = nil
-    if s.after then s.after (s.b) end
+    if s.after then s.after (s.h) end
     return
   end
   DoAfterSpecial (s.each, "_luaaudio_slide_step (" .. key .. ")", sendto.script)
 end
 
-function slidevol (volume, buffer, ms)
-  slide (buffer, ms, getvolume, setvol, volume)
+function slidevol (volume, handle, ms)
+  slide (handle, ms, getvolume, setvol, volume)
 end
 
-function slidepan (pan, buffer, ms)
-  slide (buffer, ms, function (b) return pans [b] or 0 end, setpan, pan)
+function slidepan (pan, handle, ms)
+  slide (handle, ms, function (h) local s = sounds [h]; return s and s.pan or master_pan end, setpan, pan)
 end
 
-function fadeout (buffer, ms)
-  slide (buffer, ms, getvolume, setvol, 0, stop)
+function fadeout (handle, ms)
+  slide (handle, ms, getvolume, setvol, 0, stop)
 end
 
 function init ()
@@ -330,18 +413,18 @@ function OnPluginPlaySound (sound)
   elseif key == "freq" then
     freq (value)
   elseif key == "loop" then
-    local buffer = play (value, true)
-    if buffer ~= 0 then
-      loops [value] = buffer
+    local handle = play (value, true)
+    if handle ~= 0 then
+      loops [value] = handle
     end
   elseif key == "stop" then
     if value:lower () == "all" then
-      for _, buffer in pairs (loops) do
-        StopSound (buffer)
+      for _, handle in pairs (loops) do
+        stop (handle)
       end
       loops = {}
     elseif loops [value] then
-      StopSound (loops [value])
+      stop (loops [value])
       loops [value] = nil
     end
   elseif not key then

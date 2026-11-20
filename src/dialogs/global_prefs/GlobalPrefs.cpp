@@ -1996,18 +1996,18 @@ BOOL CGlobalPrefsP14::OnInitDialog()
 	pPane->AddString (Translate ("When output is being read"));
 	pPane->AddString (Translate ("Always"));
 
-	// Only asking for the voices if they are not going to be using a reader
+	// The voices by name: looking at this page does not load one (ownVoiceNames).
 	CComboBox * pVoice = (CComboBox *) GetDlgItem (IDC_SPEECH_VOICE);
 	pVoice->AddString (Translate ("(default)"));
 	pal::ISpeech * pReader = pal::g_speechPlatform ? pal::g_speechPlatform->screenReader () : NULL;
-	pal::ISpeech * pOwn = pal::g_speechPlatform ? pal::g_speechPlatform->ownVoice () : NULL;
-	if (pOwn)
-		for (const std::string & voice : pOwn->voices ())
+	if (pal::g_speechPlatform)
+		for (const std::string & voice : pal::g_speechPlatform->ownVoiceNames ())
 			pVoice->AddString (voice.c_str ());
 
+	// Saying what was found, so that a screen reader flag left on by something else is seen
 	CString strStatus = pReader ? pReader->name () : Translate ("No screen reader");
-	if (pOwn)
-		strStatus += CString (", ") + pOwn->name ();
+	if (pReader && strcmp (pReader->name (), "UI Automation") == 0)
+		strStatus = Translate ("Screen reader flag (UI Automation)");
 	SetDlgItemText (IDC_SPEECH_STATUS, strStatus);
 
 	return CPropertyPage::OnInitDialog ();

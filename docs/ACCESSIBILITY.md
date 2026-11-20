@@ -19,14 +19,23 @@ backends), and `src/pal/win_a11y_pane.cpp` and `src/platform/wx_a11y_pane.cpp` (
 Global Preferences has an Accessibility page. *Speak output* is Never, When a screen reader is
 running (the default), or Always, which uses the system voice if there is no reader.
 
+On Windows anything that sets the system's screen reader flag counts as a reader, which is how
+Narrator is found.  Something that is not a reader can leave the flag on (some magnifiers do, and
+so can a reader that crashed): the Accessibility page then says *Screen reader flag (UI
+Automation)*, and *Speak output: Never* turns all of this off.  On Linux, Orca is looked for among
+the player's own processes, every ten seconds until it is found.
+
 A script that asks to be heard, with `world.Speak` or Send To: Speech, is heard with no reader as
 well, through the system voice, unless *Speak output* is Never. The player asked for it by
 installing that script.
 
 ## The keys
 
-They work in the command box and the text pane while speech is in use, and are otherwise whatever
-they always were. All but the first are Alt+Shift, which nothing else in the client uses.
+They work in the command box and the text pane while output is being read (a screen reader, *Speak
+output: Always*, or the world's `speech_read_all`) or MushReader is loaded, and are otherwise
+whatever they always were.  A script that only speaks does not wake them.  All but the first are
+Alt+Shift, which nothing else in the client uses; and a key the world or a plugin has given an
+accelerator stays theirs.
 
 | Key | Does |
 |---|---|
@@ -42,10 +51,10 @@ they always were. All but the first are Alt+Shift, which nothing else in the cli
 | K | Skip to the latest: drop what is waiting and say only the newest line |
 | H, J | Next and previous miniwindow hotspot |
 | Return | Activate that hotspot |
-| O | Between the command box and the text pane. F6 does this too, unless the world has given F6 a macro. |
+| O | Between the command box and the text pane. F6 does this too, wherever there is a pane, unless the world has given F6 a macro or an accelerator. |
 
 Pressing Enter in the command box silences speech, drops what is waiting and ends reviewing, since
-it is no longer news (`speech_interrupt_on_enter`).
+it is no longer news (`speech_interrupt_on_enter`).  What is urgent (priority 2) is still said.
 
 A plugin can put any of these on other keys: `world.SpeechReview (action)`, where action is one of
 `previous_line next_line first_line last_line current_line previous_word next_word current_word
@@ -64,13 +73,16 @@ a short strip under the output window.
 
 F6 goes there, at the newest line. Tab, Enter or Escape go back. Typing goes to the command box. New
 lines arrive without moving the caret, and without the reader saying so. While it has focus, new
-lines wait to be spoken, and on leaving you hear how many there were. It keeps the last 5000 lines.
+lines wait to be spoken, and on leaving you hear how many there were. It keeps the last 5000 lines,
+and when reading starts that is as much of the scrollback as it, and review, take in.
 
 ## Flooding
 
 Lines that arrive together are said together. If more than `speech_flood_lines` (40) are waiting,
 the middle goes, and you hear "N lines skipped" and the newest five. What has a category with
-priority 2, as triggers, aliases and timers sending to speech do by default, is never dropped.
+priority 2, as triggers, aliases and timers sending to speech do by default, is never dropped: not
+by a flood, by Enter, or by a script interrupting.  Stopping speech (`StopSpeech`, `tts_stop`, K,
+muting) does drop it, and so does there being nothing at all to speak with.
 
 ## For a script
 
@@ -122,10 +134,15 @@ by ID: a plugin file with one of those IDs loads as a small Lua plugin with the 
 and the file is left alone. Their DLLs are 32-bit. `CallPlugin`, `PluginSupports` and `ppi.Load`
 all answer as they did, so soundpacks work. Loading MushReader sets `speech_read_all`, since the
 original read everything. Sounds in Ogg play only if a file of the same name in WAV, MP3 or FLAC is
-beside them: the client has no Ogg decoder.
+beside them: the client has no Ogg decoder.  LuaAudio's volumes are 0 to 100 and linear, as the
+original's were, so 50 is half as loud (-6 dB to `PlaySound`).  What its `play` returns is a
+handle for that sound, not a buffer number: it plays in a buffer nobody else is using, takes over
+only one of its own one-shot sounds if all ten are busy, and stopping or changing a sound that has
+ended touches nothing.
 
-The commands `tts`, `tts_note`, `tts_interrupt`, `tts_stop` and `subst` work while speech is in use
-or that plugin is loaded. To anyone else they are words to send to the MUD. `subst` keeps
+The commands `tts`, `tts_note`, `tts_interrupt`, `tts_stop` and `subst` work while output is being
+read or that plugin is loaded. To anyone else they are words to send to the MUD, and an alias of
+the world's or a plugin's for one of them runs instead. `subst` keeps
 MushReader's `substitutions.mush`: a whole line that matches is said differently, or if replaced with
 `!skip` not at all.
 
@@ -174,3 +191,11 @@ can also speak.
 
 **Exact pacing on Linux.** speech-dispatcher's end-of-speech callback needs its struct's layout,
 which could not be checked from where this was written.
+
+**Option+Shift on macOS.** Alt is Option there, and Option+Shift with a letter, a digit, a comma or
+a full stop types a character on many layouts. So while output is being read, review's character
+keys take those characters from the command box. Other keys need choosing on a Mac, with VoiceOver,
+whose own keys are Control+Option.
+
+**A second window on a world** (Window > New Window) has no text pane: the pane belongs to the first
+output window, and closing that one leaves the world without a pane until reading stops and starts.

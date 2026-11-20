@@ -54,6 +54,11 @@ std::wstring Wide (const char * utf8)
 
 // Which pane a window handle is.  Few enough that a map is fine.
 std::map<HWND, CWinA11yPane *> g_panes;
+int g_iLivePanes = 0;      // for tests: that a pane object goes with its world
+
+// An Alt+Shift key that was ours never reached DefWindowProc, so it still thinks Alt was
+// pressed on its own, and letting go of Alt would open the menu bar.  That key-up is ours too.
+bool g_bEatAltUp = false;
 
 void SetAccessibleName (HWND hWnd, const wchar_t * sName)
   {
@@ -102,8 +107,12 @@ bool DispatchKey (CMUSHclientDoc * pDoc, const MSG * pMsg)
   int ch;
   if (!TranslateKey (pMsg->wParam, key, ch))
     return false;
-  return A11y_Key (*pDoc, key, ch, GetKeyState (VK_CONTROL) < 0, GetKeyState (VK_MENU) < 0,
-                   GetKeyState (VK_SHIFT) < 0);
+  const bool bAlt = GetKeyState (VK_MENU) < 0;
+  if (!A11y_Key (*pDoc, key, ch, GetKeyState (VK_CONTROL) < 0, bAlt, GetKeyState (VK_SHIFT) < 0))
+    return false;
+  if (bAlt)
+    g_bEatAltUp = true;
+  return true;
   }
 
 }  // namespace
@@ -114,6 +123,7 @@ class CWinA11yPane
     CWinA11yPane (HWND hOutputView, HWND hCommandBox, CMUSHclientDoc * pDoc)
       : m_hView (hOutputView), m_hCommand (hCommandBox), m_pDoc (pDoc)
       {
+      g_iLivePanes++;
       LoadLibraryW (L"msftedit.dll");
 
       m_hWnd = CreateWindowExW (0, L"RICHEDIT50W", L"",
@@ -146,6 +156,7 @@ class CWinA11yPane
 
     ~CWinA11yPane ()
       {
+      g_iLivePanes--;
       if (m_hView)
         RemoveWindowSubclass (m_hView, ViewProc, kSubclassId);
       if (m_pTom)
@@ -370,8 +381,24 @@ bool WinA11y_CommandBoxKey (CMUSHclientDoc * pDoc, const MSG * pMsg)
   return DispatchKey (pDoc, pMsg);
   }
 
+int WinA11yPane_LiveCountForTest ()
+  {
+  return g_iLivePanes;
+  }
+
 bool WinA11y_PreTranslate (MSG * pMsg)
   {
+  if (g_bEatAltUp && pMsg->wParam == VK_MENU)
+    {
+    if (pMsg->message == WM_KEYUP || pMsg->message == WM_SYSKEYUP)
+      {
+      g_bEatAltUp = false;
+      return true;
+      }
+    if ((pMsg->message == WM_KEYDOWN || pMsg->message == WM_SYSKEYDOWN) && !(pMsg->lParam & (1 << 30)))
+      g_bEatAltUp = false;     // pressed afresh: not the one we owe
+    }
+
   if (g_panes.empty ())
     return false;
   if (pMsg->message != WM_KEYDOWN && pMsg->message != WM_SYSKEYDOWN && pMsg->message != WM_CHAR &&

@@ -38,8 +38,12 @@ struct Entry
   time_t      when;
   };
 
-// Which to delete from these, given the time now.  Pure, for testing.
+// Which to delete from these, given the time now.  Pure, for testing.  Days are local.
 std::vector<std::string> ChooseToDelete (std::vector<Entry> entries, time_t now);
+
+// If this file name is one of the copies, when it was taken.  Anything else in the
+// folder is left alone.  For testing.
+bool TimeOfCopy (const std::string & name, time_t & when);
 
 // Take a copy if one is due, and prune.  bFirstThisSession: this world hasn't been
 // saved since it was opened.  True if a copy was made.

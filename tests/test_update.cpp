@@ -1100,6 +1100,54 @@ TEST (WorldBackups, ACopyIsTakenWhenDueAndOnlyThen)
   EXPECT_TRUE (bFoundOne);
   }
 
+// Only the names the copies are given count as copies: a file of the user's own in the
+// folder is never pruned.
+TEST (WorldBackups, OnlyCopiesAreCopies)
+  {
+  time_t when = 0;
+  EXPECT_TRUE (world_backups::TimeOfCopy ("20260101-120000.mcl", when));
+  EXPECT_TRUE (world_backups::TimeOfCopy ("20260101-120000-2.mcl", when));
+  EXPECT_TRUE (world_backups::TimeOfCopy ("20260101-120000", when));
+  EXPECT_FALSE (world_backups::TimeOfCopy ("20260101-120000 keep.mcl", when));
+  EXPECT_FALSE (world_backups::TimeOfCopy ("20260101-120000-keep.mcl", when));
+  EXPECT_FALSE (world_backups::TimeOfCopy ("20260101-120000.mcl.bak", when));
+  EXPECT_FALSE (world_backups::TimeOfCopy ("2026011-120000.mcl", when));
+  EXPECT_FALSE (world_backups::TimeOfCopy ("my world.mcl", when));
+  }
+
+// When the clocks go back, an hour's worth of times happen twice.  Two copies taken an
+// hour apart then can have one name, and the second mustn't replace the first.
+TEST (WorldBackups, ACopyWithTheSameNameDoesNotReplaceTheOther)
+  {
+  const fs::path folder = TempFolder ("backups-dst");
+  const std::string root = (folder / "backups").u8string () + "/";
+  const fs::path world = folder / "w.mcl";
+  const std::string worldPath = world.u8string ();
+  const fs::path where = fs::u8path (world_backups::FolderFor (root, worldPath));
+  const time_t now = 1800000000;
+
+  WriteText (world, "first");
+  EXPECT_TRUE (world_backups::BackUpIfDue (root, worldPath, true, now));
+  WriteText (world, "second");
+  EXPECT_TRUE (world_backups::BackUpIfDue (root, worldPath, true, now));   // the same name
+  std::vector<std::string> contents;
+  for (const auto & entry : fs::directory_iterator (where))
+    contents.push_back (ReadText (entry.path ()));
+  std::sort (contents.begin (), contents.end ());
+  ASSERT_EQ (2u, contents.size ());
+  EXPECT_EQ (std::string ("first"), contents [0]);
+  EXPECT_EQ (std::string ("second"), contents [1]);
+
+  // And a file the user put there is never pruned, however many copies come after it.
+  WriteText (where / "20200101-120000 keep.mcl", "mine");
+  for (int i = 1; i <= 20; i++)
+    {
+    WriteText (world, "version " + std::to_string (i));
+    world_backups::BackUpIfDue (root, worldPath, false, now + i * 86400);
+    }
+  EXPECT_TRUE (fs::exists (where / "20200101-120000 keep.mcl"));
+  }
+
 TEST (WorldBackups, DifferentFoldersForDifferentWorlds)
   {
   EXPECT_TRUE (world_backups::FolderFor ("b/", "C:\\one\\x.mcl") != world_backups::FolderFor ("b/", "C:\\two\\x.mcl"));

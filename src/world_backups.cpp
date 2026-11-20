@@ -47,8 +47,57 @@ std::string NameFor (const time_t when, const std::string & extension)
   return std::string (buffer) + extension;
   }
 
-bool TimeOf (const std::string & name, time_t & when)
+// The local day a time falls on, as a number that sorts.
+long DayOf (const time_t when)
   {
+  const struct tm * t = localtime (&when);
+  if (!t)
+    return (long) (when / kDay);
+  return (long) (t->tm_year + 1900) * 10000 + (t->tm_mon + 1) * 100 + t->tm_mday;
+  }
+
+std::string ReadAll (const fs::path & path)
+  {
+  std::ifstream f (path, std::ios::binary);
+  std::stringstream s;
+  s << f.rdbuf ();
+  return s.str ();
+  }
+
+} // anonymous namespace
+
+// Exactly what NameFor makes, perhaps with "-2" and so on before the extension (two
+// copies an hour apart can have one name, when the clocks go back), and nothing else:
+// a file of the user's own in the folder, "20260101-120000 keep.mcl" say, is not one
+// to be pruned.
+bool TimeOfCopy (const std::string & name, time_t & when)
+  {
+  static const char kPattern [] = "dddddddd-dddddd";
+  const size_t kStamp = sizeof kPattern - 1;
+  if (name.size () < kStamp)
+    return false;
+  for (size_t i = 0; i < kStamp; i++)
+    if (kPattern [i] == 'd' ? !isdigit ((unsigned char) name [i]) : name [i] != kPattern [i])
+      return false;
+  size_t at = kStamp;
+  if (at < name.size () && name [at] == '-')
+    {
+    const size_t digits = ++at;
+    while (at < name.size () && isdigit ((unsigned char) name [at]))
+      at++;
+    if (at == digits)
+      return false;
+    }
+  // The extension: one, or none.
+  if (at < name.size ())
+    {
+    if (name [at] != '.')
+      return false;
+    for (size_t i = at + 1; i < name.size (); i++)
+      if (name [i] == '.' || name [i] == ' ')
+        return false;
+    }
+
   struct tm t;
   memset (&t, 0, sizeof t);
   int year, month, day, hour, minute, second;
@@ -64,16 +113,6 @@ bool TimeOf (const std::string & name, time_t & when)
   when = mktime (&t);
   return when != (time_t) -1;
   }
-
-std::string ReadAll (const fs::path & path)
-  {
-  std::ifstream f (path, std::ios::binary);
-  std::stringstream s;
-  s << f.rdbuf ();
-  return s.str ();
-  }
-
-} // anonymous namespace
 
 std::string FolderFor (const std::string & backupsRoot, const std::string & worldPath)
   {
@@ -112,12 +151,13 @@ std::vector<std::string> ChooseToDelete (std::vector<Entry> entries, const time_
       }
     }
 
-  std::set<long long> days;
+  // Days as the user has them, not as Greenwich does.
+  std::set<long> days;
   for (const Entry & e : entries)
     {
     if (now - e.when > kKeepDays * kDay)
       break;
-    if (days.insert ((long long) (e.when / kDay)).second)
+    if (days.insert (DayOf (e.when)).second)
       keep.insert (e.name);
     }
 
@@ -144,7 +184,7 @@ bool BackUpIfDue (const std::string & backupsRoot, const std::string & worldPath
     {
     Entry e;
     e.name = it->path ().filename ().u8string ();
-    if (TimeOf (e.name, e.when))
+    if (TimeOfCopy (e.name, e.when))
       entries.push_back (e);
     }
 
@@ -161,7 +201,12 @@ bool BackUpIfDue (const std::string & backupsRoot, const std::string & worldPath
   if (pNewest && ReadAll (folder / fs::u8path (pNewest->name)) == ReadAll (world))
     return false;
 
-  const Entry fresh = { NameFor (now, world.extension ().u8string ()), now };
+  // The name is the local time, which repeats for an hour when the clocks go back: a
+  // second copy in that hour gets a name of its own rather than replacing the first.
+  const std::string extension = world.extension ().u8string ();
+  Entry fresh = { NameFor (now, extension), now };
+  for (int n = 2; fs::exists (folder / fs::u8path (fresh.name), ec) && n < 100; n++)
+    fresh.name = NameFor (now, "-" + std::to_string (n) + extension);
   fs::copy_file (world, folder / fs::u8path (fresh.name), fs::copy_options::overwrite_existing, ec);
   if (ec)
     return false;

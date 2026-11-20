@@ -76,6 +76,7 @@ class CScriptEngine : public CObject
       m_pDispatch = NULL;
 #endif
       L = NULL;
+      m_iRunning = 0;
 #ifdef MC_EMBEDDED_ENGINES
       m_pyEngine = NULL;
       m_perlEngine = NULL;
@@ -89,6 +90,25 @@ class CScriptEngine : public CObject
       {
       DisableScripting ();
       }; // end of destuctor
+
+  // How many of this engine's calls are on the stack now: Parse, Execute, ExecuteLua
+  // and the like count themselves in (Running), as does Lua's CallPlugin, which calls
+  // a plugin's function directly.  UnloadPlugin and ReloadPlugin refuse a plugin
+  // whose engine is running, since deleting it would free the interpreter under its
+  // own frames.  Their old test -- "is it m_CurrentPlugin?" -- missed every case
+  // where it is not: a callback that calls world.Execute (which clears
+  // m_CurrentPlugin) or CallPlugin into a plugin that unloads its caller, or a
+  // script's thread's call.
+  int m_iRunning;
+  struct Running
+    {
+    CScriptEngine * m_e;
+    explicit Running (CScriptEngine * e) : m_e (e) { if (m_e) m_e->m_iRunning++; }
+    ~Running () { if (m_e) m_e->m_iRunning--; }
+    Running (const Running &) = delete;
+    Running & operator= (const Running &) = delete;
+    };
+  bool IsRunning () const { return m_iRunning > 0; }
 
   bool CreateScriptEngine (void);
   bool Parse (const CString & strCode, const CString & strWhat);

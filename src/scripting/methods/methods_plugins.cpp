@@ -232,7 +232,8 @@ CPlugin * pPlugin = GetPlugin (PluginID);
     return eNoSuchPlugin;
 
   // cannot reload  ourselves
-  if (pPlugin == m_CurrentPlugin)
+  if (pPlugin == m_CurrentPlugin ||
+      (pPlugin->m_ScriptEngine && pPlugin->m_ScriptEngine->IsRunning ()))  // nor under its own frames
     return eBadParameter;
 
   PluginListIterator pit = find (m_PluginList.begin (), 
@@ -641,7 +642,8 @@ CPlugin * pPlugin = GetPlugin (PluginID);
     return eNoSuchPlugin;
 
   // cannot delete  ourselves
-  if (pPlugin == m_CurrentPlugin)
+  if (pPlugin == m_CurrentPlugin ||
+      (pPlugin->m_ScriptEngine && pPlugin->m_ScriptEngine->IsRunning ()))  // nor under its own frames
     return eBadParameter;
 
   PluginListIterator pit = find (m_PluginList.begin (), 

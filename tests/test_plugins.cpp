@@ -455,6 +455,40 @@ TEST(PluginCallback, PluginCannotUnloadItself)
                  (const char*)plugin_var(p, "rc"));
 }
 
+// methods_plugins.cpp UnloadPlugin: "cannot delete ourselves" compared only
+// m_CurrentPlugin, so a plugin whose callback was running underneath but was not
+// the current one could be deleted under its own frames.  Here A calls into B,
+// and B unloads A: A's Lua state would be closed while A's function is still on
+// the stack.  Now refused (CScriptEngine::IsRunning), and allowed again once A's
+// callback has returned.
+TEST(PluginCallback, PluginCannotBeUnloadedUnderItsOwnCallback)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    std::string bodyA = std::string(
+        "function CallB()\n"
+        "  world.CallPlugin('") + IDB + "', 'UnloadA', '')\n"
+        "  world.SetVariable('after', 'alive')\n"
+        "end\n";
+    std::string bodyB = std::string(
+        "function UnloadA()\n"
+        "  world.SetVariable('rc', tostring(world.UnloadPlugin('") + IDA + "')))\n"
+        "end\n";
+    ASSERT_TRUE(load_plugin(doc, write_plugin("unA", IDA, "UnderA", bodyA.c_str())));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("unB", IDB, "UnderB", bodyB.c_str())));
+
+    EXPECT_EQ((long)eOK, doc.CallPlugin(IDA, "CallB", ""));
+    CPlugin* a = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, a);                            // still installed
+    EXPECT_STREQ((const char*)CFormat("%d", (int)eBadParameter),
+                 (const char*)plugin_var(doc.GetPlugin(IDB), "rc"));
+    EXPECT_STREQ("alive", (const char*)plugin_var(a, "after"));
+
+    // ...and with A's callback finished, B may unload it.
+    EXPECT_EQ((long)eOK, doc.CallPlugin(IDB, "UnloadA", ""));
+    EXPECT_STREQ("0", (const char*)plugin_var(doc.GetPlugin(IDB), "rc"));
+    EXPECT_TRUE(doc.GetPlugin(IDA) == NULL);
+}
+
 // methods_plugins.cpp UnloadPlugin: "if not found, try to find by name" —
 // a case-insensitive NAME lookup when the argument is not a known ID.
 TEST(LuaScripting, UnloadPluginAcceptsNameWhenIDNotFound)

@@ -653,6 +653,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
 
 
   {
+  Running running (this);   // see m_iRunning
 
 #ifdef MC_EMBEDDED_ENGINES
   // Alt-language world (the call sites gate on UsesEmbeddedCallback(), so an
@@ -985,6 +986,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
                                long & nInvocationCount,  // count of invocations
                                CString & result)         // where to put result
   {
+  Running running (this);   // see m_iRunning
 
 #ifdef MC_EMBEDDED_ENGINES
   // Same surroundings as the rich overload above -- see DispatchEmbedded's

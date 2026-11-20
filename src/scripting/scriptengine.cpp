@@ -22,6 +22,7 @@ bool CScriptEngine::Execute (DISPID & dispid,  // dispatch ID, will be set to DI
                               COleVariant * result    // result of call
                               )
   {
+  Running running (this);   // see m_iRunning
 
 
   // If Lua, we may have been called with no arguments, so just do that
@@ -484,6 +485,7 @@ WCHAR charWorld[]=L"world";
 
 bool CScriptEngine::Parse (const CString & strCode, const CString & strWhat)
   {
+  Running running (this);   // see m_iRunning
 
   if (strWhat == "Script file" || strWhat == "Plugin")
     bImmediate = false;
@@ -740,6 +742,7 @@ bool CScriptEngine::Execute (DISPID& dispid,
                               DISPPARAMS& params, long& nInvocationCount,
                               COleVariant* result)
   {
+  Running running (this);   // see m_iRunning
   // Delegate to Lua if active; otherwise signal "not found".  The procedure
   // NAME and reason/type/reason must be forwarded to ExecuteLua, which
   // resolves the function by name (via GetNestedFunction).  The previous stub
@@ -838,6 +841,7 @@ bool CScriptEngine::CreateScriptEngine (void)
 
 bool CScriptEngine::Parse (const CString& strCode, const CString& strWhat)
   {
+  Running running (this);   // see m_iRunning
   if (L) return ParseLua (strCode, strWhat);
   if (m_pyEngine)   return ParsePython (strCode, strWhat);
   if (m_perlEngine) return ParsePerl   (strCode, strWhat);

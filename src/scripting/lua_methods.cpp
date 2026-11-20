@@ -1165,7 +1165,9 @@ static int L_CallPlugin (lua_State *L)
     CPlugin * pSavedPlugin = pDoc->m_CurrentPlugin; 
     pDoc->m_CurrentPlugin = pPlugin;  
     
-    // now call the routine in the plugin
+    // now call the routine in the plugin -- counted as running, so that it cannot
+    // be unloaded under its own frames (CScriptEngine::m_iRunning)
+    CScriptEngine::Running running (pPlugin->m_ScriptEngine);
 
     if (CallLuaWithTraceBack (pL, n, LUA_MULTRET))   // true on error
       {
